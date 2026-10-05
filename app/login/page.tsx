@@ -1,11 +1,11 @@
 "use client";
 import { useState } from "react";
-import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
+import { supabase } from "../../lib/supabase";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
-  const [senha, setSenha] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
@@ -13,54 +13,63 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password: senha,
-    });
+    // Valida se o utilizador existe na nossa tabela de permissões
+    const { data: usuario, error } = await supabase
+      .from('usuarios_permissoes')
+      .select('*')
+      .eq('email', email.trim().toLowerCase())
+      .single();
 
-    if (error) {
-      alert("Erro ao entrar: " + error.message);
+    if (error || !usuario) {
+      alert("Acesso negado: E-mail não encontrado ou sem permissão registada.");
       setLoading(false);
-    } else {
-      router.push("/");
+      return;
     }
+
+    // Grava a sessão localmente para o sistema saber quem está logado
+    localStorage.setItem("usuario_logado", JSON.stringify(usuario));
+
+    setLoading(false);
+    router.push("/");
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-slate-100 font-sans">
-      <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-2xl w-full max-w-md">
-        <h1 className="text-2xl font-black text-white mb-2">Acesso Restrito</h1>
-        <p className="text-xs text-slate-400 mb-6">Entre com as suas credenciais para aceder ao painel Best Fit.</p>
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 font-sans text-slate-100">
+      <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="mb-6">
+          <h1 className="text-xl font-black text-white tracking-tight">Acesso Restrito</h1>
+          <p className="text-xs text-slate-400 mt-1">Entre com as suas credenciais para aceder ao painel Best Fit.</p>
+        </div>
 
-        <form onSubmit={handleLogin} className="flex flex-col gap-4">
+        <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1.5 uppercase tracking-wider">E-mail</label>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">E-mail</label>
             <input 
               type="email" 
               value={email} 
               onChange={(e) => setEmail(e.target.value)} 
               required
+              placeholder="exemplo@usebestfit.com.br"
               className="w-full border border-slate-700 rounded-xl p-3 bg-slate-950 text-white text-xs outline-none focus:border-indigo-500"
-              placeholder="utilizador@bestfit.com"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1.5 uppercase tracking-wider">Palavra-passe</label>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Palavra-passe</label>
             <input 
               type="password" 
-              value={senha} 
-              onChange={(e) => setSenha(e.target.value)} 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
               required
-              className="w-full border border-slate-700 rounded-xl p-3 bg-slate-950 text-white text-xs outline-none focus:border-indigo-500"
               placeholder="••••••••"
+              className="w-full border border-slate-700 rounded-xl p-3 bg-slate-950 text-white text-xs outline-none focus:border-indigo-500"
             />
           </div>
 
           <button 
             type="submit" 
             disabled={loading}
-            className="mt-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-all text-xs uppercase tracking-wider cursor-pointer"
+            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md mt-2"
           >
             {loading ? "A entrar..." : "Entrar no Sistema"}
           </button>
