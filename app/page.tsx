@@ -12,7 +12,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  // Estados de Paginação, Filtros, Pesquisa por SKU e Modo Ocultar
   const [paginaAtual, setPaginaAtual] = useState(1);
   const itensPorPagina = 30;
 
@@ -21,11 +20,9 @@ export default function Dashboard() {
   const [ordenacao, setOrdenacao] = useState("padrao");
   const [ocultarAnalise, setOcultarAnalise] = useState(false);
 
-  // Estados para edição do Retorno de Compras
   const [editandoCodigo, setEditandoCodigo] = useState<string | null>(null);
   const [textoRetorno, setTextoRetorno] = useState("");
 
-  // VERIFICAÇÃO DE AUTENTICAÇÃO (LOCALSTORAGE)
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
     if (!usuarioLogado) {
@@ -68,7 +65,7 @@ export default function Dashboard() {
       return;
     }
 
-    const resultado = abcAtual.map((item: any, index: number) => {
+    const resultado = abcAtual.map((item: any) => {
       const invMatch = inventario?.find(
         (inv: any) => String(inv.codigo_sku || "").trim() === String(item.codigo || "").trim()
       );
@@ -217,7 +214,7 @@ export default function Dashboard() {
                 Dashboard
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/upload">
-                Upload
+                Upload & Canais
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">
                 Regras
@@ -235,46 +232,27 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* CARDS DE RESUMO EXECUTIVO (DARK MODE) */}
+        {/* CARDS DE RESUMO EXECUTIVO */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
-          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg hover:border-slate-700 transition-all">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Unidades Vendidas</span>
-              <div className="w-8 h-8 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 font-bold text-sm">📦</div>
-            </div>
-            <p className="text-3xl font-black text-white tracking-tight">{totalUnidadesVendas.toLocaleString()}</p>
+          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Unidades Vendidas</span>
+            <p className="text-3xl font-black text-white tracking-tight mt-2">{totalUnidadesVendas.toLocaleString()}</p>
           </div>
-
-          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg hover:border-slate-700 transition-all">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Faturamento Bruto</span>
-              <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 font-bold text-sm">💰</div>
-            </div>
-            <p className="text-3xl font-black text-white tracking-tight">
-              R$ {totalFaturamentoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </p>
+          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Faturamento Bruto</span>
+            <p className="text-3xl font-black text-white tracking-tight mt-2">R$ {totalFaturamentoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           </div>
-
-          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg hover:border-slate-700 transition-all">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ticket Médio</span>
-              <div className="w-8 h-8 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 font-bold text-sm">🎯</div>
-            </div>
-            <p className="text-3xl font-black text-white tracking-tight">
-              R$ {totalTicketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </p>
+          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ticket Médio</span>
+            <p className="text-3xl font-black text-white tracking-tight mt-2">R$ {totalTicketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           </div>
-
-          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg hover:border-slate-700 transition-all">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Mês de Referência</span>
-              <div className="w-8 h-8 rounded-xl bg-violet-500/10 flex items-center justify-center text-violet-400 font-bold text-sm">📅</div>
-            </div>
-            <p className="text-3xl font-black text-white tracking-tight">{competencia}</p>
+          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Mês de Referência</span>
+            <p className="text-3xl font-black text-white tracking-tight mt-2">{competencia}</p>
           </div>
         </div>
 
-        {/* BARRA DE FILTROS, PESQUISA E AÇÕES */}
+        {/* BARRA DE FILTROS E AÇÕES */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg mb-6 flex flex-col gap-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-4">
@@ -285,7 +263,7 @@ export default function Dashboard() {
                   value={competencia} 
                   onChange={(e) => setCompetencia(e.target.value)} 
                   placeholder="MM/AAAA"
-                  className="border border-slate-700 rounded-xl p-2.5 w-32 text-center font-bold text-sm bg-slate-950 text-white focus:border-indigo-500 outline-none transition-all"
+                  className="border border-slate-700 rounded-xl p-2.5 w-32 text-center font-bold text-sm bg-slate-950 text-white outline-none focus:border-indigo-500"
                 />
               </div>
               <div>
@@ -295,13 +273,13 @@ export default function Dashboard() {
                   value={competenciaAnterior} 
                   onChange={(e) => setCompetenciaAnterior(e.target.value)} 
                   placeholder="Ex: 08/2026"
-                  className="border border-slate-700 rounded-xl p-2.5 w-32 text-center font-bold text-sm bg-slate-950 text-white focus:border-indigo-500 outline-none transition-all"
+                  className="border border-slate-700 rounded-xl p-2.5 w-32 text-center font-bold text-sm bg-slate-950 text-white outline-none focus:border-indigo-500"
                 />
               </div>
               <div className="self-end">
                 <button
                   onClick={carregarDados}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl shadow-md transition-all text-xs uppercase tracking-wider cursor-pointer"
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl shadow-md text-xs uppercase tracking-wider cursor-pointer"
                 >
                   🔍 Filtrar Dados
                 </button>
@@ -310,7 +288,7 @@ export default function Dashboard() {
 
             <button
               onClick={baixarExcel}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-5 rounded-xl shadow-md transition-all text-xs uppercase tracking-wider cursor-pointer flex items-center gap-2"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-5 rounded-xl shadow-md text-xs uppercase tracking-wider cursor-pointer"
             >
               📥 Baixar Relatório Excel
             </button>
@@ -318,7 +296,6 @@ export default function Dashboard() {
 
           <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-800">
             <div className="flex flex-wrap items-center gap-4">
-              {/* CAMPO DE PESQUISA POR SKU */}
               <div>
                 <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Pesquisar por SKU:</label>
                 <input 
@@ -326,7 +303,7 @@ export default function Dashboard() {
                   value={pesquisaSku} 
                   onChange={(e) => { setPesquisaSku(e.target.value); setPaginaAtual(1); }} 
                   placeholder="Digite o código SKU..."
-                  className="border border-slate-700 rounded-xl p-2.5 w-48 text-xs font-semibold bg-slate-950 text-white focus:border-indigo-500 outline-none transition-all"
+                  className="border border-slate-700 rounded-xl p-2.5 w-48 text-xs font-semibold bg-slate-950 text-white outline-none focus:border-indigo-500"
                 />
               </div>
 
@@ -335,7 +312,7 @@ export default function Dashboard() {
                 <select 
                   value={filtroStatus} 
                   onChange={(e) => { setFiltroStatus(e.target.value); setPaginaAtual(1); }}
-                  className="border border-slate-700 rounded-xl p-2.5 text-xs font-semibold bg-slate-950 text-white focus:border-indigo-500 outline-none transition-all cursor-pointer"
+                  className="border border-slate-700 rounded-xl p-2.5 text-xs font-semibold bg-slate-950 text-white outline-none focus:border-indigo-500 cursor-pointer"
                 >
                   <option value="TODOS">Todos os Status</option>
                   <option value="Sugestão de Compra">Sugestão de Compra</option>
@@ -348,7 +325,7 @@ export default function Dashboard() {
                 <select 
                   value={ordenacao} 
                   onChange={(e) => { setOrdenacao(e.target.value); setPaginaAtual(1); }}
-                  className="border border-slate-700 rounded-xl p-2.5 text-xs font-semibold bg-slate-950 text-white focus:border-indigo-500 outline-none transition-all cursor-pointer"
+                  className="border border-slate-700 rounded-xl p-2.5 text-xs font-semibold bg-slate-950 text-white outline-none focus:border-indigo-500 cursor-pointer"
                 >
                   <option value="padrao">Ordem Padrão (Curva ABC)</option>
                   <option value="saldo-desc">Maior Saldo em Estoque</option>
@@ -360,14 +337,13 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* CHECKBOX OCULTAR ANÁLISE */}
             <div className="flex items-center bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800">
               <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-slate-300 select-none">
                 <input 
                   type="checkbox" 
                   checked={ocultarAnalise} 
                   onChange={(e) => setOcultarAnalise(e.target.checked)}
-                  className="w-4 h-4 text-indigo-600 rounded border-slate-700 bg-slate-900 focus:ring-indigo-500 cursor-pointer"
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-700 bg-slate-950 cursor-pointer"
                 />
                 Ocultar campos de análise
               </label>
@@ -375,14 +351,12 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* TABELA MODERNA DARK */}
+        {/* TABELA DE DADOS */}
         <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
           {loading ? (
             <p className="p-8 text-center text-slate-400 font-medium">A carregar e a cruzar dados em nuvem...</p>
           ) : dadosConsolidados.length === 0 ? (
-            <p className="p-8 text-center text-slate-400 font-medium">Nenhum registo encontrado para a competência {competencia}. Vá na aba "Upload" para abastecer a base.</p>
-          ) : dadosFiltradosEOrdenados.length === 0 ? (
-            <p className="p-8 text-center text-slate-400 font-medium">Nenhum produto encontrado para o SKU "{pesquisaSku}".</p>
+            <p className="p-8 text-center text-slate-400 font-medium">Nenhum registo encontrado para a competência {competencia}. Vá na aba "Upload & Canais" para abastecer a base.</p>
           ) : (
             <>
               <div className="overflow-x-auto">
@@ -401,7 +375,6 @@ export default function Dashboard() {
                           <th className="p-4 text-right">Cob. Dias</th>
                           <th className="p-4 text-right">Cob. Meses</th>
                           <th className="p-4 text-center">Status</th>
-                          {competenciaAnterior && <th className="p-4 text-center">Cresc. / Queda</th>}
                         </>
                       )}
                       <th className="p-4 text-center">Retorno Compras</th>
@@ -410,54 +383,22 @@ export default function Dashboard() {
                   <tbody className="divide-y divide-slate-800/60">
                     {itensAtuais.map((d, index) => {
                       const isEditing = editandoCodigo === d.codigo;
-
                       return (
                         <tr key={index} className="hover:bg-slate-800/40 transition-colors">
                           <td className="p-4 font-semibold text-slate-200">{d.produto}</td>
                           <td className="p-4 font-mono text-slate-400">{d.codigo}</td>
-                          
                           {!ocultarAnalise && (
                             <>
-                              <td className="p-4 text-center">
-                                <span className={`px-2.5 py-1 rounded-lg font-black text-[10px] ${
-                                  d.classificacao === 'A' ? 'bg-rose-950/60 text-rose-400 border border-rose-900/50' :
-                                  d.classificacao === 'B' ? 'bg-amber-950/60 text-amber-400 border border-amber-900/50' : 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/50'
-                                }`}>
-                                  {d.classificacao}
-                                </span>
-                              </td>
+                              <td className="p-4 text-center font-black">{d.classificacao}</td>
                               <td className="p-4 text-right font-bold text-slate-300">{d.vendas}</td>
                               <td className="p-4 text-right text-slate-400">R$ {d.valor.toFixed(2)}</td>
                               <td className="p-4 text-right font-black text-indigo-400">{d.saldoEstoque}</td>
                               <td className="p-4 text-right text-slate-400">{d.mediaDiaria}</td>
                               <td className="p-4 text-right text-slate-400">{d.coberturaDias}d</td>
                               <td className="p-4 text-right font-bold text-slate-300">{d.coberturaMeses}</td>
-                              <td className="p-4 text-center">
-                                <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${
-                                  d.status.includes('Sugestão') ? 'bg-orange-950/60 text-orange-400 border border-orange-900/50' : 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/50'
-                                }`}>
-                                  {d.status}
-                                </span>
-                              </td>
-                              {competenciaAnterior && (
-                                <td className="p-4 text-center font-bold">
-                                  {d.variacao === 0 ? (
-                                    <span className="text-slate-500">0.0%</span>
-                                  ) : d.variacao! > 0 ? (
-                                    <span className="text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-900/50">
-                                      +{d.variacao?.toFixed(1)}% 📈
-                                    </span>
-                                  ) : (
-                                    <span className="text-rose-400 bg-rose-950/60 px-2.5 py-1 rounded-lg border border-rose-900/50">
-                                      {d.variacao?.toFixed(1)}% 📉
-                                    </span>
-                                  )}
-                                </td>
-                              )}
+                              <td className="p-4 text-center font-bold text-emerald-400">{d.status}</td>
                             </>
                           )}
-
-                          {/* CAMPO DE RETORNO DE COMPRAS GLOBAL COM EDIÇÃO (CANETINHA) */}
                           <td className="p-4 text-center">
                             {isEditing ? (
                               <div className="flex items-center justify-center gap-1.5">
@@ -465,36 +406,16 @@ export default function Dashboard() {
                                   type="text"
                                   value={textoRetorno}
                                   onChange={(e) => setTextoRetorno(e.target.value)}
-                                  placeholder="Escreva o retorno..."
-                                  className="border border-slate-600 rounded-lg p-1.5 text-xs bg-slate-950 text-white w-44 outline-none focus:border-indigo-500 shadow-md"
+                                  className="border border-slate-600 rounded-lg p-1.5 text-xs bg-slate-950 text-white w-44 outline-none"
                                   autoFocus
                                 />
-                                <button
-                                  onClick={() => salvarRetorno(d.codigo)}
-                                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-all shadow-md"
-                                >
-                                  OK
-                                </button>
-                                <button
-                                  onClick={() => setEditandoCodigo(null)}
-                                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-all"
-                                >
-                                  ✕
-                                </button>
+                                <button onClick={() => salvarRetorno(d.codigo)} className="bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer">OK</button>
+                                <button onClick={() => setEditandoCodigo(null)} className="bg-slate-800 text-slate-300 px-2 py-1.5 rounded-lg text-xs font-bold cursor-pointer">✕</button>
                               </div>
                             ) : (
                               <div className="flex items-center justify-center gap-2">
-                                <span className="text-slate-300 font-medium">{d.retornoCompras || <span className="text-slate-600 italic">Sem retorno</span>}</span>
-                                <button
-                                  onClick={() => {
-                                    setEditandoCodigo(d.codigo);
-                                    setTextoRetorno(d.retornoCompras || "");
-                                  }}
-                                  title="Editar Retorno de Compras"
-                                  className="text-slate-500 hover:text-indigo-400 p-1.5 rounded-lg hover:bg-indigo-950/50 cursor-pointer transition-all border border-transparent hover:border-indigo-900/50"
-                                >
-                                  ✏️
-                                </button>
+                                <span className="text-slate-300">{d.retornoCompras || <span className="text-slate-600 italic">Sem retorno</span>}</span>
+                                <button onClick={() => { setEditandoCodigo(d.codigo); setTextoRetorno(d.retornoCompras || ""); }} className="text-slate-500 hover:text-indigo-400 p-1.5 cursor-pointer">✏️️</button>
                               </div>
                             )}
                           </td>
@@ -505,29 +426,12 @@ export default function Dashboard() {
                 </table>
               </div>
 
-              {/* RODAPÉ COM PAGINAÇÃO DARK */}
-              <div className="p-5 bg-slate-950 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-medium text-slate-400">
-                <span>
-                  A mostrar de <strong className="text-white">{indicePrimeiroItem + 1}</strong> até <strong className="text-white">{Math.min(indiceUltimoItem, dadosFiltradosEOrdenados.length)}</strong> de <strong className="text-white">{dadosFiltradosEOrdenados.length}</strong> produtos
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPaginaAtual(p => Math.max(p - 1, 1))}
-                    disabled={paginaAtual === 1}
-                    className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-xl font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-sm"
-                  >
-                    Anterior
-                  </button>
-                  <span className="px-3 font-bold text-slate-300">
-                    Página {paginaAtual} de {totalPaginas}
-                  </span>
-                  <button
-                    onClick={() => setPaginaAtual(p => Math.min(p + 1, totalPaginas))}
-                    disabled={paginaAtual === totalPaginas}
-                    className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-xl font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-sm"
-                  >
-                    Próxima
-                  </button>
+              {/* PAGINAÇÃO */}
+              <div className="p-5 bg-slate-950 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
+                <span>Página {paginaAtual} de {totalPaginas}</span>
+                <div className="flex gap-2">
+                  <button onClick={() => setPaginaAtual(p => Math.max(p - 1, 1))} disabled={paginaAtual === 1} className="px-4 py-2 bg-slate-900 rounded-xl font-bold text-slate-300 disabled:opacity-40 cursor-pointer">Anterior</button>
+                  <button onClick={() => setPaginaAtual(p => Math.min(p + 1, totalPaginas))} disabled={paginaAtual === totalPaginas} className="px-4 py-2 bg-slate-900 rounded-xl font-bold text-slate-300 disabled:opacity-40 cursor-pointer">Próxima</button>
                 </div>
               </div>
             </>
