@@ -235,7 +235,7 @@ export default function UploadPage() {
         const workbook = XLSX.read(data, { type: "array" });
         const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 }) as any[];
 
-        const registros = [];
+        const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceEstoque)) continue;
@@ -244,14 +244,15 @@ export default function UploadPage() {
           const estoque = Number(row[indiceEstoque] || 0);
 
           if (sku && !/sku|código|codigo/i.test(sku)) {
-            registros.push({ sku, estoque: isNaN(estoque) ? 0 : estoque });
+            mapaUnico.set(sku, { sku, estoque: isNaN(estoque) ? 0 : estoque });
           }
         }
+        const registros = Array.from(mapaUnico.values());
 
         const { error } = await supabase.from('cadastros_base_tiny').upsert(registros, { onConflict: 'sku' });
         if (error) throw error;
 
-        alert(`Base Tiny atualizada (SKU: ${regrasTiny.sku}, Estoque: ${regrasTiny.estoque})! ${registros.length} SKUs processados.`);
+        alert(`Base Tiny atualizada com sucesso! ${registros.length} SKUs únicos processados.`);
         setLoading(false);
         carregarDadosCadastros();
       } catch (err: any) {
@@ -280,7 +281,7 @@ export default function UploadPage() {
         const { data: tinyData } = await supabase.from('cadastros_base_tiny').select('sku');
         const skusTinySet = new Set(tinyData?.map(t => t.sku) || []);
 
-        const registros = [];
+        const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
@@ -292,13 +293,14 @@ export default function UploadPage() {
           if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
           else statusVal = 'Normal';
 
-          registros.push({ sku, status: statusVal });
+          mapaUnico.set(sku, { sku, status: statusVal });
         }
+        const registros = Array.from(mapaUnico.values());
 
         const { error } = await supabase.from('status_skus_catalogo').upsert(registros, { onConflict: 'sku' });
         if (error) throw error;
 
-        alert(`Status atualizados (SKU: ${regrasTiny.status_sku}, Status: ${regrasTiny.status_valor})! ${registros.length} SKUs validados.`);
+        alert(`Status atualizados com sucesso! ${registros.length} SKUs validados.`);
         setLoading(false);
         carregarDadosCadastros();
       } catch (err: any) {
@@ -344,7 +346,7 @@ export default function UploadPage() {
         const { error } = await supabase.from('mapeamento_canais_skus').upsert(registrosUpsert, { onConflict: 'canal,sku' });
         if (error) throw error;
 
-        alert(`Canal "${canalNome}" sincronizado com a coluna ${letraColuna.toUpperCase()}! ${skusNoCanal.size} SKUs mapeados.`);
+        alert(`Canal "${canalNome}" sincronizado! ${skusNoCanal.size} SKUs mapeados.`);
         setLoading(false);
         carregarDadosCadastros();
       } catch (err: any) {
@@ -359,7 +361,6 @@ export default function UploadPage() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-5xl mx-auto">
         
-        {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Abastecimento</h1>
@@ -377,7 +378,6 @@ export default function UploadPage() {
           </div>
         </div>
 
-        {/* ABAS INTERNAS */}
         <div className="flex gap-3 mb-6">
           <button
             onClick={() => setAbaAtiva("relatorios")}
