@@ -94,14 +94,11 @@ export default function UploadPage() {
     if (s.endsWith(".0")) {
       s = s.substring(0, s.length - 2);
     }
-    // Remove aspas extras, espaços e se houver notação científica (ex: 1.81531e+10), tenta converter para inteiro exato se aplicable
     s = s.replace(/^["']|["']$/g, "").trim();
     if (/e\+/i.test(s)) {
       try {
         s = BigInt(Math.trunc(Number(s))).toString();
-      } catch {
-        // mantém original se falhar
-      }
+      } catch {}
     }
     return s;
   };
@@ -392,25 +389,15 @@ export default function UploadPage() {
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        let linhaInicio = 0;
-        for (let i = 0; i < Math.min(json.length, 15); i++) {
-          const row = json[i];
-          if (row && row.some((cell: any) => {
-            const val = String(cell).trim().toLowerCase();
-            return val === 'seller_sku' || val === 'sku' || val === 'sku_id';
-          })) {
-            linhaInicio = i + 1;
-            break;
-          }
-        }
-        if (linhaInicio === 0 || linhaInicio < 5) linhaInicio = 5;
+        // Para o TikTok e plataformas em lote, os dados reais começam estritamente na linha 5 (índice 5)
+        const linhaInicio = sheetName === "Template" ? 5 : 4;
 
         for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
           
           const skuVal = normalizarSku(row[indiceColuna]);
-          if (skusTinySet.has(skuVal)) {
+          if (skuVal && skusTinySet.has(skuVal)) {
             skusNoCanalTotal.add(skuVal);
           }
         }
@@ -428,7 +415,7 @@ export default function UploadPage() {
         if (error) throw error;
       }
 
-      alert(`Canal "${canalNome}" sincronizado com sucesso (${files.length} ficheiro(s))! ${skusNoCanalTotal.size} SKUs cruzados.`);
+      alert(`Canal "${canalNome}" sincronizado com sucesso (${files.length} ficheiro(s))! ${skusNoCanalTotal.size} SKUs cruzados com a base.`);
       setLoading(false);
     } catch (err: any) {
       alert("Erro ao processar ficheiros: " + err.message);
