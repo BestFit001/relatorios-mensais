@@ -94,8 +94,15 @@ export default function UploadPage() {
     if (s.endsWith(".0")) {
       s = s.substring(0, s.length - 2);
     }
-    // Remove aspas extras se vierem do Excel em formato texto
+    // Remove aspas extras, espaços e se houver notação científica (ex: 1.81531e+10), tenta converter para inteiro exato se aplicable
     s = s.replace(/^["']|["']$/g, "").trim();
+    if (/e\+/i.test(s)) {
+      try {
+        s = BigInt(Math.trunc(Number(s))).toString();
+      } catch {
+        // mantém original se falhar
+      }
+    }
     return s;
   };
 
@@ -347,7 +354,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Suporte a múltiplos arquivos em simultâneo para canais como o TikTok
   const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -356,7 +362,6 @@ export default function UploadPage() {
     const indiceColuna = letraParaIndice(letraColuna || "A");
 
     try {
-      // 1. Buscar todos os SKUs do Tiny
       let allTiny: any[] = [];
       let rangeStep = 1000;
       let from = 0;
@@ -375,7 +380,6 @@ export default function UploadPage() {
 
       const skusNoCanalTotal = new Set<string>();
 
-      // 2. Iterar por cada ficheiro selecionado
       for (let f = 0; f < files.length; f++) {
         const file = files[f];
         const buffer = await file.arrayBuffer();
@@ -412,7 +416,6 @@ export default function UploadPage() {
         }
       }
 
-      // 3. Registar o mapeamento no Supabase em lote
       const registrosUpsert: any[] = [];
       skusTinySet.forEach(sku => {
         registrosUpsert.push({ canal: canalNome, sku: sku, presente: skusNoCanalTotal.has(sku) });
@@ -562,7 +565,7 @@ export default function UploadPage() {
 
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-              <p className="text-xs text-slate-400 mb-6">Atualize ou limpe o mapeamento de cada marketplace. Pode selecionar <strong>múltiplos ficheiros</strong> em simultâneo caso o canal tenha várias planilhas.</p>
+              <p className="text-xs text-slate-400 mb-6">Atualize ou limpe o mapeamento de cada marketplace. Pode selecionar <strong>múltiplos ficheiros</strong> em simultâneo.</p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {regrasCanais.map((r, idx) => (
