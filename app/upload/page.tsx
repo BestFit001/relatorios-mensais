@@ -38,7 +38,6 @@ export default function UploadPage() {
     reader.onload = (evento) => {
       const workbook = XLSX.read(evento.target?.result, { type: "array" });
       const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-      
       const dados_brutos = XLSX.utils.sheet_to_json(worksheet, { range: 1 }) as any[];
       
       const formatado = dados_brutos.map(linha => ({
@@ -66,7 +65,6 @@ export default function UploadPage() {
     reader.onload = (evento) => {
       const workbook = XLSX.read(evento.target?.result, { type: "array" });
       const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-      
       const dados_brutos = XLSX.utils.sheet_to_json(worksheet) as any[];
       
       const formatado = dados_brutos.map(linha => ({
@@ -110,7 +108,6 @@ export default function UploadPage() {
 
     setLoading(false);
     alert("🚀 Sucesso! Dados gravados no Supabase.");
-    
     setFicheiroABC("");
     setFicheiroInventario("");
     setDadosABC([]);

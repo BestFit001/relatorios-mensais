@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 
 export default function Dashboard() {
   const [competencia, setCompetencia] = useState("09/2026");
-  const [competenciaAnterior, setCompetenciaAnterior] = useState("08/2026");
+  const [competenciaAnterior, setCompetenciaAnterior] = useState(""); // Opcional
   const [dadosConsolidados, setDadosConsolidados] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -14,10 +14,14 @@ export default function Dashboard() {
     setLoading(true);
 
     // 1. Busca dados da Curva ABC do mês atual
-    const { data: abcAtual } = await supabase
+    const { data: abcAtual, error } = await supabase
       .from('curva_abc')
       .select('*')
       .eq('mes_referencia', competencia);
+
+    if (error) {
+      console.error("Erro ao carregar Supabase:", error.message);
+    }
 
     // 2. Busca dados de Inventário do mês atual
     const { data: inventario } = await supabase
@@ -25,48 +29,54 @@ export default function Dashboard() {
       .select('*')
       .eq('mes_referencia', competencia);
 
-    // 3. Busca Curva ABC do mês anterior para cálculo de crescimento / queda (%)
-    const { data: abcAnterior } = await supabase
-      .from('curva_abc')
-      .select('*')
-      .eq('mes_referencia', competenciaAnterior);
+    // 3. Busca Curva ABC anterior apenas se preenchido (opcional)
+    let abcAnterior: any[] = [];
+    if (competenciaAnterior.trim() !== "") {
+      const { data: antData } = await supabase
+        .from('curva_abc')
+        .select('*')
+        .eq('mes_referencia', competenciaAnterior);
+      if (antData) abcAnterior = antData;
+    }
 
-    if (!abcAtual) {
+    if (!abcAtual || abcAtual.length === 0) {
       setDadosConsolidados([]);
       setLoading(false);
       return;
     }
 
-    // 4. Cruzamento e Montagem das Colunas (A até G + Estoque Cruzado + Variação)
-    const resultado = abcAtual.map((item: any) => {
-      // Cruzamento do SKU da Curva ABC (Coluna B) com Inventário (Coluna C) para pegar saldo (Coluna F)
+    // 4. Cruzamento e Montagem das Colunas (A até G + Estoque Cruzado)
+    const resultado = abcAtual.map((item: any, index: number) => {
       const invMatch = inventario?.find(
         (inv: any) => String(inv.codigo_sku || "").trim() === String(item.codigo || "").trim()
       );
       const saldoEstoque = invMatch ? Number(invMatch.saldo || 0) : 0;
 
-      // Procura o mesmo produto no mês anterior para comparar o crescimento/queda nas vendas
-      const anteriorMatch = abcAnterior?.find(
-        (ant: any) => String(ant.codigo || "").trim() === String(item.codigo || "").trim()
-      );
-      const qtdAnterior = anteriorMatch ? Number(anteriorMatch.quantidade || 0) : 0;
-      const qtdAtual = Number(item.quantidade || 0);
+      let variacaoPercentual: number | null = null;
+      if (competenciaAnterior.trim() !== "") {
+        const anteriorMatch = abcAnterior.find(
+          (ant: any) => String(ant.codigo || "").trim() === String(item.codigo || "").trim()
+        );
+        const qtdAnterior = anteriorMatch ? Number(anteriorMatch.quantidade || 0) : 0;
+        const qtdAtual = Number(item.quantidade || 0);
 
-      let variacaoPercentual = 0;
-      if (qtdAnterior > 0) {
-        variacaoPercentual = ((qtdAtual - qtdAnterior) / qtdAnterior) * 100;
-      } else if (qtdAtual > 0) {
-        variacaoPercentual = 100; // Novo ou saindo de zero
+        if (qtdAnterior > 0) {
+          variacaoPercentual = ((qtdAtual - qtdAnterior) / qtdAnterior) * 100;
+        } else if (qtdAtual > 0) {
+          variacaoPercentual = 100;
+        } else {
+          variacaoPercentual = 0;
+        }
       }
 
       return {
-        id: item.id || "",
+        id: item.id || index + 1,
         produto: item.produto || "",
         codigo: item.codigo || "",
         gtin: invMatch ? invMatch.gtin_ean : "-",
-        localizacao: "-", // Coluna E da estrutura original
-        saldoEstoque: saldoEstoque, // Coluna F / G
-        vendas: qtdAtual,
+        localizacao: "-",
+        saldoEstoque: saldoEstoque,
+        vendas: Number(item.quantidade || 0),
         valor: Number(item.valor || 0),
         porcentagemIndividual: Number(item.porcentagem_individual || 0),
         porcentagemAcumulada: Number(item.porcentagem_acumulada || 0),
@@ -83,7 +93,6 @@ export default function Dashboard() {
     carregarDados();
   }, [competencia, competenciaAnterior]);
 
-  // Função para baixar o relatório Excel exatamente no formato desejado
   const baixarExcel = () => {
     if (dadosConsolidados.length === 0) {
       alert("Sem dados para exportar.");
@@ -102,7 +111,7 @@ export default function Dashboard() {
       "% Individual": d.porcentagemIndividual,
       "% Acumulado": d.porcentagemAcumulada,
       "Classificação": d.classificacao,
-      "Variação vs Mês Anterior": `${d.variacao > 0 ? '+' : ''}${d.variacao.toFixed(1)}%`
+      ...(competenciaAnterior ? { "Variação vs Mês Anterior": `${d.variacao! > 0 ? '+' : ''}${d.variacao?.toFixed(1)}%` } : {})
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(dadosExportar);
@@ -116,7 +125,6 @@ export default function Dashboard() {
       <div className="max-w-7xl mx-auto">
         <h1 className="text-3xl font-bold mb-6 text-gray-800">Painel de Performance - Curva ABC</h1>
 
-        {/* Menu de Abas */}
         <div className="flex space-x-6 border-b border-gray-300 pb-2 mb-6">
           <Link href="/" className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600">
             Curva ABC & Histórico
@@ -126,9 +134,8 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        {/* Filtros e Ações */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <div>
               <label className="block text-xs font-bold text-gray-600 mb-1">Mês Atual (Competência):</label>
               <input 
@@ -136,17 +143,17 @@ export default function Dashboard() {
                 value={competencia} 
                 onChange={(e) => setCompetencia(e.target.value)} 
                 placeholder="MM/AAAA"
-                className="border border-gray-300 rounded-md p-2 w-28 text-center font-semibold text-sm"
+                className="border border-gray-300 rounded-md p-2 w-28 text-center font-semibold text-sm bg-white"
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-gray-600 mb-1">Mês Anterior (Comparativo):</label>
+              <label className="block text-xs font-bold text-gray-600 mb-1">Mês Comparativo (Opcional):</label>
               <input 
                 type="text" 
                 value={competenciaAnterior} 
                 onChange={(e) => setCompetenciaAnterior(e.target.value)} 
-                placeholder="MM/AAAA"
-                className="border border-gray-300 rounded-md p-2 w-28 text-center font-semibold text-sm"
+                placeholder="Ex: 08/2026"
+                className="border border-gray-300 rounded-md p-2 w-32 text-center font-semibold text-sm bg-white"
               />
             </div>
           </div>
@@ -159,7 +166,6 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Tabela Principal de Curva ABC */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           {loading ? (
             <p className="p-6 text-center text-gray-500">Carregando e cruzando dados em nuvem...</p>
@@ -178,7 +184,7 @@ export default function Dashboard() {
                     <th className="p-3 text-right">Vendas</th>
                     <th className="p-3 text-right">Valor (R$)</th>
                     <th className="p-3 text-right">Saldo Estoque</th>
-                    <th className="p-3 text-center">Crescimento / Queda</th>
+                    {competenciaAnterior && <th className="p-3 text-center">Crescimento / Queda</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
@@ -199,19 +205,21 @@ export default function Dashboard() {
                       <td className="p-3 text-right font-semibold">{d.vendas}</td>
                       <td className="p-3 text-right">R$ {d.valor.toFixed(2)}</td>
                       <td className="p-3 text-right font-bold text-blue-600">{d.saldoEstoque}</td>
-                      <td className="p-3 text-center font-bold">
-                        {d.variacao === 0 ? (
-                          <span className="text-gray-400">0.0%</span>
-                        ) : d.variacao > 0 ? (
-                          <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
-                            +{d.variacao.toFixed(1)}% 📈
-                          </span>
-                        ) : (
-                          <span className="text-red-600 bg-red-50 px-2 py-1 rounded">
-                            {d.variacao.toFixed(1)}% 📉
-                          </span>
-                        )}
-                      </td>
+                      {competenciaAnterior && (
+                        <td className="p-3 text-center font-bold">
+                          {d.variacao === 0 ? (
+                            <span className="text-gray-400">0.0%</span>
+                          ) : d.variacao! > 0 ? (
+                            <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
+                              +{d.variacao?.toFixed(1)}% 📈
+                            </span>
+                          ) : (
+                            <span className="text-red-600 bg-red-50 px-2 py-1 rounded">
+                              {d.variacao?.toFixed(1)}% 📉
+                            </span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
