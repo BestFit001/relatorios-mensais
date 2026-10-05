@@ -10,14 +10,13 @@ export default function AdminPage() {
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Estados para Edição
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [novoPerfil, setNovoPerfil] = useState("");
 
   const carregarUsuarios = async () => {
     const { data, error } = await supabase.from('usuarios_permissoes').select('*');
     if (data) setUsuarios(data);
-    if (error) console.error("Erro ao carregar utilizadores:", error.message);
+    if (error) console.error("Erro ao carregar da tabela de permissões:", error.message);
   };
 
   useEffect(() => {
@@ -28,29 +27,38 @@ export default function AdminPage() {
     e.preventDefault();
     setLoading(true);
 
-    const { data, error } = await supabase.auth.signUp({
+    // 1. Criar na autenticação do Supabase
+    const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password: senha,
     });
 
-    if (error) {
-      alert("Erro ao criar utilizador: " + error.message);
+    if (authError) {
+      alert("Erro na autenticação: " + authError.message);
       setLoading(false);
       return;
     }
 
-    if (data.user) {
+    // 2. Registar na tabela de permissões
+    if (authData.user) {
       const paginas = perfil === 'admin' ? ['/', '/upload', '/admin'] : ['/'];
-      await supabase.from('usuarios_permissoes').insert({
-        id: data.user.id,
+      
+      const { error: dbError } = await supabase.from('usuarios_permissoes').upsert({
+        id: authData.user.id,
         email: email,
         perfil: perfil,
         paginas_permitidas: paginas
       });
+
+      if (dbError) {
+        alert("Erro ao salvar permissões na tabela: " + dbError.message);
+        setLoading(false);
+        return;
+      }
     }
 
     setLoading(false);
-    alert("Utilizador cadastrado com sucesso!");
+    alert("Utilizador cadastrado e permissões salvas com sucesso!");
     setEmail("");
     setSenha("");
     carregarUsuarios();
@@ -65,7 +73,7 @@ export default function AdminPage() {
       return;
     }
 
-    alert("Utilizador removido da base de dados com sucesso!");
+    alert("Utilizador removido com sucesso!");
     carregarUsuarios();
   };
 
@@ -91,7 +99,6 @@ export default function AdminPage() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-5xl mx-auto">
         
-        {/* CABEÇALHO */}
         <div className="flex justify-between items-center mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Painel Administrativo</h1>
@@ -102,7 +109,6 @@ export default function AdminPage() {
           </Link>
         </div>
 
-        {/* CADASTRAR UTILIZADOR */}
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
           <h2 className="text-lg font-bold mb-4 text-white">Cadastrar Novo Utilizador</h2>
           <form onSubmit={cadastrarUsuario} className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -142,7 +148,6 @@ export default function AdminPage() {
           </form>
         </div>
 
-        {/* LISTA DE UTILIZADORES REGISTADOS */}
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
           <h2 className="text-lg font-bold mb-4 text-white">Utilizadores Registados e Permissões</h2>
           
@@ -169,7 +174,6 @@ export default function AdminPage() {
                       <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
                         <td className="p-4 font-semibold text-slate-200">{u.email}</td>
                         
-                        {/* PERFIL (COM OPÇÃO DE EDIÇÃO) */}
                         <td className="p-4 font-bold">
                           {isEditing ? (
                             <select 
@@ -189,12 +193,10 @@ export default function AdminPage() {
                           )}
                         </td>
 
-                        {/* PÁGINAS PERMITIDAS */}
                         <td className="p-4 text-slate-400">
                           {Array.isArray(u.paginas_permitidas) ? u.paginas_permitidas.join(", ") : u.paginas_permitidas}
                         </td>
 
-                        {/* BOTÕES DE AÇÃO (EDITAR / EXCLUIR) */}
                         <td className="p-4 text-center">
                           {isEditing ? (
                             <div className="flex items-center justify-center gap-2">
@@ -221,7 +223,7 @@ export default function AdminPage() {
                                 title="Editar Permissões"
                                 className="bg-slate-800 hover:bg-indigo-950/60 text-slate-300 hover:text-indigo-400 border border-slate-700 hover:border-indigo-900/50 p-2 rounded-lg cursor-pointer transition-all"
                               >
-                                ✏️️ Editar
+                                ✏ Editar
                               </button>
                               <button
                                 onClick={() => excluirUsuario(u.id, u.email)}
