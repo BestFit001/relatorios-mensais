@@ -28,32 +28,41 @@ export default function AdminPage() {
     setLoading(true);
 
     const paginas = perfil === 'admin' ? ['/', '/upload', '/admin'] : ['/'];
-    const idUnico = crypto.randomUUID(); // Gera um ID seguro único
 
-    // 1. Tenta criar na autenticação do Supabase
+    // 1. Cria a conta no Supabase Auth
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password: senha,
     });
 
-    // Se der erro de limite de email, gravamos diretamente na tabela de permissões para não bloquear
-    const userId = authData?.user?.id || idUnico;
+    if (authError) {
+      alert("Erro ao criar credenciais de acesso: " + authError.message);
+      setLoading(false);
+      return;
+    }
 
+    if (!authData.user) {
+      alert("Erro: Utilizador não retornado pelo Supabase.");
+      setLoading(false);
+      return;
+    }
+
+    // 2. Salva as permissões usando o ID real gerado pelo Supabase Auth
     const { error: dbError } = await supabase.from('usuarios_permissoes').upsert({
-      id: userId,
+      id: authData.user.id,
       email: email,
       perfil: perfil,
       paginas_permitidas: paginas
     });
 
     if (dbError) {
-      alert("Erro ao salvar utilizador: " + dbError.message);
+      alert("Erro ao salvar permissões: " + dbError.message);
       setLoading(false);
       return;
     }
 
     setLoading(false);
-    alert("Utilizador cadastrado com sucesso!");
+    alert("Utilizador cadastrado com sucesso! Já pode fazer login.");
     setEmail("");
     setSenha("");
     carregarUsuarios();
@@ -117,7 +126,7 @@ export default function AdminPage() {
             />
             <input 
               type="password" 
-              placeholder="Palavra-passe" 
+              placeholder="Palavra-passe (mín. 6 caracteres)" 
               value={senha} 
               onChange={(e) => setSenha(e.target.value)} 
               required
