@@ -13,23 +13,25 @@ export default function Dashboard() {
   const carregarDados = async () => {
     setLoading(true);
 
-    // 1. Busca dados da Curva ABC do mês atual
+    const compBusca = competencia.trim();
+
+    // 1. Busca Curva ABC
     const { data: abcAtual, error } = await supabase
       .from('curva_abc')
       .select('*')
-      .eq('mes_referencia', competencia.trim());
+      .eq('mes_referencia', compBusca);
 
     if (error) {
-      console.error("Erro ao buscar Curva ABC:", error.message);
+      console.error("Erro Supabase ABC:", error.message);
     }
 
-    // 2. Busca dados de Inventário do mês atual para cruzamento (SKU com Saldo)
+    // 2. Busca Inventário
     const { data: inventario } = await supabase
       .from('inventario')
       .select('*')
-      .eq('mes_referencia', competencia.trim());
+      .eq('mes_referencia', compBusca);
 
-    // 3. Busca Curva ABC anterior (opcional para histórico)
+    // 3. Busca Mês Anterior (Opcional)
     let abcAnterior: any[] = [];
     if (competenciaAnterior.trim() !== "") {
       const { data: antData } = await supabase
@@ -45,9 +47,8 @@ export default function Dashboard() {
       return;
     }
 
-    // 4. Montagem das colunas e cálculos automáticos (Espelho exato do relatório)
+    // 4. Cruzamento e Cálculo
     const resultado = abcAtual.map((item: any, index: number) => {
-      // Cruza o SKU da Curva ABC com o inventário para buscar o saldo em estoque
       const invMatch = inventario?.find(
         (inv: any) => String(inv.codigo_sku || "").trim() === String(item.codigo || "").trim()
       );
@@ -56,13 +57,11 @@ export default function Dashboard() {
       const vendas = Number(item.quantidade || 0);
       const valor = Number(item.valor || 0);
 
-      // Lógica de cálculo analítico
       const mediaDiaria = vendas > 0 ? vendas / 30 : 0;
       const coberturaDias = mediaDiaria > 0 ? saldoEstoque / mediaDiaria : 0;
       const coberturaMeses = coberturaDias / 30;
       const status = coberturaMeses >= 2 ? "Cobertura Igual ou Maior 2 Meses" : "Sugestão de Compra";
 
-      // Comparativo histórico opcional
       let variacaoPercentual: number | null = null;
       if (competenciaAnterior.trim() !== "") {
         const anteriorMatch = abcAnterior.find(
@@ -116,7 +115,7 @@ export default function Dashboard() {
       "Produto": d.produto,
       "Código (SKU)": d.codigo,
       "Localização": d.localizacao,
-      "Saldo": d.saldoEstoque,
+      "SALDO": d.saldoEstoque,
       "Vendas": d.vendas,
       "Valor": d.valor,
       "% Individual": d.porcentagemIndividual,
@@ -141,15 +140,14 @@ export default function Dashboard() {
         <h1 className="text-3xl font-bold mb-6 text-gray-800">Painel de Performance - Curva ABC</h1>
 
         <div className="flex space-x-6 border-b border-gray-300 pb-2 mb-6">
-          <Link href="/" className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600">
+          <Link className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600" href="/">
             Curva ABC & Histórico
           </Link>
-          <Link href="/upload" className="px-4 py-2 font-semibold text-lg text-gray-500 hover:text-blue-500 transition-colors">
+          <Link className="px-4 py-2 font-semibold text-lg text-gray-500 hover:text-blue-500 transition-colors" href="/upload">
             Upload de Planilhas
           </Link>
         </div>
 
-        {/* Filtros e Ações */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-4">
             <div>
@@ -190,7 +188,6 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Tabela de Resultados (Coluna renomeada para SALDO) */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           {loading ? (
             <p className="p-6 text-center text-gray-500">Carregando e cruzando dados em nuvem...</p>
