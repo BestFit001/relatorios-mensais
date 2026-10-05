@@ -25,15 +25,13 @@ export default function Dashboard() {
   const [editandoCodigo, setEditandoCodigo] = useState<string | null>(null);
   const [textoRetorno, setTextoRetorno] = useState("");
 
-  // VERIFICAÇÃO DE AUTENTICAÇÃO (SEGURANÇA)
+  // VERIFICAÇÃO DE AUTENTICAÇÃO (LOCALSTORAGE)
   useEffect(() => {
-    const verificarSessao = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        router.push("/login");
-      }
-    };
-    verificarSessao();
+    const usuarioLogado = localStorage.getItem("usuario_logado");
+    if (!usuarioLogado) {
+      router.push("/login");
+      return;
+    }
     carregarDados();
   }, []);
 
@@ -132,7 +130,7 @@ export default function Dashboard() {
       .eq('mes_referencia', competencia.trim());
 
     if (error) {
-      alert("Erro ao salvar no Supabase (verifique se a coluna 'retorno_compras' foi criada na tabela): " + error.message);
+      alert("Erro ao salvar no Supabase: " + error.message);
       return;
     }
 
@@ -197,8 +195,8 @@ export default function Dashboard() {
     XLSX.writeFile(workbook, `Relatorio_CurvaABC_${competencia.replace('/', '-')}.xlsx`);
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const handleLogout = () => {
+    localStorage.removeItem("usuario_logado");
     router.push("/login");
   };
 
@@ -379,7 +377,7 @@ export default function Dashboard() {
           {loading ? (
             <p className="p-8 text-center text-slate-400 font-medium">A carregar e a cruzar dados em nuvem...</p>
           ) : dadosConsolidados.length === 0 ? (
-            <p className="p-8 text-center text-slate-400 font-medium">Nenhum registo encontrado para a competência {competencia}. Vá na aba "Upload de Planilhas" para abastecer a base.</p>
+            <p className="p-8 text-center text-slate-400 font-medium">Nenhum registo encontrado para a competência {competencia}. Vá na aba "Upload" para abastecer a base.</p>
           ) : dadosFiltradosEOrdenados.length === 0 ? (
             <p className="p-8 text-center text-slate-400 font-medium">Nenhum produto encontrado para o SKU "{pesquisaSku}".</p>
           ) : (
