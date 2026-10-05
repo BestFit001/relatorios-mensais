@@ -10,7 +10,6 @@ export default function UploadPage() {
   const [ficheiroABC, setFicheiroABC] = useState("");
   const [ficheiroInventario, setFicheiroInventario] = useState("");
   
-  // Estados para guardar os dados na memória antes de enviar
   const [dadosABC, setDadosABC] = useState<any[]>([]);
   const [dadosInv, setDadosInv] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -79,7 +78,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Função para Gravar no Supabase
   const enviarParaBanco = async () => {
     if (dadosABC.length === 0 && dadosInv.length === 0) {
       alert("Nenhum dado lido. Selecione as planilhas primeiro.");
@@ -115,7 +113,6 @@ export default function UploadPage() {
     setDadosInv([]);
   };
 
-  // Função para Limpar Dados da Competência no Supabase
   const limparDadosCompetencia = async () => {
     if (!mesReferencia) {
       alert("Selecione o Mês e o Ano da competência que deseja limpar.");
@@ -127,13 +124,11 @@ export default function UploadPage() {
 
     setLoadingDelete(true);
 
-    // Apaga Curva ABC da competência
     const { error: errAbc } = await supabase
       .from('curva_abc')
       .delete()
       .eq('mes_referencia', mesReferencia);
 
-    // Apaga Inventário da competência
     const { error: errInv } = await supabase
       .from('inventario')
       .delete()
@@ -144,7 +139,7 @@ export default function UploadPage() {
     if (errAbc || errInv) {
       alert("Erro ao limpar dados: " + (errAbc?.message || errInv?.message));
     } else {
-      alert(`🗑️️ Dados da competência ${mesReferencia} removidos com sucesso do Supabase.`);
+      alert(`🗑 Dados da competência ${mesReferencia} removidos com sucesso do Supabase.`);
     }
   };
 
@@ -168,7 +163,6 @@ export default function UploadPage() {
           
           <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 mb-6">
             
-            {/* 1. Competência & Botão de Limpeza */}
             <div className="mb-8 border-b border-gray-200 pb-6">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-3">
                 <label className="block text-sm font-bold text-gray-700">1. Competência (Mês e Ano)</label>
@@ -194,8 +188,39 @@ export default function UploadPage() {
               </div>
             </div>
 
-            {/* Zonas de Upload */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2">2. Planilha Curva ABC</label>
-                <div className={`border-2 border-dashed rounded-lg p-4 flex flex-col
+                <div className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center text-center ${mesReferencia ? 'border-blue-400 bg-blue-50/50' : 'border-gray-300 bg-gray-100 opacity-60'}`}>
+                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia} onChange={processarABC} className="block w-full text-xs text-gray-500 file:mr-2 file:py-2 file:px-3 file:rounded-md file:border-0 file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer" />
+                  {ficheiroABC && <p className="mt-2 text-xs text-green-600 font-semibold">{ficheiroABC}</p>}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">3. Planilha de Inventário</label>
+                <div className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center text-center ${mesReferencia ? 'border-blue-400 bg-blue-50/50' : 'border-gray-300 bg-gray-100 opacity-60'}`}>
+                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia} onChange={processarInventario} className="block w-full text-xs text-gray-500 file:mr-2 file:py-2 file:px-3 file:rounded-md file:border-0 file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer" />
+                  {ficheiroInventario && <p className="mt-2 text-xs text-green-600 font-semibold">{ficheiroInventario}</p>}
+                </div>
+              </div>
+            </div>
+
+            {(dadosABC.length > 0 || dadosInv.length > 0) && (
+              <div className="mt-8 pt-6 border-t border-gray-200 flex justify-end">
+                <button 
+                  onClick={enviarParaBanco} 
+                  disabled={loading}
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-colors disabled:opacity-50"
+                >
+                  {loading ? "Enviando..." : "Gravar Dados no Supabase"}
+                </button>
+              </div>
+            )}
+
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
