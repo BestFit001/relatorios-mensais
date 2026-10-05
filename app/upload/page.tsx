@@ -29,6 +29,7 @@ export default function UploadPage() {
   const anoAtual = new Date().getFullYear();
   const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i); 
 
+  // Leitura ultra flexível para a Curva ABC (.xls / .xlsx)
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -36,26 +37,49 @@ export default function UploadPage() {
 
     const reader = new FileReader();
     reader.onload = (evento) => {
-      const workbook = XLSX.read(evento.target?.result, { type: "array" });
-      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-      const dados_brutos = XLSX.utils.sheet_to_json(worksheet, { range: 1 }) as any[];
-      
-      const formatado = dados_brutos.map(linha => ({
-        mes_referencia: mesReferencia,
-        codigo: String(linha["Código"] || linha["Código (SKU)"] || "").trim(),
-        produto: linha["Produto"] || "",
-        quantidade: Number(linha["Vendas"] || linha["Quantidade"] || 0),
-        valor: Number(linha["Valor"] || 0),
-        porcentagem_individual: Number(linha["% Individual"] || 0),
-        porcentagem_acumulada: Number(linha["% Acumulado"] || 0),
-        classificacao: String(linha["Classificação"] || "C").trim()
-      })).filter(item => item.codigo);
+      try {
+        const data = new Uint8Array(evento.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const dados_brutos = XLSX.utils.sheet_to_json(worksheet, { defval: "" }) as any[];
+        
+        console.log("Dados brutos ABC:", dados_brutos);
 
-      setDadosABC(formatado);
+        const formatado = dados_brutos.map(linha => {
+          // Tenta encontrar as chaves independentemente de maiúsculas/minúsculas ou variações
+          const chaves = Object.keys(linha);
+          const acharChave = (termo: string) => chaves.find(k => k.toLowerCase().includes(termo.toLowerCase())) || "";
+
+          const kCodigo = acharChave("cód") || acharChave("sku") || chaves[0];
+          const kProduto = acharChave("prod") || chaves[1];
+          const kQtd = acharChave("venda") || acharChave("quant") || chaves[2];
+          const kValor = acharChave("valor") || chaves[3];
+          const kInd = acharChave("individual") || acharChave("%") || chaves[4];
+          const kAcum = acharChave("acumulado") || chaves[5];
+          const kClass = acharChave("class") || chaves[6];
+
+          return {
+            mes_referencia: mesReferencia,
+            codigo: String(linha[kCodigo] || "").trim(),
+            produto: String(linha[kProduto] || "").trim(),
+            quantidade: Number(linha[kQtd] || 0),
+            valor: Number(linha[kValor] || 0),
+            porcentagem_individual: Number(linha[kInd] || 0),
+            porcentagem_acumulada: Number(linha[kAcum] || 0),
+            classificacao: String(linha[kClass] || "C").trim().toUpperCase()
+          };
+        }).filter(item => item.codigo && item.codigo !== "Código" && item.codigo !== "undefined");
+
+        setDadosABC(formatado);
+        alert(`Curva ABC lida com sucesso: ${formatado.length} registos encontrados.`);
+      } catch (err: any) {
+        alert("Erro ao ler ficheiro Curva ABC: " + err.message);
+      }
     };
     reader.readAsArrayBuffer(file);
   };
 
+  // Leitura ultra flexível para o Inventário (.xls / .xlsx)
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -63,26 +87,42 @@ export default function UploadPage() {
 
     const reader = new FileReader();
     reader.onload = (evento) => {
-      const workbook = XLSX.read(evento.target?.result, { type: "array" });
-      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-      const dados_brutos = XLSX.utils.sheet_to_json(worksheet) as any[];
-      
-      const formatado = dados_brutos.map(linha => ({
-        mes_referencia: mesReferencia,
-        codigo_sku: String(linha["Código (SKU)"] || linha["Código"] || "").trim(),
-        produto_inventario: linha["Produto"] || "",
-        gtin_ean: String(linha["GTIN/EAN"] || "").trim(),
-        saldo: Number(linha["Saldo em estoque"] || linha["Saldo"] || 0)
-      })).filter(item => item.codigo_sku);
+      try {
+        const data = new Uint8Array(evento.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const dados_brutos = XLSX.utils.sheet_to_json(worksheet, { defval: "" }) as any[];
+        
+        const formatado = dados_brutos.map(linha => {
+          const chaves = Object.keys(linha);
+          const acharChave = (termo: string) => chaves.find(k => k.toLowerCase().includes(termo.toLowerCase())) || "";
 
-      setDadosInv(formatado);
+          const kCodigo = acharChave("cód") || acharChave("sku") || chaves[2] || chaves[0];
+          const kProduto = acharChave("prod") || chaves[1];
+          const kGtin = acharChave("gtin") || acharChave("ean") || chaves[3];
+          const kSaldo = acharChave("saldo") || acharChave("estoque") || chaves[5] || chaves[6];
+
+          return {
+            mes_referencia: mesReferencia,
+            codigo_sku: String(linha[kCodigo] || "").trim(),
+            produto_inventario: String(linha[kProduto] || "").trim(),
+            gtin_ean: String(linha[kGtin] || "").trim(),
+            saldo: Number(linha[kSaldo] || 0)
+          };
+        }).filter(item => item.codigo_sku && item.codigo_sku !== "Código (SKU)" && item.codigo_sku !== "undefined");
+
+        setDadosInv(formatado);
+        alert(`Inventário lido com sucesso: ${formatado.length} registos encontrados.`);
+      } catch (err: any) {
+        alert("Erro ao ler ficheiro de Inventário: " + err.message);
+      }
     };
     reader.readAsArrayBuffer(file);
   };
 
   const enviarParaBanco = async () => {
     if (dadosABC.length === 0 && dadosInv.length === 0) {
-      alert("Nenhum dado lido. Selecione as planilhas primeiro.");
+      alert("Nenhum dado válido detetado nas planilhas.");
       return;
     }
 
@@ -107,7 +147,7 @@ export default function UploadPage() {
     }
 
     setLoading(false);
-    alert(`🚀 Sucesso! ${dadosABC.length} linhas de Curva ABC e ${dadosInv.length} de Inventário gravadas no Supabase para ${mesReferencia}.`);
+    alert(`🚀 Sucesso! ${dadosABC.length} linhas de Curva ABC e ${dadosInv.length} de Inventário gravadas no Supabase.`);
     setFicheiroABC("");
     setFicheiroInventario("");
     setDadosABC([]);
