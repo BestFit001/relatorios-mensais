@@ -348,7 +348,10 @@ export default function UploadPage() {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array", cellDates: true });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        
+        // Verifica se existe a aba "Anúncios" (caso seja planilha padrão do Mercado Livre) ou pega a primeira aba
+        const sheetName = workbook.SheetNames.includes("Anúncios") ? "Anúncios" : workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         let allTiny: any[] = [];
@@ -368,7 +371,8 @@ export default function UploadPage() {
         const skusTinySet = new Set(allTiny.map(t => t.sku));
 
         const skusNoCanal = new Set<string>();
-        for (let i = 0; i < json.length; i++) {
+        // Ignora as primeiras linhas de cabeçalho descritivo (ex: linhas 0 a 3)
+        for (let i = 4; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
           const skuVal = String(row[indiceColuna] || "").trim();
@@ -389,7 +393,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`Canal "${canalNome}" sincronizado! ${skusNoCanal.size} SKUs mapeados.`);
+        alert(`Canal "${canalNome}" sincronizado com sucesso! ${skusNoCanal.size} SKUs cruzados com a base.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro: " + err.message);
@@ -503,7 +507,6 @@ export default function UploadPage() {
               </div>
             </div>
 
-            {/* BASE TINY E STATUS */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
                 <div>
