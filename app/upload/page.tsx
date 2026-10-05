@@ -7,7 +7,6 @@ import { supabase } from "../../lib/supabase";
 export default function UploadPage() {
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros">("relatorios");
 
-  // Relatórios Mensais
   const [mes, setMes] = useState("09");
   const [ano, setAno] = useState("2026");
   const [ficheiroABC, setFicheiroABC] = useState("");
@@ -17,7 +16,6 @@ export default function UploadPage() {
   const [loading, setLoading] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
 
-  // Cadastros e Canais
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
   const [progressoCanais, setProgressoCanais] = useState<any[]>([]);
@@ -84,6 +82,16 @@ export default function UploadPage() {
 
       setProgressoCanais(progresso);
     }
+  };
+
+  // Função auxiliar para converter letra da coluna (ex: A, B, C, AA) em índice numérico (0, 1, 2...)
+  const letraParaIndice = (str: string) => {
+    let base = str.toUpperCase().trim();
+    let coluna = 0;
+    for (let i = 0; i < base.length; i++) {
+      coluna = coluna * 26 + (base.charCodeAt(i) - 64);
+    }
+    return coluna - 1;
   };
 
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
@@ -211,16 +219,22 @@ export default function UploadPage() {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const workbook = XLSX.read(bstr, { type: "binary" });
-        const data = XLSX.utils.sheet_to_json<any>(workbook.Sheets[workbook.SheetNames[0]]);
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 }) as any[];
 
-        const registros = data.map(row => {
-          const skuKey = Object.keys(row).find(k => /sku|código|codigo/i.test(k));
-          const estoqueKey = Object.keys(row).find(k => /estoque|saldo|qtde|quantidade/i.test(k));
-          if (!skuKey || !row[skuKey]) return null;
-          return { sku: String(row[skuKey]).trim(), estoque: estoqueKey ? Number(row[estoqueKey]) || 0 : 0 };
-        }).filter((item): item is { sku: string; estoque: number } => item !== null);
+        const registros = [];
+        for (let i = 0; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length === 0) continue;
+          // Assume coluna A (índice 0) para SKU e última coluna para Estoque por padrão na base Tiny
+          const sku = String(row[0] || "").trim();
+          const estoque = Number(row[row.length - 1] || 0);
+
+          if (sku && !/sku|código|codigo/i.test(sku)) {
+            registros.push({ sku, estoque: isNaN(estoque) ? 0 : estoque });
+          }
+        }
 
         const { error } = await supabase.from('cadastros_base_tiny').upsert(registros, { onConflict: 'sku' });
         if (error) throw error;
@@ -233,7 +247,7 @@ export default function UploadPage() {
         setLoading(false);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   // Upload Status
@@ -244,26 +258,27 @@ export default function UploadPage() {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const workbook = XLSX.read(bstr, { type: "binary" });
-        const data = XLSX.utils.sheet_to_json<any>(workbook.Sheets[workbook.SheetNames[0]]);
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 }) as any[];
 
         const { data: tinyData } = await supabase.from('cadastros_base_tiny').select('sku');
         const skusTinySet = new Set(tinyData?.map(t => t.sku) || []);
 
-        const registros = data.map(row => {
-          const skuKey = Object.keys(row).find(k => /sku|código|codigo/i.test(k));
-          const statusKey = Object.keys(row).find(k => /status|tipo|condicao|situação/i.test(k));
-          if (!skuKey || !row[skuKey]) return null;
-          const sku = String(row[skuKey]).trim();
-          if (!skusTinySet.has(sku)) return null;
+        const registros = [];
+        for (let i = 0; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length === 0) continue;
+          // Coluna A (0) para SKU e Coluna B (1) ou última para Status
+          const sku = String(row[0] || "").trim();
+          if (!skusTinySet.has(sku)) continue;
 
-          let statusVal = statusKey ? String(row[statusKey]).trim() : 'Normal';
+          let statusVal = String(row[1] || 'Normal').trim();
           if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
           else statusVal = 'Normal';
 
-          return { sku, status: statusVal };
-        }).filter((item): item is { sku: string; status: string } => item !== null);
+          registros.push({ sku, status: statusVal });
+        }
 
         const { error } = await supabase.from('status_skus_catalogo').upsert(registros, { onConflict: 'sku' });
         if (error) throw error;
@@ -276,32 +291,36 @@ export default function UploadPage() {
         setLoading(false);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
-  // Upload Canal
-  const handleUploadCanal = async (canalNome: string, colunaConfigurada: string, e: ChangeEvent<HTMLInputElement>) => {
+  // Upload Canal por Posição de Coluna (Letra)
+  const handleUploadCanal = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+
+    const indiceColuna = letraParaIndice(letraColuna || "A");
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const workbook = XLSX.read(bstr, { type: "binary" });
-        const data = XLSX.utils.sheet_to_json<any>(workbook.Sheets[workbook.SheetNames[0]]);
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 }) as any[];
 
         const { data: tinyData } = await supabase.from('cadastros_base_tiny').select('sku');
         const skusTinySet = new Set(tinyData?.map(t => t.sku) || []);
 
         const skusNoCanal = new Set<string>();
-        data.forEach(row => {
-          const colKey = Object.keys(row).find(k => k.trim().toLowerCase() === colunaConfigurada.trim().toLowerCase() || /sku|código|codigo/i.test(k));
-          if (colKey && row[colKey]) {
-            const skuVal = String(row[colKey]).trim();
-            if (skusTinySet.has(skuVal)) skusNoCanal.add(skuVal);
+        for (let i = 0; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length <= indiceColuna) continue;
+          const skuVal = String(row[indiceColuna] || "").trim();
+          if (skusTinySet.has(skuVal)) {
+            skusNoCanal.add(skuVal);
           }
-        });
+        }
 
         const registrosUpsert: any[] = [];
         skusTinySet.forEach(sku => {
@@ -311,7 +330,7 @@ export default function UploadPage() {
         const { error } = await supabase.from('mapeamento_canais_skus').upsert(registrosUpsert, { onConflict: 'canal,sku' });
         if (error) throw error;
 
-        alert(`Canal "${canalNome}" sincronizado! ${skusNoCanal.size} SKUs mapeados.`);
+        alert(`Canal "${canalNome}" sincronizado com a coluna ${letraColuna.toUpperCase()}! ${skusNoCanal.size} SKUs mapeados.`);
         setLoading(false);
         carregarDadosCadastros();
       } catch (err: any) {
@@ -319,14 +338,13 @@ export default function UploadPage() {
         setLoading(false);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-5xl mx-auto">
         
-        {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Abastecimento</h1>
@@ -349,7 +367,6 @@ export default function UploadPage() {
           </div>
         </div>
 
-        {/* ABAS INTERNAS */}
         <div className="flex gap-3 mb-6">
           <button
             onClick={() => setAbaAtiva("relatorios")}
@@ -369,7 +386,6 @@ export default function UploadPage() {
           </button>
         </div>
 
-        {/* CONTEÚDO DA ABA: RELATÓRIOS */}
         {abaAtiva === "relatorios" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
             <h2 className="text-lg font-bold mb-1 text-white">Relatórios Mensais</h2>
@@ -417,7 +433,6 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* CONTEÚDO DA ABA: CADASTROS E CANAIS */}
         {abaAtiva === "cadastros" && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
@@ -451,7 +466,7 @@ export default function UploadPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mt-4">
                 {progressoCanais.map((p, idx) => {
                   const regraCanal = regrasCanais.find(r => r.canal === p.canal);
-                  const colunaSkuUsada = regraCanal ? regraCanal.coluna_sku : 'SKU';
+                  const letraColunaConfigurada = regraCanal ? regraCanal.coluna_sku : 'A';
                   return (
                     <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
                       <div>
@@ -462,9 +477,9 @@ export default function UploadPage() {
                         <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden mb-3">
                           <div className="bg-indigo-600 h-full rounded-full transition-all" style={{ width: `${Math.min(Number(p.percentual), 100)}%` }}></div>
                         </div>
-                        <p className="text-[11px] text-slate-400"><strong>{p.cadastrados}</strong> de <strong>{p.total}</strong> SKUs</p>
+                        <p className="text-[11px] text-slate-400"><strong>{p.cadastrados}</strong> de <strong>{p.total}</strong> SKUs (Coluna: {letraColunaConfigurada})</p>
                       </div>
-                      <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => handleUploadCanal(p.canal, colunaSkuUsada, e)} className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1.5 rounded-lg border border-slate-800" />
+                      <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => handleUploadCanal(p.canal, letraColunaConfigurada, e)} className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1.5 rounded-lg border border-slate-800" />
                     </div>
                   );
                 })}

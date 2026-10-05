@@ -33,10 +33,11 @@ export default function RegrasPage() {
     setLoading(false);
   };
 
-  const atualizarColunaSku = async (id: number, canal: string, novaColuna: string) => {
+  const atualizarColunaSku = async (id: number, novaLetra: string) => {
+    const letraLimpa = novaLetra.trim().toUpperCase();
     const { error } = await supabase
       .from('config_regras_canais')
-      .update({ coluna_sku: novaColuna })
+      .update({ coluna_sku: letraLimpa })
       .eq('id', id);
 
     if (error) {
@@ -45,7 +46,7 @@ export default function RegrasPage() {
     }
 
     setRegras(prev =>
-      prev.map(r => r.id === id ? { ...r, coluna_sku: novaColuna } : r)
+      prev.map(r => r.id === id ? { ...r, coluna_sku: letraLimpa } : r)
     );
   };
 
@@ -58,11 +59,10 @@ export default function RegrasPage() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-5xl mx-auto">
         
-        {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Regras de Mapeamento por Canal</h1>
-            <p className="text-sm font-medium text-slate-400">Defina qual o nome exato da coluna de SKU em cada planilha de canal</p>
+            <p className="text-sm font-medium text-slate-400">Defina a letra da coluna (ex: A, B, C) onde fica o SKU em cada canal</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -71,7 +71,7 @@ export default function RegrasPage() {
                 Dashboard
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/upload">
-                Upload
+                Upload & Canais
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/regras">
                 Regras
@@ -89,11 +89,10 @@ export default function RegrasPage() {
           </div>
         </div>
 
-        {/* TABELA DE REGRAS */}
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-          <h2 className="text-lg font-bold mb-2 text-white">Configuração dos Canais</h2>
+          <h2 className="text-lg font-bold mb-2 text-white">Configuração da Posição da Coluna</h2>
           <p className="text-xs text-slate-400 mb-6">
-            O sistema vai ler automaticamente a coluna especificada abaixo ao importar as planilhas de cada canal, cruzando estritamente com a base de SKUs do Tiny ERP e ignorando o resto.
+            Insira a letra correspondente à coluna (Ex: <strong>A</strong> para a 1ª coluna, <strong>B</strong> para a 2ª, etc.). O sistema fará a leitura exata com base nessa posição.
           </p>
 
           {loading ? (
@@ -104,7 +103,7 @@ export default function RegrasPage() {
                 <thead className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[11px]">
                   <tr>
                     <th className="p-4">Canal de Venda</th>
-                    <th className="p-4">Nome da Coluna de SKU na Planilha</th>
+                    <th className="p-4">Letra da Coluna de SKU (Ex: A, B, C)</th>
                     <th className="p-4 text-right">Ação</th>
                   </tr>
                 </thead>
@@ -115,14 +114,15 @@ export default function RegrasPage() {
                       <td className="p-4">
                         <input
                           type="text"
+                          maxLength={3}
                           defaultValue={regra.coluna_sku}
-                          onBlur={(e) => atualizarColunaSku(regra.id, regra.canal, e.target.value)}
-                          className="border border-slate-700 rounded-xl p-2.5 bg-slate-950 text-white text-xs w-64 outline-none focus:border-indigo-500 font-mono shadow-inner"
+                          onBlur={(e) => atualizarColunaSku(regra.id, e.target.value)}
+                          className="border border-slate-700 rounded-xl p-2.5 bg-slate-950 text-white text-xs w-32 text-center uppercase font-mono outline-none focus:border-indigo-500 shadow-inner"
                         />
                       </td>
                       <td className="p-4 text-right text-slate-400">
                         <span className="text-[11px] bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300">
-                          Guardado automaticamente ao sair do campo
+                          Guardado automaticamente ao sair
                         </span>
                       </td>
                     </tr>
