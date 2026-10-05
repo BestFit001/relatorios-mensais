@@ -107,7 +107,7 @@ export default function UploadPage() {
     }
 
     setLoading(false);
-    alert("🚀 Sucesso! Dados gravados no Supabase.");
+    alert(`🚀 Sucesso! ${dadosABC.length} linhas de Curva ABC e ${dadosInv.length} de Inventário gravadas no Supabase para ${mesReferencia}.`);
     setFicheiroABC("");
     setFicheiroInventario("");
     setDadosABC([]);

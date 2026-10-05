@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 
 export default function Dashboard() {
   const [competencia, setCompetencia] = useState("09/2026");
-  const [competenciaAnterior, setCompetenciaAnterior] = useState(""); // Opcional
+  const [competenciaAnterior, setCompetenciaAnterior] = useState("");
   const [dadosConsolidados, setDadosConsolidados] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -17,25 +17,25 @@ export default function Dashboard() {
     const { data: abcAtual, error } = await supabase
       .from('curva_abc')
       .select('*')
-      .eq('mes_referencia', competencia);
+      .eq('mes_referencia', competencia.trim());
 
     if (error) {
-      console.error("Erro ao carregar Supabase:", error.message);
+      console.error("Erro ao buscar Curva ABC:", error.message);
     }
 
     // 2. Busca dados de Inventário do mês atual
     const { data: inventario } = await supabase
       .from('inventario')
       .select('*')
-      .eq('mes_referencia', competencia);
+      .eq('mes_referencia', competencia.trim());
 
-    // 3. Busca Curva ABC anterior apenas se preenchido (opcional)
+    // 3. Busca Curva ABC anterior (opcional)
     let abcAnterior: any[] = [];
     if (competenciaAnterior.trim() !== "") {
       const { data: antData } = await supabase
         .from('curva_abc')
         .select('*')
-        .eq('mes_referencia', competenciaAnterior);
+        .eq('mes_referencia', competenciaAnterior.trim());
       if (antData) abcAnterior = antData;
     }
 
@@ -45,7 +45,7 @@ export default function Dashboard() {
       return;
     }
 
-    // 4. Cruzamento e Montagem das Colunas (A até G + Estoque Cruzado)
+    // 4. Cruzamento de Dados e Estrutura Final
     const resultado = abcAtual.map((item: any, index: number) => {
       const invMatch = inventario?.find(
         (inv: any) => String(inv.codigo_sku || "").trim() === String(item.codigo || "").trim()
@@ -89,9 +89,10 @@ export default function Dashboard() {
     setLoading(false);
   };
 
+  // Carrega automaticamente ao abrir
   useEffect(() => {
     carregarDados();
-  }, [competencia, competenciaAnterior]);
+  }, []);
 
   const baixarExcel = () => {
     if (dadosConsolidados.length === 0) {
@@ -134,6 +135,7 @@ export default function Dashboard() {
           </Link>
         </div>
 
+        {/* Barra de Filtros com Botão de Pesquisa */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-4">
             <div>
@@ -156,6 +158,14 @@ export default function Dashboard() {
                 className="border border-gray-300 rounded-md p-2 w-32 text-center font-semibold text-sm bg-white"
               />
             </div>
+            <div className="self-end">
+              <button
+                onClick={carregarDados}
+                className="bg-gray-800 hover:bg-gray-900 text-white font-bold py-2 px-4 rounded-lg shadow transition-colors text-sm cursor-pointer"
+              >
+                🔍 Filtrar Dados
+              </button>
+            </div>
           </div>
 
           <button
@@ -166,11 +176,12 @@ export default function Dashboard() {
           </button>
         </div>
 
+        {/* Tabela de Resultados */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           {loading ? (
             <p className="p-6 text-center text-gray-500">Carregando e cruzando dados em nuvem...</p>
           ) : dadosConsolidados.length === 0 ? (
-            <p className="p-6 text-center text-gray-500">Nenhum registo encontrado para a competência {competencia}. Vá na aba "Upload de Planilhas" para abastecer a base.</p>
+            <p className="p-6 text-center text-gray-500">Nenhum registo encontrado para a competência {competencia}. Verifique se fez o upload na aba ao lado.</p>
           ) : (
             <div className="overflow-x-auto max-h-[650px]">
               <table className="w-full text-left border-collapse text-xs">
