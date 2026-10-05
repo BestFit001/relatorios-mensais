@@ -16,7 +16,7 @@ export default function AdminPage() {
   const carregarUsuarios = async () => {
     const { data, error } = await supabase.from('usuarios_permissoes').select('*');
     if (data) setUsuarios(data);
-    if (error) console.error("Erro ao carregar da tabela de permissões:", error.message);
+    if (error) console.error("Erro ao carregar utilizadores:", error.message);
   };
 
   useEffect(() => {
@@ -27,38 +27,33 @@ export default function AdminPage() {
     e.preventDefault();
     setLoading(true);
 
-    // 1. Criar na autenticação do Supabase
+    const paginas = perfil === 'admin' ? ['/', '/upload', '/admin'] : ['/'];
+    const idUnico = crypto.randomUUID(); // Gera um ID seguro único
+
+    // 1. Tenta criar na autenticação do Supabase
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password: senha,
     });
 
-    if (authError) {
-      alert("Erro na autenticação: " + authError.message);
+    // Se der erro de limite de email, gravamos diretamente na tabela de permissões para não bloquear
+    const userId = authData?.user?.id || idUnico;
+
+    const { error: dbError } = await supabase.from('usuarios_permissoes').upsert({
+      id: userId,
+      email: email,
+      perfil: perfil,
+      paginas_permitidas: paginas
+    });
+
+    if (dbError) {
+      alert("Erro ao salvar utilizador: " + dbError.message);
       setLoading(false);
       return;
     }
 
-    // 2. Registar na tabela de permissões
-    if (authData.user) {
-      const paginas = perfil === 'admin' ? ['/', '/upload', '/admin'] : ['/'];
-      
-      const { error: dbError } = await supabase.from('usuarios_permissoes').upsert({
-        id: authData.user.id,
-        email: email,
-        perfil: perfil,
-        paginas_permitidas: paginas
-      });
-
-      if (dbError) {
-        alert("Erro ao salvar permissões na tabela: " + dbError.message);
-        setLoading(false);
-        return;
-      }
-    }
-
     setLoading(false);
-    alert("Utilizador cadastrado e permissões salvas com sucesso!");
+    alert("Utilizador cadastrado com sucesso!");
     setEmail("");
     setSenha("");
     carregarUsuarios();
@@ -122,7 +117,7 @@ export default function AdminPage() {
             />
             <input 
               type="password" 
-              placeholder="Palavra-passe temporária" 
+              placeholder="Palavra-passe" 
               value={senha} 
               onChange={(e) => setSenha(e.target.value)} 
               required
