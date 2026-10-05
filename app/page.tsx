@@ -204,7 +204,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[96%] mx-auto">
         
-        {/* CABEÇALHO COM ABAS E BOTÃO ADMIN */}
+        {/* CABEÇALHO COM ABAS UNIFICADAS */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatórios Mensais</h1>
@@ -218,6 +218,9 @@ export default function Dashboard() {
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/upload">
                 Upload
+              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">
+                Regras
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/admin">
                 Admin
