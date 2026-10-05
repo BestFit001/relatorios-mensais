@@ -29,7 +29,6 @@ export default function UploadPage() {
   const anoAtual = new Date().getFullYear();
   const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i); 
 
-  // Leitura exata da Curva ABC (Produto na col 0, Código na col 1, Qtd na col 2, Valor na col 3)
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -53,7 +52,6 @@ export default function UploadPage() {
           const quantidade = Number(row[2]);
           const valor = Number(row[3]);
 
-          // Ignora cabeçalhos e linhas inválidas
           const produtoLower = produto.toLowerCase();
           const codigoLower = codigo.toLowerCase();
 
@@ -87,7 +85,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Leitura do Inventário cruzando com os SKUs da Curva ABC
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -192,81 +189,90 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8 text-gray-900">
-      <div className="max-w-5xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6 text-gray-800">Relatórios mensais - Best Fit</h1>
+    <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
+      <div className="max-w-4xl mx-auto">
+        
+        {/* CABEÇALHO */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-2xl font-black text-white tracking-tight">Relatórios Mensais</h1>
+            <p className="text-sm font-medium text-slate-400">Gestão de Performance e Compras — Best Fit</p>
+          </div>
 
-        <div className="flex space-x-6 border-b border-gray-300 pb-2 mb-6">
-          <Link className="px-4 py-2 font-semibold text-lg text-gray-500 hover:text-blue-500 transition-colors" href="/">
-            Curva ABC & Histórico
-          </Link>
-          <Link className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600" href="/upload">
-            Upload de Planilhas
-          </Link>
+          <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+            <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/">
+              Dashboard
+            </Link>
+            <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/upload">
+              Upload de Planilhas
+            </Link>
+          </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 max-w-3xl">
-          <h2 className="text-xl font-bold mb-2 text-gray-800">Abastecimento do Banco de Dados</h2>
-          <p className="text-gray-500 mb-8">Faça o upload primeiro da Curva ABC e depois do Inventário para cruzamento automático.</p>
+        {/* CARD PRINCIPAL */}
+        <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
+          <h2 className="text-lg font-bold mb-1 text-white">Abastecimento do Banco de Dados</h2>
+          <p className="text-xs text-slate-400 mb-6">Defina a competência, envie os ficheiros e grave no Supabase de forma integrada.</p>
           
-          <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 mb-6">
+          <div className="bg-slate-950 p-6 rounded-xl border border-slate-800/80 mb-6">
             
-            <div className="mb-8 border-b border-gray-200 pb-6">
+            <div className="mb-6 border-b border-slate-800 pb-6">
               <div className="flex justify-between items-center mb-3">
-                <label className="block text-sm font-bold text-gray-700">1. Competência (Mês e Ano)</label>
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">1. Competência (Mês e Ano)</label>
                 <button
                   onClick={limparDadosCompetencia}
                   disabled={!mesReferencia || loadingDelete}
-                  className="bg-red-50 text-red-600 border border-red-200 text-xs font-bold py-1.5 px-3 rounded-md cursor-pointer"
+                  className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[11px] font-bold py-1.5 px-3 rounded-lg cursor-pointer hover:bg-rose-900/60 transition-all"
                 >
-                  {loadingDelete ? "Limpando..." : `🗑️ Limpar Base (${mesReferencia})`}
+                  {loadingDelete ? "A limpar..." : `🗑️ Limpar Base (${mesReferencia})`}
                 </button>
               </div>
 
-              <div className="flex space-x-4">
-                <select className="w-1/2 border border-gray-300 rounded-md p-2.5 bg-white" value={mes} onChange={(e) => setMes(e.target.value)}>
-                  <option value="">Mês...</option>
+              <div className="grid grid-cols-2 gap-4">
+                <select className="border border-slate-700 rounded-xl p-3 bg-slate-900 text-xs font-semibold text-white outline-none focus:border-indigo-500 cursor-pointer" value={mes} onChange={(e) => setMes(e.target.value)}>
+                  <option value="">Selecione o mês...</option>
                   {meses.map(m => <option key={m.valor} value={m.valor}>{m.nome}</option>)}
                 </select>
-                <select className="w-1/2 border border-gray-300 rounded-md p-2.5 bg-white" value={ano} onChange={(e) => setAno(e.target.value)}>
-                  <option value="">Ano...</option>
+                <select className="border border-slate-700 rounded-xl p-3 bg-slate-900 text-xs font-semibold text-white outline-none focus:border-indigo-500 cursor-pointer" value={ano} onChange={(e) => setAno(e.target.value)}>
+                  <option value="">Selecione o ano...</option>
                   {anos.map(a => <option key={a} value={a}>{a}</option>)}
                 </select>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">2. Planilha Curva ABC (Carregar 1º)</label>
-                <div className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center text-center ${mesReferencia ? 'border-blue-400 bg-blue-50/50' : 'border-gray-300 bg-gray-100 opacity-60'}`}>
-                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia} onChange={processarABC} className="block w-full text-xs text-gray-500 file:mr-2 file:py-2 file:px-3 file:rounded-md file:border-0 file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer" />
-                  {ficheiroABC && <p className="mt-2 text-xs text-green-600 font-semibold">{ficheiroABC}</p>}
+                <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">2. Planilha Curva ABC (Carregar 1º)</label>
+                <div className={`border-2 border-dashed rounded-xl p-5 flex flex-col items-center justify-center text-center transition-all ${mesReferencia ? 'border-indigo-500/50 bg-indigo-950/20' : 'border-slate-800 bg-slate-900/50 opacity-50'}`}>
+                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia} onChange={processarABC} className="block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-bold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer" />
+                  {ficheiroABC && <p className="mt-3 text-xs text-emerald-400 font-bold">✓ {ficheiroABC}</p>}
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">3. Planilha de Inventário (Carregar 2º)</label>
-                <div className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center text-center ${mesReferencia && dadosABC.length > 0 ? 'border-blue-400 bg-blue-50/50' : 'border-gray-300 bg-gray-100 opacity-60'}`}>
-                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia || dadosABC.length === 0} onChange={processarInventario} className="block w-full text-xs text-gray-500 file:mr-2 file:py-2 file:px-3 file:rounded-md file:border-0 file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer" />
-                  {ficheiroInventario && <p className="mt-2 text-xs text-green-600 font-semibold">{ficheiroInventario}</p>}
+                <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">3. Planilha de Inventário (Carregar 2º)</label>
+                <div className={`border-2 border-dashed rounded-xl p-5 flex flex-col items-center justify-center text-center transition-all ${mesReferencia && dadosABC.length > 0 ? 'border-indigo-500/50 bg-indigo-950/20' : 'border-slate-800 bg-slate-900/50 opacity-50'}`}>
+                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia || dadosABC.length === 0} onChange={processarInventario} className="block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-bold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer" />
+                  {ficheiroInventario && <p className="mt-3 text-xs text-emerald-400 font-bold">✓ {ficheiroInventario}</p>}
                 </div>
               </div>
             </div>
 
             {(dadosABC.length > 0 || dadosInvBruto.length > 0) && (
-              <div className="mt-8 pt-6 border-t border-gray-200 flex justify-end">
+              <div className="mt-6 pt-5 border-t border-slate-800 flex justify-end">
                 <button 
                   onClick={enviarParaBanco} 
                   disabled={loading}
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-colors cursor-pointer"
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition-all text-xs uppercase tracking-wider cursor-pointer"
                 >
-                  {loading ? "A gravar..." : "Gravar Dados no Supabase"}
+                  {loading ? "A gravar dados..." : "🚀 Gravar Dados no Supabase"}
                 </button>
               </div>
             )}
 
           </div>
         </div>
+
       </div>
     </div>
   );
