@@ -11,7 +11,7 @@ export default function UploadPage() {
   const [ficheiroInventario, setFicheiroInventario] = useState("");
   
   const [dadosABC, setDadosABC] = useState<any[]>([]);
-  const [dadosInvBruto, setDadosInvBruto] = useState<any[]>([]);
+  const [dadosInv, setDadosInv] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
 
@@ -29,7 +29,7 @@ export default function UploadPage() {
   const anoAtual = new Date().getFullYear();
   const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i); 
 
-  // Processa Curva ABC
+  // Leitura ultra flexível para a Curva ABC (.xls / .xlsx)
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -41,29 +41,45 @@ export default function UploadPage() {
         const data = new Uint8Array(evento.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const dados_brutos = XLSX.utils.sheet_to_json(worksheet, { range: 1, defval: "" }) as any[];
+        const dados_brutos = XLSX.utils.sheet_to_json(worksheet, { defval: "" }) as any[];
         
-        const formatado = dados_brutos.map(linha => ({
-          mes_referencia: mesReferencia,
-          codigo: String(linha["Código"] || linha["Código (SKU)"] || "").trim(),
-          produto: String(linha["Produto"] || "").trim(),
-          quantidade: Number(linha["Vendas"] || linha["Quantidade"] || 0),
-          valor: Number(linha["Valor"] || 0),
-          porcentagem_individual: Number(linha["% Individual"] || 0),
-          porcentagem_acumulada: Number(linha["% Acumulado"] || 0),
-          classificacao: String(linha["Classificação"] || "C").trim().toUpperCase()
-        })).filter(item => item.codigo && item.codigo !== "Código" && item.codigo !== "undefined");
+        console.log("Dados brutos ABC:", dados_brutos);
+
+        const formatado = dados_brutos.map(linha => {
+          // Tenta encontrar as chaves independentemente de maiúsculas/minúsculas ou variações
+          const chaves = Object.keys(linha);
+          const acharChave = (termo: string) => chaves.find(k => k.toLowerCase().includes(termo.toLowerCase())) || "";
+
+          const kCodigo = acharChave("cód") || acharChave("sku") || chaves[0];
+          const kProduto = acharChave("prod") || chaves[1];
+          const kQtd = acharChave("venda") || acharChave("quant") || chaves[2];
+          const kValor = acharChave("valor") || chaves[3];
+          const kInd = acharChave("individual") || acharChave("%") || chaves[4];
+          const kAcum = acharChave("acumulado") || chaves[5];
+          const kClass = acharChave("class") || chaves[6];
+
+          return {
+            mes_referencia: mesReferencia,
+            codigo: String(linha[kCodigo] || "").trim(),
+            produto: String(linha[kProduto] || "").trim(),
+            quantidade: Number(linha[kQtd] || 0),
+            valor: Number(linha[kValor] || 0),
+            porcentagem_individual: Number(linha[kInd] || 0),
+            porcentagem_acumulada: Number(linha[kAcum] || 0),
+            classificacao: String(linha[kClass] || "C").trim().toUpperCase()
+          };
+        }).filter(item => item.codigo && item.codigo !== "Código" && item.codigo !== "undefined");
 
         setDadosABC(formatado);
-        alert(`Curva ABC lida: ${formatado.length} SKUs identificados.`);
+        alert(`Curva ABC lida com sucesso: ${formatado.length} registos encontrados.`);
       } catch (err: any) {
-        alert("Erro ao ler Curva ABC: " + err.message);
+        alert("Erro ao ler ficheiro Curva ABC: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
-  // Processa Inventário Bruto
+  // Leitura ultra flexível para o Inventário (.xls / .xlsx)
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -82,61 +98,60 @@ export default function UploadPage() {
           const acharChave = (termo: string) => chaves.find(k => k.toLowerCase().includes(termo.toLowerCase())) || "";
 
           const kCodigo = acharChave("cód") || acharChave("sku") || chaves[2] || chaves[0];
+          const kProduto = acharChave("prod") || chaves[1];
+          const kGtin = acharChave("gtin") || acharChave("ean") || chaves[3];
           const kSaldo = acharChave("saldo") || acharChave("estoque") || chaves[5] || chaves[6];
 
           return {
             mes_referencia: mesReferencia,
             codigo_sku: String(linha[kCodigo] || "").trim(),
+            produto_inventario: String(linha[kProduto] || "").trim(),
+            gtin_ean: String(linha[kGtin] || "").trim(),
             saldo: Number(linha[kSaldo] || 0)
           };
-        }).filter(item => item.codigo_sku && item.codigo_sku !== "Código (SKU)");
+        }).filter(item => item.codigo_sku && item.codigo_sku !== "Código (SKU)" && item.codigo_sku !== "undefined");
 
-        setDadosInvBruto(formatado);
-        alert(`Inventário lido: ${formatado.length} registos no total.`);
+        setDadosInv(formatado);
+        alert(`Inventário lido com sucesso: ${formatado.length} registos encontrados.`);
       } catch (err: any) {
-        alert("Erro ao ler Inventário: " + err.message);
+        alert("Erro ao ler ficheiro de Inventário: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
-  // Grava no Banco filtrando APENAS os estoques dos SKUs presentes na Curva ABC
   const enviarParaBanco = async () => {
-    if (dadosABC.length === 0) {
-      alert("Por favor, selecione e processe primeiro a planilha de Curva ABC.");
+    if (dadosABC.length === 0 && dadosInv.length === 0) {
+      alert("Nenhum dado válido detetado nas planilhas.");
       return;
     }
 
     setLoading(true);
 
-    // 1. Grava Curva ABC
-    const { error: errAbc } = await supabase.from('curva_abc').insert(dadosABC);
-    if (errAbc) {
-      alert("Erro ao gravar Curva ABC: " + errAbc.message);
-      setLoading(false);
-      return;
+    if (dadosABC.length > 0) {
+      const { error } = await supabase.from('curva_abc').insert(dadosABC);
+      if (error) {
+        alert("Erro ao enviar Curva ABC: " + error.message);
+        setLoading(false);
+        return;
+      }
     }
 
-    // 2. Filtra o Inventário para guardar APENAS os SKUs que constam na Curva ABC carregada
-    const skusPermitidos = new Set(dadosABC.map(item => item.codigo));
-    const inventarioFiltrado = dadosInvBruto.filter(inv => skusPermitidos.has(inv.codigo_sku));
-
-    if (inventarioFiltrado.length > 0) {
-      const { error: errInv } = await supabase.from('inventario').insert(inventarioFiltrado);
-      if (errInv) {
-        alert("Erro ao gravar Inventário filtrado: " + errInv.message);
+    if (dadosInv.length > 0) {
+      const { error } = await supabase.from('inventario').insert(dadosInv);
+      if (error) {
+        alert("Erro ao enviar Inventário: " + error.message);
         setLoading(false);
         return;
       }
     }
 
     setLoading(false);
-    alert(`🚀 Sucesso! ${dadosABC.length} SKUs da Curva ABC e ${inventarioFiltrado.length} registos de inventário correspondentes gravados no Supabase.`);
-    
+    alert(`🚀 Sucesso! ${dadosABC.length} linhas de Curva ABC e ${dadosInv.length} de Inventário gravadas no Supabase.`);
     setFicheiroABC("");
     setFicheiroInventario("");
     setDadosABC([]);
-    setDadosInvBruto([]);
+    setDadosInv([]);
   };
 
   const limparDadosCompetencia = async () => {
@@ -154,17 +169,17 @@ export default function UploadPage() {
         <h1 className="text-3xl font-bold mb-6 text-gray-800">Painel de Performance</h1>
 
         <div className="flex space-x-6 border-b border-gray-300 pb-2 mb-6">
-          <Link className="px-4 py-2 font-semibold text-lg text-gray-500 hover:text-blue-500 transition-colors" href="/">
+          <Link href="/" className="px-4 py-2 font-semibold text-lg text-gray-500 hover:text-blue-500 transition-colors">
             Curva ABC & Histórico
           </Link>
-          <Link className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600" href="/upload">
+          <Link href="/upload" className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600">
             Upload de Planilhas
           </Link>
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 max-w-3xl">
           <h2 className="text-xl font-bold mb-2 text-gray-800">Abastecimento do Banco de Dados</h2>
-          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros e grave no Supabase com cruzamento inteligente de SKUs.</p>
+          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros e grave no Supabase.</p>
           
           <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 mb-6">
             
@@ -210,14 +225,14 @@ export default function UploadPage() {
               </div>
             </div>
 
-            {(dadosABC.length > 0 || dadosInvBruto.length > 0) && (
+            {(dadosABC.length > 0 || dadosInv.length > 0) && (
               <div className="mt-8 pt-6 border-t border-gray-200 flex justify-end">
                 <button 
                   onClick={enviarParaBanco} 
                   disabled={loading}
                   className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-colors cursor-pointer"
                 >
-                  {loading ? "Gravando filtrado..." : "Gravar Dados no Supabase"}
+                  {loading ? "Enviando..." : "Gravar Dados no Supabase"}
                 </button>
               </div>
             )}

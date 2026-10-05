@@ -31,7 +31,7 @@ export default function Dashboard() {
       console.error("Erro Supabase ABC:", error.message);
     }
 
-    // 2. Busca Inventário filtrado por SKU
+    // 2. Busca Inventário
     const { data: inventario } = await supabase
       .from('inventario')
       .select('*')
@@ -103,7 +103,7 @@ export default function Dashboard() {
     });
 
     setDadosConsolidados(resultado);
-    setPaginaAtual(1); // Reseta para a primeira página ao filtrar
+    setPaginaAtual(1);
     setLoading(false);
   };
 
@@ -111,7 +111,12 @@ export default function Dashboard() {
     carregarDados();
   }, []);
 
-  // Aplicação de Filtros de Status e Ordenação
+  // Cálculos dos Cards de Resumo (Topo)
+  const totalUnidadesVendas = dadosConsolidados.reduce((acc, item) => acc + item.vendas, 0);
+  const totalFaturamentoBruto = dadosConsolidados.reduce((acc, item) => acc + item.valor, 0);
+  const totalTicketMedio = totalUnidadesVendas > 0 ? totalFaturamentoBruto / totalUnidadesVendas : 0;
+
+  // Filtros de Status e Ordenação
   const dadosFiltradosEOrdenados = dadosConsolidados
     .filter(item => {
       if (filtroStatus === "TODOS") return true;
@@ -165,7 +170,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-50 p-8 text-gray-900">
       <div className="max-w-[95%] mx-auto">
-        <h1 className="text-3xl font-bold mb-6 text-gray-800">Painel de Performance - Curva ABC</h1>
+        <h1 className="text-3xl font-bold mb-6 text-gray-800">Relatórios mensais - Best Fit</h1>
 
         <div className="flex space-x-6 border-b border-gray-300 pb-2 mb-6">
           <Link className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600" href="/">
@@ -174,6 +179,26 @@ export default function Dashboard() {
           <Link className="px-4 py-2 font-semibold text-lg text-gray-500 hover:text-blue-500 transition-colors" href="/upload">
             Upload de Planilhas
           </Link>
+        </div>
+
+        {/* CARDS DE RESUMO EXECUTIVO (TOPO) */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total de Unidades Vendas</p>
+            <p className="text-2xl font-extrabold text-gray-800 mt-1">{totalUnidadesVendas.toLocaleString()}</p>
+          </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Faturamento Bruto</p>
+            <p className="text-2xl font-extrabold text-emerald-600 mt-1">R$ {totalFaturamentoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Ticket Médio</p>
+            <p className="text-2xl font-extrabold text-blue-600 mt-1">R$ {totalTicketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Mês de Referência</p>
+            <p className="text-2xl font-extrabold text-indigo-600 mt-1">{competencia}</p>
+          </div>
         </div>
 
         {/* Filtros, Ordenação e Ações */}
@@ -218,7 +243,6 @@ export default function Dashboard() {
             </button>
           </div>
 
-          {/* Barra de Ordenação e Status Operacional */}
           <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-gray-100">
             <div>
               <label className="block text-xs font-bold text-gray-600 mb-1">Filtrar por Status:</label>
@@ -325,7 +349,7 @@ export default function Dashboard() {
                 </table>
               </div>
 
-              {/* Rodapé com Paginação Visual (30 por página) */}
+              {/* Rodapé com Paginação Visual */}
               <div className="p-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-sm">
                 <span className="text-gray-600">
                   Mostrando de <b>{indicePrimeiroItem + 1}</b> até <b>{Math.min(indiceUltimoItem, dadosFiltradosEOrdenados.length)}</b> de <b>{dadosFiltradosEOrdenados.length}</b> produtos
