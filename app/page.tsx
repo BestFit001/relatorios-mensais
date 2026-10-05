@@ -21,23 +21,21 @@ export default function Dashboard() {
     setLoading(true);
     const compBusca = competencia.trim();
 
-    // 1. Busca Curva ABC sem limite de paginação (trazendo todos os registos)
+    // 1. Busca Curva ABC
     const { data: abcAtual, error } = await supabase
       .from('curva_abc')
       .select('*')
-      .eq('mes_referencia', compBusca)
-      .range(0, 9999);
+      .eq('mes_referencia', compBusca);
 
     if (error) {
       console.error("Erro Supabase ABC:", error.message);
     }
 
-    // 2. Busca Inventário correspondente
+    // 2. Busca Inventário
     const { data: inventario } = await supabase
       .from('inventario')
       .select('*')
-      .eq('mes_referencia', compBusca)
-      .range(0, 9999);
+      .eq('mes_referencia', compBusca);
 
     // 3. Busca Mês Anterior (Opcional)
     let abcAnterior: any[] = [];
@@ -45,8 +43,7 @@ export default function Dashboard() {
       const { data: antData } = await supabase
         .from('curva_abc')
         .select('*')
-        .eq('mes_referencia', competenciaAnterior.trim())
-        .range(0, 9999);
+        .eq('mes_referencia', competenciaAnterior.trim());
       if (antData) abcAnterior = antData;
     }
 
@@ -56,7 +53,7 @@ export default function Dashboard() {
       return;
     }
 
-    // 4. Cruzamento e Cálculo de todas as linhas
+    // 4. Cruzamento e Cálculo
     const resultado = abcAtual.map((item: any, index: number) => {
       const invMatch = inventario?.find(
         (inv: any) => String(inv.codigo_sku || "").trim() === String(item.codigo || "").trim()
@@ -114,7 +111,7 @@ export default function Dashboard() {
     carregarDados();
   }, []);
 
-  // Cálculos dos Cards de Resumo (Topo) baseados em TODOS os itens carregados
+  // Cálculos dos Cards de Resumo (Topo)
   const totalUnidadesVendas = dadosConsolidados.reduce((acc, item) => acc + item.vendas, 0);
   const totalFaturamentoBruto = dadosConsolidados.reduce((acc, item) => acc + item.valor, 0);
   const totalTicketMedio = totalUnidadesVendas > 0 ? totalFaturamentoBruto / totalUnidadesVendas : 0;
