@@ -29,7 +29,7 @@ export default function UploadPage() {
   const anoAtual = new Date().getFullYear();
   const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i); 
 
-  // 1. Processar Curva ABC (Ignorando cabeçalhos estritamente)
+  // Leitura exata da Curva ABC (Produto na col 0, Código na col 1, Qtd na col 2, Valor na col 3)
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -48,28 +48,29 @@ export default function UploadPage() {
           const row = json[i];
           if (!row || row.length === 0) continue;
 
-          const codigo = String(row[0] || "").trim();
-          const produto = String(row[1] || "").trim();
+          const produto = String(row[0] || "").trim();
+          const codigo = String(row[1] || "").trim();
+          const quantidade = Number(row[2]);
+          const valor = Number(row[3]);
 
-          // Ignora cabeçalhos, rótulos ou linhas de título
-          const codigoLower = codigo.toLowerCase();
+          // Ignora cabeçalhos e linhas inválidas
           const produtoLower = produto.toLowerCase();
+          const codigoLower = codigo.toLowerCase();
 
           if (
             codigo && 
             codigo !== "" && 
             !codigoLower.includes("código") && 
             !codigoLower.includes("id") &&
-            !codigoLower.includes("código (sku)") &&
             !produtoLower.includes("produto") &&
-            !isNaN(Number(row[2])) // Garante que a coluna de vendas é numérica
+            !isNaN(quantidade)
           ) {
             formatado.push({
               mes_referencia: mesReferencia,
               codigo: codigo,
               produto: produto,
-              quantidade: Number(row[2] || 0),
-              valor: Number(row[3] || 0),
+              quantidade: quantidade,
+              valor: isNaN(valor) ? 0 : valor,
               porcentagem_individual: Number(row[4] || 0),
               porcentagem_acumulada: Number(row[5] || 0),
               classificacao: String(row[6] || "C").trim().toUpperCase()
@@ -86,7 +87,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // 2. Processar Inventário filtrando com os SKUs da Curva ABC
+  // Leitura do Inventário cruzando com os SKUs da Curva ABC
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -153,11 +154,9 @@ export default function UploadPage() {
 
     setLoading(true);
 
-    // Limpa dados antigos da competência
     await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
     await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
 
-    // 1. Insere Curva ABC
     const { error: errAbc } = await supabase.from('curva_abc').insert(dadosABC);
     if (errAbc) {
       alert("Erro ao gravar Curva ABC: " + errAbc.message);
@@ -165,7 +164,6 @@ export default function UploadPage() {
       return;
     }
 
-    // 2. Insere Inventário filtrado
     if (dadosInvBruto.length > 0) {
       const { error: errInv } = await supabase.from('inventario').insert(dadosInvBruto);
       if (errInv) {
