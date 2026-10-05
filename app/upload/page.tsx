@@ -233,8 +233,8 @@ export default function UploadPage() {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array", cellDates: true });
+        const buffer = evt.target?.result;
+        const workbook = XLSX.read(buffer, { type: "array", cellDates: true, raw: true });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
@@ -349,7 +349,6 @@ export default function UploadPage() {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array", cellDates: true });
         
-        // Verifica se existe a aba "Anúncios" (caso seja planilha padrão do Mercado Livre) ou pega a primeira aba
         const sheetName = workbook.SheetNames.includes("Anúncios") ? "Anúncios" : workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
@@ -371,8 +370,18 @@ export default function UploadPage() {
         const skusTinySet = new Set(allTiny.map(t => t.sku));
 
         const skusNoCanal = new Set<string>();
-        // Ignora as primeiras linhas de cabeçalho descritivo (ex: linhas 0 a 3)
-        for (let i = 4; i < json.length; i++) {
+        // Deteta automaticamente a linha de cabeçalho onde está a palavra 'sku' para ignorar o cabeçalho descritivo
+        let linhaInicio = 0;
+        for (let i = 0; i < Math.min(json.length, 10); i++) {
+          const row = json[i];
+          if (row && row.some((cell: any) => String(cell).trim().toLowerCase() === 'sku')) {
+            linhaInicio = i + 1; // Começa a ler logo após a linha do cabeçalho
+            break;
+          }
+        }
+        if (linhaInicio === 0) linhaInicio = 5; // Fallback padrão para planilhas do ML
+
+        for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
           const skuVal = String(row[indiceColuna] || "").trim();
@@ -530,7 +539,6 @@ export default function UploadPage() {
               </div>
             </div>
 
-            {/* UPLOADS E LIMPEZA DOS 11 CANAIS */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
               <p className="text-xs text-slate-400 mb-6">Atualize ou limpe o mapeamento de cada marketplace de forma independente.</p>
