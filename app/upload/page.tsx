@@ -29,7 +29,7 @@ export default function UploadPage() {
   const anoAtual = new Date().getFullYear();
   const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i); 
 
-  // Leitura robusta da Curva ABC (mapeando por índices e chaves flexíveis)
+  // Leitura limpa da Curva ABC (ignorando cabeçalhos e linhas inválidas)
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -43,16 +43,25 @@ export default function UploadPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
         
-        // Identifica onde estão os dados (procurando a linha de cabeçalho ou lendo a partir da linha 1 ou 2)
         const formatado = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
-          // Se a linha tem código válido (ex: SKU numérico ou texto consistente)
-          if (row && row[0] && String(row[0]).trim() !== "" && String(row[0]).toLowerCase() !== "código" && String(row[0]).toLowerCase() !== "id") {
+          const codigo = String(row[0] || "").trim();
+          const produto = String(row[1] || "").trim();
+
+          // Ignora cabeçalhos, linhas vazias ou rótulos
+          if (
+            codigo && 
+            codigo !== "" && 
+            codigo.toLowerCase() !== "código" && 
+            codigo.toLowerCase() !== "código (sku)" &&
+            codigo.toLowerCase() !== "id" &&
+            produto.toLowerCase() !== "produto"
+          ) {
             formatado.push({
               mes_referencia: mesReferencia,
-              codigo: String(row[0] || "").trim(),
-              produto: String(row[1] || "").trim(),
+              codigo: codigo,
+              produto: produto,
               quantidade: Number(row[2] || 0),
               valor: Number(row[3] || 0),
               porcentagem_individual: Number(row[4] || 0),
@@ -63,7 +72,7 @@ export default function UploadPage() {
         }
 
         setDadosABC(formatado);
-        alert(`Curva ABC processada com sucesso: ${formatado.length} SKUs identificados.`);
+        alert(`Curva ABC processada com sucesso: ${formatado.length} produtos válidos identificados.`);
       } catch (err: any) {
         alert("Erro ao ler Curva ABC: " + err.message);
       }
@@ -71,7 +80,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Leitura robusta do Inventário
+  // Leitura limpa do Inventário (.xls / .xlsx)
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -88,11 +97,32 @@ export default function UploadPage() {
         const formatado = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
-          // No inventário, geralmente o SKU está na coluna C (índice 2) ou A (índice 0) e o saldo na F (índice 5) ou última
-          const sku = String(row[2] || row[0] || "").trim();
-          const saldo = Number(row[5] || row[1] || row[row.length - 1] || 0);
+          // Procura o SKU e o Saldo nas colunas da linha
+          // No inventário costuma ser Coluna SKU (índice 2 ou 0) e Saldo (última coluna ou índice 5 ou 6)
+          let sku = "";
+          let saldo = 0;
 
-          if (sku && sku.toLowerCase() !== "código (sku)" && sku.toLowerCase() !== "código" && !isNaN(saldo)) {
+          for (let col = 0; col < row.length; col++) {
+            const val = String(row[col] || "").trim();
+            // Se parece com um SKU (código numérico longo ou alfanumérico)
+            if (val.length >= 8 && !isNaN(Number(val)) && !sku) {
+              sku = val;
+            }
+          }
+          // Se não achou pelo tamanho, pega o índice padrão da coluna de SKU (geralmente 2 ou 0)
+          if (!sku) sku = String(row[2] || row[0] || "").trim();
+          
+          // O saldo costuma estar na última coluna ou índice 5
+          const saldoVal = Number(row[row.length - 1] ?? row[5] ?? 0);
+          if (!isNaN(saldoVal)) saldo = saldoVal;
+
+          if (
+            sku && 
+            sku !== "" && 
+            sku.toLowerCase() !== "código (sku)" && 
+            sku.toLowerCase() !== "código" &&
+            sku.toLowerCase() !== "id"
+          ) {
             formatado.push({
               mes_referencia: mesReferencia,
               codigo_sku: sku,
@@ -118,7 +148,7 @@ export default function UploadPage() {
 
     setLoading(true);
 
-    // Limpa dados antigos da competência antes de inserir novos para evitar duplicados
+    // Limpa dados antigos da competência para evitar duplicação
     await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
     await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
 
@@ -144,7 +174,7 @@ export default function UploadPage() {
     }
 
     setLoading(false);
-    alert(`🚀 Sucesso! ${dadosABC.length} SKUs da Curva ABC e ${inventarioFiltrado.length} registos de inventário guardados no Supabase.`);
+    alert(`🚀 Sucesso! ${dadosABC.length} SKUs da Curva ABC e ${inventarioFiltrado.length} registos de inventário correspondentes guardados no Supabase.`);
     
     setFicheiroABC("");
     setFicheiroInventario("");
@@ -177,7 +207,7 @@ export default function UploadPage() {
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 max-w-3xl">
           <h2 className="text-xl font-bold mb-2 text-gray-800">Abastecimento do Banco de Dados</h2>
-          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros e grave no Supabase com leitura otimizada por linhas.</p>
+          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros e grave no Supabase sem cabeçalhos duplicados.</p>
           
           <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 mb-6">
             
