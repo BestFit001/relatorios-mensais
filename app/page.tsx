@@ -23,13 +23,13 @@ export default function Dashboard() {
       console.error("Erro ao buscar Curva ABC:", error.message);
     }
 
-    // 2. Busca dados de Inventário do mês atual
+    // 2. Busca dados de Inventário do mês atual para cruzamento (Coluna C SKU com Coluna F Saldo)
     const { data: inventario } = await supabase
       .from('inventario')
       .select('*')
       .eq('mes_referencia', competencia.trim());
 
-    // 3. Busca Curva ABC anterior (opcional)
+    // 3. Busca Curva ABC anterior (opcional para histórico)
     let abcAnterior: any[] = [];
     if (competenciaAnterior.trim() !== "") {
       const { data: antData } = await supabase
@@ -45,24 +45,33 @@ export default function Dashboard() {
       return;
     }
 
-    // 4. Cruzamento de Dados e Estrutura Final
+    // 4. Montagem das colunas de A a G + Lógica H até L (Espelho exato da planilha de relatório)
     const resultado = abcAtual.map((item: any, index: number) => {
+      // Cruza o SKU da Curva ABC (Coluna A/B) com a Coluna C do inventário para pegar o saldo da Coluna F
       const invMatch = inventario?.find(
         (inv: any) => String(inv.codigo_sku || "").trim() === String(item.codigo || "").trim()
       );
+      
       const saldoEstoque = invMatch ? Number(invMatch.saldo || 0) : 0;
+      const vendas = Number(item.quantidade || 0);
+      const valor = Number(item.valor || 0);
 
+      // Lógica de cálculo (H até L)
+      const mediaDiaria = vendas > 0 ? vendas / 30 : 0;
+      const coberturaDias = mediaDiaria > 0 ? saldoEstoque / mediaDiaria : 0;
+      const coberturaMeses = coberturaDias / 30;
+      const status = coberturaMeses >= 2 ? "Cobertura Igual ou Maior 2 Meses" : "Sugestão de Compra";
+
+      // Comparativo histórico opcional
       let variacaoPercentual: number | null = null;
       if (competenciaAnterior.trim() !== "") {
         const anteriorMatch = abcAnterior.find(
           (ant: any) => String(ant.codigo || "").trim() === String(item.codigo || "").trim()
         );
         const qtdAnterior = anteriorMatch ? Number(anteriorMatch.quantidade || 0) : 0;
-        const qtdAtual = Number(item.quantidade || 0);
-
         if (qtdAnterior > 0) {
-          variacaoPercentual = ((qtdAtual - qtdAnterior) / qtdAnterior) * 100;
-        } else if (qtdAtual > 0) {
+          variacaoPercentual = ((vendas - qtdAnterior) / qtdAnterior) * 100;
+        } else if (vendas > 0) {
           variacaoPercentual = 100;
         } else {
           variacaoPercentual = 0;
@@ -70,17 +79,21 @@ export default function Dashboard() {
       }
 
       return {
-        id: item.id || index + 1,
-        produto: item.produto || "",
-        codigo: item.codigo || "",
-        gtin: invMatch ? invMatch.gtin_ean : "-",
-        localizacao: "-",
-        saldoEstoque: saldoEstoque,
-        vendas: Number(item.quantidade || 0),
-        valor: Number(item.valor || 0),
+        id: item.id || index + 1, // Coluna A
+        produto: item.produto || "", // Coluna B
+        codigo: item.codigo || "", // Coluna C
+        gtin: invMatch ? invMatch.gtin_ean : "-", // Coluna D
+        localizacao: "-", // Coluna E
+        saldoEstoque: saldoEstoque, // Coluna F / G (Cruzado do inventário)
+        vendas: vendas,
+        valor: valor,
         porcentagemIndividual: Number(item.porcentagem_individual || 0),
         porcentagemAcumulada: Number(item.porcentagem_acumulada || 0),
         classificacao: item.classificacao || "C",
+        mediaDiaria: mediaDiaria.toFixed(2),
+        coberturaDias: coberturaDias.toFixed(1),
+        coberturaMeses: coberturaMeses.toFixed(2),
+        status: status,
         variacao: variacaoPercentual
       };
     });
@@ -89,7 +102,6 @@ export default function Dashboard() {
     setLoading(false);
   };
 
-  // Carrega automaticamente ao abrir
   useEffect(() => {
     carregarDados();
   }, []);
@@ -112,18 +124,22 @@ export default function Dashboard() {
       "% Individual": d.porcentagemIndividual,
       "% Acumulado": d.porcentagemAcumulada,
       "Classificação": d.classificacao,
+      "Média Diária Vendas": d.mediaDiaria,
+      "Cobertura (dias)": d.coberturaDias,
+      "Cobertura MESES": d.coberturaMeses,
+      "STATUS": d.status,
       ...(competenciaAnterior ? { "Variação vs Mês Anterior": `${d.variacao! > 0 ? '+' : ''}${d.variacao?.toFixed(1)}%` } : {})
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(dadosExportar);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Curva ABC Consolidada");
-    XLSX.writeFile(workbook, `CurvaABC_${competencia.replace('/', '-')}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Relatório Consolidado");
+    XLSX.writeFile(workbook, `Relatorio_CurvaABC_${competencia.replace('/', '-')}.xlsx`);
   };
 
   return (
     <div className="min-h-screen bg-gray-50 p-8 text-gray-900">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-[95%] mx-auto">
         <h1 className="text-3xl font-bold mb-6 text-gray-800">Painel de Performance - Curva ABC</h1>
 
         <div className="flex space-x-6 border-b border-gray-300 pb-2 mb-6">
@@ -135,7 +151,7 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        {/* Barra de Filtros com Botão de Pesquisa */}
+        {/* Filtros e Ações */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-4">
             <div>
@@ -176,16 +192,16 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Tabela de Resultados */}
+        {/* Tabela de Resultados (Espelho do Relatório) */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           {loading ? (
             <p className="p-6 text-center text-gray-500">Carregando e cruzando dados em nuvem...</p>
           ) : dadosConsolidados.length === 0 ? (
-            <p className="p-6 text-center text-gray-500">Nenhum registo encontrado para a competência {competencia}. Verifique se fez o upload na aba ao lado.</p>
+            <p className="p-6 text-center text-gray-500">Nenhum registo encontrado para a competência {competencia}. Vá na aba "Upload de Planilhas" para abastecer a base.</p>
           ) : (
-            <div className="overflow-x-auto max-h-[650px]">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-gray-100 sticky top-0 border-b border-gray-200 uppercase text-gray-700 font-semibold">
+            <div className="overflow-x-auto max-h-[700px]">
+              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                <thead className="bg-gray-100 sticky top-0 border-b border-gray-200 uppercase text-gray-700 font-semibold shadow-sm">
                   <tr>
                     <th className="p-3">ID</th>
                     <th className="p-3">Produto</th>
@@ -195,7 +211,11 @@ export default function Dashboard() {
                     <th className="p-3 text-right">Vendas</th>
                     <th className="p-3 text-right">Valor (R$)</th>
                     <th className="p-3 text-right">Saldo Estoque</th>
-                    {competenciaAnterior && <th className="p-3 text-center">Crescimento / Queda</th>}
+                    <th className="p-3 text-right">Média Diária</th>
+                    <th className="p-3 text-right">Cob. Dias</th>
+                    <th className="p-3 text-right">Cob. Meses</th>
+                    <th className="p-3 text-center">Status</th>
+                    {competenciaAnterior && <th className="p-3 text-center">Cresc. / Queda</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
@@ -216,6 +236,16 @@ export default function Dashboard() {
                       <td className="p-3 text-right font-semibold">{d.vendas}</td>
                       <td className="p-3 text-right">R$ {d.valor.toFixed(2)}</td>
                       <td className="p-3 text-right font-bold text-blue-600">{d.saldoEstoque}</td>
+                      <td className="p-3 text-right">{d.mediaDiaria}</td>
+                      <td className="p-3 text-right">{d.coberturaDias}d</td>
+                      <td className="p-3 text-right font-semibold">{d.coberturaMeses}</td>
+                      <td className="p-3 text-center">
+                        <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                          d.status.includes('Sugestão') ? 'bg-orange-100 text-orange-800' : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {d.status}
+                        </span>
+                      </td>
                       {competenciaAnterior && (
                         <td className="p-3 text-center font-bold">
                           {d.variacao === 0 ? (
