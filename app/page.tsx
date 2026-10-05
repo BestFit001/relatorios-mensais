@@ -23,7 +23,7 @@ export default function Dashboard() {
       console.error("Erro ao buscar Curva ABC:", error.message);
     }
 
-    // 2. Busca dados de Inventário do mês atual para cruzamento (Coluna C SKU com Coluna F Saldo)
+    // 2. Busca dados de Inventário do mês atual para cruzamento (SKU com Saldo)
     const { data: inventario } = await supabase
       .from('inventario')
       .select('*')
@@ -45,9 +45,9 @@ export default function Dashboard() {
       return;
     }
 
-    // 4. Montagem das colunas de A a G + Lógica H até L (Espelho exato da planilha de relatório)
+    // 4. Montagem das colunas e cálculos automáticos (Espelho exato do relatório)
     const resultado = abcAtual.map((item: any, index: number) => {
-      // Cruza o SKU da Curva ABC (Coluna A/B) com a Coluna C do inventário para pegar o saldo da Coluna F
+      // Cruza o SKU da Curva ABC com o inventário para buscar o saldo em estoque
       const invMatch = inventario?.find(
         (inv: any) => String(inv.codigo_sku || "").trim() === String(item.codigo || "").trim()
       );
@@ -56,7 +56,7 @@ export default function Dashboard() {
       const vendas = Number(item.quantidade || 0);
       const valor = Number(item.valor || 0);
 
-      // Lógica de cálculo (H até L)
+      // Lógica de cálculo analítico
       const mediaDiaria = vendas > 0 ? vendas / 30 : 0;
       const coberturaDias = mediaDiaria > 0 ? saldoEstoque / mediaDiaria : 0;
       const coberturaMeses = coberturaDias / 30;
@@ -79,12 +79,11 @@ export default function Dashboard() {
       }
 
       return {
-        id: item.id || index + 1, // Coluna A
-        produto: item.produto || "", // Coluna B
-        codigo: item.codigo || "", // Coluna C
-        gtin: invMatch ? invMatch.gtin_ean : "-", // Coluna D
-        localizacao: "-", // Coluna E
-        saldoEstoque: saldoEstoque, // Coluna F / G (Cruzado do inventário)
+        id: item.id || index + 1,
+        produto: item.produto || "",
+        codigo: item.codigo || "",
+        localizacao: "-",
+        saldoEstoque: saldoEstoque,
         vendas: vendas,
         valor: valor,
         porcentagemIndividual: Number(item.porcentagem_individual || 0),
@@ -116,9 +115,8 @@ export default function Dashboard() {
       "ID": d.id,
       "Produto": d.produto,
       "Código (SKU)": d.codigo,
-      "GTIN/EAN": d.gtin,
       "Localização": d.localizacao,
-      "Saldo em estoque": d.saldoEstoque,
+      "Saldo": d.saldoEstoque,
       "Vendas": d.vendas,
       "Valor": d.valor,
       "% Individual": d.porcentagemIndividual,
@@ -192,7 +190,7 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Tabela de Resultados (Espelho do Relatório) */}
+        {/* Tabela de Resultados (Coluna renomeada para SALDO) */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           {loading ? (
             <p className="p-6 text-center text-gray-500">Carregando e cruzando dados em nuvem...</p>
@@ -206,11 +204,10 @@ export default function Dashboard() {
                     <th className="p-3">ID</th>
                     <th className="p-3">Produto</th>
                     <th className="p-3">Código (SKU)</th>
-                    <th className="p-3">GTIN/EAN</th>
                     <th className="p-3 text-center">Classificação</th>
                     <th className="p-3 text-right">Vendas</th>
                     <th className="p-3 text-right">Valor (R$)</th>
-                    <th className="p-3 text-right">Saldo Estoque</th>
+                    <th className="p-3 text-right">SALDO</th>
                     <th className="p-3 text-right">Média Diária</th>
                     <th className="p-3 text-right">Cob. Dias</th>
                     <th className="p-3 text-right">Cob. Meses</th>
@@ -224,7 +221,6 @@ export default function Dashboard() {
                       <td className="p-3 text-gray-500">{d.id}</td>
                       <td className="p-3 font-medium text-gray-900">{d.produto}</td>
                       <td className="p-3 font-mono text-gray-700">{d.codigo}</td>
-                      <td className="p-3 font-mono text-gray-600">{d.gtin}</td>
                       <td className="p-3 text-center">
                         <span className={`px-2 py-0.5 rounded font-bold ${
                           d.classificacao === 'A' ? 'bg-red-100 text-red-700' :
