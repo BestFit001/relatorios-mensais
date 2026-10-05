@@ -5,8 +5,8 @@ import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 
 export default function UploadPage() {
-  const [mes, setMes] = useState("");
-  const [ano, setAno] = useState("");
+  const [mes, setMes] = useState("09");
+  const [ano, setAno] = useState("2026");
   const [ficheiroABC, setFicheiroABC] = useState("");
   const [ficheiroInventario, setFicheiroInventario] = useState("");
   
@@ -118,21 +118,12 @@ export default function UploadPage() {
   };
 
   const limparDadosCompetencia = async () => {
-    if (!mesReferencia) {
-      alert("Selecione o Mês e o Ano da competência que deseja limpar.");
-      return;
-    }
-
-    const confirmar = window.confirm(`Tem a certeza que deseja apagar todos os dados da competência ${mesReferencia}?`);
-    if (!confirmar) return;
-
+    if (!mesReferencia) return;
     setLoadingDelete(true);
-
     await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
     await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
-
     setLoadingDelete(false);
-    alert(`🗑 Dados da competência ${mesReferencia} removidos.`);
+    alert(`🗑 Dados da competência ${mesReferencia} limpos.`);
   };
 
   return (
@@ -151,28 +142,28 @@ export default function UploadPage() {
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 max-w-3xl">
           <h2 className="text-xl font-bold mb-2 text-gray-800">Abastecimento do Banco de Dados</h2>
-          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros e faça a gestão dos registos.</p>
+          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros e grave no Supabase.</p>
           
           <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 mb-6">
             
             <div className="mb-8 border-b border-gray-200 pb-6">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-3">
+              <div className="flex justify-between items-center mb-3">
                 <label className="block text-sm font-bold text-gray-700">1. Competência (Mês e Ano)</label>
                 <button
                   onClick={limparDadosCompetencia}
                   disabled={!mesReferencia || loadingDelete}
-                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold py-2 px-3 rounded-md transition-colors disabled:opacity-50 cursor-pointer"
+                  className="bg-red-50 text-red-600 border border-red-200 text-xs font-bold py-1.5 px-3 rounded-md cursor-pointer"
                 >
-                  {loadingDelete ? "Limpando..." : `🗑️ Limpar Base (${mesReferencia || 'MM/AAAA'})`}
+                  {loadingDelete ? "Limpando..." : `🗑️ Limpar Base (${mesReferencia})`}
                 </button>
               </div>
 
               <div className="flex space-x-4">
-                <select className="w-1/2 border border-gray-300 rounded-md p-2.5" value={mes} onChange={(e) => setMes(e.target.value)}>
+                <select className="w-1/2 border border-gray-300 rounded-md p-2.5 bg-white" value={mes} onChange={(e) => setMes(e.target.value)}>
                   <option value="">Mês...</option>
                   {meses.map(m => <option key={m.valor} value={m.valor}>{m.nome}</option>)}
                 </select>
-                <select className="w-1/2 border border-gray-300 rounded-md p-2.5" value={ano} onChange={(e) => setAno(e.target.value)}>
+                <select className="w-1/2 border border-gray-300 rounded-md p-2.5 bg-white" value={ano} onChange={(e) => setAno(e.target.value)}>
                   <option value="">Ano...</option>
                   {anos.map(a => <option key={a} value={a}>{a}</option>)}
                 </select>
@@ -202,7 +193,7 @@ export default function UploadPage() {
                 <button 
                   onClick={enviarParaBanco} 
                   disabled={loading}
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-colors disabled:opacity-50 cursor-pointer"
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-colors cursor-pointer"
                 >
                   {loading ? "Enviando..." : "Gravar Dados no Supabase"}
                 </button>
