@@ -31,7 +31,7 @@ export default function Dashboard() {
       console.error("Erro Supabase ABC:", error.message);
     }
 
-    // 2. Busca Inventário filtrado por SKU
+    // 2. Busca Inventário
     const { data: inventario } = await supabase
       .from('inventario')
       .select('*')
@@ -103,7 +103,7 @@ export default function Dashboard() {
     });
 
     setDadosConsolidados(resultado);
-    setPaginaAtual(1); // Reseta para a primeira página ao filtrar
+    setPaginaAtual(1);
     setLoading(false);
   };
 
@@ -111,7 +111,12 @@ export default function Dashboard() {
     carregarDados();
   }, []);
 
-  // Aplicação de Filtros de Status e Ordenação
+  // Cálculos dos Cards de Resumo (Topo)
+  const totalUnidadesVendas = dadosConsolidados.reduce((acc, item) => acc + item.vendas, 0);
+  const totalFaturamentoBruto = dadosConsolidados.reduce((acc, item) => acc + item.valor, 0);
+  const totalTicketMedio = totalUnidadesVendas > 0 ? totalFaturamentoBruto / totalUnidadesVendas : 0;
+
+  // Filtros de Status e Ordenação
   const dadosFiltradosEOrdenados = dadosConsolidados
     .filter(item => {
       if (filtroStatus === "TODOS") return true;
@@ -176,6 +181,26 @@ export default function Dashboard() {
           </Link>
         </div>
 
+        {/* CARDS DE RESUMO EXECUTIVO (TOPO) */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total de Unidades Vendas</p>
+            <p className="text-2xl font-extrabold text-gray-800 mt-1">{totalUnidadesVendas.toLocaleString()}</p>
+          </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Faturamento Bruto</p>
+            <p className="text-2xl font-extrabold text-emerald-600 mt-1">R$ {totalFaturamentoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Ticket Médio</p>
+            <p className="text-2xl font-extrabold text-blue-600 mt-1">R$ {totalTicketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Mês de Referência</p>
+            <p className="text-2xl font-extrabold text-indigo-600 mt-1">{competencia}</p>
+          </div>
+        </div>
+
         {/* Filtros, Ordenação e Ações */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -218,7 +243,6 @@ export default function Dashboard() {
             </button>
           </div>
 
-          {/* Barra de Ordenação e Status Operacional */}
           <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-gray-100">
             <div>
               <label className="block text-xs font-bold text-gray-600 mb-1">Filtrar por Status:</label>
@@ -325,7 +349,7 @@ export default function Dashboard() {
                 </table>
               </div>
 
-              {/* Rodapé com Paginação Visual (30 por página) */}
+              {/* Rodapé com Paginação Visual */}
               <div className="p-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-sm">
                 <span className="text-gray-600">
                   Mostrando de <b>{indicePrimeiroItem + 1}</b> até <b>{Math.min(indiceUltimoItem, dadosFiltradosEOrdenados.length)}</b> de <b>{dadosFiltradosEOrdenados.length}</b> produtos
