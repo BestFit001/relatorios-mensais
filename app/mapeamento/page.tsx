@@ -76,8 +76,19 @@ export default function MapeamentoPage() {
     setLoading(false);
   };
 
+  // Processa a pesquisa (suporta vários SKUs separados por vírgula) e obriga a ter termo pesquisado na tabela
+  const termoPesquisaLimpo = pesquisaSku.trim();
+  const skusPesquisadosArray = termoPesquisaLimpo !== "" 
+    ? termoPesquisaLimpo.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    : [];
+
   const dadosFiltrados = dadosCompletos.filter(item => {
-    const matchSku = item.sku.toLowerCase().includes(pesquisaSku.toLowerCase().trim());
+    // Se não houver pesquisa, esconde todos os produtos da tabela
+    if (skusPesquisadosArray.length === 0) return false;
+
+    const skuItemLower = item.sku.toLowerCase();
+    const matchSku = skusPesquisadosArray.some(s => skuItemLower.includes(s));
+
     const matchStatus = filtroStatus === "TODOS" || item.status === filtroStatus;
     
     let matchEstoque = true;
@@ -90,14 +101,15 @@ export default function MapeamentoPage() {
   const totalFiltrados = dadosFiltrados.length;
   const progressoCanaisFiltrados = regrasCanais.map(r => {
     let countPresentes = 0;
-    dadosFiltrados.forEach(item => {
+    dadosCompletos.forEach(item => {
       if (item.canais[r.canal]) countPresentes++;
     });
-    const percentual = totalFiltrados > 0 ? (countPresentes / totalFiltrados) * 100 : 0;
+    const totalGeral = dadosCompletos.length;
+    const percentual = totalGeral > 0 ? (countPresentes / totalGeral) * 100 : 0;
     return {
       canal: r.canal,
       cadastrados: countPresentes,
-      total: totalFiltrados,
+      total: totalGeral,
       percentual: percentual.toFixed(1)
     };
   });
@@ -123,22 +135,49 @@ export default function MapeamentoPage() {
           </div>
         </div>
 
-        {/* FILTROS */}
+        {/* GRÁFICOS DE PROGRESSO GLOBAIS */}
+        <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
+          <h2 className="text-lg font-bold mb-2 text-white">Progresso Geral de Cadastros por Canal</h2>
+          <p className="text-xs text-slate-400 mb-6">Acompanhe a cobertura geral do catálogo em todos os marketplaces.</p>
+
+          {loading ? (
+            <p className="p-6 text-center text-slate-400 font-medium">A calcular rácios...</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {progressoCanaisFiltrados.map((p, idx) => (
+                <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-3">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-white text-sm">{p.canal}</span>
+                    <span className="text-xs font-mono font-bold text-indigo-400">{p.percentual}%</span>
+                  </div>
+                  
+                  <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                    <div className="bg-indigo-600 h-full rounded-full transition-all" style={{ width: `${Math.min(Number(p.percentual), 100)}%` }}></div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400"><strong>{p.cadastrados}</strong> de <strong>{p.total}</strong> SKUs presentes</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* FILTROS E PESQUISA */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Pesquisar SKU:</label>
+          <div className="flex flex-wrap items-center gap-4 flex-1">
+            <div className="flex-1 min-w-[280px]">
+              <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Pesquisar SKU(s) (separados por vírgula):</label>
               <input 
                 type="text" 
                 value={pesquisaSku} 
                 onChange={(e) => setPesquisaSku(e.target.value)} 
-                placeholder="Digite o SKU exato..."
-                className="border border-slate-700 rounded-xl p-2.5 w-48 text-xs font-semibold bg-slate-950 text-white outline-none"
+                placeholder="Ex: SKU001, SKU002, SKU003..."
+                className="border border-slate-700 rounded-xl p-2.5 w-full text-xs font-semibold bg-slate-950 text-white outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Status do SKU:</label>
+              <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Status:</label>
               <select 
                 value={filtroStatus} 
                 onChange={(e) => setFiltroStatus(e.target.value)}
@@ -165,48 +204,26 @@ export default function MapeamentoPage() {
           </div>
 
           <div className="text-xs font-bold text-slate-400">
-            A exibir <strong className="text-white">{totalFiltrados}</strong> SKUs filtrados
+            A exibir <strong className="text-white">{totalFiltrados}</strong> resultados
           </div>
-        </div>
-
-        {/* GRÁFICOS DE PROGRESSO */}
-        <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
-          <h2 className="text-lg font-bold mb-2 text-white">Progresso de Cadastros por Canal</h2>
-          <p className="text-xs text-slate-400 mb-6">Acompanhe a cobertura do catálogo nos marketplaces com base nos filtros aplicados.</p>
-
-          {loading ? (
-            <p className="p-6 text-center text-slate-400 font-medium">A calcular rácios...</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {progressoCanaisFiltrados.map((p, idx) => (
-                <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-3">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-white text-sm">{p.canal}</span>
-                    <span className="text-xs font-mono font-bold text-indigo-400">{p.percentual}%</span>
-                  </div>
-                  
-                  <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                    <div className="bg-indigo-600 h-full rounded-full transition-all" style={{ width: `${Math.min(Number(p.percentual), 100)}%` }}></div>
-                  </div>
-
-                  <p className="text-[11px] text-slate-400"><strong>{p.cadastrados}</strong> de <strong>{p.total}</strong> SKUs presentes</p>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* TABELA DE AUDITORIA */}
         <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
           <div className="p-6 border-b border-slate-800">
             <h2 className="text-lg font-bold text-white">Auditoria Detalhada de SKUs por Canal</h2>
-            <p className="text-xs text-slate-400 mt-1">Verifique onde cada item está cadastrado (✅) ou ausente (❌).</p>
+            <p className="text-xs text-slate-400 mt-1">Utilize o campo de pesquisa acima para consultar SKUs específicos (suporta vários separados por vírgula).</p>
           </div>
 
           {loading ? (
             <p className="p-8 text-center text-slate-400 font-medium">A carregar auditoria...</p>
+          ) : skusPesquisadosArray.length === 0 ? (
+            <div className="p-12 text-center text-slate-500 font-medium">
+              <p className="text-sm mb-1">🔍 Digite um ou mais SKUs na barra de pesquisa acima para visualizar os dados.</p>
+              <p className="text-xs text-slate-600">Exemplo: SKU123, SKU456, SKU789</p>
+            </div>
           ) : dadosFiltrados.length === 0 ? (
-            <p className="p-8 text-center text-slate-400 font-medium">Nenhum SKU encontrado com os filtros selecionados.</p>
+            <p className="p-8 text-center text-slate-400 font-medium">Nenhum SKU encontrado com os termos pesquisados e filtros selecionados.</p>
           ) : (
             <div className="overflow-x-auto max-h-[600px]">
               <table className="w-full text-left border-collapse text-xs">
