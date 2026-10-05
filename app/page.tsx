@@ -138,7 +138,6 @@ export default function Dashboard() {
   const totalFaturamentoBruto = dadosConsolidados.reduce((acc, item) => acc + item.valor, 0);
   const totalTicketMedio = totalUnidadesVendas > 0 ? totalFaturamentoBruto / totalUnidadesVendas : 0;
 
-  // Filtros combinados (Status, Pesquisa por SKU e Ordenação)
   const dadosFiltradosEOrdenados = dadosConsolidados
     .filter(item => {
       const matchSku = String(item.codigo).toLowerCase().includes(pesquisaSku.toLowerCase().trim());
@@ -466,3 +465,49 @@ export default function Dashboard() {
                                   }}
                                   title="Editar Retorno de Compras"
                                   className="text-slate-500 hover:text-indigo-400 p-1.5 rounded-lg hover:bg-indigo-950/50 cursor-pointer transition-all border border-transparent hover:border-indigo-900/50"
+                                >
+                                  ✏️
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* RODAPÉ COM PAGINAÇÃO DARK */}
+              <div className="p-5 bg-slate-950 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-medium text-slate-400">
+                <span>
+                  A mostrar de <strong className="text-white">{indicePrimeiroItem + 1}</strong> até <strong className="text-white">{Math.min(indiceUltimoItem, dadosFiltradosEOrdenados.length)}</strong> de <strong className="text-white">{dadosFiltradosEOrdenados.length}</strong> produtos
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPaginaAtual(p => Math.max(p - 1, 1))}
+                    disabled={paginaAtual === 1}
+                    className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-xl font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-sm"
+                  >
+                    Anterior
+                  </button>
+                  <span className="px-3 font-bold text-slate-300">
+                    Página {paginaAtual} de {totalPaginas}
+                  </span>
+                  <button
+                    onClick={() => setPaginaAtual(p => Math.min(p + 1, totalPaginas))}
+                    disabled={paginaAtual === totalPaginas}
+                    className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-xl font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-sm"
+                  >
+                    Próxima
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
