@@ -43,12 +43,12 @@ export default function UploadPage() {
       
       const formatado = dados_brutos.map(linha => ({
         mes_referencia: mesReferencia,
-        codigo: String(linha["Código"] || linha["Código (SKU)"] || ""),
+        codigo: String(linha["Código"] || linha["Código (SKU)"] || "").trim(),
         produto: linha["Produto"] || "",
         quantidade: Number(linha["Vendas"] || linha["Quantidade"] || 0),
         valor: Number(linha["Valor"] || 0),
-        porcentagemIndividual: Number(linha["% Individual"] || 0),
-        porcentagemAcumulada: Number(linha["% Acumulado"] || 0),
+        porcentagem_individual: Number(linha["% Individual"] || 0),
+        porcentagem_acumulada: Number(linha["% Acumulado"] || 0),
         classificacao: String(linha["Classificação"] || "C").trim()
       })).filter(item => item.codigo);
 
@@ -65,11 +65,15 @@ export default function UploadPage() {
     const reader = new FileReader();
     reader.onload = (evento) => {
       const workbook = XLSX.read(evento.target?.result, { type: "array" });
-      const dados_brutos = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]) as any[];
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      
+      const dados_brutos = XLSX.utils.sheet_to_json(worksheet) as any[];
       
       const formatado = dados_brutos.map(linha => ({
         mes_referencia: mesReferencia,
-        codigo_sku: String(linha["Código (SKU)"] || linha["Código"] || ""),
+        codigo_sku: String(linha["Código (SKU)"] || linha["Código"] || "").trim(),
+        produto_inventario: linha["Produto"] || "",
+        gtin_ean: String(linha["GTIN/EAN"] || "").trim(),
         saldo: Number(linha["Saldo em estoque"] || linha["Saldo"] || 0)
       })).filter(item => item.codigo_sku);
 
@@ -119,28 +123,16 @@ export default function UploadPage() {
       return;
     }
 
-    const confirmar = window.confirm(`Tem a certeza que deseja apagar todos os dados de Curva ABC e Inventário da competência ${mesReferencia} do Supabase?`);
+    const confirmar = window.confirm(`Tem a certeza que deseja apagar todos os dados da competência ${mesReferencia}?`);
     if (!confirmar) return;
 
     setLoadingDelete(true);
 
-    const { error: errAbc } = await supabase
-      .from('curva_abc')
-      .delete()
-      .eq('mes_referencia', mesReferencia);
-
-    const { error: errInv } = await supabase
-      .from('inventario')
-      .delete()
-      .eq('mes_referencia', mesReferencia);
+    await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
+    await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
 
     setLoadingDelete(false);
-
-    if (errAbc || errInv) {
-      alert("Erro ao limpar dados: " + (errAbc?.message || errInv?.message));
-    } else {
-      alert(`🗑 Dados da competência ${mesReferencia} removidos com sucesso do Supabase.`);
-    }
+    alert(`🗑 Dados da competência ${mesReferencia} removidos.`);
   };
 
   return (
@@ -159,18 +151,17 @@ export default function UploadPage() {
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 max-w-3xl">
           <h2 className="text-xl font-bold mb-2 text-gray-800">Abastecimento do Banco de Dados</h2>
-          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros isoladamente e faça a gestão dos registos.</p>
+          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros e faça a gestão dos registos.</p>
           
           <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 mb-6">
             
             <div className="mb-8 border-b border-gray-200 pb-6">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-3">
                 <label className="block text-sm font-bold text-gray-700">1. Competência (Mês e Ano)</label>
-                
                 <button
                   onClick={limparDadosCompetencia}
                   disabled={!mesReferencia || loadingDelete}
-                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold py-2 px-3 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold py-2 px-3 rounded-md transition-colors disabled:opacity-50 cursor-pointer"
                 >
                   {loadingDelete ? "Limpando..." : `🗑️ Limpar Base (${mesReferencia || 'MM/AAAA'})`}
                 </button>
@@ -211,7 +202,7 @@ export default function UploadPage() {
                 <button 
                   onClick={enviarParaBanco} 
                   disabled={loading}
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-colors disabled:opacity-50"
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-colors disabled:opacity-50 cursor-pointer"
                 >
                   {loading ? "Enviando..." : "Gravar Dados no Supabase"}
                 </button>
