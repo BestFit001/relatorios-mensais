@@ -3,12 +3,14 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../lib/supabase";
 import * as XLSX from "xlsx";
+import { useRouter } from "next/navigation";
 
 export default function Dashboard() {
   const [competencia, setCompetencia] = useState("09/2026");
   const [competenciaAnterior, setCompetenciaAnterior] = useState("");
   const [dadosConsolidados, setDadosConsolidados] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   // Estados de Paginação, Filtros, Pesquisa por SKU e Modo Ocultar
   const [paginaAtual, setPaginaAtual] = useState(1);
@@ -22,6 +24,18 @@ export default function Dashboard() {
   // Estados para edição do Retorno de Compras
   const [editandoCodigo, setEditandoCodigo] = useState<string | null>(null);
   const [textoRetorno, setTextoRetorno] = useState("");
+
+  // VERIFICAÇÃO DE AUTENTICAÇÃO (SEGURANÇA)
+  useEffect(() => {
+    const verificarSessao = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push("/login");
+      }
+    };
+    verificarSessao();
+    carregarDados();
+  }, []);
 
   const carregarDados = async () => {
     setLoading(true);
@@ -110,10 +124,6 @@ export default function Dashboard() {
     setLoading(false);
   };
 
-  useEffect(() => {
-    carregarDados();
-  }, []);
-
   const salvarRetorno = async (codigo: string) => {
     const { error } = await supabase
       .from('curva_abc')
@@ -122,7 +132,7 @@ export default function Dashboard() {
       .eq('mes_referencia', competencia.trim());
 
     if (error) {
-      alert("Erro ao salvar no Supabase: " + error.message);
+      alert("Erro ao salvar no Supabase (verifique se a coluna 'retorno_compras' foi criada na tabela): " + error.message);
       return;
     }
 
@@ -187,24 +197,40 @@ export default function Dashboard() {
     XLSX.writeFile(workbook, `Relatorio_CurvaABC_${competencia.replace('/', '-')}.xlsx`);
   };
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[96%] mx-auto">
         
-        {/* CABEÇALHO */}
+        {/* CABEÇALHO COM ABAS E BOTÃO ADMIN */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatórios Mensais</h1>
             <p className="text-sm font-medium text-slate-400">Gestão de Performance e Compras — Best Fit</p>
           </div>
 
-          <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-            <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/">
-              Dashboard
-            </Link>
-            <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/upload">
-              Upload de Planilhas
-            </Link>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/">
+                Dashboard
+              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/upload">
+                Upload
+              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/admin">
+                Admin
+              </Link>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="bg-slate-900 hover:bg-rose-950/60 text-rose-400 border border-slate-800 hover:border-rose-900/50 px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all cursor-pointer"
+            >
+              Sair
+            </button>
           </div>
         </div>
 
