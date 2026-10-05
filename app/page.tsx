@@ -10,10 +10,11 @@ export default function Dashboard() {
   const [dadosConsolidados, setDadosConsolidados] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Estados de Paginação, Filtros e Modo Ocultar
+  // Estados de Paginação, Filtros, Pesquisa por SKU e Modo Ocultar
   const [paginaAtual, setPaginaAtual] = useState(1);
   const itensPorPagina = 30;
 
+  const [pesquisaSku, setPesquisaSku] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [ordenacao, setOrdenacao] = useState("padrao");
   const [ocultarAnalise, setOcultarAnalise] = useState(false);
@@ -114,7 +115,6 @@ export default function Dashboard() {
   }, []);
 
   const salvarRetorno = async (codigo: string) => {
-    // Atualiza diretamente no Supabase por SKU e Mês de Referência (garante sincronização global)
     const { error } = await supabase
       .from('curva_abc')
       .update({ retorno_compras: textoRetorno })
@@ -126,7 +126,6 @@ export default function Dashboard() {
       return;
     }
 
-    // Atualiza o estado local
     setDadosConsolidados(prev =>
       prev.map(item => item.codigo === codigo ? { ...item, retornoCompras: textoRetorno } : item)
     );
@@ -139,10 +138,12 @@ export default function Dashboard() {
   const totalFaturamentoBruto = dadosConsolidados.reduce((acc, item) => acc + item.valor, 0);
   const totalTicketMedio = totalUnidadesVendas > 0 ? totalFaturamentoBruto / totalUnidadesVendas : 0;
 
+  // Filtros combinados (Status, Pesquisa por SKU e Ordenação)
   const dadosFiltradosEOrdenados = dadosConsolidados
     .filter(item => {
-      if (filtroStatus === "TODOS") return true;
-      return item.status === filtroStatus;
+      const matchSku = String(item.codigo).toLowerCase().includes(pesquisaSku.toLowerCase().trim());
+      const matchStatus = filtroStatus === "TODOS" || item.status === filtroStatus;
+      return matchSku && matchStatus;
     })
     .sort((a, b) => {
       if (ordenacao === "saldo-desc") return b.saldoEstoque - a.saldoEstoque;
@@ -247,7 +248,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* BARRA DE FILTROS E AÇÕES */}
+        {/* BARRA DE FILTROS, PESQUISA E AÇÕES */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg mb-6 flex flex-col gap-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-4">
@@ -291,6 +292,18 @@ export default function Dashboard() {
 
           <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-800">
             <div className="flex flex-wrap items-center gap-4">
+              {/* CAMPO DE PESQUISA POR SKU */}
+              <div>
+                <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Pesquisar por SKU:</label>
+                <input 
+                  type="text" 
+                  value={pesquisaSku} 
+                  onChange={(e) => { setPesquisaSku(e.target.value); setPaginaAtual(1); }} 
+                  placeholder="Digite o código SKU..."
+                  className="border border-slate-700 rounded-xl p-2.5 w-48 text-xs font-semibold bg-slate-950 text-white focus:border-indigo-500 outline-none transition-all"
+                />
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Status:</label>
                 <select 
@@ -342,6 +355,8 @@ export default function Dashboard() {
             <p className="p-8 text-center text-slate-400 font-medium">A carregar e a cruzar dados em nuvem...</p>
           ) : dadosConsolidados.length === 0 ? (
             <p className="p-8 text-center text-slate-400 font-medium">Nenhum registo encontrado para a competência {competencia}. Vá na aba "Upload de Planilhas" para abastecer a base.</p>
+          ) : dadosFiltradosEOrdenados.length === 0 ? (
+            <p className="p-8 text-center text-slate-400 font-medium">Nenhum produto encontrado para o SKU "{pesquisaSku}".</p>
           ) : (
             <>
               <div className="overflow-x-auto">
@@ -451,49 +466,3 @@ export default function Dashboard() {
                                   }}
                                   title="Editar Retorno de Compras"
                                   className="text-slate-500 hover:text-indigo-400 p-1.5 rounded-lg hover:bg-indigo-950/50 cursor-pointer transition-all border border-transparent hover:border-indigo-900/50"
-                                >
-                                  ✏️
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* RODAPÉ COM PAGINAÇÃO DARK */}
-              <div className="p-5 bg-slate-950 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-medium text-slate-400">
-                <span>
-                  A mostrar de <strong className="text-white">{indicePrimeiroItem + 1}</strong> até <strong className="text-white">{Math.min(indiceUltimoItem, dadosFiltradosEOrdenados.length)}</strong> de <strong className="text-white">{dadosFiltradosEOrdenados.length}</strong> produtos
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPaginaAtual(p => Math.max(p - 1, 1))}
-                    disabled={paginaAtual === 1}
-                    className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-xl font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-sm"
-                  >
-                    Anterior
-                  </button>
-                  <span className="px-3 font-bold text-slate-300">
-                    Página {paginaAtual} de {totalPaginas}
-                  </span>
-                  <button
-                    onClick={() => setPaginaAtual(p => Math.min(p + 1, totalPaginas))}
-                    disabled={paginaAtual === totalPaginas}
-                    className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-xl font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-sm"
-                  >
-                    Próxima
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-      </div>
-    </div>
-  );
-}
