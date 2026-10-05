@@ -1,9 +1,8 @@
 "use client";
-import { useState, useEffect, ChangeEvent } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
-import * as XLSX from "xlsx";
 
 export default function MapeamentoPage() {
   const [loading, setLoading] = useState(false);
@@ -31,7 +30,6 @@ export default function MapeamentoPage() {
     const { data: regras } = await supabase.from('config_regras_canais').select('*').order('id');
     if (regras) setRegrasCanais(regras);
 
-    // Carrega base Tiny completa sem limite de 1000
     let allTiny: any[] = [];
     let rangeStep = 1000;
     let from = 0;
@@ -76,89 +74,6 @@ export default function MapeamentoPage() {
 
     setDadosCompletos(resultado);
     setLoading(false);
-  };
-
-  const letraParaIndice = (str: string) => {
-    let base = str.toUpperCase().trim();
-    let coluna = 0;
-    for (let i = 0; i < base.length; i++) {
-      coluna = coluna * 26 + (base.charCodeAt(i) - 64);
-    }
-    return coluna - 1;
-  };
-
-  const limparCanal = async (canalNome: string) => {
-    if (!confirm(`Tem certeza que deseja apagar todo o mapeamento do canal "${canalNome}"?`)) return;
-    const { error } = await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
-    if (error) alert("Erro: " + error.message);
-    else {
-      alert(`Canal "${canalNome}" limpo com sucesso!`);
-      carregarDadosAnalise();
-    }
-  };
-
-  const handleUploadCanal = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-
-    const indiceColuna = letraParaIndice(letraColuna || "A");
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array", cellDates: true });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        let allTiny: any[] = [];
-        let rangeStep = 1000;
-        let from = 0;
-        let keepFetching = true;
-        while (keepFetching) {
-          const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + rangeStep - 1);
-          if (tinyBatch && tinyBatch.length > 0) {
-            allTiny = [...allTiny, ...tinyBatch];
-            from += rangeStep;
-            if (tinyBatch.length < rangeStep) keepFetching = false;
-          } else {
-            keepFetching = false;
-          }
-        }
-        const skusTinySet = new Set(allTiny.map(t => t.sku));
-
-        const skusNoCanal = new Set<string>();
-        for (let i = 0; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= indiceColuna) continue;
-          const skuVal = String(row[indiceColuna] || "").trim();
-          if (skusTinySet.has(skuVal)) {
-            skusNoCanal.add(skuVal);
-          }
-        }
-
-        const registrosUpsert: any[] = [];
-        skusTinySet.forEach(sku => {
-          registrosUpsert.push({ canal: canalNome, sku: sku, presente: skusNoCanal.has(sku) });
-        });
-
-        const tamanhoLote = 500;
-        for (let i = 0; i < registrosUpsert.length; i += tamanhoLote) {
-          const lote = registrosUpsert.slice(i, i + tamanhoLote);
-          const { error } = await supabase.from('mapeamento_canais_skus').upsert(lote, { onConflict: 'canal,sku' });
-          if (error) throw error;
-        }
-
-        alert(`Canal "${canalNome}" sincronizado! ${skusNoCanal.size} SKUs mapeados.`);
-        setLoading(false);
-        carregarDadosAnalise();
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
-      }
-    };
-    reader.readAsArrayBuffer(file);
   };
 
   const dadosFiltrados = dadosCompletos.filter(item => {
@@ -208,6 +123,7 @@ export default function MapeamentoPage() {
           </div>
         </div>
 
+        {/* FILTROS */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-4">
             <div>
@@ -253,51 +169,29 @@ export default function MapeamentoPage() {
           </div>
         </div>
 
-        {/* GRÁFICOS DE PROGRESSO E UPLOAD/LIMPEZA POR CANAL */}
+        {/* GRÁFICOS DE PROGRESSO */}
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
-          <h2 className="text-lg font-bold mb-2 text-white">Progresso, Upload e Gestão por Canal</h2>
-          <p className="text-xs text-slate-400 mb-6">Acompanhe a cobertura, atualize ou limpe o mapeamento de cada canal individualmente.</p>
+          <h2 className="text-lg font-bold mb-2 text-white">Progresso de Cadastros por Canal</h2>
+          <p className="text-xs text-slate-400 mb-6">Acompanhe a cobertura do catálogo nos marketplaces com base nos filtros aplicados.</p>
 
           {loading ? (
             <p className="p-6 text-center text-slate-400 font-medium">A calcular rácios...</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {progressoCanaisFiltrados.map((p, idx) => {
-                const regraCanal = regrasCanais.find(r => r.canal === p.canal);
-                const letraColuna = regraCanal ? regraCanal.coluna_sku : 'A';
-
-                return (
-                  <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
-                    <div>
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="font-bold text-white text-sm">{p.canal}</span>
-                        <div className="flex items-center gap-2">
-                          <button onClick={() => limparCanal(p.canal)} title="Limpar Canal" className="text-rose-400 hover:text-rose-300 text-[10px] font-bold bg-rose-950/40 border border-rose-900/50 px-2 py-0.5 rounded cursor-pointer">
-                            🗑️ Limpar
-                          </button>
-                          <span className="text-xs font-mono font-bold text-indigo-400">{p.percentual}%</span>
-                        </div>
-                      </div>
-                      
-                      <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden mb-2">
-                        <div className="bg-indigo-600 h-full rounded-full transition-all" style={{ width: `${Math.min(Number(p.percentual), 100)}%` }}></div>
-                      </div>
-
-                      <p className="text-[11px] text-slate-400"><strong>{p.cadastrados}</strong> de <strong>{p.total}</strong> SKUs (Coluna: {letraColuna})</p>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Atualizar planilha do canal:</label>
-                      <input 
-                        type="file" 
-                        accept=".xlsx, .xls, .csv" 
-                        onChange={(e) => handleUploadCanal(p.canal, letraColuna, e)}
-                        className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:font-bold file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1 rounded-lg border border-slate-800"
-                      />
-                    </div>
+              {progressoCanaisFiltrados.map((p, idx) => (
+                <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-3">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-white text-sm">{p.canal}</span>
+                    <span className="text-xs font-mono font-bold text-indigo-400">{p.percentual}%</span>
                   </div>
-                );
-              })}
+                  
+                  <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                    <div className="bg-indigo-600 h-full rounded-full transition-all" style={{ width: `${Math.min(Number(p.percentual), 100)}%` }}></div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400"><strong>{p.cadastrados}</strong> de <strong>{p.total}</strong> SKUs presentes</p>
+                </div>
+              ))}
             </div>
           )}
         </div>
