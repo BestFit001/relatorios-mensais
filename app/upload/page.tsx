@@ -84,7 +84,6 @@ export default function UploadPage() {
     }
   };
 
-  // Função auxiliar para converter letra da coluna (ex: A, B, C, AA) em índice numérico (0, 1, 2...)
   const letraParaIndice = (str: string) => {
     let base = str.toUpperCase().trim();
     let coluna = 0;
@@ -211,7 +210,6 @@ export default function UploadPage() {
     alert(`🗑 Dados limpos.`);
   };
 
-  // Upload Tiny
   const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -227,7 +225,6 @@ export default function UploadPage() {
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
-          // Assume coluna A (índice 0) para SKU e última coluna para Estoque por padrão na base Tiny
           const sku = String(row[0] || "").trim();
           const estoque = Number(row[row.length - 1] || 0);
 
@@ -250,7 +247,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Upload Status
   const handleUploadStatus = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -269,7 +265,6 @@ export default function UploadPage() {
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
-          // Coluna A (0) para SKU e Coluna B (1) ou última para Status
           const sku = String(row[0] || "").trim();
           if (!skusTinySet.has(sku)) continue;
 
@@ -294,7 +289,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Upload Canal por Posição de Coluna (Letra)
   const handleUploadCanal = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -345,28 +339,35 @@ export default function UploadPage() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-5xl mx-auto">
         
+        {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Abastecimento</h1>
             <p className="text-sm font-medium text-slate-400">Gestão de Relatórios e Mapeamento de Canais</p>
           </div>
 
-          <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-            <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/">
-              Dashboard
-            </Link>
-            <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/upload">
-              Upload & Canais
-            </Link>
-            <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">
-              Regras
-            </Link>
-            <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/admin">
-              Admin
-            </Link>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/">
+                Dashboard
+              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/upload">
+                Upload & Canais
+              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/mapeamento">
+                Mapeamento
+              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">
+                Regras
+              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/admin">
+                Admin
+              </Link>
+            </div>
           </div>
         </div>
 
+        {/* ABAS INTERNAS */}
         <div className="flex gap-3 mb-6">
           <button
             onClick={() => setAbaAtiva("relatorios")}

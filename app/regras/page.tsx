@@ -42,8 +42,6 @@ export default function RegrasPage() {
 
   const salvarTodasRegras = async () => {
     setSalvando(true);
-    
-    // Atualiza cada regra no Supabase
     for (const regra of regras) {
       const { error } = await supabase
         .from('config_regras_canais')
@@ -56,14 +54,8 @@ export default function RegrasPage() {
         return;
       }
     }
-
     setSalvando(false);
-    alert("✅ Todas as regras de colunas foram salvas com sucesso! Elas serão lembradas permanentemente nos próximos uploads.");
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem("usuario_logado");
-    router.push("/login");
+    alert("✅ Regras salvas com sucesso!");
   };
 
   return (
@@ -84,6 +76,9 @@ export default function RegrasPage() {
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/upload">
                 Upload & Canais
               </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/mapeamento">
+                Mapeamento
+              </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/regras">
                 Regras
               </Link>
@@ -91,12 +86,6 @@ export default function RegrasPage() {
                 Admin
               </Link>
             </div>
-            <button
-              onClick={handleLogout}
-              className="bg-slate-900 hover:bg-rose-950/60 text-rose-400 border border-slate-800 hover:border-rose-900/50 px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all cursor-pointer"
-            >
-              Sair
-            </button>
           </div>
         </div>
 
@@ -104,14 +93,12 @@ export default function RegrasPage() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <div>
               <h2 className="text-lg font-bold text-white">Configuração da Posição da Coluna</h2>
-              <p className="text-xs text-slate-400 mt-1">
-                Insira a letra correspondente à coluna (Ex: <strong>A</strong> para a 1ª coluna, <strong>B</strong> para a 2ª, etc.) e clique em salvar.
-              </p>
+              <p className="text-xs text-slate-400 mt-1">Insira a letra correspondente à coluna (Ex: A, B, C) e clique em salvar.</p>
             </div>
             <button
               onClick={salvarTodasRegras}
               disabled={salvando}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl shadow-lg text-xs uppercase tracking-wider cursor-pointer transition-all"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl shadow-lg text-xs uppercase tracking-wider cursor-pointer"
             >
               {salvando ? "A salvar..." : "💾 Salvar Regras"}
             </button>
@@ -138,7 +125,7 @@ export default function RegrasPage() {
                           maxLength={3}
                           value={regra.coluna_sku}
                           onChange={(e) => alterarValorLocal(regra.id, e.target.value)}
-                          className="border border-slate-700 rounded-xl p-2.5 bg-slate-950 text-white text-xs w-32 text-center uppercase font-mono outline-none focus:border-indigo-500 shadow-inner"
+                          className="border border-slate-700 rounded-xl p-2.5 bg-slate-950 text-white text-xs w-32 text-center uppercase font-mono outline-none"
                         />
                       </td>
                     </tr>
@@ -152,7 +139,7 @@ export default function RegrasPage() {
             <button
               onClick={salvarTodasRegras}
               disabled={salvando}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-8 rounded-xl shadow-lg text-xs uppercase tracking-wider cursor-pointer transition-all"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-8 rounded-xl shadow-lg text-xs uppercase tracking-wider cursor-pointer"
             >
               {salvando ? "A salvar alterações..." : "💾 Salvar Regras Definitivamente"}
             </button>

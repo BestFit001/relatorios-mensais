@@ -201,7 +201,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[96%] mx-auto">
         
-        {/* CABEÇALHO COM ABAS UNIFICADAS */}
+        {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatórios Mensais</h1>
@@ -215,6 +215,9 @@ export default function Dashboard() {
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/upload">
                 Upload & Canais
+              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/mapeamento">
+                Mapeamento
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">
                 Regras
@@ -232,23 +235,23 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* CARDS DE RESUMO EXECUTIVO */}
+        {/* CARDS DE RESUMO */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Unidades Vendidas</span>
-            <p className="text-3xl font-black text-white tracking-tight mt-2">{totalUnidadesVendas.toLocaleString()}</p>
+            <p className="text-3xl font-black text-white mt-2">{totalUnidadesVendas.toLocaleString()}</p>
           </div>
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Faturamento Bruto</span>
-            <p className="text-3xl font-black text-white tracking-tight mt-2">R$ {totalFaturamentoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            <p className="text-3xl font-black text-white mt-2">R$ {totalFaturamentoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           </div>
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ticket Médio</span>
-            <p className="text-3xl font-black text-white tracking-tight mt-2">R$ {totalTicketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            <p className="text-3xl font-black text-white mt-2">R$ {totalTicketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           </div>
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Mês de Referência</span>
-            <p className="text-3xl font-black text-white tracking-tight mt-2">{competencia}</p>
+            <p className="text-3xl font-black text-white mt-2">{competencia}</p>
           </div>
         </div>
 
@@ -262,8 +265,7 @@ export default function Dashboard() {
                   type="text" 
                   value={competencia} 
                   onChange={(e) => setCompetencia(e.target.value)} 
-                  placeholder="MM/AAAA"
-                  className="border border-slate-700 rounded-xl p-2.5 w-32 text-center font-bold text-sm bg-slate-950 text-white outline-none focus:border-indigo-500"
+                  className="border border-slate-700 rounded-xl p-2.5 w-32 text-center font-bold text-sm bg-slate-950 text-white outline-none"
                 />
               </div>
               <div>
@@ -272,24 +274,17 @@ export default function Dashboard() {
                   type="text" 
                   value={competenciaAnterior} 
                   onChange={(e) => setCompetenciaAnterior(e.target.value)} 
-                  placeholder="Ex: 08/2026"
-                  className="border border-slate-700 rounded-xl p-2.5 w-32 text-center font-bold text-sm bg-slate-950 text-white outline-none focus:border-indigo-500"
+                  className="border border-slate-700 rounded-xl p-2.5 w-32 text-center font-bold text-sm bg-slate-950 text-white outline-none"
                 />
               </div>
               <div className="self-end">
-                <button
-                  onClick={carregarDados}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl shadow-md text-xs uppercase tracking-wider cursor-pointer"
-                >
+                <button onClick={carregarDados} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl shadow-md text-xs uppercase tracking-wider cursor-pointer">
                   🔍 Filtrar Dados
                 </button>
               </div>
             </div>
 
-            <button
-              onClick={baixarExcel}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-5 rounded-xl shadow-md text-xs uppercase tracking-wider cursor-pointer"
-            >
+            <button onClick={baixarExcel} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-5 rounded-xl shadow-md text-xs uppercase tracking-wider cursor-pointer">
               📥 Baixar Relatório Excel
             </button>
           </div>
@@ -303,7 +298,7 @@ export default function Dashboard() {
                   value={pesquisaSku} 
                   onChange={(e) => { setPesquisaSku(e.target.value); setPaginaAtual(1); }} 
                   placeholder="Digite o código SKU..."
-                  className="border border-slate-700 rounded-xl p-2.5 w-48 text-xs font-semibold bg-slate-950 text-white outline-none focus:border-indigo-500"
+                  className="border border-slate-700 rounded-xl p-2.5 w-48 text-xs font-semibold bg-slate-950 text-white outline-none"
                 />
               </div>
 
@@ -312,7 +307,7 @@ export default function Dashboard() {
                 <select 
                   value={filtroStatus} 
                   onChange={(e) => { setFiltroStatus(e.target.value); setPaginaAtual(1); }}
-                  className="border border-slate-700 rounded-xl p-2.5 text-xs font-semibold bg-slate-950 text-white outline-none focus:border-indigo-500 cursor-pointer"
+                  className="border border-slate-700 rounded-xl p-2.5 text-xs font-semibold bg-slate-950 text-white outline-none cursor-pointer"
                 >
                   <option value="TODOS">Todos os Status</option>
                   <option value="Sugestão de Compra">Sugestão de Compra</option>
@@ -325,7 +320,7 @@ export default function Dashboard() {
                 <select 
                   value={ordenacao} 
                   onChange={(e) => { setOrdenacao(e.target.value); setPaginaAtual(1); }}
-                  className="border border-slate-700 rounded-xl p-2.5 text-xs font-semibold bg-slate-950 text-white outline-none focus:border-indigo-500 cursor-pointer"
+                  className="border border-slate-700 rounded-xl p-2.5 text-xs font-semibold bg-slate-950 text-white outline-none cursor-pointer"
                 >
                   <option value="padrao">Ordem Padrão (Curva ABC)</option>
                   <option value="saldo-desc">Maior Saldo em Estoque</option>
@@ -351,12 +346,12 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* TABELA DE DADOS */}
+        {/* TABELA */}
         <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
           {loading ? (
             <p className="p-8 text-center text-slate-400 font-medium">A carregar e a cruzar dados em nuvem...</p>
           ) : dadosConsolidados.length === 0 ? (
-            <p className="p-8 text-center text-slate-400 font-medium">Nenhum registo encontrado para a competência {competencia}. Vá na aba "Upload & Canais" para abastecer a base.</p>
+            <p className="p-8 text-center text-slate-400 font-medium">Nenhum registo encontrado para a competência {competencia}.</p>
           ) : (
             <>
               <div className="overflow-x-auto">
@@ -415,7 +410,7 @@ export default function Dashboard() {
                             ) : (
                               <div className="flex items-center justify-center gap-2">
                                 <span className="text-slate-300">{d.retornoCompras || <span className="text-slate-600 italic">Sem retorno</span>}</span>
-                                <button onClick={() => { setEditandoCodigo(d.codigo); setTextoRetorno(d.retornoCompras || ""); }} className="text-slate-500 hover:text-indigo-400 p-1.5 cursor-pointer">✏️️</button>
+                                <button onClick={() => { setEditandoCodigo(d.codigo); setTextoRetorno(d.retornoCompras || ""); }} className="text-slate-500 hover:text-indigo-400 p-1.5 cursor-pointer">✏</button>
                               </div>
                             )}
                           </td>
