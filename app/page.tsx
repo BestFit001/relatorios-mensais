@@ -10,18 +10,22 @@ export default function Dashboard() {
   const [dadosConsolidados, setDadosConsolidados] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Estados de Paginação e Filtros/Ordenação
+  // Estados de Paginação, Filtros e Modo Ocultar
   const [paginaAtual, setPaginaAtual] = useState(1);
   const itensPorPagina = 30;
 
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [ordenacao, setOrdenacao] = useState("padrao");
+  const [ocultarAnalise, setOcultarAnalise] = useState(false);
+
+  // Estados para edição do Retorno de Compras
+  const [editandoIndex, setEditandoIndex] = useState<number | null>(null);
+  const [textoRetorno, setTextoRetorno] = useState("");
 
   const carregarDados = async () => {
     setLoading(true);
     const compBusca = competencia.trim();
 
-    // 1. Busca Curva ABC
     const { data: abcAtual, error } = await supabase
       .from('curva_abc')
       .select('*')
@@ -31,13 +35,11 @@ export default function Dashboard() {
       console.error("Erro Supabase ABC:", error.message);
     }
 
-    // 2. Busca Inventário
     const { data: inventario } = await supabase
       .from('inventario')
       .select('*')
       .eq('mes_referencia', compBusca);
 
-    // 3. Busca Mês Anterior (Opcional)
     let abcAnterior: any[] = [];
     if (competenciaAnterior.trim() !== "") {
       const { data: antData } = await supabase
@@ -53,7 +55,6 @@ export default function Dashboard() {
       return;
     }
 
-    // 4. Cruzamento e Cálculo
     const resultado = abcAtual.map((item: any, index: number) => {
       const invMatch = inventario?.find(
         (inv: any) => String(inv.codigo_sku || "").trim() === String(item.codigo || "").trim()
@@ -84,6 +85,7 @@ export default function Dashboard() {
       }
 
       return {
+        id: item.id,
         produto: item.produto || "",
         codigo: item.codigo || "",
         localizacao: "-",
@@ -97,7 +99,8 @@ export default function Dashboard() {
         coberturaDias: Number(coberturaDias.toFixed(1)),
         coberturaMeses: Number(coberturaMeses.toFixed(2)),
         status: status,
-        variacao: variacaoPercentual
+        variacao: variacaoPercentual,
+        retornoCompras: item.retorno_compras || ""
       };
     });
 
@@ -110,12 +113,35 @@ export default function Dashboard() {
     carregarDados();
   }, []);
 
-  // Cálculos dos Cards de Resumo (Topo)
+  const salvarRetorno = async (id: number, codigo: string) => {
+    // Atualiza no banco de dados Supabase
+    const { error } = await supabase
+      .from('curva_abc')
+      .update({ retorno_compras: textoRetorno })
+      .eq('id', id);
+
+    if (error) {
+      // Se não tiver ID numérico, tenta atualizar pelo código e mês de referência
+      await supabase
+        .from('curva_abc')
+        .update({ retorno_compras: textoRetorno })
+        .eq('codigo', codigo)
+        .eq('mes_referencia', competencia.trim());
+    }
+
+    // Atualiza no estado local
+    setDadosConsolidados(prev =>
+      prev.map(item => item.codigo === codigo ? { ...item, retornoCompras: textoRetorno } : item)
+    );
+
+    setEditandoIndex(null);
+    setTextoRetorno("");
+  };
+
   const totalUnidadesVendas = dadosConsolidados.reduce((acc, item) => acc + item.vendas, 0);
   const totalFaturamentoBruto = dadosConsolidados.reduce((acc, item) => acc + item.valor, 0);
   const totalTicketMedio = totalUnidadesVendas > 0 ? totalFaturamentoBruto / totalUnidadesVendas : 0;
 
-  // Filtros de Status e Ordenação
   const dadosFiltradosEOrdenados = dadosConsolidados
     .filter(item => {
       if (filtroStatus === "TODOS") return true;
@@ -130,7 +156,6 @@ export default function Dashboard() {
       return 0;
     });
 
-  // Paginação (30 itens por página)
   const totalPaginas = Math.ceil(dadosFiltradosEOrdenados.length / itensPorPagina) || 1;
   const indiceUltimoItem = paginaAtual * itensPorPagina;
   const indicePrimeiroItem = indiceUltimoItem - itensPorPagina;
@@ -145,7 +170,6 @@ export default function Dashboard() {
     const dadosExportar = dadosFiltradosEOrdenados.map(d => ({
       "Produto": d.produto,
       "Código (SKU)": d.codigo,
-      "Localização": d.localizacao,
       "SALDO": d.saldoEstoque,
       "Vendas": d.vendas,
       "Valor": d.valor,
@@ -156,6 +180,7 @@ export default function Dashboard() {
       "Cobertura (dias)": d.coberturaDias,
       "Cobertura MESES": d.coberturaMeses,
       "STATUS": d.status,
+      "Retorno Compras": d.retornoCompras,
       ...(competenciaAnterior ? { "Variação vs Mês Anterior": `${d.variacao! > 0 ? '+' : ''}${d.variacao?.toFixed(1)}%` } : {})
     }));
 
@@ -241,34 +266,49 @@ export default function Dashboard() {
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-gray-100">
-            <div>
-              <label className="block text-xs font-bold text-gray-600 mb-1">Filtrar por Status:</label>
-              <select 
-                value={filtroStatus} 
-                onChange={(e) => { setFiltroStatus(e.target.value); setPaginaAtual(1); }}
-                className="border border-gray-300 rounded-md p-2 text-sm bg-white"
-              >
-                <option value="TODOS">Todos os Status</option>
-                <option value="Sugestão de Compra">Sugestão de Compra</option>
-                <option value="Cobertura Igual ou Maior 2 Meses">Cobertura Igual ou Maior 2 Meses</option>
-              </select>
+          <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-gray-100">
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1">Filtrar por Status:</label>
+                <select 
+                  value={filtroStatus} 
+                  onChange={(e) => { setFiltroStatus(e.target.value); setPaginaAtual(1); }}
+                  className="border border-gray-300 rounded-md p-2 text-sm bg-white"
+                >
+                  <option value="TODOS">Todos os Status</option>
+                  <option value="Sugestão de Compra">Sugestão de Compra</option>
+                  <option value="Cobertura Igual ou Maior 2 Meses">Cobertura Igual ou Maior 2 Meses</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1">Ordenar por:</label>
+                <select 
+                  value={ordenacao} 
+                  onChange={(e) => { setOrdenacao(e.target.value); setPaginaAtual(1); }}
+                  className="border border-gray-300 rounded-md p-2 text-sm bg-white"
+                >
+                  <option value="padrao">Ordem Padrão (Curva ABC)</option>
+                  <option value="saldo-desc">Maior Saldo em Estoque</option>
+                  <option value="saldo-asc">Menor Saldo em Estoque</option>
+                  <option value="cobertura-desc">Maior Cobertura (Meses)</option>
+                  <option value="cobertura-asc">Menor Cobertura (Meses)</option>
+                  <option value="vendas-desc">Maior Volume de Vendas</option>
+                </select>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-gray-600 mb-1">Ordenar por:</label>
-              <select 
-                value={ordenacao} 
-                onChange={(e) => { setOrdenacao(e.target.value); setPaginaAtual(1); }}
-                className="border border-gray-300 rounded-md p-2 text-sm bg-white"
-              >
-                <option value="padrao">Ordem Padrão (Curva ABC)</option>
-                <option value="saldo-desc">Maior Saldo em Estoque</option>
-                <option value="saldo-asc">Menor Saldo em Estoque</option>
-                <option value="cobertura-desc">Maior Cobertura (Meses)</option>
-                <option value="cobertura-asc">Menor Cobertura (Meses)</option>
-                <option value="vendas-desc">Maior Volume de Vendas</option>
-              </select>
+            {/* OPÇÃO DE OCULTAR CAMPOS DE ANÁLISE */}
+            <div className="flex items-center self-end bg-gray-50 p-2 rounded-lg border border-gray-200">
+              <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-gray-700 select-none">
+                <input 
+                  type="checkbox" 
+                  checked={ocultarAnalise} 
+                  onChange={(e) => setOcultarAnalise(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                />
+                Ocultar campos de análise
+              </label>
             </div>
           </div>
         </div>
@@ -287,60 +327,117 @@ export default function Dashboard() {
                     <tr>
                       <th className="p-3">Produto</th>
                       <th className="p-3">Código (SKU)</th>
-                      <th className="p-3 text-center">Classificação</th>
-                      <th className="p-3 text-right">Vendas</th>
-                      <th className="p-3 text-right">Valor (R$)</th>
-                      <th className="p-3 text-right">SALDO</th>
-                      <th className="p-3 text-right">Média Diária</th>
-                      <th className="p-3 text-right">Cob. Dias</th>
-                      <th className="p-3 text-right">Cob. Meses</th>
-                      <th className="p-3 text-center">Status</th>
-                      {competenciaAnterior && <th className="p-3 text-center">Cresc. / Queda</th>}
+                      {!ocultarAnalise && (
+                        <>
+                          <th className="p-3 text-center">Classificação</th>
+                          <th className="p-3 text-right">Vendas</th>
+                          <th className="p-3 text-right">Valor (R$)</th>
+                          <th className="p-3 text-right">SALDO</th>
+                          <th className="p-3 text-right">Média Diária</th>
+                          <th className="p-3 text-right">Cob. Dias</th>
+                          <th className="p-3 text-right">Cob. Meses</th>
+                          <th className="p-3 text-center">Status</th>
+                          {competenciaAnterior && <th className="p-3 text-center">Cresc. / Queda</th>}
+                        </>
+                      )}
+                      <th className="p-3 text-center">Retorno Compras</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {itensAtuais.map((d, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="p-3 font-medium text-gray-900">{d.produto}</td>
-                        <td className="p-3 font-mono text-gray-700">{d.codigo}</td>
-                        <td className="p-3 text-center">
-                          <span className={`px-2 py-0.5 rounded font-bold ${
-                            d.classificacao === 'A' ? 'bg-red-100 text-red-700' :
-                            d.classificacao === 'B' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'
-                          }`}>
-                            {d.classificacao}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right font-semibold">{d.vendas}</td>
-                        <td className="p-3 text-right">R$ {d.valor.toFixed(2)}</td>
-                        <td className="p-3 text-right font-bold text-blue-600">{d.saldoEstoque}</td>
-                        <td className="p-3 text-right">{d.mediaDiaria}</td>
-                        <td className="p-3 text-right">{d.coberturaDias}d</td>
-                        <td className="p-3 text-right font-semibold">{d.coberturaMeses}</td>
-                        <td className="p-3 text-center">
-                          <span className={`px-2 py-1 rounded text-[10px] font-bold ${
-                            d.status.includes('Sugestão') ? 'bg-orange-100 text-orange-800' : 'bg-emerald-100 text-emerald-800'
-                          }`}>
-                            {d.status}
-                          </span>
-                        </td>
-                        {competenciaAnterior && (
-                          <td className="p-3 text-center font-bold">
-                            {d.variacao === 0 ? (
-                              <span className="text-gray-400">0.0%</span>
-                            ) : d.variacao! > 0 ? (
-                              <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
-                                +{d.variacao?.toFixed(1)}% 📈
-                              </span>
+                    {itensAtuais.map((d, index) => {
+                      const globalIndex = indicePrimeiroItem + index;
+                      const isEditing = editandoIndex === globalIndex;
+
+                      return (
+                        <tr key={index} className="hover:bg-gray-50">
+                          <td className="p-3 font-medium text-gray-900">{d.produto}</td>
+                          <td className="p-3 font-mono text-gray-700">{d.codigo}</td>
+                          
+                          {!ocultarAnalise && (
+                            <>
+                              <td className="p-3 text-center">
+                                <span className={`px-2 py-0.5 rounded font-bold ${
+                                  d.classificacao === 'A' ? 'bg-red-100 text-red-700' :
+                                  d.classificacao === 'B' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'
+                                }`}>
+                                  {d.classificacao}
+                                </span>
+                              </td>
+                              <td className="p-3 text-right font-semibold">{d.vendas}</td>
+                              <td className="p-3 text-right">R$ {d.valor.toFixed(2)}</td>
+                              <td className="p-3 text-right font-bold text-blue-600">{d.saldoEstoque}</td>
+                              <td className="p-3 text-right">{d.mediaDiaria}</td>
+                              <td className="p-3 text-right">{d.coberturaDias}d</td>
+                              <td className="p-3 text-right font-semibold">{d.coberturaMeses}</td>
+                              <td className="p-3 text-center">
+                                <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                                  d.status.includes('Sugestão') ? 'bg-orange-100 text-orange-800' : 'bg-emerald-100 text-emerald-800'
+                                }`}>
+                                  {d.status}
+                                </span>
+                              </td>
+                              {competenciaAnterior && (
+                                <td className="p-3 text-center font-bold">
+                                  {d.variacao === 0 ? (
+                                    <span className="text-gray-400">0.0%</span>
+                                  ) : d.variacao! > 0 ? (
+                                    <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
+                                      +{d.variacao?.toFixed(1)}% 📈
+                                    </span>
+                                  ) : (
+                                    <span className="text-red-600 bg-red-50 px-2 py-1 rounded">
+                                      {d.variacao?.toFixed(1)}% 📉
+                                    </span>
+                                  )}
+                                </td>
+                              )}
+                            </>
+                          )}
+
+                          {/* CAMPO DE RETORNO DE COMPRAS COM EDIÇÃO (CANETINHA) */}
+                          <td className="p-3 text-center">
+                            {isEditing ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <input
+                                  type="text"
+                                  value={textoRetorno}
+                                  onChange={(e) => setTextoRetorno(e.target.value)}
+                                  placeholder="Digite o retorno..."
+                                  className="border border-blue-400 rounded p-1 text-xs bg-white w-40"
+                                  autoFocus
+                                />
+                                <button
+                                  onClick={() => salvarRetorno(d.id, d.codigo)}
+                                  className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs font-bold cursor-pointer"
+                                >
+                                  Salvar
+                                </button>
+                                <button
+                                  onClick={() => setEditandoIndex(null)}
+                                  className="bg-gray-300 hover:bg-gray-400 text-gray-700 px-2 py-1 rounded text-xs cursor-pointer"
+                                >
+                                  X
+                                </button>
+                              </div>
                             ) : (
-                              <span className="text-red-600 bg-red-50 px-2 py-1 rounded">
-                                {d.variacao?.toFixed(1)}% 📉
-                              </span>
+                              <div className="flex items-center justify-center gap-2">
+                                <span className="text-gray-700">{d.retornoCompras || "-"}</span>
+                                <button
+                                  onClick={() => {
+                                    setEditandoIndex(globalIndex);
+                                    setTextoRetorno(d.retornoCompras || "");
+                                  }}
+                                  title="Editar Retorno de Compras"
+                                  className="text-blue-600 hover:text-blue-800 p-1 rounded hover:bg-blue-50 cursor-pointer transition-colors"
+                                >
+                                  ✏️
+                                </button>
+                              </div>
                             )}
                           </td>
-                        )}
-                      </tr>
-                    ))}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
