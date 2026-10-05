@@ -84,7 +84,6 @@ export default function Dashboard() {
       }
 
       return {
-        id: item.id || index + 1,
         produto: item.produto || "",
         codigo: item.codigo || "",
         localizacao: "-",
@@ -144,7 +143,6 @@ export default function Dashboard() {
     }
 
     const dadosExportar = dadosFiltradosEOrdenados.map(d => ({
-      "ID": d.id,
       "Produto": d.produto,
       "Código (SKU)": d.codigo,
       "Localização": d.localizacao,
@@ -278,7 +276,7 @@ export default function Dashboard() {
         {/* Tabela de Resultados */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           {loading ? (
-            <p className="p-6 text-center text-gray-500">Carregando e cruzando dados em nuvem...</p>
+            <p className="p-6 text-center text-gray-500">A carregar e a cruzar dados em nuvem...</p>
           ) : dadosConsolidados.length === 0 ? (
             <p className="p-6 text-center text-gray-500">Nenhum registo encontrado para a competência {competencia}. Vá na aba "Upload de Planilhas" para abastecer a base.</p>
           ) : (
@@ -287,7 +285,6 @@ export default function Dashboard() {
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead className="bg-gray-100 border-b border-gray-200 uppercase text-gray-700 font-semibold shadow-sm">
                     <tr>
-                      <th className="p-3">ID</th>
                       <th className="p-3">Produto</th>
                       <th className="p-3">Código (SKU)</th>
                       <th className="p-3 text-center">Classificação</th>
@@ -304,7 +301,6 @@ export default function Dashboard() {
                   <tbody className="divide-y divide-gray-200">
                     {itensAtuais.map((d, index) => (
                       <tr key={index} className="hover:bg-gray-50">
-                        <td className="p-3 text-gray-500">{d.id}</td>
                         <td className="p-3 font-medium text-gray-900">{d.produto}</td>
                         <td className="p-3 font-mono text-gray-700">{d.codigo}</td>
                         <td className="p-3 text-center">
@@ -352,7 +348,7 @@ export default function Dashboard() {
               {/* Rodapé com Paginação Visual */}
               <div className="p-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-sm">
                 <span className="text-gray-600">
-                  Mostrando de <b>{indicePrimeiroItem + 1}</b> até <b>{Math.min(indiceUltimoItem, dadosFiltradosEOrdenados.length)}</b> de <b>{dadosFiltradosEOrdenados.length}</b> produtos
+                  A mostrar de <b>{indicePrimeiroItem + 1}</b> até <b>{Math.min(indiceUltimoItem, dadosFiltradosEOrdenados.length)}</b> de <b>{dadosFiltradosEOrdenados.length}</b> produtos
                 </span>
                 <div className="flex space-x-2">
                   <button
