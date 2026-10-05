@@ -21,21 +21,23 @@ export default function Dashboard() {
     setLoading(true);
     const compBusca = competencia.trim();
 
-    // 1. Busca Curva ABC
+    // 1. Busca Curva ABC sem limite de paginação (trazendo todos os registos)
     const { data: abcAtual, error } = await supabase
       .from('curva_abc')
       .select('*')
-      .eq('mes_referencia', compBusca);
+      .eq('mes_referencia', compBusca)
+      .range(0, 9999);
 
     if (error) {
       console.error("Erro Supabase ABC:", error.message);
     }
 
-    // 2. Busca Inventário
+    // 2. Busca Inventário correspondente
     const { data: inventario } = await supabase
       .from('inventario')
       .select('*')
-      .eq('mes_referencia', compBusca);
+      .eq('mes_referencia', compBusca)
+      .range(0, 9999);
 
     // 3. Busca Mês Anterior (Opcional)
     let abcAnterior: any[] = [];
@@ -43,7 +45,8 @@ export default function Dashboard() {
       const { data: antData } = await supabase
         .from('curva_abc')
         .select('*')
-        .eq('mes_referencia', competenciaAnterior.trim());
+        .eq('mes_referencia', competenciaAnterior.trim())
+        .range(0, 9999);
       if (antData) abcAnterior = antData;
     }
 
@@ -53,7 +56,7 @@ export default function Dashboard() {
       return;
     }
 
-    // 4. Cruzamento e Cálculo
+    // 4. Cruzamento e Cálculo de todas as linhas
     const resultado = abcAtual.map((item: any, index: number) => {
       const invMatch = inventario?.find(
         (inv: any) => String(inv.codigo_sku || "").trim() === String(item.codigo || "").trim()
@@ -111,7 +114,7 @@ export default function Dashboard() {
     carregarDados();
   }, []);
 
-  // Cálculos dos Cards de Resumo (Topo)
+  // Cálculos dos Cards de Resumo (Topo) baseados em TODOS os itens carregados
   const totalUnidadesVendas = dadosConsolidados.reduce((acc, item) => acc + item.vendas, 0);
   const totalFaturamentoBruto = dadosConsolidados.reduce((acc, item) => acc + item.valor, 0);
   const totalTicketMedio = totalUnidadesVendas > 0 ? totalFaturamentoBruto / totalUnidadesVendas : 0;
@@ -170,7 +173,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-50 p-8 text-gray-900">
       <div className="max-w-[95%] mx-auto">
-        <h1 className="text-3xl font-bold mb-6 text-gray-800">Painel de Performance - Curva ABC</h1>
+        <h1 className="text-3xl font-bold mb-6 text-gray-800">Relatórios mensais - Best Fit</h1>
 
         <div className="flex space-x-6 border-b border-gray-300 pb-2 mb-6">
           <Link className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600" href="/">
