@@ -17,6 +17,7 @@ export default function UploadPage() {
   const [loadingDelete, setLoadingDelete] = useState(false);
 
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
+  const [regrasTiny, setRegrasTiny] = useState({ sku: 'A', estoque: 'E', status_sku: 'A', status_valor: 'B' });
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
   const [progressoCanais, setProgressoCanais] = useState<any[]>([]);
 
@@ -39,6 +40,15 @@ export default function UploadPage() {
   const carregarDadosCadastros = async () => {
     const { data: regras } = await supabase.from('config_regras_canais').select('*').order('id');
     if (regras) setRegrasCanais(regras);
+
+    const { data: tinyConfig } = await supabase.from('config_regras_tiny').select('*');
+    if (tinyConfig) {
+      const cfgSku = tinyConfig.find(t => t.campo === 'sku')?.coluna || 'A';
+      const cfgEstoque = tinyConfig.find(t => t.campo === 'estoque')?.coluna || 'E';
+      const cfgStatusSku = tinyConfig.find(t => t.campo === 'status_sku')?.coluna || 'A';
+      const cfgStatusValor = tinyConfig.find(t => t.campo === 'status_valor')?.coluna || 'B';
+      setRegrasTiny({ sku: cfgSku, estoque: cfgEstoque, status_sku: cfgStatusSku, status_valor: cfgStatusValor });
+    }
 
     const { data: tinyData } = await supabase.from('cadastros_base_tiny').select('sku, estoque');
     const { data: statusData } = await supabase.from('status_skus_catalogo').select('*');
@@ -214,6 +224,10 @@ export default function UploadPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+
+    const indiceSku = letraParaIndice(regrasTiny.sku);
+    const indiceEstoque = letraParaIndice(regrasTiny.estoque);
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -224,9 +238,10 @@ export default function UploadPage() {
         const registros = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
-          if (!row || row.length === 0) continue;
-          const sku = String(row[0] || "").trim();
-          const estoque = Number(row[row.length - 1] || 0);
+          if (!row || row.length <= Math.max(indiceSku, indiceEstoque)) continue;
+
+          const sku = String(row[indiceSku] || "").trim();
+          const estoque = Number(row[indiceEstoque] || 0);
 
           if (sku && !/sku|código|codigo/i.test(sku)) {
             registros.push({ sku, estoque: isNaN(estoque) ? 0 : estoque });
@@ -236,7 +251,7 @@ export default function UploadPage() {
         const { error } = await supabase.from('cadastros_base_tiny').upsert(registros, { onConflict: 'sku' });
         if (error) throw error;
 
-        alert(`Base Tiny atualizada! ${registros.length} SKUs processados.`);
+        alert(`Base Tiny atualizada (SKU: ${regrasTiny.sku}, Estoque: ${regrasTiny.estoque})! ${registros.length} SKUs processados.`);
         setLoading(false);
         carregarDadosCadastros();
       } catch (err: any) {
@@ -251,6 +266,10 @@ export default function UploadPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+
+    const indiceSku = letraParaIndice(regrasTiny.status_sku);
+    const indiceValor = letraParaIndice(regrasTiny.status_valor);
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -264,11 +283,12 @@ export default function UploadPage() {
         const registros = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
-          if (!row || row.length === 0) continue;
-          const sku = String(row[0] || "").trim();
+          if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
+
+          const sku = String(row[indiceSku] || "").trim();
           if (!skusTinySet.has(sku)) continue;
 
-          let statusVal = String(row[1] || 'Normal').trim();
+          let statusVal = String(row[indiceValor] || 'Normal').trim();
           if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
           else statusVal = 'Normal';
 
@@ -278,7 +298,7 @@ export default function UploadPage() {
         const { error } = await supabase.from('status_skus_catalogo').upsert(registros, { onConflict: 'sku' });
         if (error) throw error;
 
-        alert(`Status atualizados! ${registros.length} SKUs validados.`);
+        alert(`Status atualizados (SKU: ${regrasTiny.status_sku}, Status: ${regrasTiny.status_valor})! ${registros.length} SKUs validados.`);
         setLoading(false);
         carregarDadosCadastros();
       } catch (err: any) {
@@ -348,21 +368,11 @@ export default function UploadPage() {
 
           <div className="flex items-center gap-3">
             <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/">
-                Dashboard
-              </Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/upload">
-                Upload & Canais
-              </Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/mapeamento">
-                Mapeamento
-              </Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">
-                Regras
-              </Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/admin">
-                Admin
-              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/">Dashboard</Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/upload">Upload & Canais</Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/mapeamento">Mapeamento</Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">Regras</Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/admin">Admin</Link>
             </div>
           </div>
         </div>
@@ -454,10 +464,12 @@ export default function UploadPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
                 <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Base Central (Tiny ERP)</h3>
+                <p className="text-xs text-slate-400 mb-3">Lê colunas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadTiny} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
                 <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
+                <p className="text-xs text-slate-400 mb-3">Lê colunas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
             </div>
