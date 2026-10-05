@@ -88,7 +88,6 @@ export default function UploadPage() {
     return coluna - 1;
   };
 
-  // Função auxiliar para normalizar SKU (remove ".0" se interpretado como número e limpa espaços)
   const normalizarSku = (valor: any) => {
     if (valor === null || valor === undefined) return "";
     let s = String(valor).trim();
@@ -359,7 +358,10 @@ export default function UploadPage() {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array", cellDates: true, raw: false });
         
-        const sheetName = workbook.SheetNames.includes("Anúncios") ? "Anúncios" : workbook.SheetNames[0];
+        let sheetName = workbook.SheetNames[0];
+        if (workbook.SheetNames.includes("Template")) sheetName = "Template";
+        else if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
+
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
@@ -383,16 +385,20 @@ export default function UploadPage() {
         let linhaInicio = 0;
         for (let i = 0; i < Math.min(json.length, 15); i++) {
           const row = json[i];
-          if (row && row.some((cell: any) => String(cell).trim().toLowerCase() === 'sku')) {
+          if (row && row.some((cell: any) => {
+            const val = String(cell).trim().toLowerCase();
+            return val === 'seller_sku' || val === 'sku' || val === 'sku_id';
+          })) {
             linhaInicio = i + 1;
             break;
           }
         }
-        if (linhaInicio === 0) linhaInicio = 5;
+        if (linhaInicio === 0 || linhaInicio < 5) linhaInicio = 5;
 
         for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
+          
           const skuVal = normalizarSku(row[indiceColuna]);
           if (skusTinySet.has(skuVal)) {
             skusNoCanal.add(skuVal);
