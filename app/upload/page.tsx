@@ -94,6 +94,8 @@ export default function UploadPage() {
     if (s.endsWith(".0")) {
       s = s.substring(0, s.length - 2);
     }
+    // Remove aspas extras se vierem do Excel em formato texto
+    s = s.replace(/^["']|["']$/g, "").trim();
     return s;
   };
 
@@ -345,19 +347,40 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  const handleUploadCanal = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Suporte a múltiplos arquivos em simultâneo para canais como o TikTok
+  const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
     setLoading(true);
 
     const indiceColuna = letraParaIndice(letraColuna || "A");
 
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array", cellDates: true, raw: false });
-        
+    try {
+      // 1. Buscar todos os SKUs do Tiny
+      let allTiny: any[] = [];
+      let rangeStep = 1000;
+      let from = 0;
+      let keepFetching = true;
+      while (keepFetching) {
+        const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + rangeStep - 1);
+        if (tinyBatch && tinyBatch.length > 0) {
+          allTiny = [...allTiny, ...tinyBatch];
+          from += rangeStep;
+          if (tinyBatch.length < rangeStep) keepFetching = false;
+        } else {
+          keepFetching = false;
+        }
+      }
+      const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
+
+      const skusNoCanalTotal = new Set<string>();
+
+      // 2. Iterar por cada ficheiro selecionado
+      for (let f = 0; f < files.length; f++) {
+        const file = files[f];
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true, raw: false });
+
         let sheetName = workbook.SheetNames[0];
         if (workbook.SheetNames.includes("Template")) sheetName = "Template";
         else if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
@@ -365,23 +388,6 @@ export default function UploadPage() {
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        let allTiny: any[] = [];
-        let rangeStep = 1000;
-        let from = 0;
-        let keepFetching = true;
-        while (keepFetching) {
-          const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + rangeStep - 1);
-          if (tinyBatch && tinyBatch.length > 0) {
-            allTiny = [...allTiny, ...tinyBatch];
-            from += rangeStep;
-            if (tinyBatch.length < rangeStep) keepFetching = false;
-          } else {
-            keepFetching = false;
-          }
-        }
-        const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
-
-        const skusNoCanal = new Set<string>();
         let linhaInicio = 0;
         for (let i = 0; i < Math.min(json.length, 15); i++) {
           const row = json[i];
@@ -401,30 +407,30 @@ export default function UploadPage() {
           
           const skuVal = normalizarSku(row[indiceColuna]);
           if (skusTinySet.has(skuVal)) {
-            skusNoCanal.add(skuVal);
+            skusNoCanalTotal.add(skuVal);
           }
         }
-
-        const registrosUpsert: any[] = [];
-        skusTinySet.forEach(sku => {
-          registrosUpsert.push({ canal: canalNome, sku: sku, presente: skusNoCanal.has(sku) });
-        });
-
-        const tamanhoLote = 500;
-        for (let i = 0; i < registrosUpsert.length; i += tamanhoLote) {
-          const lote = registrosUpsert.slice(i, i + tamanhoLote);
-          const { error } = await supabase.from('mapeamento_canais_skus').upsert(lote, { onConflict: 'canal,sku' });
-          if (error) throw error;
-        }
-
-        alert(`Canal "${canalNome}" sincronizado com sucesso! ${skusNoCanal.size} SKUs cruzados com a base.`);
-        setLoading(false);
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
       }
-    };
-    reader.readAsArrayBuffer(file);
+
+      // 3. Registar o mapeamento no Supabase em lote
+      const registrosUpsert: any[] = [];
+      skusTinySet.forEach(sku => {
+        registrosUpsert.push({ canal: canalNome, sku: sku, presente: skusNoCanalTotal.has(sku) });
+      });
+
+      const tamanhoLote = 500;
+      for (let i = 0; i < registrosUpsert.length; i += tamanhoLote) {
+        const lote = registrosUpsert.slice(i, i + tamanhoLote);
+        const { error } = await supabase.from('mapeamento_canais_skus').upsert(lote, { onConflict: 'canal,sku' });
+        if (error) throw error;
+      }
+
+      alert(`Canal "${canalNome}" sincronizado com sucesso (${files.length} ficheiro(s))! ${skusNoCanalTotal.size} SKUs cruzados.`);
+      setLoading(false);
+    } catch (err: any) {
+      alert("Erro ao processar ficheiros: " + err.message);
+      setLoading(false);
+    }
   };
 
   return (
@@ -556,7 +562,7 @@ export default function UploadPage() {
 
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-              <p className="text-xs text-slate-400 mb-6">Atualize ou limpe o mapeamento de cada marketplace de forma independente.</p>
+              <p className="text-xs text-slate-400 mb-6">Atualize ou limpe o mapeamento de cada marketplace. Pode selecionar <strong>múltiplos ficheiros</strong> em simultâneo caso o canal tenha várias planilhas.</p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {regrasCanais.map((r, idx) => (
@@ -572,8 +578,9 @@ export default function UploadPage() {
                       <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Atualizar canal (Coluna: {r.coluna_sku}):</label>
                       <input 
                         type="file" 
+                        multiple 
                         accept=".xlsx, .xls, .csv" 
-                        onChange={(e) => handleUploadCanal(r.canal, r.coluna_sku, e)}
+                        onChange={(e) => handleUploadCanalMultiplos(r.canal, r.coluna_sku, e)}
                         className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:font-bold file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1 rounded-lg border border-slate-800"
                       />
                     </div>
