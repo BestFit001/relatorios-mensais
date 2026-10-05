@@ -11,7 +11,7 @@ export default function UploadPage() {
   const [ficheiroInventario, setFicheiroInventario] = useState("");
   
   const [dadosABC, setDadosABC] = useState<any[]>([]);
-  const [dadosInvFiltrados, setDadosInvFiltrados] = useState<any[]>([]);
+  const [dadosInvBruto, setDadosInvBruto] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
 
@@ -29,7 +29,7 @@ export default function UploadPage() {
   const anoAtual = new Date().getFullYear();
   const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i); 
 
-  // 1. Processar Curva ABC (Lendo da linha de dados em diante, ignorando cabeçalhos)
+  // 1. Processar Curva ABC (Ignorando cabeçalhos estritamente)
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -46,16 +46,23 @@ export default function UploadPage() {
         const formatado = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
+          if (!row || row.length === 0) continue;
+
           const codigo = String(row[0] || "").trim();
           const produto = String(row[1] || "").trim();
 
-          // Ignora cabeçalhos ou linhas inválidas
+          // Ignora cabeçalhos, rótulos ou linhas de título
+          const codigoLower = codigo.toLowerCase();
+          const produtoLower = produto.toLowerCase();
+
           if (
             codigo && 
             codigo !== "" && 
-            !codigo.toLowerCase().includes("código") && 
-            !codigo.toLowerCase().includes("id") &&
-            !produto.toLowerCase().includes("produto")
+            !codigoLower.includes("código") && 
+            !codigoLower.includes("id") &&
+            !codigoLower.includes("código (sku)") &&
+            !produtoLower.includes("produto") &&
+            !isNaN(Number(row[2])) // Garante que a coluna de vendas é numérica
           ) {
             formatado.push({
               mes_referencia: mesReferencia,
@@ -79,7 +86,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // 2. Processar Inventário cruzando e filtrando estritamente com os SKUs da Curva ABC
+  // 2. Processar Inventário filtrando com os SKUs da Curva ABC
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -106,7 +113,6 @@ export default function UploadPage() {
           const row = json[i];
           if (!row || row.length === 0) continue;
 
-          // Procura em todas as colunas da linha o SKU que bate com a Curva ABC
           let skuEncontrado = "";
           let saldoEstoque = 0;
 
@@ -118,9 +124,7 @@ export default function UploadPage() {
             }
           }
 
-          // Se encontrou o SKU na linha, captura o saldo (geralmente na última coluna ou índice específico)
           if (skuEncontrado) {
-            // Tenta pegar o último valor numérico da linha ou coluna de saldo
             const saldoVal = Number(row[row.length - 1] ?? row[1] ?? row[5] ?? 0);
             if (!isNaN(saldoVal)) saldoEstoque = saldoVal;
 
@@ -132,8 +136,8 @@ export default function UploadPage() {
           }
         }
 
-        setDadosInvFiltrados(formatado);
-        alert(`Inventário processado com sucesso: ${formatado.length} SKUs correspondentes à Curva ABC foram salvos na base.`);
+        setDadosInvBruto(formatado);
+        alert(`Inventário processado: ${formatado.length} SKUs correspondentes à Curva ABC foram identificados.`);
       } catch (err: any) {
         alert("Erro ao ler Inventário: " + err.message);
       }
@@ -162,8 +166,8 @@ export default function UploadPage() {
     }
 
     // 2. Insere Inventário filtrado
-    if (dadosInvFiltrados.length > 0) {
-      const { error: errInv } = await supabase.from('inventario').insert(dadosInvFiltrados);
+    if (dadosInvBruto.length > 0) {
+      const { error: errInv } = await supabase.from('inventario').insert(dadosInvBruto);
       if (errInv) {
         alert("Erro ao gravar Inventário: " + errInv.message);
         setLoading(false);
@@ -172,12 +176,12 @@ export default function UploadPage() {
     }
 
     setLoading(false);
-    alert(`🚀 Sucesso! ${dadosABC.length} SKUs da Curva ABC e ${dadosInvFiltrados.length} registos de inventário correspondentes guardados no Supabase.`);
+    alert(`🚀 Sucesso! ${dadosABC.length} SKUs da Curva ABC e ${dadosInvBruto.length} registos de inventário guardados no Supabase.`);
     
     setFicheiroABC("");
     setFicheiroInventario("");
     setDadosABC([]);
-    setDadosInvFiltrados([]);
+    setDadosInvBruto([]);
   };
 
   const limparDadosCompetencia = async () => {
@@ -251,7 +255,7 @@ export default function UploadPage() {
               </div>
             </div>
 
-            {(dadosABC.length > 0 || dadosInvFiltrados.length > 0) && (
+            {(dadosABC.length > 0 || dadosInvBruto.length > 0) && (
               <div className="mt-8 pt-6 border-t border-gray-200 flex justify-end">
                 <button 
                   onClick={enviarParaBanco} 
