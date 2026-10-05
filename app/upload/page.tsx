@@ -16,10 +16,8 @@ export default function UploadPage() {
   const [loading, setLoading] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
 
-  const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
-  const [regrasTiny, setRegrasTiny] = useState({ sku: 'A', estoque: 'E', status_sku: 'A', status_valor: 'B' });
+  const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
-  const [progressoCanais, setProgressoCanais] = useState<any[]>([]);
 
   const mesReferencia = mes && ano ? `${mes}/${ano}` : "";
   const meses = [
@@ -38,60 +36,46 @@ export default function UploadPage() {
   }, []);
 
   const carregarDadosCadastros = async () => {
-    const { data: regras } = await supabase.from('config_regras_canais').select('*').order('id');
-    if (regras) setRegrasCanais(regras);
-
     const { data: tinyConfig } = await supabase.from('config_regras_tiny').select('*');
     if (tinyConfig) {
-      const cfgSku = tinyConfig.find(t => t.campo === 'sku')?.coluna || 'A';
-      const cfgEstoque = tinyConfig.find(t => t.campo === 'estoque')?.coluna || 'E';
+      const cfgSku = tinyConfig.find(t => t.campo === 'sku')?.coluna || 'C';
+      const cfgEstoque = tinyConfig.find(t => t.campo === 'estoque')?.coluna || 'F';
       const cfgStatusSku = tinyConfig.find(t => t.campo === 'status_sku')?.coluna || 'A';
       const cfgStatusValor = tinyConfig.find(t => t.campo === 'status_valor')?.coluna || 'B';
       setRegrasTiny({ sku: cfgSku, estoque: cfgEstoque, status_sku: cfgStatusSku, status_valor: cfgStatusValor });
     }
 
-    const { data: tinyData } = await supabase.from('cadastros_base_tiny').select('sku, estoque');
-    const { data: statusData } = await supabase.from('status_skus_catalogo').select('*');
+    // Busca paginada ou total superando o limite de 1000 do Supabase
+    let allTiny: any[] = [];
+    let rangeStep = 1000;
+    let from = 0;
+    let keepFetching = true;
 
-    const totalTiny = tinyData?.length || 0;
+    while (keepFetching) {
+      const { data } = await supabase.from('cadastros_base_tiny').select('sku, estoque').range(from, from + rangeStep - 1);
+      if (data && data.length > 0) {
+        allTiny = [...allTiny, ...data];
+        from += rangeStep;
+        if (data.length < rangeStep) keepFetching = false;
+      } else {
+        keepFetching = false;
+      }
+    }
+
+    const { data: statusData } = await supabase.from('status_skus_catalogo').select('sku, status');
+    const totalTiny = allTiny.length;
     const mapaStatus = new Map(statusData?.map(s => [s.sku, s.status]) || []);
 
     let normais = 0;
     let obsoletos = 0;
 
-    tinyData?.forEach(item => {
+    allTiny.forEach(item => {
       const st = mapaStatus.get(item.sku) || 'Normal';
       if (st === 'Obsoleto') obsoletos++;
       else normais++;
     });
 
     setEstatisticas({ totalTiny, normais, obsoletos });
-
-    if (regras && tinyData) {
-      const skusTinySet = new Set(tinyData.map(t => t.sku));
-      const { data: mapeamentoData } = await supabase.from('mapeamento_canais_skus').select('*');
-
-      const progresso = regras.map(r => {
-        const skusCanal = new Set(
-          mapeamentoData?.filter(m => m.canal === r.canal && m.presente).map(m => m.sku) || []
-        );
-
-        let cadastrados = 0;
-        skusTinySet.forEach(sku => {
-          if (skusCanal.has(sku)) cadastrados++;
-        });
-
-        const percentual = totalTiny > 0 ? (cadastrados / totalTiny) * 100 : 0;
-        return {
-          canal: r.canal,
-          cadastrados,
-          total: totalTiny,
-          percentual: percentual.toFixed(1)
-        };
-      });
-
-      setProgressoCanais(progresso);
-    }
   };
 
   const letraParaIndice = (str: string) => {
@@ -220,6 +204,16 @@ export default function UploadPage() {
     alert(`🗑 Dados limpos.`);
   };
 
+  const limparBaseTiny = async () => {
+    if (!confirm("Tem certeza que deseja apagar toda a base do Tiny ERP?")) return;
+    const { error } = await supabase.from('cadastros_base_tiny').delete().neq('id', 0);
+    if (error) alert("Erro: " + error.message);
+    else {
+      alert("Base Tiny limpa com sucesso!");
+      carregarDadosCadastros();
+    }
+  };
+
   const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -250,7 +244,6 @@ export default function UploadPage() {
         }
         const registros = Array.from(mapaUnico.values());
 
-        // Inserção em lotes de 500 para evitar limites de payload do Supabase
         const tamanhoLote = 500;
         for (let i = 0; i < registros.length; i += tamanhoLote) {
           const lote = registros.slice(i, i + tamanhoLote);
@@ -322,57 +315,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  const handleUploadCanal = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-
-    const indiceColuna = letraParaIndice(letraColuna || "A");
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array", cellDates: true });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const { data: tinyData } = await supabase.from('cadastros_base_tiny').select('sku');
-        const skusTinySet = new Set(tinyData?.map(t => t.sku) || []);
-
-        const skusNoCanal = new Set<string>();
-        for (let i = 0; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= indiceColuna) continue;
-          const skuVal = String(row[indiceColuna] || "").trim();
-          if (skusTinySet.has(skuVal)) {
-            skusNoCanal.add(skuVal);
-          }
-        }
-
-        const registrosUpsert: any[] = [];
-        skusTinySet.forEach(sku => {
-          registrosUpsert.push({ canal: canalNome, sku: sku, presente: skusNoCanal.has(sku) });
-        });
-
-        const tamanhoLote = 500;
-        for (let i = 0; i < registrosUpsert.length; i += tamanhoLote) {
-          const lote = registrosUpsert.slice(i, i + tamanhoLote);
-          const { error } = await supabase.from('mapeamento_canais_skus').upsert(lote, { onConflict: 'canal,sku' });
-          if (error) throw error;
-        }
-
-        alert(`Canal "${canalNome}" sincronizado! ${skusNoCanal.size} SKUs mapeados.`);
-        setLoading(false);
-        carregarDadosCadastros();
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-5xl mx-auto">
@@ -409,7 +351,7 @@ export default function UploadPage() {
               abaAtiva === "cadastros" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
             }`}
           >
-            🛒 Cadastros e Canais (11 Marketplaces)
+            🛒 Cadastros e Canais (Base Tiny & Status)
           </button>
         </div>
 
@@ -478,40 +420,25 @@ export default function UploadPage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
-                <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Base Central (Tiny ERP)</h3>
-                <p className="text-xs text-slate-400 mb-3">Lê todas as linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
+              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Base Central (Tiny ERP)</h3>
+                    <button onClick={limparBaseTiny} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer">
+                      🗑️ Limpar Base Tiny
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-3">Lê todas as linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
+                </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadTiny} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
-                <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
-                <p className="text-xs text-slate-400 mb-3">Lê todas as linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
-                <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
-              </div>
-            </div>
 
-            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <h2 className="text-lg font-bold mb-2 text-white">Progresso de Cadastros por Canal</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mt-4">
-                {progressoCanais.map((p, idx) => {
-                  const regraCanal = regrasCanais.find(r => r.canal === p.canal);
-                  const letraColunaConfigurada = regraCanal ? regraCanal.coluna_sku : 'A';
-                  return (
-                    <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
-                      <div>
-                        <div className="flex justify-between items-center mb-2">
-                          <span className="font-bold text-white text-sm">{p.canal}</span>
-                          <span className="text-xs font-mono font-bold text-indigo-400">{p.percentual}%</span>
-                        </div>
-                        <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden mb-3">
-                          <div className="bg-indigo-600 h-full rounded-full transition-all" style={{ width: `${Math.min(Number(p.percentual), 100)}%` }}></div>
-                        </div>
-                        <p className="text-[11px] text-slate-400"><strong>{p.cadastrados}</strong> de <strong>{p.total}</strong> SKUs (Coluna: {letraColunaConfigurada})</p>
-                      </div>
-                      <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => handleUploadCanal(p.canal, letraColunaConfigurada, e)} className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1.5 rounded-lg border border-slate-800" />
-                    </div>
-                  );
-                })}
+              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
+                  <p className="text-xs text-slate-400 mb-3">Lê todas as linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: 1<strong>{regrasTiny.status_valor}</strong>).</p>
+                </div>
+                <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
             </div>
           </div>
