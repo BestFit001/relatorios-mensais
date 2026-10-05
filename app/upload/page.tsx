@@ -232,8 +232,9 @@ export default function UploadPage() {
     reader.onload = async (evt) => {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 }) as any[];
+        const workbook = XLSX.read(data, { type: "array", cellDates: true });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
@@ -249,8 +250,13 @@ export default function UploadPage() {
         }
         const registros = Array.from(mapaUnico.values());
 
-        const { error } = await supabase.from('cadastros_base_tiny').upsert(registros, { onConflict: 'sku' });
-        if (error) throw error;
+        // Inserção em lotes de 500 para evitar limites de payload do Supabase
+        const tamanhoLote = 500;
+        for (let i = 0; i < registros.length; i += tamanhoLote) {
+          const lote = registros.slice(i, i + tamanhoLote);
+          const { error } = await supabase.from('cadastros_base_tiny').upsert(lote, { onConflict: 'sku' });
+          if (error) throw error;
+        }
 
         alert(`Base Tiny atualizada com sucesso! ${registros.length} SKUs únicos processados.`);
         setLoading(false);
@@ -275,8 +281,9 @@ export default function UploadPage() {
     reader.onload = async (evt) => {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 }) as any[];
+        const workbook = XLSX.read(data, { type: "array", cellDates: true });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         const { data: tinyData } = await supabase.from('cadastros_base_tiny').select('sku');
         const skusTinySet = new Set(tinyData?.map(t => t.sku) || []);
@@ -297,8 +304,12 @@ export default function UploadPage() {
         }
         const registros = Array.from(mapaUnico.values());
 
-        const { error } = await supabase.from('status_skus_catalogo').upsert(registros, { onConflict: 'sku' });
-        if (error) throw error;
+        const tamanhoLote = 500;
+        for (let i = 0; i < registros.length; i += tamanhoLote) {
+          const lote = registros.slice(i, i + tamanhoLote);
+          const { error } = await supabase.from('status_skus_catalogo').upsert(lote, { onConflict: 'sku' });
+          if (error) throw error;
+        }
 
         alert(`Status atualizados com sucesso! ${registros.length} SKUs validados.`);
         setLoading(false);
@@ -322,8 +333,9 @@ export default function UploadPage() {
     reader.onload = async (evt) => {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 }) as any[];
+        const workbook = XLSX.read(data, { type: "array", cellDates: true });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         const { data: tinyData } = await supabase.from('cadastros_base_tiny').select('sku');
         const skusTinySet = new Set(tinyData?.map(t => t.sku) || []);
@@ -343,8 +355,12 @@ export default function UploadPage() {
           registrosUpsert.push({ canal: canalNome, sku: sku, presente: skusNoCanal.has(sku) });
         });
 
-        const { error } = await supabase.from('mapeamento_canais_skus').upsert(registrosUpsert, { onConflict: 'canal,sku' });
-        if (error) throw error;
+        const tamanhoLote = 500;
+        for (let i = 0; i < registrosUpsert.length; i += tamanhoLote) {
+          const lote = registrosUpsert.slice(i, i + tamanhoLote);
+          const { error } = await supabase.from('mapeamento_canais_skus').upsert(lote, { onConflict: 'canal,sku' });
+          if (error) throw error;
+        }
 
         alert(`Canal "${canalNome}" sincronizado! ${skusNoCanal.size} SKUs mapeados.`);
         setLoading(false);
@@ -464,12 +480,12 @@ export default function UploadPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
                 <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Base Central (Tiny ERP)</h3>
-                <p className="text-xs text-slate-400 mb-3">Lê colunas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
+                <p className="text-xs text-slate-400 mb-3">Lê todas as linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadTiny} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
                 <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
-                <p className="text-xs text-slate-400 mb-3">Lê colunas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
+                <p className="text-xs text-slate-400 mb-3">Lê todas as linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
             </div>
