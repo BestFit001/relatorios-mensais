@@ -218,11 +218,13 @@ export default function UploadPage() {
         const registros = data.map(row => {
           const skuKey = Object.keys(row).find(k => /sku|código|codigo/i.test(k));
           const estoqueKey = Object.keys(row).find(k => /estoque|saldo|qtde|quantidade/i.test(k));
-          if (!skuKey) return null;
+          if (!skuKey || !row[skuKey]) return null;
           return { sku: String(row[skuKey]).trim(), estoque: estoqueKey ? Number(row[estoqueKey]) || 0 : 0 };
-        }).filter(Boolean);
+        }).filter((item): item is { sku: string; estoque: number } => item !== null);
 
-        await supabase.from('cadastros_base_tiny').upsert(registros, { onConflict: 'sku' });
+        const { error } = await supabase.from('cadastros_base_tiny').upsert(registros, { onConflict: 'sku' });
+        if (error) throw error;
+
         alert(`Base Tiny atualizada! ${registros.length} SKUs processados.`);
         setLoading(false);
         carregarDadosCadastros();
@@ -252,18 +254,20 @@ export default function UploadPage() {
         const registros = data.map(row => {
           const skuKey = Object.keys(row).find(k => /sku|código|codigo/i.test(k));
           const statusKey = Object.keys(row).find(k => /status|tipo|condicao|situação/i.test(k));
-          if (!skuKey) return null;
+          if (!skuKey || !row[skuKey]) return null;
           const sku = String(row[skuKey]).trim();
           if (!skusTinySet.has(sku)) return null;
 
           let statusVal = statusKey ? String(row[statusKey]).trim() : 'Normal';
-          if (/obsoleto|inativo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
+          if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
           else statusVal = 'Normal';
 
           return { sku, status: statusVal };
-        }).filter(Boolean);
+        }).filter((item): item is { sku: string; status: string } => item !== null);
 
-        await supabase.from('status_skus_catalogo').upsert(registros, { onConflict: 'sku' });
+        const { error } = await supabase.from('status_skus_catalogo').upsert(registros, { onConflict: 'sku' });
+        if (error) throw error;
+
         alert(`Status atualizados! ${registros.length} SKUs validados.`);
         setLoading(false);
         carregarDadosCadastros();
@@ -304,7 +308,9 @@ export default function UploadPage() {
           registrosUpsert.push({ canal: canalNome, sku: sku, presente: skusNoCanal.has(sku) });
         });
 
-        await supabase.from('mapeamento_canais_skus').upsert(registrosUpsert, { onConflict: 'canal,sku' });
+        const { error } = await supabase.from('mapeamento_canais_skus').upsert(registrosUpsert, { onConflict: 'canal,sku' });
+        if (error) throw error;
+
         alert(`Canal "${canalNome}" sincronizado! ${skusNoCanal.size} SKUs mapeados.`);
         setLoading(false);
         carregarDadosCadastros();
