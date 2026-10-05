@@ -11,7 +11,7 @@ export default function UploadPage() {
   const [ficheiroInventario, setFicheiroInventario] = useState("");
   
   const [dadosABC, setDadosABC] = useState<any[]>([]);
-  const [dadosInv, setDadosInv] = useState<any[]>([]);
+  const [dadosInvBruto, setDadosInvBruto] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
 
@@ -29,7 +29,7 @@ export default function UploadPage() {
   const anoAtual = new Date().getFullYear();
   const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i); 
 
-  // Leitura ultra flexível para a Curva ABC (.xls / .xlsx)
+  // Leitura robusta da Curva ABC (mapeando por índices e chaves flexíveis)
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -41,45 +41,37 @@ export default function UploadPage() {
         const data = new Uint8Array(evento.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const dados_brutos = XLSX.utils.sheet_to_json(worksheet, { defval: "" }) as any[];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
         
-        console.log("Dados brutos ABC:", dados_brutos);
-
-        const formatado = dados_brutos.map(linha => {
-          // Tenta encontrar as chaves independentemente de maiúsculas/minúsculas ou variações
-          const chaves = Object.keys(linha);
-          const acharChave = (termo: string) => chaves.find(k => k.toLowerCase().includes(termo.toLowerCase())) || "";
-
-          const kCodigo = acharChave("cód") || acharChave("sku") || chaves[0];
-          const kProduto = acharChave("prod") || chaves[1];
-          const kQtd = acharChave("venda") || acharChave("quant") || chaves[2];
-          const kValor = acharChave("valor") || chaves[3];
-          const kInd = acharChave("individual") || acharChave("%") || chaves[4];
-          const kAcum = acharChave("acumulado") || chaves[5];
-          const kClass = acharChave("class") || chaves[6];
-
-          return {
-            mes_referencia: mesReferencia,
-            codigo: String(linha[kCodigo] || "").trim(),
-            produto: String(linha[kProduto] || "").trim(),
-            quantidade: Number(linha[kQtd] || 0),
-            valor: Number(linha[kValor] || 0),
-            porcentagem_individual: Number(linha[kInd] || 0),
-            porcentagem_acumulada: Number(linha[kAcum] || 0),
-            classificacao: String(linha[kClass] || "C").trim().toUpperCase()
-          };
-        }).filter(item => item.codigo && item.codigo !== "Código" && item.codigo !== "undefined");
+        // Identifica onde estão os dados (procurando a linha de cabeçalho ou lendo a partir da linha 1 ou 2)
+        const formatado = [];
+        for (let i = 0; i < json.length; i++) {
+          const row = json[i];
+          // Se a linha tem código válido (ex: SKU numérico ou texto consistente)
+          if (row && row[0] && String(row[0]).trim() !== "" && String(row[0]).toLowerCase() !== "código" && String(row[0]).toLowerCase() !== "id") {
+            formatado.push({
+              mes_referencia: mesReferencia,
+              codigo: String(row[0] || "").trim(),
+              produto: String(row[1] || "").trim(),
+              quantidade: Number(row[2] || 0),
+              valor: Number(row[3] || 0),
+              porcentagem_individual: Number(row[4] || 0),
+              porcentagem_acumulada: Number(row[5] || 0),
+              classificacao: String(row[6] || "C").trim().toUpperCase()
+            });
+          }
+        }
 
         setDadosABC(formatado);
-        alert(`Curva ABC lida com sucesso: ${formatado.length} registos encontrados.`);
+        alert(`Curva ABC processada com sucesso: ${formatado.length} SKUs identificados.`);
       } catch (err: any) {
-        alert("Erro ao ler ficheiro Curva ABC: " + err.message);
+        alert("Erro ao ler Curva ABC: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
-  // Leitura ultra flexível para o Inventário (.xls / .xlsx)
+  // Leitura robusta do Inventário
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -91,67 +83,73 @@ export default function UploadPage() {
         const data = new Uint8Array(evento.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const dados_brutos = XLSX.utils.sheet_to_json(worksheet, { defval: "" }) as any[];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
         
-        const formatado = dados_brutos.map(linha => {
-          const chaves = Object.keys(linha);
-          const acharChave = (termo: string) => chaves.find(k => k.toLowerCase().includes(termo.toLowerCase())) || "";
+        const formatado = [];
+        for (let i = 0; i < json.length; i++) {
+          const row = json[i];
+          // No inventário, geralmente o SKU está na coluna C (índice 2) ou A (índice 0) e o saldo na F (índice 5) ou última
+          const sku = String(row[2] || row[0] || "").trim();
+          const saldo = Number(row[5] || row[1] || row[row.length - 1] || 0);
 
-          const kCodigo = acharChave("cód") || acharChave("sku") || chaves[2] || chaves[0];
-          const kProduto = acharChave("prod") || chaves[1];
-          const kGtin = acharChave("gtin") || acharChave("ean") || chaves[3];
-          const kSaldo = acharChave("saldo") || acharChave("estoque") || chaves[5] || chaves[6];
+          if (sku && sku.toLowerCase() !== "código (sku)" && sku.toLowerCase() !== "código" && !isNaN(saldo)) {
+            formatado.push({
+              mes_referencia: mesReferencia,
+              codigo_sku: sku,
+              saldo: saldo
+            });
+          }
+        }
 
-          return {
-            mes_referencia: mesReferencia,
-            codigo_sku: String(linha[kCodigo] || "").trim(),
-            produto_inventario: String(linha[kProduto] || "").trim(),
-            gtin_ean: String(linha[kGtin] || "").trim(),
-            saldo: Number(linha[kSaldo] || 0)
-          };
-        }).filter(item => item.codigo_sku && item.codigo_sku !== "Código (SKU)" && item.codigo_sku !== "undefined");
-
-        setDadosInv(formatado);
-        alert(`Inventário lido com sucesso: ${formatado.length} registos encontrados.`);
+        setDadosInvBruto(formatado);
+        alert(`Inventário processado com sucesso: ${formatado.length} registos identificados.`);
       } catch (err: any) {
-        alert("Erro ao ler ficheiro de Inventário: " + err.message);
+        alert("Erro ao ler Inventário: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
   const enviarParaBanco = async () => {
-    if (dadosABC.length === 0 && dadosInv.length === 0) {
-      alert("Nenhum dado válido detetado nas planilhas.");
+    if (dadosABC.length === 0) {
+      alert("Por favor, selecione e processe primeiro a planilha de Curva ABC.");
       return;
     }
 
     setLoading(true);
 
-    if (dadosABC.length > 0) {
-      const { error } = await supabase.from('curva_abc').insert(dadosABC);
-      if (error) {
-        alert("Erro ao enviar Curva ABC: " + error.message);
-        setLoading(false);
-        return;
-      }
+    // Limpa dados antigos da competência antes de inserir novos para evitar duplicados
+    await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
+    await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
+
+    // 1. Insere Curva ABC
+    const { error: errAbc } = await supabase.from('curva_abc').insert(dadosABC);
+    if (errAbc) {
+      alert("Erro ao gravar Curva ABC: " + errAbc.message);
+      setLoading(false);
+      return;
     }
 
-    if (dadosInv.length > 0) {
-      const { error } = await supabase.from('inventario').insert(dadosInv);
-      if (error) {
-        alert("Erro ao enviar Inventário: " + error.message);
+    // 2. Filtra inventário apenas para os SKUs presentes na Curva ABC
+    const skusPermitidos = new Set(dadosABC.map(item => item.codigo));
+    const inventarioFiltrado = dadosInvBruto.filter(inv => skusPermitidos.has(inv.codigo_sku));
+
+    if (inventarioFiltrado.length > 0) {
+      const { error: errInv } = await supabase.from('inventario').insert(inventarioFiltrado);
+      if (errInv) {
+        alert("Erro ao gravar Inventário: " + errInv.message);
         setLoading(false);
         return;
       }
     }
 
     setLoading(false);
-    alert(`🚀 Sucesso! ${dadosABC.length} linhas de Curva ABC e ${dadosInv.length} de Inventário gravadas no Supabase.`);
+    alert(`🚀 Sucesso! ${dadosABC.length} SKUs da Curva ABC e ${inventarioFiltrado.length} registos de inventário guardados no Supabase.`);
+    
     setFicheiroABC("");
     setFicheiroInventario("");
     setDadosABC([]);
-    setDadosInv([]);
+    setDadosInvBruto([]);
   };
 
   const limparDadosCompetencia = async () => {
@@ -166,20 +164,20 @@ export default function UploadPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-8 text-gray-900">
       <div className="max-w-5xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6 text-gray-800">Painel de Performance</h1>
+        <h1 className="text-3xl font-bold mb-6 text-gray-800">Relatórios mensais - Best Fit</h1>
 
         <div className="flex space-x-6 border-b border-gray-300 pb-2 mb-6">
-          <Link href="/" className="px-4 py-2 font-semibold text-lg text-gray-500 hover:text-blue-500 transition-colors">
+          <Link className="px-4 py-2 font-semibold text-lg text-gray-500 hover:text-blue-500 transition-colors" href="/">
             Curva ABC & Histórico
           </Link>
-          <Link href="/upload" className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600">
+          <Link className="px-4 py-2 font-semibold text-lg border-b-4 border-blue-600 text-blue-600" href="/upload">
             Upload de Planilhas
           </Link>
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 max-w-3xl">
           <h2 className="text-xl font-bold mb-2 text-gray-800">Abastecimento do Banco de Dados</h2>
-          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros e grave no Supabase.</p>
+          <p className="text-gray-500 mb-8">Defina a competência, envie os ficheiros e grave no Supabase com leitura otimizada por linhas.</p>
           
           <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 mb-6">
             
@@ -225,14 +223,14 @@ export default function UploadPage() {
               </div>
             </div>
 
-            {(dadosABC.length > 0 || dadosInv.length > 0) && (
+            {(dadosABC.length > 0 || dadosInvBruto.length > 0) && (
               <div className="mt-8 pt-6 border-t border-gray-200 flex justify-end">
                 <button 
                   onClick={enviarParaBanco} 
                   disabled={loading}
                   className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-colors cursor-pointer"
                 >
-                  {loading ? "Enviando..." : "Gravar Dados no Supabase"}
+                  {loading ? "A gravar..." : "Gravar Dados no Supabase"}
                 </button>
               </div>
             )}
