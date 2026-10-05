@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 export default function RegrasPage() {
   const [regras, setRegras] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [salvando, setSalvando] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -33,21 +34,31 @@ export default function RegrasPage() {
     setLoading(false);
   };
 
-  const atualizarColunaSku = async (id: number, novaLetra: string) => {
-    const letraLimpa = novaLetra.trim().toUpperCase();
-    const { error } = await supabase
-      .from('config_regras_canais')
-      .update({ coluna_sku: letraLimpa })
-      .eq('id', id);
+  const alterarValorLocal = (id: number, novaLetra: string) => {
+    setRegras(prev =>
+      prev.map(r => r.id === id ? { ...r, coluna_sku: novaLetra.trim().toUpperCase() } : r)
+    );
+  };
 
-    if (error) {
-      alert("Erro ao atualizar regra: " + error.message);
-      return;
+  const salvarTodasRegras = async () => {
+    setSalvando(true);
+    
+    // Atualiza cada regra no Supabase
+    for (const regra of regras) {
+      const { error } = await supabase
+        .from('config_regras_canais')
+        .update({ coluna_sku: regra.coluna_sku })
+        .eq('id', regra.id);
+
+      if (error) {
+        alert(`Erro ao salvar o canal ${regra.canal}: ${error.message}`);
+        setSalvando(false);
+        return;
+      }
     }
 
-    setRegras(prev =>
-      prev.map(r => r.id === id ? { ...r, coluna_sku: letraLimpa } : r)
-    );
+    setSalvando(false);
+    alert("✅ Todas as regras de colunas foram salvas com sucesso! Elas serão lembradas permanentemente nos próximos uploads.");
   };
 
   const handleLogout = () => {
@@ -90,10 +101,21 @@ export default function RegrasPage() {
         </div>
 
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-          <h2 className="text-lg font-bold mb-2 text-white">Configuração da Posição da Coluna</h2>
-          <p className="text-xs text-slate-400 mb-6">
-            Insira a letra correspondente à coluna (Ex: <strong>A</strong> para a 1ª coluna, <strong>B</strong> para a 2ª, etc.). O sistema fará a leitura exata com base nessa posição.
-          </p>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            <div>
+              <h2 className="text-lg font-bold text-white">Configuração da Posição da Coluna</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Insira a letra correspondente à coluna (Ex: <strong>A</strong> para a 1ª coluna, <strong>B</strong> para a 2ª, etc.) e clique em salvar.
+              </p>
+            </div>
+            <button
+              onClick={salvarTodasRegras}
+              disabled={salvando}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl shadow-lg text-xs uppercase tracking-wider cursor-pointer transition-all"
+            >
+              {salvando ? "A salvar..." : "💾 Salvar Regras"}
+            </button>
+          </div>
 
           {loading ? (
             <p className="p-6 text-center text-slate-400 font-medium">A carregar regras...</p>
@@ -104,7 +126,6 @@ export default function RegrasPage() {
                   <tr>
                     <th className="p-4">Canal de Venda</th>
                     <th className="p-4">Letra da Coluna de SKU (Ex: A, B, C)</th>
-                    <th className="p-4 text-right">Ação</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
@@ -115,15 +136,10 @@ export default function RegrasPage() {
                         <input
                           type="text"
                           maxLength={3}
-                          defaultValue={regra.coluna_sku}
-                          onBlur={(e) => atualizarColunaSku(regra.id, e.target.value)}
+                          value={regra.coluna_sku}
+                          onChange={(e) => alterarValorLocal(regra.id, e.target.value)}
                           className="border border-slate-700 rounded-xl p-2.5 bg-slate-950 text-white text-xs w-32 text-center uppercase font-mono outline-none focus:border-indigo-500 shadow-inner"
                         />
-                      </td>
-                      <td className="p-4 text-right text-slate-400">
-                        <span className="text-[11px] bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300">
-                          Guardado automaticamente ao sair
-                        </span>
                       </td>
                     </tr>
                   ))}
@@ -131,6 +147,16 @@ export default function RegrasPage() {
               </table>
             </div>
           )}
+
+          <div className="mt-6 pt-5 border-t border-slate-800 flex justify-end">
+            <button
+              onClick={salvarTodasRegras}
+              disabled={salvando}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-8 rounded-xl shadow-lg text-xs uppercase tracking-wider cursor-pointer transition-all"
+            >
+              {salvando ? "A salvar alterações..." : "💾 Salvar Regras Definitivamente"}
+            </button>
+          </div>
         </div>
 
       </div>
