@@ -66,12 +66,12 @@ export default function UploadPage() {
 
     const { data: statusData } = await supabase.from('status_skus_catalogo').select('sku, status');
     const totalTiny = allTiny.length;
-    const mapaStatus = new Map(statusData?.map(s => [s.sku, s.status]) || []);
+    const mapaStatus = new Map(statusData?.map(s => [String(s.sku).trim(), s.status]) || []);
 
     let normais = 0;
     let obsoletos = 0;
     allTiny.forEach(item => {
-      const st = mapaStatus.get(item.sku) || 'Normal';
+      const st = mapaStatus.get(String(item.sku).trim()) || 'Normal';
       if (st === 'Obsoleto') obsoletos++;
       else normais++;
     });
@@ -86,6 +86,16 @@ export default function UploadPage() {
       coluna = coluna * 26 + (base.charCodeAt(i) - 64);
     }
     return coluna - 1;
+  };
+
+  // Função auxiliar para normalizar SKU (remove ".0" se interpretado como número e limpa espaços)
+  const normalizarSku = (valor: any) => {
+    if (valor === null || valor === undefined) return "";
+    let s = String(valor).trim();
+    if (s.endsWith(".0")) {
+      s = s.substring(0, s.length - 2);
+    }
+    return s;
   };
 
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
@@ -106,7 +116,7 @@ export default function UploadPage() {
           const row = json[i];
           if (!row || row.length === 0) continue;
           const produto = String(row[0] || "").trim();
-          const codigo = String(row[1] || "").trim();
+          const codigo = normalizarSku(row[1]);
           const quantidade = Number(row[2]);
           const valor = Number(row[3]);
 
@@ -159,7 +169,7 @@ export default function UploadPage() {
           let saldoEstoque = 0;
 
           for (let col = 0; col < row.length; col++) {
-            const val = String(row[col] || "").trim();
+            const val = normalizarSku(row[col]);
             if (skusPermitidos.has(val)) {
               skuEncontrado = val;
               break;
@@ -234,7 +244,7 @@ export default function UploadPage() {
     reader.onload = async (evt) => {
       try {
         const buffer = evt.target?.result;
-        const workbook = XLSX.read(buffer, { type: "array", cellDates: true, raw: true });
+        const workbook = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
@@ -243,7 +253,7 @@ export default function UploadPage() {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceEstoque)) continue;
 
-          const sku = String(row[indiceSku] || "").trim();
+          const sku = normalizarSku(row[indiceSku]);
           const estoque = Number(row[indiceEstoque] || 0);
 
           if (sku && !/sku|código|codigo/i.test(sku)) {
@@ -282,7 +292,7 @@ export default function UploadPage() {
     reader.onload = async (evt) => {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array", cellDates: true });
+        const workbook = XLSX.read(data, { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
@@ -300,14 +310,14 @@ export default function UploadPage() {
             keepFetching = false;
           }
         }
-        const skusTinySet = new Set(allTiny.map(t => t.sku));
+        const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
 
         const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
 
-          const sku = String(row[indiceSku] || "").trim();
+          const sku = normalizarSku(row[indiceSku]);
           if (!skusTinySet.has(sku)) continue;
 
           let statusVal = String(row[indiceValor] || 'Normal').trim();
@@ -347,7 +357,7 @@ export default function UploadPage() {
     reader.onload = async (evt) => {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array", cellDates: true });
+        const workbook = XLSX.read(data, { type: "array", cellDates: true, raw: false });
         
         const sheetName = workbook.SheetNames.includes("Anúncios") ? "Anúncios" : workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
@@ -367,24 +377,23 @@ export default function UploadPage() {
             keepFetching = false;
           }
         }
-        const skusTinySet = new Set(allTiny.map(t => t.sku));
+        const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
 
         const skusNoCanal = new Set<string>();
-        // Deteta automaticamente a linha de cabeçalho onde está a palavra 'sku' para ignorar o cabeçalho descritivo
         let linhaInicio = 0;
-        for (let i = 0; i < Math.min(json.length, 10); i++) {
+        for (let i = 0; i < Math.min(json.length, 15); i++) {
           const row = json[i];
           if (row && row.some((cell: any) => String(cell).trim().toLowerCase() === 'sku')) {
-            linhaInicio = i + 1; // Começa a ler logo após a linha do cabeçalho
+            linhaInicio = i + 1;
             break;
           }
         }
-        if (linhaInicio === 0) linhaInicio = 5; // Fallback padrão para planilhas do ML
+        if (linhaInicio === 0) linhaInicio = 5;
 
         for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
-          const skuVal = String(row[indiceColuna] || "").trim();
+          const skuVal = normalizarSku(row[indiceColuna]);
           if (skusTinySet.has(skuVal)) {
             skusNoCanal.add(skuVal);
           }
