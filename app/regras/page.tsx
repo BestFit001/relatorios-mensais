@@ -10,7 +10,6 @@ export default function RegrasPage() {
   const [salvando, setSalvando] = useState(false);
   const router = useRouter();
 
-  // Campos para nova regra
   const [novoCanal, setNovoCanal] = useState("Amazon");
   const [novaFaixa, setNovaFaixa] = useState("R$ 0.00 até R$ 78.99");
   const [novaComissao, setNovaComissao] = useState("14.00");
@@ -90,7 +89,6 @@ export default function RegrasPage() {
           </div>
         </div>
 
-        {/* FORMULÁRIO PARA ADICIONAR NOVA REGRA */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8">
           <h2 className="text-sm font-bold text-white uppercase tracking-wider mb-4">➕ Adicionar Nova Regra Condicional</h2>
           <form onSubmit={adicionarRegra} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 items-end">
@@ -113,7 +111,7 @@ export default function RegrasPage() {
 
             <div>
               <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tarifa Fixa (R$)</label>
-              <input type="text" value={novaTarifaFixa} onChange={(e) => setNovoTarifaFixa(e.target.value)} placeholder="4.00" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none" required />
+              <input type="text" value={novaTarifaFixa} onChange={(e) => setNovaTarifaFixa(e.target.value)} placeholder="4.00" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none" required />
             </div>
 
             <div>
@@ -127,7 +125,6 @@ export default function RegrasPage() {
           </form>
         </div>
 
-        {/* TABELA DE REGRAS */}
         <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
           <div className="p-6 border-b border-slate-800">
             <h2 className="text-lg font-bold text-white">Regras Ativas</h2>
@@ -146,7 +143,7 @@ export default function RegrasPage() {
                     <th className="p-4">Canal</th>
                     <th className="p-4">Faixa de Preço</th>
                     <th className="p-4 text-center">Comissão (%)</th>
-                    <th className="p-4 text-center">Tarifa Fixo (R$)</th>
+                    <th className="p-4 text-center">Tarifa Fixa (R$)</th>
                     <th className="p-4 text-center">Frete (R$)</th>
                     <th className="p-4 text-center">Ação</th>
                   </tr>
