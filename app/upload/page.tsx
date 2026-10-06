@@ -242,6 +242,23 @@ export default function UploadPage() {
     else alert(`Canal "${canalNome}" limpo com sucesso!`);
   };
 
+  const limparTabelaCustos = async () => {
+    if (!confirm("Tem certeza que deseja apagar todos os custos unitários do Supabase?")) return;
+    const { error } = await supabase.from('tabela_custos_skus').delete().neq('id', 0);
+    if (error) alert("Erro: " + error.message);
+    else {
+      alert("🗑️ Tabela de custos limpa com sucesso!");
+      carregarCustos();
+    }
+  };
+
+  const limparRegrasMl = async () => {
+    if (!confirm("Tem certeza que deseja apagar todas as regras e medidas do Mercado Livre do Supabase?")) return;
+    const { error } = await supabase.from('ml_anuncios_regras').delete().neq('id', 0);
+    if (error) alert("Erro: " + error.message);
+    else alert("🗑️ Regras do ML limpas com sucesso!");
+  };
+
   const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -370,14 +387,13 @@ export default function UploadPage() {
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         const registros = [];
-        // Coluna 0 (A) = SKU, Coluna 1 (B) = Nome Produto, Coluna 2 (C) = Custo Unitário
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length < 2) continue;
 
           const sku = normalizarSku(row[0]);
           const produto = String(row[1] || "Produto sem nome").trim();
-          const custo = Number(row[2] ?? row[1] ?? 0); // Flexível se vier em 2 ou 3 colunas
+          const custo = Number(row[2] ?? row[1] ?? 0);
 
           if (sku && !isNaN(custo)) {
             registros.push({ sku, produto, custo_unitario: custo });
@@ -557,7 +573,6 @@ export default function UploadPage() {
           </div>
         </div>
 
-        {/* ABAS DE NAVEGAÇÃO DE UPLOAD */}
         <div className="flex flex-wrap gap-3 mb-6">
           <button
             onClick={() => setAbaAtiva("relatorios")}
@@ -714,8 +729,18 @@ export default function UploadPage() {
 
         {abaAtiva === "custos" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-            <h2 className="text-lg font-bold mb-1 text-white">Gestão de Custos Unitários e Produtos por SKU</h2>
-            <p className="text-xs text-slate-400 mb-6">Faça o upload da planilha dedicada contendo o SKU, Nome do Produto e Custo Unitário.</p>
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários e Produtos por SKU</h2>
+                <p className="text-xs text-slate-400 mt-1">Faça o upload da planilha dedicada contendo o SKU, Nome do Produto e Custo Unitário.</p>
+              </div>
+              <button 
+                onClick={limparTabelaCustos}
+                className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 border border-rose-900/50 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all"
+              >
+                🗑️ Limpar Todos os Custos
+              </button>
+            </div>
 
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 mb-6">
               <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro de Custos (.xlsx / .csv)</label>
@@ -765,8 +790,18 @@ export default function UploadPage() {
 
         {abaAtiva === "regras_ml" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-            <h2 className="text-lg font-bold mb-1 text-white">Upload de Regras e Medidas do Mercado Livre</h2>
-            <p className="text-xs text-slate-400 mb-6">Envie a planilha contendo: <strong>MLB, SKU, Comissão (%), Peso Real (kg), Altura (cm), Largura (cm), Comprimento (cm)</strong>.</p>
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-lg font-bold text-white">Upload de Regras e Medidas do Mercado Livre</h2>
+                <p className="text-xs text-slate-400 mt-1">Envie a planilha contendo: MLB, SKU, Comissão (%), Peso Real, Altura, Largura, Comprimento.</p>
+              </div>
+              <button 
+                onClick={limparRegrasMl}
+                className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 border border-rose-900/50 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all"
+              >
+                🗑️ Limpar Regras ML
+              </button>
+            </div>
 
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
               <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro Excel de Regras ML (.xlsx)</label>

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 
-// Tabela de Tarifas de Frete Integrada Diretamente
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
   { atePeso: 0.5, faixas: { "78.99": 8.25, "99.99": 13.85, "119.99": 16.15, "149.99": 18.15, "199.99": 20.45, "200": 23.25 } },
@@ -24,16 +23,12 @@ const matrizFretes = [
 ];
 
 function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura: number, comprimento: number): number {
-  if (pdv < 79.00) {
-    return 0.00;
-  }
+  if (pdv < 79.00) return 0.00;
   const pesoVolumetrico = (altura * largura * comprimento) / 6000;
   const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
 
   let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
-  if (!linhaFrete) {
-    linhaFrete = matrizFretes[matrizFretes.length - 1];
-  }
+  if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
 
   let valorFrete = 0;
   if (pdv < 79) valorFrete = linhaFrete.faixas["78.99"];
@@ -58,6 +53,10 @@ export default function AdsPage() {
   const [lancamentos, setLancamentos] = useState<any[]>([]);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [regrasMlMap, setRegrasMlMap] = useState<Map<string, any>>(new Map());
+
+  // Estado para edição de linha na tabela
+  const [idEditando, setIdEditando] = useState<number | null>(null);
+  const [dadosEdicao, setDadosEdicao] = useState<any>({});
 
   const [linhas, setLinhas] = useState([
     { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "" }
@@ -213,6 +212,75 @@ export default function AdsPage() {
       carregarLancamentos();
     }
     setSalvando(false);
+  };
+
+  const iniciarEdicao = (item: any) => {
+    setIdEditando(item.id);
+    setDadosEdicao({
+      identificador_anuncio: item.identificador_anuncio,
+      sku: item.sku,
+      unidades_vendidas: item.unidades_vendidas,
+      retorno_bruto: item.retorno_bruto,
+      investimento: item.investimento
+    });
+  };
+
+  const salvarEdicao = async (id: number) => {
+    const unidades = Number(dadosEdicao.unidades_vendidas || 0);
+    const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
+    const investimento = Number(dadosEdicao.investimento || 0);
+    const skuLimpo = String(dadosEdicao.sku || "").trim();
+    const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
+
+    const custoRegra = custosMap.get(skuLimpo);
+    const mlRegra = regrasMlMap.get(mlbLimpo);
+
+    const produtoNome = custoRegra?.produto || "Produto sem nome";
+    const custoUnitario = Number(custoRegra?.custo_unitario || 0);
+    const custoProdutoTotal = custoUnitario * unidades;
+
+    let comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : 14;
+    let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 0.5;
+    let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
+    let largura = mlRegra ? Number(mlRegra.largura || 0) : 10;
+    let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
+
+    const precoUnitarioEstimado = unidades > 0 ? (receitaAds / unidades) : 100;
+    const freteUnitario = calcularFreteML(precoUnitarioEstimado, pesoReal, altura, largura, comprimento);
+    const freteTotal = freteUnitario * unidades;
+
+    const impostoTotal = receitaAds * 0.08;
+    const tarifaComissaoTotal = receitaAds * (comissaoPct / 100);
+    const embalagemTotal = 0.70 * unidades;
+
+    const faturamentoTotal = receitaAds;
+    const margemLiquidaVal = faturamentoTotal - (investimento + custoProdutoTotal + impostoTotal + tarifaComissaoTotal + embalagemTotal + freteTotal);
+    const margemLiquidaPct = faturamentoTotal > 0 ? (margemLiquidaVal / faturamentoTotal) : 0;
+
+    const atualizacao = {
+      identificador_anuncio: mlbLimpo,
+      sku: skuLimpo,
+      nome_anuncio: produtoNome,
+      unidades_vendidas: unidades,
+      retorno_bruto: receitaAds,
+      investimento: investimento,
+      faturamento_total: faturamentoTotal,
+      custo_produto: custoProdutoTotal,
+      imposto: impostoTotal,
+      tarifa: tarifaComissaoTotal,
+      embalagem: embalagemTotal,
+      frete: freteTotal,
+      margem_liquida_rs: margemLiquidaVal,
+      margem_liquida_pct: margemLiquidaPct
+    };
+
+    const { error } = await supabase.from('ads_campanhas_lancamentos').update(atualizacao).eq('id', id);
+    if (error) {
+      alert("Erro ao atualizar: " + error.message);
+    } else {
+      setIdEditando(null);
+      carregarLancamentos();
+    }
   };
 
   const excluirLancamento = async (id: number) => {
@@ -388,10 +456,11 @@ export default function AdsPage() {
           </form>
         </div>
 
+        {/* TABELA DE RELATÓRIO CONSOLIDADO COM EDIÇÃO DIRETA */}
         <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
           <div className="p-6 border-b border-slate-800">
             <h2 className="text-lg font-bold text-white">Relatório Consolidado ({canalSelecionado} - {mesSelecionado})</h2>
-            <p className="text-xs text-slate-400 mt-1">Demonstrativo completo com custos, tarifas, impostos, fretes e margens calculadas.</p>
+            <p className="text-xs text-slate-400 mt-1">Demonstrativo completo. Clique no botão de editar para ajustar os valores diretamente.</p>
           </div>
 
           {loading ? (
@@ -423,6 +492,7 @@ export default function AdsPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                   {lancamentos.map((item) => {
+                    const isEditing = idEditando === item.id;
                     const roas = item.investimento > 0 ? (item.retorno_bruto / item.investimento).toFixed(2) : "0.00";
                     const tacos = item.faturamento_total > 0 ? ((item.investimento / item.faturamento_total) * 100).toFixed(2) : "0.00";
                     const margemVal = Number(item.margem_liquida_rs || 0);
@@ -430,12 +500,59 @@ export default function AdsPage() {
 
                     return (
                       <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-3 font-mono font-bold text-slate-200">{item.identificador_anuncio}</td>
-                        <td className="p-3 font-mono text-slate-400">{item.sku}</td>
+                        <td className="p-3 font-mono font-bold text-slate-200">
+                          {isEditing ? (
+                            <input 
+                              type="text" 
+                              value={dadosEdicao.identificador_anuncio} 
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, identificador_anuncio: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white"
+                            />
+                          ) : item.identificador_anuncio}
+                        </td>
+                        <td className="p-3 font-mono text-slate-400">
+                          {isEditing ? (
+                            <input 
+                              type="text" 
+                              value={dadosEdicao.sku} 
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, sku: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-white"
+                            />
+                          ) : item.sku}
+                        </td>
                         <td className="p-3 text-slate-300 max-w-[200px] truncate">{item.nome_anuncio}</td>
-                        <td className="p-3 text-center font-bold text-white">{item.unidades_vendidas}</td>
-                        <td className="p-3 text-right font-mono text-emerald-400 font-bold">R$ {Number(item.retorno_bruto).toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-rose-400">R$ {Number(item.investimento).toFixed(2)}</td>
+                        <td className="p-3 text-center font-bold text-white">
+                          {isEditing ? (
+                            <input 
+                              type="number" 
+                              value={dadosEdicao.unidades_vendidas} 
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, unidades_vendidas: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white"
+                            />
+                          ) : item.unidades_vendidas}
+                        </td>
+                        <td className="p-3 text-right font-mono text-emerald-400 font-bold">
+                          {isEditing ? (
+                            <input 
+                              type="number" 
+                              step="0.01" 
+                              value={dadosEdicao.retorno_bruto} 
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, retorno_bruto: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white"
+                            />
+                          ) : `R$ ${Number(item.retorno_bruto).toFixed(2)}`}
+                        </td>
+                        <td className="p-3 text-right font-mono text-rose-400">
+                          {isEditing ? (
+                            <input 
+                              type="number" 
+                              step="0.01" 
+                              value={dadosEdicao.investimento} 
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, investimento: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white"
+                            />
+                          ) : `R$ ${Number(item.investimento).toFixed(2)}`}
+                        </td>
                         <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.custo_produto || 0).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.imposto || 0).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.tarifa || 0).toFixed(2)}</td>
@@ -449,13 +566,18 @@ export default function AdsPage() {
                         <td className={`p-3 text-right font-mono font-bold ${margemPct >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
                           {margemPct.toFixed(1)}%
                         </td>
-                        <td className="p-3 text-center">
-                          <button 
-                            onClick={() => excluirLancamento(item.id)}
-                            className="bg-rose-950/60 text-rose-400 px-3 py-1 rounded-lg text-[11px] font-bold cursor-pointer"
-                          >
-                            Remover
-                          </button>
+                        <td className="p-3 text-center flex items-center justify-center gap-2">
+                          {isEditing ? (
+                            <>
+                              <button onClick={() => salvarEdicao(item.id)} className="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Salvar</button>
+                              <button onClick={() => setIdEditando(null)} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[11px] font-bold cursor-pointer">Cancelar</button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => iniciarEdicao(item)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
+                              <button onClick={() => excluirLancamento(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     );
