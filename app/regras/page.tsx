@@ -10,6 +10,8 @@ export default function RegrasPage() {
   const router = useRouter();
 
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
+  const [regrasCustos, setRegrasCustos] = useState({ sku: 'A', produto: 'B', custo: 'C' });
+  const [regrasMlCols, setRegrasMlCols] = useState({ mlb: 'A', sku: 'B', comissao: 'C', peso: 'D', altura: 'E', largura: 'F', comprimento: 'G' });
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
 
   useEffect(() => {
@@ -24,13 +26,15 @@ export default function RegrasPage() {
   const carregarDados = async () => {
     setLoading(true);
     
-    const { data: tinyConfig } = await supabase.from('config_regras_tiny').select('*');
-    if (tinyConfig && tinyConfig.length > 0) {
-      const cfgSku = tinyConfig.find(t => t.campo === 'sku')?.coluna || 'C';
-      const cfgEstoque = tinyConfig.find(t => t.campo === 'estoque')?.coluna || 'F';
-      const cfgStatusSku = tinyConfig.find(t => t.campo === 'status_sku')?.coluna || 'A';
-      const cfgStatusValor = tinyConfig.find(t => t.campo === 'status_valor')?.coluna || 'B';
-      setRegrasTiny({ sku: cfgSku, estoque: cfgEstoque, status_sku: cfgStatusSku, status_valor: cfgStatusValor });
+    const { data: configs } = await supabase.from('config_regras_tiny').select('*');
+    if (configs) {
+      const getCol = (campo: string, def: string) => configs.find((t: any) => t.campo === campo)?.coluna || def;
+      setRegrasTiny({ sku: getCol('sku', 'C'), estoque: getCol('estoque', 'F'), status_sku: getCol('status_sku', 'A'), status_valor: getCol('status_valor', 'B') });
+      setRegrasCustos({ sku: getCol('custo_sku', 'A'), produto: getCol('custo_produto', 'B'), custo: getCol('custo_valor', 'C') });
+      setRegrasMlCols({ 
+        mlb: getCol('ml_mlb', 'A'), sku: getCol('ml_sku', 'B'), comissao: getCol('ml_comissao', 'C'), 
+        peso: getCol('ml_peso', 'D'), altura: getCol('ml_altura', 'E'), largura: getCol('ml_largura', 'F'), comprimento: getCol('ml_comprimento', 'G') 
+      });
     }
 
     const { data: canaisConfig } = await supabase.from('config_regras_canais').select('*').order('id');
@@ -39,7 +43,7 @@ export default function RegrasPage() {
     setLoading(false);
   };
 
-  const salvarRegrasTiny = async (e: React.FormEvent) => {
+  const salvarTodasRegras = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
 
@@ -47,21 +51,25 @@ export default function RegrasPage() {
       { campo: 'sku', coluna: regrasTiny.sku.toUpperCase() },
       { campo: 'estoque', coluna: regrasTiny.estoque.toUpperCase() },
       { campo: 'status_sku', coluna: regrasTiny.status_sku.toUpperCase() },
-      { campo: 'status_valor', coluna: regrasTiny.status_valor.toUpperCase() }
+      { campo: 'status_valor', coluna: regrasTiny.status_valor.toUpperCase() },
+      { campo: 'custo_sku', coluna: regrasCustos.sku.toUpperCase() },
+      { campo: 'custo_produto', coluna: regrasCustos.produto.toUpperCase() },
+      { campo: 'custo_valor', coluna: regrasCustos.custo.toUpperCase() },
+      { campo: 'ml_mlb', coluna: regrasMlCols.mlb.toUpperCase() },
+      { campo: 'ml_sku', coluna: regrasMlCols.sku.toUpperCase() },
+      { campo: 'ml_comissao', coluna: regrasMlCols.comissao.toUpperCase() },
+      { campo: 'ml_peso', coluna: regrasMlCols.peso.toUpperCase() },
+      { campo: 'ml_altura', coluna: regrasMlCols.altura.toUpperCase() },
+      { campo: 'ml_largura', coluna: regrasMlCols.largura.toUpperCase() },
+      { campo: 'ml_comprimento', coluna: regrasMlCols.comprimento.toUpperCase() },
     ];
 
     for (const cfg of configs) {
       await supabase.from('config_regras_tiny').upsert(cfg, { onConflict: 'campo' });
     }
 
-    alert("✅ Configurações salvas com sucesso!");
+    alert("✅ Configurações de colunas salvas com sucesso!");
     setSalvando(false);
-  };
-
-  const atualizarColunaCanal = async (id: number, novaColuna: string) => {
-    const colunaLimpa = novaColuna.toUpperCase().trim();
-    setRegrasCanais(prev => prev.map(r => r.id === id ? { ...r, coluna_sku: colunaLimpa } : r));
-    await supabase.from('config_regras_canais').update({ coluna_sku: colunaLimpa }).eq('id', id);
   };
 
   const alternarAtivoAds = async (id: number, ativoAtual: boolean) => {
@@ -77,7 +85,7 @@ export default function RegrasPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Regras</h1>
-            <p className="text-sm font-medium text-slate-400">Configure colunas e visibilidade de canais no Painel Ads</p>
+            <p className="text-sm font-medium text-slate-400">Configure as colunas das planilhas brutas e visibilidade no Ads</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -95,83 +103,97 @@ export default function RegrasPage() {
         {loading ? (
           <p className="p-8 text-center text-slate-400">A carregar...</p>
         ) : (
-          <div className="space-y-8">
+          <form onSubmit={salvarTodasRegras} className="space-y-8">
 
+            {/* VISIBILIDADE DE CANAIS NO ADS */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <h2 className="text-lg font-bold mb-1 text-white">Mapeamento de Colunas & Visibilidade no Painel Ads</h2>
-              <p className="text-xs text-slate-400 mb-6">Defina a coluna do SKU e marque quais canais aparecem no Painel Ads (ex: desativar canais sem ads).</p>
-
+              <h2 className="text-lg font-bold mb-1 text-white">Visibilidade de Canais no Painel Ads</h2>
+              <p className="text-xs text-slate-400 mb-6">Marque quais canais aparecem no Painel Ads.</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {regrasCanais.map((r) => (
                   <div key={r.id} className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
-                    <div>
-                      <span className="font-bold text-white text-xs block mb-1">{r.canal}</span>
-                      <button 
-                        type="button"
-                        onClick={() => alternarAtivoAds(r.id, r.ativo_ads ?? true)}
-                        className={`px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer transition-all ${
-                          (r.ativo_ads ?? true) ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-rose-950 text-rose-400 border border-rose-800'
-                        }`}
-                      >
-                        {(r.ativo_ads ?? true) ? '✓ Visível no Ads' : '✕ Oculto no Ads'}
-                      </button>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-400 font-bold uppercase">Col:</span>
-                      <input 
-                        type="text" 
-                        maxLength={2} 
-                        value={r.coluna_sku} 
-                        onChange={(e) => atualizarColunaCanal(r.id, e.target.value)} 
-                        className="w-12 bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-white font-mono uppercase text-center outline-none"
-                      />
-                    </div>
+                    <span className="font-bold text-white text-xs">{r.canal}</span>
+                    <button 
+                      type="button"
+                      onClick={() => alternarAtivoAds(r.id, r.ativo_ads ?? true)}
+                      className={`px-3 py-1 rounded text-[10px] font-bold cursor-pointer transition-all ${
+                        (r.ativo_ads ?? true) ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-rose-950 text-rose-400 border border-rose-800'
+                      }`}
+                    >
+                      {(r.ativo_ads ?? true) ? '✓ Visível' : '✕ Oculto'}
+                    </button>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <h2 className="text-lg font-bold mb-1 text-white">Configuração de Colunas (Base Tiny & Status)</h2>
-              <form onSubmit={salvarRegrasTiny} className="space-y-6 mt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-950 p-6 rounded-xl border border-slate-800">
+            {/* CONFIGURAÇÃO DE COLUNAS DE UPLOAD */}
+            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+              <h2 className="text-lg font-bold mb-1 text-white">Mapeamento de Colunas (Planilhas Brutas)</h2>
+              <p className="text-xs text-slate-400 mb-4">Informe as letras das colunas correspondentes para cada importação.</p>
+
+              {/* Custos */}
+              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
+                <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">Planilha de Custos Unitários</h3>
+                <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3">Base Central (Tiny)</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Coluna SKU</label>
-                        <input type="text" maxLength={2} value={regrasTiny.sku} onChange={(e) => setRegrasTiny({ ...regrasTiny, sku: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono uppercase text-center outline-none" required />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Coluna Estoque</label>
-                        <input type="text" maxLength={2} value={regrasTiny.estoque} onChange={(e) => setRegrasTiny({ ...regrasTiny, estoque: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono uppercase text-center outline-none" required />
-                      </div>
-                    </div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna SKU</label>
+                    <input type="text" maxLength={2} value={regrasCustos.sku} onChange={(e) => setRegrasCustos({ ...regrasCustos, sku: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
                   </div>
                   <div>
-                    <h3 className="text-xs font-bold text-violet-400 uppercase tracking-wider mb-3">Status</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Coluna SKU</label>
-                        <input type="text" maxLength={2} value={regrasTiny.status_sku} onChange={(e) => setRegrasTiny({ ...regrasTiny, status_sku: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono uppercase text-center outline-none" required />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Coluna Status</label>
-                        <input type="text" maxLength={2} value={regrasTiny.status_valor} onChange={(e) => setRegrasTiny({ ...regrasTiny, status_valor: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono uppercase text-center outline-none" required />
-                      </div>
-                    </div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Nome Produto</label>
+                    <input type="text" maxLength={2} value={regrasCustos.produto} onChange={(e) => setRegrasCustos({ ...regrasCustos, produto: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Custo Unitário</label>
+                    <input type="text" maxLength={2} value={regrasCustos.custo} onChange={(e) => setRegrasCustos({ ...regrasCustos, custo: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
                   </div>
                 </div>
-                <div className="flex justify-end">
-                  <button type="submit" disabled={salvando} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">
-                    {salvando ? "A salvar..." : "Salvar Configurações Tiny"}
-                  </button>
+              </div>
+
+              {/* Regras ML */}
+              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
+                <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3">Planilha de Regras & Medidas ML</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna MLB</label>
+                    <input type="text" maxLength={2} value={regrasMlCols.mlb} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, mlb: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna SKU</label>
+                    <input type="text" maxLength={2} value={regrasMlCols.sku} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, sku: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Comissão (%)</label>
+                    <input type="text" maxLength={2} value={regrasMlCols.comissao} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, comissao: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Peso Real</label>
+                    <input type="text" maxLength={2} value={regrasMlCols.peso} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, peso: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Altura</label>
+                    <input type="text" maxLength={2} value={regrasMlCols.altura} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, altura: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Largura</label>
+                    <input type="text" maxLength={2} value={regrasMlCols.largura} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, largura: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Comprimento</label>
+                    <input type="text" maxLength={2} value={regrasMlCols.comprimento} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, comprimento: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                  </div>
                 </div>
-              </form>
+              </div>
+
+              <div className="flex justify-end pt-4">
+                <button type="submit" disabled={salvando} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">
+                  {salvando ? "A salvar..." : "Salvar Todas as Configurações"}
+                </button>
+              </div>
             </div>
 
-          </div>
+          </form>
         )}
 
       </div>

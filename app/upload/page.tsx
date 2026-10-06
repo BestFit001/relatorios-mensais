@@ -18,6 +18,10 @@ export default function UploadPage() {
 
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
+  const [regrasColsDinamicas, setRegrasColsDinamicas] = useState({
+    custo_sku: 'A', custo_produto: 'B', custo_valor: 'C',
+    ml_mlb: 'A', ml_sku: 'B', ml_comissao: 'C', ml_peso: 'D', ml_altura: 'E', ml_largura: 'F', ml_comprimento: 'G'
+  });
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
 
   // Estados para Custos
@@ -56,11 +60,13 @@ export default function UploadPage() {
 
     const { data: tinyConfig } = await supabase.from('config_regras_tiny').select('*');
     if (tinyConfig) {
-      const cfgSku = tinyConfig.find(t => t.campo === 'sku')?.coluna || 'C';
-      const cfgEstoque = tinyConfig.find(t => t.campo === 'estoque')?.coluna || 'F';
-      const cfgStatusSku = tinyConfig.find(t => t.campo === 'status_sku')?.coluna || 'A';
-      const cfgStatusValor = tinyConfig.find(t => t.campo === 'status_valor')?.coluna || 'B';
-      setRegrasTiny({ sku: cfgSku, estoque: cfgEstoque, status_sku: cfgStatusSku, status_valor: cfgStatusValor });
+      const getC = (k: string, d: string) => tinyConfig.find((t: any) => t.campo === k)?.coluna || d;
+      setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
+      setRegrasColsDinamicas({
+        custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'),
+        ml_mlb: getC('ml_mlb', 'A'), ml_sku: getC('ml_sku', 'B'), ml_comissao: getC('ml_comissao', 'C'),
+        ml_peso: getC('ml_peso', 'D'), ml_altura: getC('ml_altura', 'E'), ml_largura: getC('ml_largura', 'F'), ml_comprimento: getC('ml_comprimento', 'G')
+      });
     }
 
     let allTiny: any[] = [];
@@ -391,10 +397,15 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // Upload Bruto de Custos com base nas colunas configuradas nas Regras
   const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+
+    const idxSku = letraParaIndice(regrasColsDinamicas.custo_sku);
+    const idxProd = letraParaIndice(regrasColsDinamicas.custo_produto);
+    const idxCusto = letraParaIndice(regrasColsDinamicas.custo_valor);
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -407,11 +418,11 @@ export default function UploadPage() {
         const registros = [];
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
-          if (!row || row.length < 2) continue;
+          if (!row || row.length <= Math.max(idxSku, idxCusto)) continue;
 
-          const sku = normalizarSku(row[0]);
-          const produto = String(row[1] || "Produto sem nome").trim();
-          const custo = Number(row[2] ?? row[1] ?? 0);
+          const sku = normalizarSku(row[idxSku]);
+          const produto = String(row[idxProd] || "Produto sem nome").trim();
+          const custo = Number(row[idxCusto] || 0);
 
           if (sku && !isNaN(custo)) {
             registros.push({ sku, produto, custo_unitario: custo });
@@ -425,7 +436,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`💰 Custos unitários atualizados com sucesso! ${registros.length} SKUs processados.`);
+        alert(`💰 Custos unitários extraídos e atualizados com sucesso! ${registros.length} SKUs processados.`);
         carregarCustos();
         setLoading(false);
       } catch (err: any) {
@@ -436,10 +447,19 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // Upload Bruto de Regras ML com base nas colunas configuradas nas Regras
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+
+    const idxMlb = letraParaIndice(regrasColsDinamicas.ml_mlb);
+    const idxSku = letraParaIndice(regrasColsDinamicas.ml_sku);
+    const idxCom = letraParaIndice(regrasColsDinamicas.ml_comissao);
+    const idxPeso = letraParaIndice(regrasColsDinamicas.ml_peso);
+    const idxAlt = letraParaIndice(regrasColsDinamicas.ml_altura);
+    const idxLarg = letraParaIndice(regrasColsDinamicas.ml_largura);
+    const idxComp = letraParaIndice(regrasColsDinamicas.ml_comprimento);
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -452,15 +472,15 @@ export default function UploadPage() {
         const registros = [];
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
-          if (!row || row.length < 7) continue;
+          if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
 
-          const mlb = String(row[0] || "").trim();
-          const sku = normalizarSku(row[1]);
-          const comissao = Number(row[2] || 0);
-          const pesoReal = Number(row[3] || 0);
-          const altura = Number(row[4] || 0);
-          const largura = Number(row[5] || 0);
-          const comprimento = Number(row[6] || 0);
+          const mlb = String(row[idxMlb] || "").trim();
+          const sku = normalizarSku(row[idxSku]);
+          const comissao = Number(row[idxCom] || 0);
+          const pesoReal = Number(row[idxPeso] || 0);
+          const altura = Number(row[idxAlt] || 0);
+          const largura = Number(row[idxLarg] || 0);
+          const comprimento = Number(row[idxComp] || 0);
 
           if (mlb && sku) {
             registros.push({ mlb, sku, comissao, peso_real: pesoReal, altura, largura, comprimento });
@@ -762,7 +782,7 @@ export default function UploadPage() {
 
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-              <p className="text-xs text-slate-400 mb-6">Atualize ou limpe o mapeamento de cada marketplace. Apenas os SKUs válidos existentes no Tiny serão guardados.</p>
+              <p className="text-xs text-slate-400 mb-6">Atualize ou limpe o mapeamento de cada marketplace.</p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {regrasCanais.map((r, idx) => (
@@ -797,7 +817,7 @@ export default function UploadPage() {
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
-                <p className="text-xs text-slate-400 mt-1">Consulte, edite ou remova os custos guardados no Supabase.</p>
+                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (SKU: <strong>{regrasColsDinamicas.custo_sku}</strong>, Produto: <strong>{regrasColsDinamicas.custo_produto}</strong>, Custo: <strong>{regrasColsDinamicas.custo_valor}</strong>) ou consulte/edite abaixo.</p>
               </div>
               <button 
                 onClick={limparTabelaCustos}
@@ -815,7 +835,6 @@ export default function UploadPage() {
                 onChange={handleUploadCustosUnitarios} 
                 className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-emerald-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" 
               />
-              <p className="text-[11px] text-slate-400 mt-2">💡 Coluna A = SKU | Coluna B = Nome do Produto | Coluna C = Custo Unitário (R$)</p>
             </div>
 
             <div className="mb-4">
@@ -847,33 +866,17 @@ export default function UploadPage() {
                         <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
                           <td className="p-3.5 font-mono font-bold text-slate-200">
                             {isEditing ? (
-                              <input 
-                                type="text" 
-                                value={dadosEdicaoCusto.sku} 
-                                onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, sku: e.target.value })}
-                                className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white font-mono"
-                              />
+                              <input type="text" value={dadosEdicaoCusto.sku} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, sku: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white font-mono" />
                             ) : item.sku}
                           </td>
                           <td className="p-3.5 text-slate-300">
                             {isEditing ? (
-                              <input 
-                                type="text" 
-                                value={dadosEdicaoCusto.produto} 
-                                onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, produto: e.target.value })}
-                                className="bg-slate-900 border border-slate-700 rounded p-1 w-full text-white"
-                              />
+                              <input type="text" value={dadosEdicaoCusto.produto} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, produto: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-full text-white" />
                             ) : (item.produto || "—")}
                           </td>
                           <td className="p-3.5 text-right font-bold text-emerald-400 font-mono">
                             {isEditing ? (
-                              <input 
-                                type="number" 
-                                step="0.01" 
-                                value={dadosEdicaoCusto.custo_unitario} 
-                                onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, custo_unitario: Number(e.target.value) })}
-                                className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white font-mono"
-                              />
+                              <input type="number" step="0.01" value={dadosEdicaoCusto.custo_unitario} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, custo_unitario: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white font-mono" />
                             ) : `R$ ${Number(item.custo_unitario).toFixed(2)}`}
                           </td>
                           <td className="p-3.5 text-center flex items-center justify-center gap-2">
@@ -903,7 +906,7 @@ export default function UploadPage() {
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400 mt-1">Consulte, edite ou remova os anúncios e medidas guardados.</p>
+                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (MLB: <strong>{regrasColsDinamicas.ml_mlb}</strong>, SKU: <strong>{regrasColsDinamicas.ml_sku}</strong>, Comissão: <strong>{regrasColsDinamicas.ml_comissao}</strong>, Peso: <strong>{regrasColsDinasricas?.ml_peso ?? regrasColsDinamicas.ml_peso}</strong>) ou consulte abaixo.</p>
               </div>
               <button 
                 onClick={limparRegrasMl}
@@ -914,14 +917,13 @@ export default function UploadPage() {
             </div>
 
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 mb-6">
-              <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro Excel de Regras ML (.xlsx)</label>
+              <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro de Regras ML (.xlsx)</label>
               <input 
                 type="file" 
                 accept=".xlsx, .xls" 
                 onChange={handleUploadRegrasML} 
                 className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" 
               />
-              <p className="text-[11px] text-slate-400 mt-3">💡 O sistema calcula o peso volumétrico automáticamente.</p>
             </div>
 
             <div className="mb-4">
