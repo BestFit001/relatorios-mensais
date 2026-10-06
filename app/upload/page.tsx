@@ -397,7 +397,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Upload Bruto de Custos com base nas colunas configuradas nas Regras
   const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -447,7 +446,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Upload Bruto de Regras ML com base nas colunas configuradas nas Regras
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -817,7 +815,7 @@ export default function UploadPage() {
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
-                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (SKU: <strong>{regrasColsDinamicas.custo_sku}</strong>, Produto: <strong>{regrasColsDinamicas.custo_produto}</strong>, Custo: <strong>{regrasColsDinamicas.custo_valor}</strong>) ou consulte/edite abaixo.</p>
+                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (SKU: <strong>{regrasColsDinamicas.custo_sku}</strong>, Produto: <strong>{regrasColsDinamicas.custo_produto}</strong>, Custo: <strong>{regrasColsDinamicas.custo_valor}</strong>).</p>
               </div>
               <button 
                 onClick={limparTabelaCustos}
@@ -906,7 +904,7 @@ export default function UploadPage() {
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (MLB: <strong>{regrasColsDinamicas.ml_mlb}</strong>, SKU: <strong>{regrasColsDinamicas.ml_sku}</strong>, Comissão: <strong>{regrasColsDinamicas.ml_comissao}</strong>, Peso: <strong>{regrasColsDinasricas?.ml_peso ?? regrasColsDinamicas.ml_peso}</strong>) ou consulte abaixo.</p>
+                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (MLB: <strong>{regrasColsDinamicas.ml_mlb}</strong>, SKU: <strong>{regrasColsDinamicas.ml_sku}</strong>, Comissão: <strong>{regrasColsDinamicas.ml_comissao}</strong>, Peso: <strong>{regrasColsDinamicas.ml_peso}</strong>).</p>
               </div>
               <button 
                 onClick={limparRegrasMl}
