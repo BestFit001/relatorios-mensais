@@ -99,19 +99,48 @@ export default function AdsPage() {
       if (ativos.length > 0) setCanalSelecionado(ativos[0].canal);
     }
 
-    const { data: custosData } = await supabase.from('tabela_custos_skus').select('*');
-    if (custosData) {
-      const mapaC = new Map();
-      custosData.forEach((c: any) => mapaC.set(String(c.sku).trim(), c));
-      setCustosMap(mapaC);
+    // Carregar todos os custos com paginação em lotes para garantir 100% de cobertura
+    let allCustos: any[] = [];
+    let from = 0;
+    let step = 1000;
+    let keep = true;
+    while (keep) {
+      const { data } = await supabase.from('tabela_custos_skus').select('*').range(from, from + step - 1);
+      if (data && data.length > 0) {
+        allCustos = [...allCustos, ...data];
+        from += step;
+        if (data.length < step) keep = false;
+      } else {
+        keep = false;
+      }
     }
+    const mapaC = new Map();
+    allCustos.forEach((c: any) => {
+      const skuLimpo = String(c.sku || "").trim().toLowerCase();
+      mapaC.set(skuLimpo, c);
+    });
+    setCustosMap(mapaC);
 
-    const { data: mlData } = await supabase.from('ml_anuncios_regras').select('*');
-    if (mlData) {
-      const mapaMl = new Map();
-      mlData.forEach((m: any) => mapaMl.set(String(m.mlb).trim().toUpperCase(), m));
-      setRegrasMlMap(mapaMl);
+    // Carregar regras do ML
+    let allMl: any[] = [];
+    from = 0;
+    keep = true;
+    while (keep) {
+      const { data } = await supabase.from('ml_anuncios_regras').select('*').range(from, from + step - 1);
+      if (data && data.length > 0) {
+        allMl = [...allMl, ...data];
+        from += step;
+        if (data.length < step) keep = false;
+      } else {
+        keep = false;
+      }
     }
+    const mapaMl = new Map();
+    allMl.forEach((m: any) => {
+      const mlbLimpo = String(m.mlb || "").trim().toUpperCase();
+      mapaMl.set(mlbLimpo, m);
+    });
+    setRegrasMlMap(mapaMl);
   };
 
   const carregarLancamentos = async () => {
@@ -159,7 +188,6 @@ export default function AdsPage() {
       const diffMargemRs = margemRsAtual - margemRsAnt;
 
       const repAds = totFatAtual > 0 ? (fatAdsAtual / totFatAtual) * 100 : 0;
-      // Lógica de Sugestão de Budget (TACOS Sugerido baseado na representatividade ou 15% da receita ads)
       const tacosSugerido = fatAdsAtual > 0 ? (fatAdsAtual * 0.15) : 0;
 
       return {
@@ -206,12 +234,13 @@ export default function AdsPage() {
       .filter(l => l.mlb.trim() !== "" && l.sku.trim() !== "")
       .map(l => {
         const skuLimpo = l.sku.trim();
+        const skuKey = skuLimpo.toLowerCase();
         const mlbLimpo = l.mlb.trim().toUpperCase();
         const unidades = Number(l.unidades || 0);
         const receitaAds = Number(l.receitaAds || 0);
         const investimento = Number(l.investimento || 0);
 
-        const custoRegra = custosMap.get(skuLimpo);
+        const custoRegra = custosMap.get(skuKey);
         const mlRegra = regrasMlMap.get(mlbLimpo);
 
         const produtoNome = custoRegra?.produto || "Produto sem nome";
@@ -219,7 +248,7 @@ export default function AdsPage() {
         const custoProdutoTotal = custoUnitario * unidades;
 
         let comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : 14;
-        let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 0.5;
+        let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 2.0;
         let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
         let largura = mlRegra ? Number(mlRegra.largura || 0) : 10;
         let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
@@ -289,9 +318,10 @@ export default function AdsPage() {
     const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
     const investimento = Number(dadosEdicao.investimento || 0);
     const skuLimpo = String(dadosEdicao.sku || "").trim();
+    const skuKey = skuLimpo.toLowerCase();
     const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
 
-    const custoRegra = custosMap.get(skuLimpo);
+    const custoRegra = custosMap.get(skuKey);
     const mlRegra = regrasMlMap.get(mlbLimpo);
 
     const produtoNome = custoRegra?.produto || "Produto sem nome";
@@ -299,7 +329,7 @@ export default function AdsPage() {
     const custoProdutoTotal = custoUnitario * unidades;
 
     let comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : 14;
-    let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 0.5;
+    let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 2.0;
     let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
     let largura = mlRegra ? Number(mlRegra.largura || 0) : 10;
     let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
