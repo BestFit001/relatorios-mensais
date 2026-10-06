@@ -5,7 +5,7 @@ import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 
 export default function UploadPage() {
-  const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros">("relatorios");
+  const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml">("relatorios");
 
   const [mes, setMes] = useState("09");
   const [ano, setAno] = useState("2026");
@@ -19,6 +19,10 @@ export default function UploadPage() {
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
+
+  // Estados para Gestão de Custos
+  const [listaCustos, setListaCustos] = useState<any[]>([]);
+  const [pesquisaCusto, setPesquisaCusto] = useState("");
 
   const mesReferencia = mes && ano ? `${mes}/${ano}` : "";
   const meses = [
@@ -34,6 +38,7 @@ export default function UploadPage() {
 
   useEffect(() => {
     carregarDadosCadastros();
+    carregarCustos();
   }, []);
 
   const carregarDadosCadastros = async () => {
@@ -77,6 +82,11 @@ export default function UploadPage() {
     });
 
     setEstatisticas({ totalTiny, normais, obsoletos });
+  };
+
+  const carregarCustos = async () => {
+    const { data } = await supabase.from('curva_abc').select('codigo, produto, valor').limit(100);
+    if (data) setListaCustos(data);
   };
 
   const letraParaIndice = (str: string) => {
@@ -351,7 +361,54 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Atualização inteligente: Limpa os registos anteriores do canal e salva APENAS o que foi encontrado no Tiny
+  const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
+        const registros = [];
+        for (let i = 1; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length < 7) continue;
+
+          const mlb = String(row[0] || "").trim();
+          const sku = normalizarSku(row[1]);
+          const comissao = Number(row[2] || 0);
+          const pesoReal = Number(row[3] || 0);
+          const altura = Number(row[4] || 0);
+          const largura = Number(row[5] || 0);
+          const comprimento = Number(row[6] || 0);
+
+          if (mlb && sku) {
+            registros.push({ mlb, sku, comissao, peso_real: pesoReal, altura, largura, comprimento });
+          }
+        }
+
+        const tamanhoLote = 500;
+        for (let i = 0; i < registros.length; i += tamanhoLote) {
+          const lote = registros.slice(i, i + tamanhoLote);
+          const { error } = await supabase.from('ml_anuncios_regras').upsert(lote, { onConflict: 'mlb' });
+          if (error) throw error;
+        }
+
+        alert(`🚀 Planilha de Regras do ML processada com sucesso! ${registros.length} anúncios mapeados.`);
+        setLoading(false);
+      } catch (err: any) {
+        alert("Erro ao processar planilha do ML: " + err.message);
+        setLoading(false);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -360,7 +417,6 @@ export default function UploadPage() {
     const indiceColuna = letraParaIndice(letraColuna || "A");
 
     try {
-      // 1. Carregar todos os SKUs da base Tiny para validação
       let allTiny: any[] = [];
       let rangeStep = 1000;
       let from = 0;
@@ -379,7 +435,6 @@ export default function UploadPage() {
 
       const skusEncontradosNoCanal = new Set<string>();
 
-      // 2. Ler os ficheiros e acumular APENAS SKUs válidos que existem no Tiny
       for (let f = 0; f < files.length; f++) {
         const file = files[f];
         const buffer = await file.arrayBuffer();
@@ -403,24 +458,21 @@ export default function UploadPage() {
             break;
           }
         }
-        if (linhaInicio === 0 || linhaInicio < 5) linhaInicio = 5;
+        if (linhaInicio === 0 || linhaInicio < 5) linhaInicio = sheetName === "Template" ? 5 : 4;
 
         for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
           
           const skuVal = normalizarSku(row[indiceColuna]);
-          // Considera apenas se estiver presente na base do Tiny
           if (skuVal && skusTinySet.has(skuVal)) {
             skusEncontradosNoCanal.add(skuVal);
           }
         }
       }
 
-      // 3. Limpar o mapeamento anterior deste canal antes de inserir os novos dados limpos
       await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
 
-      // 4. Inserir APENAS os SKUs encontrados (presente: true)
       const registrosUpsert = Array.from(skusEncontradosNoCanal).map(sku => ({
         canal: canalNome,
         sku: sku,
@@ -449,7 +501,7 @@ export default function UploadPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Abastecimento</h1>
-            <p className="text-sm font-medium text-slate-400">Gestão de Relatórios e Uploads</p>
+            <p className="text-sm font-medium text-slate-400">Gestão de Relatórios, Custos e Uploads</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -463,7 +515,8 @@ export default function UploadPage() {
           </div>
         </div>
 
-        <div className="flex gap-3 mb-6">
+        {/* ABAS DE NAVEGAÇÃO DE UPLOAD */}
+        <div className="flex flex-wrap gap-3 mb-6">
           <button
             onClick={() => setAbaAtiva("relatorios")}
             className={`px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
@@ -478,7 +531,23 @@ export default function UploadPage() {
               abaAtiva === "cadastros" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
             }`}
           >
-            🛒 Cadastros e Canais (Uploads em Massa)
+            🛒 Cadastros e Canais
+          </button>
+          <button
+            onClick={() => setAbaAtiva("custos")}
+            className={`px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              abaAtiva === "custos" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+            }`}
+          >
+            💰 Gestão de Custos por SKU
+          </button>
+          <button
+            onClick={() => setAbaAtiva("regras_ml")}
+            className={`px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              abaAtiva === "regras_ml" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+            }`}
+          >
+            📦 Regras & Medidas ML
           </button>
         </div>
 
@@ -598,6 +667,64 @@ export default function UploadPage() {
               </div>
             </div>
 
+          </div>
+        )}
+
+        {abaAtiva === "custos" && (
+          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
+            <h2 className="text-lg font-bold mb-1 text-white">Gestão de Custos por SKU</h2>
+            <p className="text-xs text-slate-400 mb-6">Consulte e verifique os custos unitários carregados através da Curva ABC mensal.</p>
+
+            <div className="mb-6">
+              <input 
+                type="text" 
+                value={pesquisaCusto} 
+                onChange={(e) => setPesquisaCusto(e.target.value)} 
+                placeholder="Pesquisar SKU ou Descrição..." 
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none"
+              />
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                  <tr>
+                    <th className="p-3.5">SKU</th>
+                    <th className="p-3.5">Descrição do Produto</th>
+                    <th className="p-3.5 text-right">Custo Unitário</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                  {listaCustos
+                    .filter(c => c.codigo.toLowerCase().includes(pesquisaCusto.toLowerCase()) || c.produto.toLowerCase().includes(pesquisaCusto.toLowerCase()))
+                    .map((item, idx) => (
+                      <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3.5 font-mono font-bold text-slate-200">{item.codigo}</td>
+                        <td className="p-3.5 text-slate-300">{item.produto}</td>
+                        <td className="p-3.5 text-right font-bold text-emerald-400 font-mono">R$ {Number(item.valor).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {abaAtiva === "regras_ml" && (
+          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
+            <h2 className="text-lg font-bold mb-1 text-white">Upload de Regras e Medidas do Mercado Livre</h2>
+            <p className="text-xs text-slate-400 mb-6">Envie a planilha contendo: <strong>MLB, SKU, Comissão (%), Peso Real (kg), Altura (cm), Largura (cm), Comprimento (cm)</strong>.</p>
+
+            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
+              <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro Excel de Regras ML (.xlsx)</label>
+              <input 
+                type="file" 
+                accept=".xlsx, .xls" 
+                onChange={handleUploadRegrasML} 
+                className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" 
+              />
+              <p className="text-[11px] text-slate-400 mt-3">💡 O sistema calculará automaticamente o peso volumétrico (A x L x C / 6000) e considerará sempre o maior peso entre o real e o volumétrico nas análises de frete.</p>
+            </div>
           </div>
         )}
 
