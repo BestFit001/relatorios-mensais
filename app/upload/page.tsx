@@ -20,7 +20,7 @@ export default function UploadPage() {
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
 
-  // Estados para Gestão de Custos
+  // Estados para Gestão de Custos dedicados
   const [listaCustos, setListaCustos] = useState<any[]>([]);
   const [pesquisaCusto, setPesquisaCusto] = useState("");
 
@@ -85,7 +85,7 @@ export default function UploadPage() {
   };
 
   const carregarCustos = async () => {
-    const { data } = await supabase.from('curva_abc').select('codigo, produto, valor').limit(100);
+    const { data } = await supabase.from('tabela_custos_skus').select('*').order('sku');
     if (data) setListaCustos(data);
   };
 
@@ -361,6 +361,52 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // Upload da Planilha de Custos Unitários
+  const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
+        const registros = [];
+        // Assume Coluna 0 (A) = SKU, Coluna 1 (B) = Custo Unitário
+        for (let i = 1; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length < 2) continue;
+
+          const sku = normalizarSku(row[0]);
+          const custo = Number(row[1] || 0);
+
+          if (sku && !isNaN(custo)) {
+            registros.push({ sku, custo_unitario: custo });
+          }
+        }
+
+        const tamanhoLote = 500;
+        for (let i = 0; i < registros.length; i += tamanhoLote) {
+          const lote = registros.slice(i, i + tamanhoLote);
+          const { error } = await supabase.from('tabela_custos_skus').upsert(lote, { onConflict: 'sku' });
+          if (error) throw error;
+        }
+
+        alert(`💰 Custos unitários atualizados com sucesso! ${registros.length} SKUs processados.`);
+        carregarCustos();
+        setLoading(false);
+      } catch (err: any) {
+        alert("Erro ao processar custos: " + err.message);
+        setLoading(false);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -621,7 +667,7 @@ export default function UploadPage() {
                   <div className="flex justify-between items-center mb-2">
                     <h3 className="text-sm font-bold text-white uppercase tracking-wider">Base Central (Tiny ERP)</h3>
                     <button onClick={limparBaseTiny} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer">
-                      🗑️ Limpar Base Tiny
+                      🗑️️ Limpar Base Tiny
                     </button>
                   </div>
                   <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
@@ -672,15 +718,26 @@ export default function UploadPage() {
 
         {abaAtiva === "custos" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-            <h2 className="text-lg font-bold mb-1 text-white">Gestão de Custos por SKU</h2>
-            <p className="text-xs text-slate-400 mb-6">Consulte e verifique os custos unitários carregados através da Curva ABC mensal.</p>
+            <h2 className="text-lg font-bold mb-1 text-white">Gestão de Custos Unitários por SKU</h2>
+            <p className="text-xs text-slate-400 mb-6">Faça o upload da planilha dedicada de custos unitários e consulte os valores por SKU.</p>
 
-            <div className="mb-6">
+            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 mb-6">
+              <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro de Custos Unitários (.xlsx / .csv)</label>
+              <input 
+                type="file" 
+                accept=".xlsx, .xls, .csv" 
+                onChange={handleUploadCustosUnitarios} 
+                className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-emerald-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" 
+              />
+              <p className="text-[11px] text-slate-400 mt-2">💡 Coluna A = SKU | Coluna B = Custo Unitário (R$)</p>
+            </div>
+
+            <div className="mb-4">
               <input 
                 type="text" 
                 value={pesquisaCusto} 
                 onChange={(e) => setPesquisaCusto(e.target.value)} 
-                placeholder="Pesquisar SKU ou Descrição..." 
+                placeholder="Pesquisar SKU..." 
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none"
               />
             </div>
@@ -690,18 +747,16 @@ export default function UploadPage() {
                 <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                   <tr>
                     <th className="p-3.5">SKU</th>
-                    <th className="p-3.5">Descrição do Produto</th>
                     <th className="p-3.5 text-right">Custo Unitário</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                   {listaCustos
-                    .filter(c => c.codigo.toLowerCase().includes(pesquisaCusto.toLowerCase()) || c.produto.toLowerCase().includes(pesquisaCusto.toLowerCase()))
+                    .filter(c => c.sku.toLowerCase().includes(pesquisaCusto.toLowerCase()))
                     .map((item, idx) => (
                       <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-3.5 font-mono font-bold text-slate-200">{item.codigo}</td>
-                        <td className="p-3.5 text-slate-300">{item.produto}</td>
-                        <td className="p-3.5 text-right font-bold text-emerald-400 font-mono">R$ {Number(item.valor).toFixed(2)}</td>
+                        <td className="p-3.5 font-mono font-bold text-slate-200">{item.sku}</td>
+                        <td className="p-3.5 text-right font-bold text-emerald-400 font-mono">R$ {Number(item.custo_unitario).toFixed(2)}</td>
                       </tr>
                     ))}
                 </tbody>
