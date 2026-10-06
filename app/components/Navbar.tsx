@@ -10,6 +10,7 @@ export default function Navbar() {
     { nome: "Curva ABC", href: "/" },
     { nome: "Cadastros", href: "/mapeamento" },
     { nome: "Adsense", href: "/ads" },
+    { nome: "Devoluções", href: "/devolucoes" }, // NOVO: Aba de Devoluções adicionada
     { nome: "Regras", href: "/regras" },
     { nome: "Uploads", href: "/upload" },
     { nome: "Admin", href: "/admin" },

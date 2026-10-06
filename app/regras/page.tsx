@@ -11,7 +11,8 @@ export default function RegrasPage() {
   const router = useRouter();
 
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
-  const [regrasCustos, setRegrasCustos] = useState({ sku: 'A', produto: 'B', custo: 'C' });
+  // NOVO: Adicionado o campo "marca" no estado de regrasCustos
+  const [regrasCustos, setRegrasCustos] = useState({ sku: 'A', produto: 'B', custo: 'C', marca: 'D' });
   const [regrasMlCols, setRegrasMlCols] = useState({ mlb: 'A', sku: 'B', comissao: 'C', peso: '', altura: 'E', largura: 'F', comprimento: 'G' });
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
@@ -42,7 +43,8 @@ export default function RegrasPage() {
     if (configs) {
       const getCol = (campo: string, def: string) => configs.find((t: any) => t.campo === campo)?.coluna || def;
       setRegrasTiny({ sku: getCol('sku', 'C'), estoque: getCol('estoque', 'F'), status_sku: getCol('status_sku', 'A'), status_valor: getCol('status_valor', 'B') });
-      setRegrasCustos({ sku: getCol('custo_sku', 'A'), produto: getCol('custo_produto', 'B'), custo: getCol('custo_valor', 'C') });
+      // NOVO: Lê a coluna "custo_marca" do banco, com valor padrão 'D'
+      setRegrasCustos({ sku: getCol('custo_sku', 'A'), produto: getCol('custo_produto', 'B'), custo: getCol('custo_valor', 'C'), marca: getCol('custo_marca', 'D') });
       setRegrasMlCols({ 
         mlb: getCol('ml_mlb', 'A'), sku: getCol('ml_sku', 'B'), comissao: getCol('ml_comissao', 'C'), 
         peso: getCol('ml_peso', ''), altura: getCol('ml_altura', 'E'), largura: getCol('ml_largura', 'F'), comprimento: getCol('ml_comprimento', 'G') 
@@ -70,6 +72,8 @@ export default function RegrasPage() {
       { campo: 'custo_sku', coluna: regrasCustos.sku.toUpperCase() },
       { campo: 'custo_produto', coluna: regrasCustos.produto.toUpperCase() },
       { campo: 'custo_valor', coluna: regrasCustos.custo.toUpperCase() },
+      // NOVO: Adicionado o campo "custo_marca" para gravar na base de dados
+      { campo: 'custo_marca', coluna: regrasCustos.marca.toUpperCase() },
       { campo: 'ml_mlb', coluna: regrasMlCols.mlb.toUpperCase() },
       { campo: 'ml_sku', coluna: regrasMlCols.sku.toUpperCase() },
       { campo: 'ml_comissao', coluna: regrasMlCols.comissao.toUpperCase() },
@@ -237,7 +241,8 @@ export default function RegrasPage() {
 
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
                 <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">Planilha de Custos Unitários</h3>
-                <div className="grid grid-cols-3 gap-4">
+                {/* NOVO: Ajustado grid-cols-3 para grid-cols-2 md:grid-cols-4 para acomodar a Marca */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna SKU</label>
                     <input type="text" maxLength={2} value={regrasCustos.sku} onChange={(e) => setRegrasCustos({ ...regrasCustos, sku: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
@@ -249,6 +254,11 @@ export default function RegrasPage() {
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Custo Unitário</label>
                     <input type="text" maxLength={2} value={regrasCustos.custo} onChange={(e) => setRegrasCustos({ ...regrasCustos, custo: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                  </div>
+                  {/* NOVO: Campo de input para a Coluna Marca */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Marca</label>
+                    <input type="text" maxLength={2} value={regrasCustos.marca} onChange={(e) => setRegrasCustos({ ...regrasCustos, marca: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
                   </div>
                 </div>
               </div>

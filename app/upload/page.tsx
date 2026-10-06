@@ -19,7 +19,7 @@ export default function UploadPage() {
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [regrasColsDinamicas, setRegrasColsDinamicas] = useState({
-    custo_sku: 'A', custo_produto: 'B', custo_valor: 'C',
+    custo_sku: 'A', custo_produto: 'B', custo_valor: 'C', custo_marca: 'D', // NOVO: custo_marca
     ml_mlb: 'A', ml_sku: 'B', ml_comissao: 'C', ml_peso: 'D', ml_altura: 'E', ml_largura: 'F', ml_comprimento: 'G'
   });
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
@@ -28,7 +28,7 @@ export default function UploadPage() {
   const [pesquisaCusto, setPesquisaCusto] = useState("");
   const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
   const [editandoCustoId, setEditandoCustoId] = useState<number | null>(null);
-  const [dadosEdicaoCusto, setDadosEdicaoCusto] = useState({ sku: "", produto: "", custo_unitario: 0 });
+  const [dadosEdicaoCusto, setDadosEdicaoCusto] = useState({ sku: "", produto: "", custo_unitario: 0, marca: "" }); // NOVO: marca
 
   // Estados para Regras ML
   const [pesquisaMl, setPesquisaMl] = useState("");
@@ -69,7 +69,7 @@ export default function UploadPage() {
       const getC = (k: string, d: string) => tinyConfig.find((t: any) => t.campo === k)?.coluna || d;
       setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
       setRegrasColsDinamicas({
-        custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'),
+        custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'), custo_marca: getC('custo_marca', 'D'), // NOVO
         ml_mlb: getC('ml_mlb', 'A'), ml_sku: getC('ml_sku', 'B'), ml_comissao: getC('ml_comissao', 'C'),
         ml_peso: getC('ml_peso', ''), ml_altura: getC('ml_altura', 'E'), ml_largura: getC('ml_largura', 'F'), ml_comprimento: getC('ml_comprimento', 'G')
       });
@@ -431,6 +431,7 @@ export default function UploadPage() {
     const idxSku = letraParaIndice(regrasColsDinamicas.custo_sku);
     const idxProd = letraParaIndice(regrasColsDinamicas.custo_produto);
     const idxCusto = letraParaIndice(regrasColsDinamicas.custo_valor);
+    const idxMarca = letraParaIndice(regrasColsDinamicas.custo_marca); // NOVO
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -448,9 +449,10 @@ export default function UploadPage() {
           const sku = normalizarSku(row[idxSku]);
           const produto = String(row[idxProd] || "Produto sem nome").trim();
           const custo = Number(row[idxCusto] || 0);
+          const marca = String(row[idxMarca] || "").trim(); // NOVO
 
           if (sku && !isNaN(custo)) {
-            registros.push({ sku, produto, custo_unitario: custo });
+            registros.push({ sku, produto, custo_unitario: custo, marca }); // NOVO
           }
         }
 
@@ -649,7 +651,8 @@ export default function UploadPage() {
     const { error } = await supabase.from('tabela_custos_skus').update({
       sku: dadosEdicaoCusto.sku.trim(),
       produto: dadosEdicaoCusto.produto.trim(),
-      custo_unitario: Number(dadosEdicaoCusto.custo_unitario || 0)
+      custo_unitario: Number(dadosEdicaoCusto.custo_unitario || 0),
+      marca: dadosEdicaoCusto.marca.trim() // NOVO
     }).eq('id', id);
 
     if (error) alert("Erro ao atualizar custo: " + error.message);
@@ -863,7 +866,7 @@ export default function UploadPage() {
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
-                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (SKU: <strong>{regrasColsDinamicas.custo_sku}</strong>, Produto: <strong>{regrasColsDinamicas.custo_produto}</strong>, Custo: <strong>{regrasColsDinamicas.custo_valor}</strong>).</p>
+                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (SKU: <strong>{regrasColsDinamicas.custo_sku}</strong>, Produto: <strong>{regrasColsDinamicas.custo_produto}</strong>, Custo: <strong>{regrasColsDinamicas.custo_valor}</strong>, Marca: <strong>{regrasColsDinamicas.custo_marca}</strong>).</p>
               </div>
               <button 
                 onClick={limparTabelaCustos}
@@ -900,13 +903,14 @@ export default function UploadPage() {
                     <tr>
                       <th className="p-3.5">SKU</th>
                       <th className="p-3.5">Nome do Produto</th>
+                      <th className="p-3.5">Marca</th>
                       <th className="p-3.5 text-right">Custo Unitário</th>
                       <th className="p-3.5 text-center">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                     {listaCustosFiltrados.length === 0 ? (
-                      <tr><td colSpan={4} className="p-6 text-center text-slate-500">Nenhum custo encontrado para este SKU.</td></tr>
+                      <tr><td colSpan={5} className="p-6 text-center text-slate-500">Nenhum custo encontrado para este SKU.</td></tr>
                     ) : (
                       listaCustosFiltrados.map((item) => {
                         const isEditing = editandoCustoId === item.id;
@@ -922,6 +926,11 @@ export default function UploadPage() {
                                 <input type="text" value={dadosEdicaoCusto.produto} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, produto: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-full text-white" />
                               ) : (item.produto || "—")}
                             </td>
+                            <td className="p-3.5 text-slate-300">
+                              {isEditing ? (
+                                <input type="text" value={dadosEdicaoCusto.marca} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, marca: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-white" />
+                              ) : (item.marca || "—")}
+                            </td>
                             <td className="p-3.5 text-right font-bold text-emerald-400 font-mono">
                               {isEditing ? (
                                 <input type="number" step="0.01" value={dadosEdicaoCusto.custo_unitario} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, custo_unitario: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white font-mono" />
@@ -935,7 +944,7 @@ export default function UploadPage() {
                                 </>
                               ) : (
                                 <>
-                                  <button onClick={() => { setEditandoCustoId(item.id); setDadosEdicaoCusto({ sku: item.sku, produto: item.produto || "", custo_unitario: item.custo_unitario }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
+                                  <button onClick={() => { setEditandoCustoId(item.id); setDadosEdicaoCusto({ sku: item.sku, produto: item.produto || "", custo_unitario: item.custo_unitario, marca: item.marca || "" }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
                                   <button onClick={() => excluirCusto(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
                                 </>
                               )}
