@@ -1,6 +1,4 @@
 "use client";
-import Navbar from "./components/Navbar"; // ou "../components/Navbar" conforme a estrutura exata
-"use client";
 import { useState, ChangeEvent, useEffect } from "react";
 import * as XLSX from "xlsx";
 import Link from "next/link";
