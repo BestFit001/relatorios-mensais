@@ -11,19 +11,6 @@ export default function RegrasPage() {
 
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
-  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
-
-  const [novoCanal, setNovoCanal] = useState("Amazon");
-  const [novaFaixa, setNovaFaixa] = useState("R$ 0.00 até R$ 78.99");
-  const [novaComissao, setNovaComissao] = useState("14.00");
-  const [novaTarifaFixa, setNovaTarifaFixa] = useState("4.00");
-  const [novoFrete, setNovoFrete] = useState("0.00");
-  const [salvandoTarifa, setSalvandoTarifa] = useState(false);
-
-  const canaisDisponiveis = [
-    "Amazon", "Centauro", "Magalu", "Mercado Livre Clássico", 
-    "Mercado Livre Premium", "Netshoes", "Shein", "Shopee", "Site", "TikTok Shop"
-  ];
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -48,9 +35,6 @@ export default function RegrasPage() {
 
     const { data: canaisConfig } = await supabase.from('config_regras_canais').select('*').order('id');
     if (canaisConfig) setRegrasCanais(canaisConfig);
-
-    const { data: tarifacaoData } = await supabase.from('config_regras_tarifacao').select('*').order('id');
-    if (tarifacaoData) setRegrasTarifacao(tarifacaoData);
 
     setLoading(false);
   };
@@ -86,34 +70,6 @@ export default function RegrasPage() {
     await supabase.from('config_regras_canais').update({ ativo_ads: novoStatus }).eq('id', id);
   };
 
-  const adicionarRegraTarifacao = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSalvandoTarifa(true);
-
-    const { error } = await supabase.from('config_regras_tarifacao').insert([{
-      canal: novoCanal,
-      faixa_preco: novaFaixa,
-      comissao: Number(novaComissao),
-      tarifa_fixa: Number(novaTarifaFixa),
-      frete: Number(novoFrete)
-    }]);
-
-    if (error) {
-      alert("Erro ao adicionar regra: " + error.message);
-    } else {
-      carregarDados();
-      alert("✅ Regra adicionada com sucesso!");
-    }
-    setSalvandoTarifa(false);
-  };
-
-  const removerRegraTarifacao = async (id: number) => {
-    if (!confirm("Tem certeza que deseja remover esta regra?")) return;
-    const { error } = await supabase.from('config_regras_tarifacao').delete().eq('id', id);
-    if (error) alert("Erro: " + error.message);
-    else carregarDados();
-  };
-
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-6xl mx-auto">
@@ -121,7 +77,7 @@ export default function RegrasPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Regras</h1>
-            <p className="text-sm font-medium text-slate-400">Configure colunas, visibilidade de canais no Ads e tarifação</p>
+            <p className="text-sm font-medium text-slate-400">Configure colunas e visibilidade de canais no Painel Ads</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -141,10 +97,9 @@ export default function RegrasPage() {
         ) : (
           <div className="space-y-8">
 
-            {/* MAPEAMENTO DE COLUNAS E VISIBILIDADE NO ADS */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-1 text-white">Mapeamento de Colunas & Visibilidade no Painel Ads</h2>
-              <p className="text-xs text-slate-400 mb-6">Defina a coluna do SKU e marque quais canais aparecem no Painel Ads (ex: Site desativado).</p>
+              <p className="text-xs text-slate-400 mb-6">Defina a coluna do SKU e marque quais canais aparecem no Painel Ads (ex: desativar canais sem ads).</p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {regrasCanais.map((r) => (
@@ -154,7 +109,7 @@ export default function RegrasPage() {
                       <button 
                         type="button"
                         onClick={() => alternarAtivoAds(r.id, r.ativo_ads ?? true)}
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-all ${
+                        className={`px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer transition-all ${
                           (r.ativo_ads ?? true) ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-rose-950 text-rose-400 border border-rose-800'
                         }`}
                       >
@@ -177,7 +132,6 @@ export default function RegrasPage() {
               </div>
             </div>
 
-            {/* RESTANTE DA PÁGINA (TINY E TARIFAÇÃO) */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-1 text-white">Configuração de Colunas (Base Tiny & Status)</h2>
               <form onSubmit={salvarRegrasTiny} className="space-y-6 mt-4">

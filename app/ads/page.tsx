@@ -92,7 +92,6 @@ export default function AdsPage() {
   }, [subAba, mesSelecionado, mesComparativo]);
 
   const carregarDadosAuxiliares = async () => {
-    // Carrega apenas canais com ativo_ads = true (ou nulo)
     const { data: regrasCanaisData } = await supabase.from('config_regras_canais').select('*').order('id');
     if (regrasCanaisData) {
       const ativos = regrasCanaisData.filter((c: any) => c.ativo_ads !== false);
@@ -160,7 +159,8 @@ export default function AdsPage() {
       const diffMargemRs = margemRsAtual - margemRsAnt;
 
       const repAds = totFatAtual > 0 ? (fatAdsAtual / totFatAtual) * 100 : 0;
-      const tacosSugerido = fatAdsAtual * 0.15;
+      // Lógica de Sugestão de Budget (TACOS Sugerido baseado na representatividade ou 15% da receita ads)
+      const tacosSugerido = fatAdsAtual > 0 ? (fatAdsAtual * 0.15) : 0;
 
       return {
         canal,
