@@ -25,14 +25,14 @@ export default function UploadPage() {
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
 
   // Estados para Custos
-  const [listaCustos, setListaCustos] = useState<any[]>([]);
   const [pesquisaCusto, setPesquisaCusto] = useState("");
+  const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
   const [editandoCustoId, setEditandoCustoId] = useState<number | null>(null);
   const [dadosEdicaoCusto, setDadosEdicaoCusto] = useState({ sku: "", produto: "", custo_unitario: 0 });
 
   // Estados para Regras ML
-  const [listaRegrasMl, setListaRegrasMl] = useState<any[]>([]);
   const [pesquisaMl, setPesquisaMl] = useState("");
+  const [listaRegrasMlFiltradas, setListaRegrasMlFiltradas] = useState<any[]>([]);
   const [editandoMlId, setEditandoMlId] = useState<number | null>(null);
   const [dadosEdicaoMl, setDadosEdicaoMl] = useState({ mlb: "", sku: "", comissao: 0, peso_real: 0, altura: 0, largura: 0, comprimento: 0 });
 
@@ -50,9 +50,15 @@ export default function UploadPage() {
 
   useEffect(() => {
     carregarDadosCadastros();
-    carregarCustos();
-    carregarRegrasMl();
   }, []);
+
+  useEffect(() => {
+    pesquisarCustosNoBanco();
+  }, [pesquisaCusto]);
+
+  useEffect(() => {
+    pesquisarMlNoBanco();
+  }, [pesquisaMl]);
 
   const carregarDadosCadastros = async () => {
     const { data: regras } = await supabase.from('config_regras_canais').select('*').order('id');
@@ -99,14 +105,34 @@ export default function UploadPage() {
     setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
-  const carregarCustos = async () => {
-    const { data } = await supabase.from('tabela_custos_skus').select('*').order('sku');
-    if (data) setListaCustos(data);
+  const pesquisarCustosNoBanco = async () => {
+    if (!pesquisaCusto || pesquisaCusto.trim() === "") {
+      setListaCustosFiltrados([]);
+      return;
+    }
+    const termo = pesquisaCusto.trim();
+    const { data } = await supabase
+      .from('tabela_custos_skus')
+      .select('*')
+      .or(`sku.ilike.%${termo}%,produto.ilike.%${termo}%`)
+      .limit(50);
+
+    if (data) setListaCustosFiltrados(data);
   };
 
-  const carregarRegrasMl = async () => {
-    const { data } = await supabase.from('ml_anuncios_regras').select('*').order('id');
-    if (data) setListaRegrasMl(data);
+  const pesquisarMlNoBanco = async () => {
+    if (!pesquisaMl || pesquisaMl.trim() === "") {
+      setListaRegrasMlFiltradas([]);
+      return;
+    }
+    const termo = pesquisaMl.trim().toUpperCase();
+    const { data } = await supabase
+      .from('ml_anuncios_regras')
+      .select('*')
+      .or(`mlb.ilike.%${termo}%,sku.ilike.%${termo}%`)
+      .limit(50);
+
+    if (data) setListaRegrasMlFiltradas(data);
   };
 
   const letraParaIndice = (str: string) => {
@@ -269,7 +295,7 @@ export default function UploadPage() {
     if (error) alert("Erro: " + error.message);
     else {
       alert("🗑️ Tabela de custos limpa com sucesso!");
-      carregarCustos();
+      setListaCustosFiltrados([]);
     }
   };
 
@@ -279,7 +305,7 @@ export default function UploadPage() {
     if (error) alert("Erro: " + error.message);
     else {
       alert("🗑️ Regras do ML limpas com sucesso!");
-      carregarRegrasMl();
+      setListaRegrasMlFiltradas([]);
     }
   };
 
@@ -435,8 +461,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`💰 Custos unitários extraídos e atualizados com sucesso! ${registros.length} SKUs processados.`);
-        carregarCustos();
+        alert(`💰 Custos unitários extraídos e salvos com sucesso! Total de ${registros.length} registos processados.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao processar custos: " + err.message);
@@ -525,8 +550,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`🚀 Planilha de Regras do ML processada com sucesso! ${registros.length} anúncios únicos consolidados.`);
-        carregarRegrasMl();
+        alert(`🚀 Planilha de Regras do ML processada com sucesso! Total de ${registros.length} anúncios únicos salvos na base.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao processar planilha do ML: " + err.message);
@@ -631,7 +655,7 @@ export default function UploadPage() {
     if (error) alert("Erro ao atualizar custo: " + error.message);
     else {
       setEditandoCustoId(null);
-      carregarCustos();
+      pesquisarCustosNoBanco();
     }
   };
 
@@ -639,7 +663,7 @@ export default function UploadPage() {
     if (!confirm("Excluir este registo de custo?")) return;
     const { error } = await supabase.from('tabela_custos_skus').delete().eq('id', id);
     if (error) alert("Erro: " + error.message);
-    else carregarCustos();
+    else pesquisarCustosNoBanco();
   };
 
   const salvarEdicaoMl = async (id: number) => {
@@ -656,7 +680,7 @@ export default function UploadPage() {
     if (error) alert("Erro ao atualizar regra ML: " + error.message);
     else {
       setEditandoMlId(null);
-      carregarRegrasMl();
+      pesquisarMlNoBanco();
     }
   };
 
@@ -664,7 +688,7 @@ export default function UploadPage() {
     if (!confirm("Excluir esta regra do Mercado Livre?")) return;
     const { error } = await supabase.from('ml_anuncios_regras').delete().eq('id', id);
     if (error) alert("Erro: " + error.message);
-    else carregarRegrasMl();
+    else pesquisarMlNoBanco();
   };
 
   return (
@@ -873,62 +897,66 @@ export default function UploadPage() {
                 type="text" 
                 value={pesquisaCusto} 
                 onChange={(e) => setPesquisaCusto(e.target.value)} 
-                placeholder="Pesquisar SKU ou Nome do Produto..." 
+                placeholder="🔍 Digite o SKU para pesquisar e consultar..." 
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none"
               />
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                  <tr>
-                    <th className="p-3.5">SKU</th>
-                    <th className="p-3.5">Nome do Produto</th>
-                    <th className="p-3.5 text-right">Custo Unitário</th>
-                    <th className="p-3.5 text-center">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                  {listaCustos
-                    .filter(c => c.sku.toLowerCase().includes(pesquisaCusto.toLowerCase()) || (c.produto && c.produto.toLowerCase().includes(pesquisaCusto.toLowerCase())))
-                    .map((item) => {
-                      const isEditing = editandoCustoId === item.id;
-                      return (
-                        <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="p-3.5 font-mono font-bold text-slate-200">
-                            {isEditing ? (
-                              <input type="text" value={dadosEdicaoCusto.sku} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, sku: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white font-mono" />
-                            ) : item.sku}
-                          </td>
-                          <td className="p-3.5 text-slate-300">
-                            {isEditing ? (
-                              <input type="text" value={dadosEdicaoCusto.produto} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, produto: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-full text-white" />
-                            ) : (item.produto || "—")}
-                          </td>
-                          <td className="p-3.5 text-right font-bold text-emerald-400 font-mono">
-                            {isEditing ? (
-                              <input type="number" step="0.01" value={dadosEdicaoCusto.custo_unitario} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, custo_unitario: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white font-mono" />
-                            ) : `R$ ${Number(item.custo_unitario).toFixed(2)}`}
-                          </td>
-                          <td className="p-3.5 text-center flex items-center justify-center gap-2">
-                            {isEditing ? (
-                              <>
-                                <button onClick={() => salvarEdicaoCusto(item.id)} className="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Salvar</button>
-                                <button onClick={() => setEditandoCustoId(null)} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[11px] font-bold cursor-pointer">Cancelar</button>
-                              </>
-                            ) : (
-                              <>
-                                <button onClick={() => { setEditandoCustoId(item.id); setDadosEdicaoCusto({ sku: item.sku, produto: item.produto || "", custo_unitario: item.custo_unitario }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
-                                <button onClick={() => excluirCusto(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
-                              </>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
+            {pesquisaCusto.trim() !== "" && (
+              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                    <tr>
+                      <th className="p-3.5">SKU</th>
+                      <th className="p-3.5">Nome do Produto</th>
+                      <th className="p-3.5 text-right">Custo Unitário</th>
+                      <th className="p-3.5 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {listaCustosFiltrados.length === 0 ? (
+                      <tr><td colSpan={4} className="p-6 text-center text-slate-500">Nenhum custo encontrado para este SKU.</td></tr>
+                    ) : (
+                      listaCustosFiltrados.map((item) => {
+                        const isEditing = editandoCustoId === item.id;
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="p-3.5 font-mono font-bold text-slate-200">
+                              {isEditing ? (
+                                <input type="text" value={dadosEdicaoCusto.sku} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, sku: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white font-mono" />
+                              ) : item.sku}
+                            </td>
+                            <td className="p-3.5 text-slate-300">
+                              {isEditing ? (
+                                <input type="text" value={dadosEdicaoCusto.produto} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, produto: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-full text-white" />
+                              ) : (item.produto || "—")}
+                            </td>
+                            <td className="p-3.5 text-right font-bold text-emerald-400 font-mono">
+                              {isEditing ? (
+                                <input type="number" step="0.01" value={dadosEdicaoCusto.custo_unitario} onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, custo_unitario: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white font-mono" />
+                              ) : `R$ ${Number(item.custo_unitario).toFixed(2)}`}
+                            </td>
+                            <td className="p-3.5 text-center flex items-center justify-center gap-2">
+                              {isEditing ? (
+                                <>
+                                  <button onClick={() => salvarEdicaoCusto(item.id)} className="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Salvar</button>
+                                  <button onClick={() => setEditandoCustoId(null)} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[11px] font-bold cursor-pointer">Cancelar</button>
+                                </>
+                              ) : (
+                                <>
+                                  <button onClick={() => { setEditandoCustoId(item.id); setDadosEdicaoCusto({ sku: item.sku, produto: item.produto || "", custo_unitario: item.custo_unitario }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
+                                  <button onClick={() => excluirCusto(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -962,86 +990,90 @@ export default function UploadPage() {
                 type="text" 
                 value={pesquisaMl} 
                 onChange={(e) => setPesquisaMl(e.target.value)} 
-                placeholder="Pesquisar por MLB ou SKU..." 
+                placeholder="🔍 Digite o MLB ou SKU para pesquisar e consultar..." 
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none"
               />
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
-              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                  <tr>
-                    <th className="p-3">MLB</th>
-                    <th className="p-3">SKU</th>
-                    <th className="p-3 text-center">Comissão (%)</th>
-                    <th className="p-3 text-right">Peso (kg)</th>
-                    <th className="p-3 text-right">Alt (cm)</th>
-                    <th className="p-3 text-right">Larg (cm)</th>
-                    <th className="p-3 text-right">Comp (cm)</th>
-                    <th className="p-3 text-center">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                  {listaRegrasMl
-                    .filter(m => m.mlb.toLowerCase().includes(pesquisaMl.toLowerCase()) || m.sku.toLowerCase().includes(pesquisaMl.toLowerCase()))
-                    .map((item) => {
-                      const isEditing = editandoMlId === item.id;
-                      return (
-                        <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="p-3 font-mono font-bold text-slate-200">
-                            {isEditing ? (
-                              <input type="text" value={dadosEdicaoMl.mlb} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, mlb: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white font-mono" />
-                            ) : item.mlb}
-                          </td>
-                          <td className="p-3 font-mono text-slate-400">
-                            {isEditing ? (
-                              <input type="text" value={dadosEdicaoMl.sku} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, sku: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-white font-mono" />
-                            ) : item.sku}
-                          </td>
-                          <td className="p-3 text-center font-bold text-rose-400">
-                            {isEditing ? (
-                              <input type="number" step="0.01" value={dadosEdicaoMl.comissao} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, comissao: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white" />
-                            ) : `${Number(item.comissao).toFixed(2)}%`}
-                          </td>
-                          <td className="p-3 text-right font-mono text-slate-300">
-                            {isEditing ? (
-                              <input type="number" step="0.001" value={dadosEdicaoMl.peso_real} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, peso_real: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-right text-white" />
-                            ) : Number(item.peso_real).toFixed(3)}
-                          </td>
-                          <td className="p-3 text-right font-mono text-slate-300">
-                            {isEditing ? (
-                              <input type="number" step="0.01" value={dadosEdicaoMl.altura} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, altura: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white" />
-                            ) : item.altura}
-                          </td>
-                          <td className="p-3 text-right font-mono text-slate-300">
-                            {isEditing ? (
-                              <input type="number" step="0.01" value={dadosEdicaoMl.largura} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, largura: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white" />
-                            ) : item.largura}
-                          </td>
-                          <td className="p-3 text-right font-mono text-slate-300">
-                            {isEditing ? (
-                              <input type="number" step="0.01" value={dadosEdicaoMl.comprimento} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, comprimento: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white" />
-                            ) : item.comprimento}
-                          </td>
-                          <td className="p-3 text-center flex items-center justify-center gap-2">
-                            {isEditing ? (
-                              <>
-                                <button onClick={() => salvarEdicaoMl(item.id)} className="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Salvar</button>
-                                <button onClick={() => setEditandoMlId(null)} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[11px] font-bold cursor-pointer">Cancelar</button>
-                              </>
-                            ) : (
-                              <>
-                                <button onClick={() => { setEditandoMlId(item.id); setDadosEdicaoMl({ mlb: item.mlb, sku: item.sku, comissao: item.comissao, peso_real: item.peso_real, altura: item.altura, largura: item.largura, comprimento: item.comprimento }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
-                                <button onClick={() => excluirRegraMl(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
-                              </>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
+            {pesquisaMl.trim() !== "" && (
+              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
+                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                    <tr>
+                      <th className="p-3">MLB</th>
+                      <th className="p-3">SKU</th>
+                      <th className="p-3 text-center">Comissão (%)</th>
+                      <th className="p-3 text-right">Peso (kg)</th>
+                      <th className="p-3 text-right">Alt (cm)</th>
+                      <th className="p-3 text-right">Larg (cm)</th>
+                      <th className="p-3 text-right">Comp (cm)</th>
+                      <th className="p-3 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {listaRegrasMlFiltradas.length === 0 ? (
+                      <tr><td colSpan={8} className="p-6 text-center text-slate-500">Nenhum anúncio encontrado para esta pesquisa.</td></tr>
+                    ) : (
+                      listaRegrasMlFiltradas.map((item) => {
+                        const isEditing = editandoMlId === item.id;
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="p-3 font-mono font-bold text-slate-200">
+                              {isEditing ? (
+                                <input type="text" value={dadosEdicaoMl.mlb} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, mlb: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white font-mono" />
+                              ) : item.mlb}
+                            </td>
+                            <td className="p-3 font-mono text-slate-400">
+                              {isEditing ? (
+                                <input type="text" value={dadosEdicaoMl.sku} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, sku: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-white font-mono" />
+                              ) : item.sku}
+                            </td>
+                            <td className="p-3 text-center font-bold text-rose-400">
+                              {isEditing ? (
+                                <input type="number" step="0.01" value={dadosEdicaoMl.comissao} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, comissao: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white" />
+                              ) : `${Number(item.comissao).toFixed(2)}%`}
+                            </td>
+                            <td className="p-3 text-right font-mono text-slate-300">
+                              {isEditing ? (
+                                <input type="number" step="0.001" value={dadosEdicaoMl.peso_real} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, peso_real: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-right text-white" />
+                              ) : Number(item.peso_real).toFixed(3)}
+                            </td>
+                            <td className="p-3 text-right font-mono text-slate-300">
+                              {isEditing ? (
+                                <input type="number" step="0.01" value={dadosEdicaoMl.altura} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, altura: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white" />
+                              ) : item.altura}
+                            </td>
+                            <td className="p-3 text-right font-mono text-slate-300">
+                              {isEditing ? (
+                                <input type="number" step="0.01" value={dadosEdicaoMl.largura} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, largura: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white" />
+                              ) : item.largura}
+                            </td>
+                            <td className="p-3 text-right font-mono text-slate-300">
+                              {isEditing ? (
+                                <input type="number" step="0.01" value={dadosEdicaoMl.comprimento} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, comprimento: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white" />
+                              ) : item.comprimento}
+                            </td>
+                            <td className="p-3 text-center flex items-center justify-center gap-2">
+                              {isEditing ? (
+                                <>
+                                  <button onClick={() => salvarEdicaoMl(item.id)} className="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Salvar</button>
+                                  <button onClick={() => setEditandoMlId(null)} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[11px] font-bold cursor-pointer">Cancelar</button>
+                                </>
+                              ) : (
+                                <>
+                                  <button onClick={() => { setEditandoMlId(item.id); setDadosEdicaoMl({ mlb: item.mlb, sku: item.sku, comissao: item.comissao, peso_real: item.peso_real, altura: item.altura, largura: item.largura, comprimento: item.comprimento }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
+                                  <button onClick={() => excluirRegraMl(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
