@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
+import Navbar from "../../components/Navbar";
 
 export default function MapeamentoPage() {
   const [loading, setLoading] = useState(false);
@@ -151,23 +152,14 @@ export default function MapeamentoPage() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[96%] mx-auto">
         
-        {/* CABEÇALHO COM NAVEGAÇÃO COMPLETA INCLUINDO PAINEL ADS */}
+        {/* CABEÇALHO UNIFICADO COM O NAVBAR */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Análise e Progresso de Cadastros</h1>
             <p className="text-sm font-medium text-slate-400">Monitorize a presença do catálogo por canal com filtros avançados</p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800 flex-wrap gap-1">
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/">Dashboard</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/upload">Upload & Canais</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/mapeamento">Mapeamento</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/ads">Painel Ads</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">Regras</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/admin">Admin</Link>
-            </div>
-          </div>
+          <Navbar />
         </div>
 
         {/* FILTROS E PESQUISA */}
