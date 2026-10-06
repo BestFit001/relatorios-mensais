@@ -10,7 +10,7 @@ export default function AdsPage() {
   const router = useRouter();
 
   // Filtros de Canal e Mês
-  const [canalSelecionado, setCanalSelecionado] = useState("Mercado Livre 1");
+  const [canalSelecionado, setCanalSelecionado] = useState("");
   const [mesSelecionado, setMesSelecionado] = useState("09/2026");
 
   const [canais, setCanais] = useState<any[]>([]);
@@ -47,10 +47,13 @@ export default function AdsPage() {
       setCanais(data);
       setCanalSelecionado(data[0].canal);
     } else {
-      setCanais([
+      const padrao = [
         { canal: "Mercado Livre 1" }, { canal: "Mercado Livre 2" },
-        { canal: "Shopee" }, { canal: "Amazon" }, { canal: "TikTok Shop" }, { canal: "Magalu" }
-      ]);
+        { canal: "Shopee" }, { canal: "Amazon" }, { canal: "TikTok" }, { canal: "Magalu" },
+        { canal: "Shein" }, { canal: "Netshoes" }, { canal: "Site" }, { canal: "Centauro" }
+      ];
+      setCanais(padrao);
+      setCanalSelecionado(padrao[0].canal);
     }
   };
 
@@ -145,25 +148,38 @@ export default function AdsPage() {
           </div>
         </div>
 
-        {/* SELETOR DE CANAL E MÊS */}
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex flex-wrap items-center gap-6">
-          <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Selecione o Canal:</label>
-            <select 
-              value={canalSelecionado} 
-              onChange={(e) => setCanalSelecionado(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer min-w-[200px]"
-            >
-              {canais.map((c, i) => <option key={i} value={c.canal}>{c.canal}</option>)}
-            </select>
+        {/* SELETOR DE CANAIS EM FORMATO DE BOTÕES CLICÁVEIS */}
+        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-6">
+          <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Selecione o Canal:</label>
+          <div className="flex flex-wrap gap-2.5">
+            {canais.map((c, i) => {
+              const ativo = canalSelecionado === c.canal;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setCanalSelecionado(c.canal)}
+                  className={`px-5 py-2.5 rounded-xl font-bold text-xs tracking-wide cursor-pointer transition-all shadow-sm ${
+                    ativo 
+                      ? 'bg-purple-600 text-white shadow-purple-900/40 shadow-md scale-105' 
+                      : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white hover:border-slate-700'
+                  }`}
+                >
+                  {c.canal}
+                </button>
+              );
+            })}
           </div>
+        </div>
 
+        {/* SELETOR DE MÊS */}
+        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex items-center gap-4">
           <div>
             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Selecione o Mês / Período:</label>
             <select 
               value={mesSelecionado} 
               onChange={(e) => setMesSelecionado(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer min-w-[160px]"
+              className="bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer min-w-[180px]"
             >
               {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
             </select>
