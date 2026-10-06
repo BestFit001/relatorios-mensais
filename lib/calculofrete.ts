@@ -1,4 +1,3 @@
-// Tabela de tarifas de frete carregada do Excel
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
   { atePeso: 0.5, faixas: { "78.99": 8.25, "99.99": 13.85, "119.99": 16.15, "149.99": 18.15, "199.99": 20.45, "200": 23.25 } },
@@ -18,24 +17,17 @@ const matrizFretes = [
 ];
 
 export function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura: number, comprimento: number): number {
-  // 1. Regra de Preço: Abaixo de R$ 79,00 não tem frete grátis obrigatório (ou regra específica)
   if (pdv < 79.00) {
-    return 0.00; // Ou valor fixo abaixo de 79 conforme tabela
+    return 0.00;
   }
-
-  // 2. Cálculo do Peso Volumétrico (A x L x C / 6000)
   const pesoVolumetrico = (altura * largura * comprimento) / 6000;
-
-  // O Mercado Livre considera sempre o MAIOR peso (Real vs Volumétrico)
   const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
 
-  // 3. Encontrar a linha de peso correspondente na matriz
   let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
   if (!linhaFrete) {
-    linhaFrete = matrizFretes[matrizFretes.length - 1]; // pega o maior limite se ultrapassar 30kg
+    linhaFrete = matrizFretes[matrizFretes.length - 1];
   }
 
-  // 4. Encontrar a faixa de preço do PDV
   let valorFrete = 0;
   if (pdv < 79) valorFrete = linhaFrete.faixas["78.99"];
   else if (pdv < 100) valorFrete = linhaFrete.faixas["99.99"];
