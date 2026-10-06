@@ -42,19 +42,22 @@ function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura:
 }
 
 export default function AdsPage() {
+  const [subAba, setSubAba] = useState<"campanhas" | "dashboard">("campanhas");
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const router = useRouter();
 
   const [canalSelecionado, setCanalSelecionado] = useState("Mercado Livre 1");
   const [mesSelecionado, setMesSelecionado] = useState("09/2026");
+  const [mesComparativo, setMesComparativo] = useState("08/2026");
 
   const [canais, setCanais] = useState<any[]>([]);
   const [lancamentos, setLancamentos] = useState<any[]>([]);
+  const [dadosComparativo, setDadosComparativo] = useState<any[]>([]);
+
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [regrasMlMap, setRegrasMlMap] = useState<Map<string, any>>(new Map());
 
-  // Estado para edição de linha na tabela
   const [idEditando, setIdEditando] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
 
@@ -81,6 +84,12 @@ export default function AdsPage() {
       carregarLancamentos();
     }
   }, [canalSelecionado, mesSelecionado]);
+
+  useEffect(() => {
+    if (subAba === "dashboard") {
+      carregarDadosDashboard();
+    }
+  }, [subAba, mesSelecionado, mesComparativo]);
 
   const carregarDadosAuxiliares = async () => {
     const { data: regrasCanaisData } = await supabase.from('config_regras_canais').select('*').order('id');
@@ -122,6 +131,69 @@ export default function AdsPage() {
       .order('id');
 
     if (data) setLancamentos(data);
+    setLoading(false);
+  };
+
+  const carregarDadosDashboard = async () => {
+    setLoading(true);
+    // Buscar todos os canais e consolidar dados do mês atual e anterior
+    const { data: todosCanais } = await supabase.from('config_regras_canais').select('canal');
+    const listaCanais = todosCanais && todosCanais.length > 0 ? todosCanais.map(c => c.canal) : canais.map(c => c.canal);
+
+    const { data: dadosAtual } = await supabase.from('ads_campanhas_lancamentos').select('*').eq('mes_referencia', mesSelecionado);
+    const { data: dadosAnterior } = await supabase.from('ads_campanhas_lancamentos').select('*').eq('mes_referencia', mesComparativo);
+
+    const consolidado = listaCanais.map(canal => {
+      const itensA = dadosAtual?.filter(d => d.canal === canal) || [];
+      const itensB = dadosAnterior?.filter(d => d.canal === canal) || [];
+
+      const fatAdsAtual = itensA.reduce((sum, i) => sum + Number(i.retorno_bruto || 0), 0);
+      const fatAdsAnt = itensB.reduce((sum, i) => sum + Number(i.retorno_bruto || 0), 0);
+      const diffAds = fatAdsAtual - fatAdsAnt;
+
+      const invAtual = itensA.reduce((sum, i) => sum + Number(i.investimento || 0), 0);
+      const invAnt = itensB.reduce((sum, i) => sum + Number(i.investimento || 0), 0);
+
+      const roasAtual = invAtual > 0 ? fatAdsAtual / invAtual : 0;
+      const roasAnt = invAnt > 0 ? fatAdsAnt / invAnt : 0;
+
+      const totFatAtual = itensA.reduce((sum, i) => sum + Number(i.faturamento_total || 0), 0);
+      const totFatAnt = itensB.reduce((sum, i) => sum + Number(i.faturamento_total || 0), 0);
+
+      const tacosAtual = totFatAtual > 0 ? (invAtual / totFatAtual) * 100 : 0;
+      const tacosAnt = totFatAnt > 0 ? (invAnt / totFatAnt) * 100 : 0;
+
+      const margemRsAtual = itensA.reduce((sum, i) => sum + Number(i.margem_liquida_rs || 0), 0);
+      const margemRsAnt = itensB.reduce((sum, i) => sum + Number(i.margem_liquida_rs || 0), 0);
+      const diffMargemRs = margemRsAtual - margemRsAnt;
+
+      const margemPctAtual = totFatAtual > 0 ? (margemRsAtual / totFatAtual) * 100 : 0;
+      const margemPctAnt = totFatAnt > 0 ? (margemRsAnt / totFatAnt) * 100 : 0;
+
+      const repAds = totFatAtual > 0 ? (fatAdsAtual / totFatAtual) * 100 : 0;
+      const tacosSugerido = fatAdsAtual * 0.15; // Sugestão base 15%
+
+      return {
+        canal,
+        fatAdsAtual,
+        fatAdsAnt,
+        diffAds,
+        roasAtual,
+        roasAnt,
+        tacosAtual,
+        tacosAnt,
+        margemRsAtual,
+        margemRsAnt,
+        diffMargemRs,
+        margemPctAtual,
+        margemPctAnt,
+        totFatAtual,
+        repAds,
+        tacosSugerido
+      };
+    });
+
+    setDadosComparativo(consolidado);
     setLoading(false);
   };
 
@@ -294,10 +366,11 @@ export default function AdsPage() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto">
         
+        {/* TOPO DE NAVEGAÇÃO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Painel Unificado de Ads & Campanhas</h1>
-            <p className="text-sm font-medium text-slate-400">Insira MLB, SKU, Unidades e Receita Ads para cálculo automático de margens e fretes</p>
+            <p className="text-sm font-medium text-slate-400">Gestão e Performance de Ads por Canal</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -312,281 +385,340 @@ export default function AdsPage() {
           </div>
         </div>
 
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-6">
-          <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Selecione o Canal:</label>
-          <div className="flex flex-wrap gap-2.5">
-            {canais.map((c, i) => {
-              const ativo = canalSelecionado === c.canal;
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => setCanalSelecionado(c.canal)}
-                  className={`px-5 py-2.5 rounded-xl font-bold text-xs tracking-wide cursor-pointer transition-all shadow-sm ${
-                    ativo 
-                      ? 'bg-purple-600 text-white shadow-purple-900/40 shadow-md scale-105' 
-                      : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white hover:border-slate-700'
-                  }`}
+        {/* SUB-ABAS (CAMPANHAS / DASHBOARD) */}
+        <div className="flex gap-3 mb-6">
+          <button
+            onClick={() => setSubAba("campanhas")}
+            className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              subAba === "campanhas" ? 'bg-purple-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+            }`}
+          >
+            📋 Campanhas por Canal
+          </button>
+          <button
+            onClick={() => setSubAba("dashboard")}
+            className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              subAba === "dashboard" ? 'bg-purple-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+            }`}
+          >
+            📊 Dashboard Comparativo & Budget
+          </button>
+        </div>
+
+        {subAba === "campanhas" && (
+          <>
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-6">
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Selecione o Canal:</label>
+              <div className="flex flex-wrap gap-2.5">
+                {canais.map((c, i) => {
+                  const ativo = canalSelecionado === c.canal;
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setCanalSelecionado(c.canal)}
+                      className={`px-5 py-2.5 rounded-xl font-bold text-xs tracking-wide cursor-pointer transition-all shadow-sm ${
+                        ativo 
+                          ? 'bg-purple-600 text-white shadow-purple-900/40 shadow-md scale-105' 
+                          : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white hover:border-slate-700'
+                      }`}
+                    >
+                      {c.canal}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex items-center gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Selecione o Mês / Período:</label>
+                <select 
+                  value={mesSelecionado} 
+                  onChange={(e) => setMesSelecionado(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer min-w-[180px]"
                 >
-                  {c.canal}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex items-center gap-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Selecione o Mês / Período:</label>
-            <select 
-              value={mesSelecionado} 
-              onChange={(e) => setMesSelecionado(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer min-w-[180px]"
-            >
-              {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
-            </select>
-          </div>
-        </div>
-
-        <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
-          <h2 className="text-lg font-bold text-white mb-2">➕ Lançamento de Anúncios</h2>
-          <p className="text-xs text-slate-400 mb-6">Insira o MLB, SKU, Unidades e Receita Ads. O restante será calculado automaticamente.</p>
-
-          <form onSubmit={salvarLancamentos} className="space-y-4">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[10px] border-b border-slate-800">
-                  <tr>
-                    <th className="p-3">MLB / ID</th>
-                    <th className="p-3">SKU</th>
-                    <th className="p-3 text-center">Unidades</th>
-                    <th className="p-3 text-right">Receita Ads (R$)</th>
-                    <th className="p-3 text-right">Investimento Ads (R$)</th>
-                    <th className="p-3 text-center">Ação</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {linhas.map((l, index) => (
-                    <tr key={index} className="bg-slate-950/40">
-                      <td className="p-2">
-                        <input 
-                          type="text" 
-                          value={l.mlb} 
-                          onChange={(e) => atualizarLinhaForm(index, "mlb", e.target.value)}
-                          placeholder="Ex: MLB4384359235" 
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none"
-                          required 
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input 
-                          type="text" 
-                          value={l.sku} 
-                          onChange={(e) => atualizarLinhaForm(index, "sku", e.target.value)}
-                          placeholder="Ex: 22362042067" 
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none"
-                          required 
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input 
-                          type="number" 
-                          value={l.unidades} 
-                          onChange={(e) => atualizarLinhaForm(index, "unidades", e.target.value)}
-                          placeholder="0" 
-                          className="w-24 mx-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center text-white outline-none" 
-                          required
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input 
-                          type="number" 
-                          step="0.01" 
-                          value={l.receitaAds} 
-                          onChange={(e) => atualizarLinhaForm(index, "receitaAds", e.target.value)}
-                          placeholder="0.00" 
-                          className="w-32 ml-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono text-white outline-none" 
-                          required
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input 
-                          type="number" 
-                          step="0.01" 
-                          value={l.investimento} 
-                          onChange={(e) => atualizarLinhaForm(index, "investimento", e.target.value)}
-                          placeholder="0.00" 
-                          className="w-32 ml-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono text-white outline-none" 
-                        />
-                      </td>
-                      <td className="p-2 text-center">
-                        {linhas.length > 1 && (
-                          <button 
-                            type="button" 
-                            onClick={() => removerLinhaForm(index)}
-                            className="bg-rose-950/60 text-rose-400 px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                  {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                </select>
+              </div>
             </div>
 
-            <div className="flex justify-between items-center pt-3">
-              <button 
-                type="button" 
-                onClick={adicionarLinhaForm}
-                className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer"
-              >
-                + Adicionar Outra Linha
-              </button>
+            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
+              <h2 className="text-lg font-bold text-white mb-2">➕ Lançamento de Anúncios</h2>
+              <p className="text-xs text-slate-400 mb-6">Insira o MLB, SKU, Unidades e Receita Ads para o canal <strong>{canalSelecionado}</strong> ({mesSelecionado}).</p>
 
-              <button 
-                type="submit" 
-                disabled={salvando}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg"
-              >
-                {salvando ? "A calcular e gravar..." : "🚀 Gravar e Calcular Anúncios"}
-              </button>
-            </div>
-          </form>
-        </div>
-
-        {/* TABELA DE RELATÓRIO CONSOLIDADO COM EDIÇÃO DIRETA */}
-        <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-          <div className="p-6 border-b border-slate-800">
-            <h2 className="text-lg font-bold text-white">Relatório Consolidado ({canalSelecionado} - {mesSelecionado})</h2>
-            <p className="text-xs text-slate-400 mt-1">Demonstrativo completo. Clique no botão de editar para ajustar os valores diretamente.</p>
-          </div>
-
-          {loading ? (
-            <p className="p-8 text-center text-slate-400 font-medium">A carregar registos...</p>
-          ) : lancamentos.length === 0 ? (
-            <p className="p-8 text-center text-slate-500 font-medium">Nenhum registo encontrado para este canal no período selecionado.</p>
-          ) : (
-            <div className="overflow-x-auto max-h-[600px]">
-              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                  <tr>
-                    <th className="p-3">MLB</th>
-                    <th className="p-3">SKU</th>
-                    <th className="p-3">Produto</th>
-                    <th className="p-3 text-center">Unid.</th>
-                    <th className="p-3 text-right">Receita Ads</th>
-                    <th className="p-3 text-right">Investimento</th>
-                    <th className="p-3 text-right">Custo Produto</th>
-                    <th className="p-3 text-right">Imposto</th>
-                    <th className="p-3 text-right">Tarifa</th>
-                    <th className="p-3 text-right">Embalagem</th>
-                    <th className="p-3 text-right">Frete</th>
-                    <th className="p-3 text-right">ROAS</th>
-                    <th className="p-3 text-right">TACOS</th>
-                    <th className="p-3 text-right">Margem R$</th>
-                    <th className="p-3 text-right">Margem %</th>
-                    <th className="p-3 text-center">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                  {lancamentos.map((item) => {
-                    const isEditing = idEditando === item.id;
-                    const roas = item.investimento > 0 ? (item.retorno_bruto / item.investimento).toFixed(2) : "0.00";
-                    const tacos = item.faturamento_total > 0 ? ((item.investimento / item.faturamento_total) * 100).toFixed(2) : "0.00";
-                    const margemVal = Number(item.margem_liquida_rs || 0);
-                    const margemPct = Number(item.margem_liquida_pct || 0) * 100;
-
-                    return (
-                      <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-3 font-mono font-bold text-slate-200">
-                          {isEditing ? (
-                            <input 
-                              type="text" 
-                              value={dadosEdicao.identificador_anuncio} 
-                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, identificador_anuncio: e.target.value })}
-                              className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white"
-                            />
-                          ) : item.identificador_anuncio}
-                        </td>
-                        <td className="p-3 font-mono text-slate-400">
-                          {isEditing ? (
-                            <input 
-                              type="text" 
-                              value={dadosEdicao.sku} 
-                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, sku: e.target.value })}
-                              className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-white"
-                            />
-                          ) : item.sku}
-                        </td>
-                        <td className="p-3 text-slate-300 max-w-[200px] truncate">{item.nome_anuncio}</td>
-                        <td className="p-3 text-center font-bold text-white">
-                          {isEditing ? (
-                            <input 
-                              type="number" 
-                              value={dadosEdicao.unidades_vendidas} 
-                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, unidades_vendidas: e.target.value })}
-                              className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white"
-                            />
-                          ) : item.unidades_vendidas}
-                        </td>
-                        <td className="p-3 text-right font-mono text-emerald-400 font-bold">
-                          {isEditing ? (
-                            <input 
-                              type="number" 
-                              step="0.01" 
-                              value={dadosEdicao.retorno_bruto} 
-                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, retorno_bruto: e.target.value })}
-                              className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white"
-                            />
-                          ) : `R$ ${Number(item.retorno_bruto).toFixed(2)}`}
-                        </td>
-                        <td className="p-3 text-right font-mono text-rose-400">
-                          {isEditing ? (
-                            <input 
-                              type="number" 
-                              step="0.01" 
-                              value={dadosEdicao.investimento} 
-                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, investimento: e.target.value })}
-                              className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white"
-                            />
-                          ) : `R$ ${Number(item.investimento).toFixed(2)}`}
-                        </td>
-                        <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.custo_produto || 0).toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.imposto || 0).toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.tarifa || 0).toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.embalagem || 0).toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.frete || 0).toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono font-bold text-indigo-400">{roas}x</td>
-                        <td className="p-3 text-right font-mono font-bold text-amber-400">{tacos}%</td>
-                        <td className={`p-3 text-right font-mono font-bold ${margemVal >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
-                          R$ {margemVal.toFixed(2)}
-                        </td>
-                        <td className={`p-3 text-right font-mono font-bold ${margemPct >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
-                          {margemPct.toFixed(1)}%
-                        </td>
-                        <td className="p-3 text-center flex items-center justify-center gap-2">
-                          {isEditing ? (
-                            <>
-                              <button onClick={() => salvarEdicao(item.id)} className="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Salvar</button>
-                              <button onClick={() => setIdEditando(null)} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[11px] font-bold cursor-pointer">Cancelar</button>
-                            </>
-                          ) : (
-                            <>
-                              <button onClick={() => iniciarEdicao(item)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
-                              <button onClick={() => excluirLancamento(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
-                            </>
-                          )}
-                        </td>
+              <form onSubmit={salvarLancamentos} className="space-y-4">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[10px] border-b border-slate-800">
+                      <tr>
+                        <th className="p-3">MLB / ID</th>
+                        <th className="p-3">SKU</th>
+                        <th className="p-3 text-center">Unidades</th>
+                        <th className="p-3 text-right">Receita Ads (R$)</th>
+                        <th className="p-3 text-right">Investimento Ads (R$)</th>
+                        <th className="p-3 text-center">Ação</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {linhas.map((l, index) => (
+                        <tr key={index} className="bg-slate-950/40">
+                          <td className="p-2">
+                            <input 
+                              type="text" 
+                              value={l.mlb} 
+                              onChange={(e) => atualizarLinhaForm(index, "mlb", e.target.value)}
+                              placeholder="Ex: MLB4384359235" 
+                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none"
+                              required 
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input 
+                              type="text" 
+                              value={l.sku} 
+                              onChange={(e) => atualizarLinhaForm(index, "sku", e.target.value)}
+                              placeholder="Ex: 22362042067" 
+                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none"
+                              required 
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input 
+                              type="number" 
+                              value={l.unidades} 
+                              onChange={(e) => atualizarLinhaForm(index, "unidades", e.target.value)}
+                              placeholder="0" 
+                              className="w-24 mx-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center text-white outline-none" 
+                              required
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input 
+                              type="number" 
+                              step="0.01" 
+                              value={l.receitaAds} 
+                              onChange={(e) => atualizarLinhaForm(index, "receitaAds", e.target.value)}
+                              placeholder="0.00" 
+                              className="w-32 ml-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono text-white outline-none" 
+                              required
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input 
+                              type="number" 
+                              step="0.01" 
+                              value={l.investimento} 
+                              onChange={(e) => atualizarLinhaForm(index, "investimento", e.target.value)}
+                              placeholder="0.00" 
+                              className="w-32 ml-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono text-white outline-none" 
+                            />
+                          </td>
+                          <td className="p-2 text-center">
+                            {linhas.length > 1 && (
+                              <button 
+                                type="button" 
+                                onClick={() => removerLinhaForm(index)}
+                                className="bg-rose-950/60 text-rose-400 px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex justify-between items-center pt-3">
+                  <button 
+                    type="button" 
+                    onClick={adicionarLinhaForm}
+                    className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer"
+                  >
+                    + Adicionar Outra Linha
+                  </button>
+
+                  <button 
+                    type="submit" 
+                    disabled={salvando}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg"
+                  >
+                    {salvando ? "A calcular e gravar..." : "🚀 Gravar e Calcular Anúncios"}
+                  </button>
+                </div>
+              </form>
             </div>
-          )}
-        </div>
+
+            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+              <div className="p-6 border-b border-slate-800">
+                <h2 className="text-lg font-bold text-white">Relatório Consolidado ({canalSelecionado} - {mesSelecionado})</h2>
+                <p className="text-xs text-slate-400 mt-1">Demonstrativo completo com custos, tarifas, impostos, fretes e margens calculadas.</p>
+              </div>
+
+              {loading ? (
+                <p className="p-8 text-center text-slate-400 font-medium">A carregar registos...</p>
+              ) : lancamentos.length === 0 ? (
+                <p className="p-8 text-center text-slate-500 font-medium">Nenhum registo encontrado para este canal no período selecionado.</p>
+              ) : (
+                <div className="overflow-x-auto max-h-[600px]">
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                      <tr>
+                        <th className="p-3">MLB</th>
+                        <th className="p-3">SKU</th>
+                        <th className="p-3">Produto</th>
+                        <th className="p-3 text-center">Unid.</th>
+                        <th className="p-3 text-right">Receita Ads</th>
+                        <th className="p-3 text-right">Investimento</th>
+                        <th className="p-3 text-right">Custo Produto</th>
+                        <th className="p-3 text-right">Imposto</th>
+                        <th className="p-3 text-right">Tarifa</th>
+                        <th className="p-3 text-right">Embalagem</th>
+                        <th className="p-3 text-right">Frete</th>
+                        <th className="p-3 text-right">ROAS</th>
+                        <th className="p-3 text-right">TACOS</th>
+                        <th className="p-3 text-right">Margem R$</th>
+                        <th className="p-3 text-right">Margem %</th>
+                        <th className="p-3 text-center">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                      {lancamentos.map((item) => {
+                        const isEditing = idEditando === item.id;
+                        const roas = item.investimento > 0 ? (item.retorno_bruto / item.investimento).toFixed(2) : "0.00";
+                        const tacos = item.faturamento_total > 0 ? ((item.investimento / item.faturamento_total) * 100).toFixed(2) : "0.00";
+                        const margemVal = Number(item.margem_liquida_rs || 0);
+                        const margemPct = Number(item.margem_liquida_pct || 0) * 100;
+
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="p-3 font-mono font-bold text-slate-200">
+                              {isEditing ? <input type="text" value={dadosEdicao.identificador_anuncio} onChange={(e) => setDadosEdicao({ ...dadosEdicao, identificador_anuncio: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white" /> : item.identificador_anuncio}
+                            </td>
+                            <td className="p-3 font-mono text-slate-400">
+                              {isEditing ? <input type="text" value={dadosEdicao.sku} onChange={(e) => setDadosEdicao({ ...dadosEdicao, sku: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-white" /> : item.sku}
+                            </td>
+                            <td className="p-3 text-slate-300 max-w-[200px] truncate">{item.nome_anuncio}</td>
+                            <td className="p-3 text-center font-bold text-white">
+                              {isEditing ? <input type="number" value={dadosEdicao.unidades_vendidas} onChange={(e) => setDadosEdicao({ ...dadosEdicao, unidades_vendidas: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white" /> : item.unidades_vendidas}
+                            </td>
+                            <td className="p-3 text-right font-mono text-emerald-400 font-bold">
+                              {isEditing ? <input type="number" step="0.01" value={dadosEdicao.retorno_bruto} onChange={(e) => setDadosEdicao({ ...dadosEdicao, retorno_bruto: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white" /> : `R$ ${Number(item.retorno_bruto).toFixed(2)}`}
+                            </td>
+                            <td className="p-3 text-right font-mono text-rose-400">
+                              {isEditing ? <input type="number" step="0.01" value={dadosEdicao.investimento} onChange={(e) => setDadosEdicao({ ...dadosEdicao, investimento: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white" /> : `R$ ${Number(item.investimento).toFixed(2)}`}
+                            </td>
+                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.custo_produto || 0).toFixed(2)}</td>
+                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.imposto || 0).toFixed(2)}</td>
+                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.tarifa || 0).toFixed(2)}</td>
+                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.embalagem || 0).toFixed(2)}</td>
+                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.frete || 0).toFixed(2)}</td>
+                            <td className="p-3 text-right font-mono font-bold text-indigo-400">{roas}x</td>
+                            <td className="p-3 text-right font-mono font-bold text-amber-400">{tacos}%</td>
+                            <td className={`p-3 text-right font-mono font-bold ${margemVal >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>R$ {margemVal.toFixed(2)}</td>
+                            <td className={`p-3 text-right font-mono font-bold ${margemPct >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>{margemPct.toFixed(1)}%</td>
+                            <td className="p-3 text-center flex items-center justify-center gap-2">
+                              {isEditing ? (
+                                <>
+                                  <button onClick={() => salvarEdicao(item.id)} className="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Salvar</button>
+                                  <button onClick={() => setIdEditando(null)} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[11px] font-bold cursor-pointer">Cancelar</button>
+                                </>
+                              ) : (
+                                <>
+                                  <button onClick={() => iniciarEdicao(item)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
+                                  <button onClick={() => excluirLancamento(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {subAba === "dashboard" && (
+          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-8 pb-6 border-b border-slate-800">
+              <div>
+                <h2 className="text-xl font-bold text-white">Dashboard Comparativo de Performance & Budget</h2>
+                <p className="text-xs text-slate-400 mt-1">Comparativo entre o período selecionado e o período anterior.</p>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período Atual:</label>
+                  <select value={mesSelecionado} onChange={(e) => setMesSelecionado(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none">
+                    {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período Comparativo:</label>
+                  <select value={mesComparativo} onChange={(e) => setMesComparativo(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none">
+                    {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {loading ? (
+              <p className="p-8 text-center text-slate-400">A processar comparativo...</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="p-3">Canal</th>
+                      <th className="p-3 text-right">Fat. Ads (Atual)</th>
+                      <th className="p-3 text-right">Fat. Ads (Anterior)</th>
+                      <th className="p-3 text-right">Dif. Ads (R$)</th>
+                      <th className="p-3 text-right">ROAS Atual</th>
+                      <th className="p-3 text-right">ROAS Anterior</th>
+                      <th className="p-3 text-right">TACOS Atual</th>
+                      <th className="p-3 text-right">TACOS Anterior</th>
+                      <th className="p-3 text-right">Margem Líq. R$ (Atual)</th>
+                      <th className="p-3 text-right">Margem Líq. R$ (Ant)</th>
+                      <th className="p-3 text-right">Dif. Margem R$</th>
+                      <th className="p-3 text-right">Total Faturado</th>
+                      <th className="p-3 text-right">Rep. Ads %</th>
+                      <th className="p-3 text-right">TACOS Sugerido (Budget)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {dadosComparativo.map((d, idx) => (
+                      <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3 font-bold text-white">{d.canal}</td>
+                        <td className="p-3 text-right font-mono text-emerald-400">R$ {d.fatAdsAtual.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono text-slate-300">R$ {d.fatAdsAnt.toFixed(2)}</td>
+                        <td className={`p-3 text-right font-mono font-bold ${d.diffAds >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                          {d.diffAds >= 0 ? '+' : ''}R$ {d.diffAds.toFixed(2)}
+                        </td>
+                        <td className="p-3 text-right font-mono text-indigo-400 font-bold">{d.roasAtual.toFixed(2)}x</td>
+                        <td className="p-3 text-right font-mono text-slate-300">{d.roasAnt.toFixed(2)}x</td>
+                        <td className="p-3 text-right font-mono text-amber-400 font-bold">{d.tacosAtual.toFixed(2)}%</td>
+                        <td className="p-3 text-right font-mono text-slate-300">{d.tacosAnt.toFixed(2)}%</td>
+                        <td className="p-3 text-right font-mono text-emerald-300">R$ {d.margemRsAtual.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono text-slate-300">R$ {d.margemRsAnt.toFixed(2)}</td>
+                        <td className={`p-3 text-right font-mono font-bold ${d.diffMargemRs >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                          {d.diffMargemRs >= 0 ? '+' : ''}R$ {d.diffMargemRs.toFixed(2)}
+                        </td>
+                        <td className="p-3 text-right font-mono text-white">R$ {d.totFatAtual.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono text-violet-400 font-bold">{d.repAds.toFixed(2)}%</td>
+                        <td className="p-3 text-right font-mono font-bold text-emerald-400">R$ {d.tacosSugerido.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
       </div>
     </div>
