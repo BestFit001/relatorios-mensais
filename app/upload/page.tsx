@@ -702,16 +702,7 @@ export default function UploadPage() {
             <p className="text-sm font-medium text-slate-400">Gestão de Relatórios, Custos e Uploads</p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/">Dashboard</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/upload">Upload & Canais</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/mapeamento">Mapeamento</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/ads">Painel Ads</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">Regras</Link>
-              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/admin">Admin</Link>
-            </div>
-          </div>
+          <Navbar />
         </div>
 
         <div className="flex flex-wrap gap-3 mb-6">
