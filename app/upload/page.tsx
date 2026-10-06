@@ -20,8 +20,17 @@ export default function UploadPage() {
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
 
+  // Estados para Custos
   const [listaCustos, setListaCustos] = useState<any[]>([]);
   const [pesquisaCusto, setPesquisaCusto] = useState("");
+  const [editandoCustoId, setEditandoCustoId] = useState<number | null>(null);
+  const [dadosEdicaoCusto, setDadosEdicaoCusto] = useState({ sku: "", produto: "", custo_unitario: 0 });
+
+  // Estados para Regras ML
+  const [listaRegrasMl, setListaRegrasMl] = useState<any[]>([]);
+  const [pesquisaMl, setPesquisaMl] = useState("");
+  const [editandoMlId, setEditandoMlId] = useState<number | null>(null);
+  const [dadosEdicaoMl, setDadosEdicaoMl] = useState({ mlb: "", sku: "", comissao: 0, peso_real: 0, altura: 0, largura: 0, comprimento: 0 });
 
   const mesReferencia = mes && ano ? `${mes}/${ano}` : "";
   const meses = [
@@ -38,6 +47,7 @@ export default function UploadPage() {
   useEffect(() => {
     carregarDadosCadastros();
     carregarCustos();
+    carregarRegrasMl();
   }, []);
 
   const carregarDadosCadastros = async () => {
@@ -86,6 +96,11 @@ export default function UploadPage() {
   const carregarCustos = async () => {
     const { data } = await supabase.from('tabela_custos_skus').select('*').order('sku');
     if (data) setListaCustos(data);
+  };
+
+  const carregarRegrasMl = async () => {
+    const { data } = await supabase.from('ml_anuncios_regras').select('*').order('id');
+    if (data) setListaRegrasMl(data);
   };
 
   const letraParaIndice = (str: string) => {
@@ -256,7 +271,10 @@ export default function UploadPage() {
     if (!confirm("Tem certeza que deseja apagar todas as regras e medidas do Mercado Livre do Supabase?")) return;
     const { error } = await supabase.from('ml_anuncios_regras').delete().neq('id', 0);
     if (error) alert("Erro: " + error.message);
-    else alert("🗑️ Regras do ML limpas com sucesso!");
+    else {
+      alert("🗑️ Regras do ML limpas com sucesso!");
+      carregarRegrasMl();
+    }
   };
 
   const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
@@ -457,6 +475,7 @@ export default function UploadPage() {
         }
 
         alert(`🚀 Planilha de Regras do ML processada com sucesso! ${registros.length} anúncios mapeados.`);
+        carregarRegrasMl();
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao processar planilha do ML: " + err.message);
@@ -466,94 +485,57 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    setLoading(true);
+  // Funções de Edição e Exclusão Individual - Custos
+  const salvarEdicaoCusto = async (id: number) => {
+    const { error } = await supabase.from('tabela_custos_skus').update({
+      sku: dadosEdicaoCusto.sku.trim(),
+      produto: dadosEdicaoCusto.produto.trim(),
+      custo_unitario: Number(dadosEdicaoCusto.custo_unitario || 0)
+    }).eq('id', id);
 
-    const indiceColuna = letraParaIndice(letraColuna || "A");
-
-    try {
-      let allTiny: any[] = [];
-      let rangeStep = 1000;
-      let from = 0;
-      let keepFetching = true;
-      while (keepFetching) {
-        const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + rangeStep - 1);
-        if (tinyBatch && tinyBatch.length > 0) {
-          allTiny = [...allTiny, ...tinyBatch];
-          from += rangeStep;
-          if (tinyBatch.length < rangeStep) keepFetching = false;
-        } else {
-          keepFetching = false;
-        }
-      }
-      const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
-
-      const skusEncontradosNoCanal = new Set<string>();
-
-      for (let f = 0; f < files.length; f++) {
-        const file = files[f];
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true, raw: false });
-
-        let sheetName = workbook.SheetNames[0];
-        if (workbook.SheetNames.includes("Template")) sheetName = "Template";
-        else if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
-
-        const worksheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        let linhaInicio = 0;
-        for (let i = 0; i < Math.min(json.length, 15); i++) {
-          const row = json[i];
-          if (row && row.some((cell: any) => {
-            const val = String(cell).trim().toLowerCase();
-            return val === 'seller_sku' || val === 'sku' || val === 'sku_id';
-          })) {
-            linhaInicio = i + 1;
-            break;
-          }
-        }
-        if (linhaInicio === 0 || linhaInicio < 5) linhaInicio = sheetName === "Template" ? 5 : 4;
-
-        for (let i = linhaInicio; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= indiceColuna) continue;
-          
-          const skuVal = normalizarSku(row[indiceColuna]);
-          if (skuVal && skusTinySet.has(skuVal)) {
-            skusEncontradosNoCanal.add(skuVal);
-          }
-        }
-      }
-
-      await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
-
-      const registrosUpsert = Array.from(skusEncontradosNoCanal).map(sku => ({
-        canal: canalNome,
-        sku: sku,
-        presente: true
-      }));
-
-      const tamanhoLote = 500;
-      for (let i = 0; i < registrosUpsert.length; i += tamanhoLote) {
-        const lote = registrosUpsert.slice(i, i + tamanhoLote);
-        const { error } = await supabase.from('mapeamento_canais_skus').insert(lote);
-        if (error) throw error;
-      }
-
-      alert(`Canal "${canalNome}" sincronizado com sucesso (${files.length} ficheiro(s))! ${registrosUpsert.length} SKUs válidos guardados.`);
-      setLoading(false);
-    } catch (err: any) {
-      alert("Erro ao processar ficheiros: " + err.message);
-      setLoading(false);
+    if (error) alert("Erro ao atualizar custo: " + error.message);
+    else {
+      setEditandoCustoId(null);
+      carregarCustos();
     }
+  };
+
+  const excluirCusto = async (id: number) => {
+    if (!confirm("Excluir este registo de custo?")) return;
+    const { error } = await supabase.from('tabela_custos_skus').delete().eq('id', id);
+    if (error) alert("Erro: " + error.message);
+    else carregarCustos();
+  };
+
+  // Funções de Edição e Exclusão Individual - Regras ML
+  const salvarEdicaoMl = async (id: number) => {
+    const { error } = await supabase.from('ml_anuncios_regras').update({
+      mlb: dadosEdicaoMl.mlb.trim().toUpperCase(),
+      sku: dadosEdicaoMl.sku.trim(),
+      comissao: Number(dadosEdicaoMl.comissao || 0),
+      peso_real: Number(dadosEdicaoMl.peso_real || 0),
+      altura: Number(dadosEdicaoMl.altura || 0),
+      largura: Number(dadosEdicaoMl.largura || 0),
+      comprimento: Number(dadosEdicaoMl.comprimento || 0)
+    }).eq('id', id);
+
+    if (error) alert("Erro ao atualizar regra ML: " + error.message);
+    else {
+      setEditandoMlId(null);
+      carregarRegrasMl();
+    }
+  };
+
+  const excluirRegraMl = async (id: number) => {
+    if (!confirm("Excluir esta regra do Mercado Livre?")) return;
+    const { error } = await supabase.from('ml_anuncios_regras').delete().eq('id', id);
+    if (error) alert("Erro: " + error.message);
+    else carregarRegrasMl();
   };
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
@@ -731,8 +713,8 @@ export default function UploadPage() {
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
             <div className="flex justify-between items-center mb-6">
               <div>
-                <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários e Produtos por SKU</h2>
-                <p className="text-xs text-slate-400 mt-1">Faça o upload da planilha dedicada contendo o SKU, Nome do Produto e Custo Unitário.</p>
+                <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
+                <p className="text-xs text-slate-400 mt-1">Consulte, edite ou remova os custos guardados no Supabase.</p>
               </div>
               <button 
                 onClick={limparTabelaCustos}
@@ -770,18 +752,63 @@ export default function UploadPage() {
                     <th className="p-3.5">SKU</th>
                     <th className="p-3.5">Nome do Produto</th>
                     <th className="p-3.5 text-right">Custo Unitário</th>
+                    <th className="p-3.5 text-center">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                   {listaCustos
                     .filter(c => c.sku.toLowerCase().includes(pesquisaCusto.toLowerCase()) || (c.produto && c.produto.toLowerCase().includes(pesquisaCusto.toLowerCase())))
-                    .map((item, idx) => (
-                      <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-3.5 font-mono font-bold text-slate-200">{item.sku}</td>
-                        <td className="p-3.5 text-slate-300">{item.produto || "—"}</td>
-                        <td className="p-3.5 text-right font-bold text-emerald-400 font-mono">R$ {Number(item.custo_unitario).toFixed(2)}</td>
-                      </tr>
-                    ))}
+                    .map((item) => {
+                      const isEditing = editandoCustoId === item.id;
+                      return (
+                        <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3.5 font-mono font-bold text-slate-200">
+                            {isEditing ? (
+                              <input 
+                                type="text" 
+                                value={dadosEdicaoCusto.sku} 
+                                onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, sku: e.target.value })}
+                                className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white font-mono"
+                              />
+                            ) : item.sku}
+                          </td>
+                          <td className="p-3.5 text-slate-300">
+                            {isEditing ? (
+                              <input 
+                                type="text" 
+                                value={dadosEdicaoCusto.produto} 
+                                onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, produto: e.target.value })}
+                                className="bg-slate-900 border border-slate-700 rounded p-1 w-full text-white"
+                              />
+                            ) : (item.produto || "—")}
+                          </td>
+                          <td className="p-3.5 text-right font-bold text-emerald-400 font-mono">
+                            {isEditing ? (
+                              <input 
+                                type="number" 
+                                step="0.01" 
+                                value={dadosEdicaoCusto.custo_unitario} 
+                                onChange={(e) => setDadosEdicaoCusto({ ...dadosEdicaoCusto, custo_unitario: Number(e.target.value) })}
+                                className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white font-mono"
+                              />
+                            ) : `R$ ${Number(item.custo_unitario).toFixed(2)}`}
+                          </td>
+                          <td className="p-3.5 text-center flex items-center justify-center gap-2">
+                            {isEditing ? (
+                              <>
+                                <button onClick={() => salvarEdicaoCusto(item.id)} className="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Salvar</button>
+                                <button onClick={() => setEditandoCustoId(null)} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[11px] font-bold cursor-pointer">Cancelar</button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => { setEditandoCustoId(item.id); setDadosEdicaoCusto({ sku: item.sku, produto: item.produto || "", custo_unitario: item.custo_unitario }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
+                                <button onClick={() => excluirCusto(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -792,8 +819,8 @@ export default function UploadPage() {
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
             <div className="flex justify-between items-center mb-6">
               <div>
-                <h2 className="text-lg font-bold text-white">Upload de Regras e Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400 mt-1">Envie a planilha contendo: MLB, SKU, Comissão (%), Peso Real, Altura, Largura, Comprimento.</p>
+                <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
+                <p className="text-xs text-slate-400 mt-1">Consulte, edite ou remova os anúncios e medidas guardados.</p>
               </div>
               <button 
                 onClick={limparRegrasMl}
@@ -803,7 +830,7 @@ export default function UploadPage() {
               </button>
             </div>
 
-            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
+            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 mb-6">
               <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro Excel de Regras ML (.xlsx)</label>
               <input 
                 type="file" 
@@ -811,7 +838,93 @@ export default function UploadPage() {
                 onChange={handleUploadRegrasML} 
                 className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" 
               />
-              <p className="text-[11px] text-slate-400 mt-3">💡 O sistema calculará automaticamente o peso volumétrico (A x L x C / 6000) e considerará sempre o maior peso entre o real e o volumétrico nas análises de frete.</p>
+              <p className="text-[11px] text-slate-400 mt-3">💡 O sistema calcula o peso volumétrico automáticamente.</p>
+            </div>
+
+            <div className="mb-4">
+              <input 
+                type="text" 
+                value={pesquisaMl} 
+                onChange={(e) => setPesquisaMl(e.target.value)} 
+                placeholder="Pesquisar por MLB ou SKU..." 
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none"
+              />
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
+              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                  <tr>
+                    <th className="p-3">MLB</th>
+                    <th className="p-3">SKU</th>
+                    <th className="p-3 text-center">Comissão (%)</th>
+                    <th className="p-3 text-right">Peso (kg)</th>
+                    <th className="p-3 text-right">Alt (cm)</th>
+                    <th className="p-3 text-right">Larg (cm)</th>
+                    <th className="p-3 text-right">Comp (cm)</th>
+                    <th className="p-3 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                  {listaRegrasMl
+                    .filter(m => m.mlb.toLowerCase().includes(pesquisaMl.toLowerCase()) || m.sku.toLowerCase().includes(pesquisaMl.toLowerCase()))
+                    .map((item) => {
+                      const isEditing = editandoMlId === item.id;
+                      return (
+                        <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3 font-mono font-bold text-slate-200">
+                            {isEditing ? (
+                              <input type="text" value={dadosEdicaoMl.mlb} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, mlb: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white font-mono" />
+                            ) : item.mlb}
+                          </td>
+                          <td className="p-3 font-mono text-slate-400">
+                            {isEditing ? (
+                              <input type="text" value={dadosEdicaoMl.sku} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, sku: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-white font-mono" />
+                            ) : item.sku}
+                          </td>
+                          <td className="p-3 text-center font-bold text-rose-400">
+                            {isEditing ? (
+                              <input type="number" step="0.01" value={dadosEdicaoMl.comissao} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, comissao: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white" />
+                            ) : `${Number(item.comissao).toFixed(2)}%`}
+                          </td>
+                          <td className="p-3 text-right font-mono text-slate-300">
+                            {isEditing ? (
+                              <input type="number" step="0.001" value={dadosEdicaoMl.peso_real} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, peso_real: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-right text-white" />
+                            ) : Number(item.peso_real).toFixed(3)}
+                          </td>
+                          <td className="p-3 text-right font-mono text-slate-300">
+                            {isEditing ? (
+                              <input type="number" step="0.01" value={dadosEdicaoMl.altura} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, altura: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white" />
+                            ) : item.altura}
+                          </td>
+                          <td className="p-3 text-right font-mono text-slate-300">
+                            {isEditing ? (
+                              <input type="number" step="0.01" value={dadosEdicaoMl.largura} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, largura: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white" />
+                            ) : item.largura}
+                          </td>
+                          <td className="p-3 text-right font-mono text-slate-300">
+                            {isEditing ? (
+                              <input type="number" step="0.01" value={dadosEdicaoMl.comprimento} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, comprimento: Number(e.target.value) })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white" />
+                            ) : item.comprimento}
+                          </td>
+                          <td className="p-3 text-center flex items-center justify-center gap-2">
+                            {isEditing ? (
+                              <>
+                                <button onClick={() => salvarEdicaoMl(item.id)} className="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Salvar</button>
+                                <button onClick={() => setEditandoMlId(null)} className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[11px] font-bold cursor-pointer">Cancelar</button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => { setEditandoMlId(item.id); setDadosEdicaoMl({ mlb: item.mlb, sku: item.sku, comissao: item.comissao, peso_real: item.peso_real, altura: item.altura, largura: item.largura, comprimento: item.comprimento }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
+                                <button onClick={() => excluirRegraMl(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
