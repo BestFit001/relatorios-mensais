@@ -76,9 +76,20 @@ export default function DevolucoesPage() {
   const [salvando, setSalvando] = useState(false);
   const [subAba, setSubAba] = useState<"controle" | "plano">("controle");
 
+  // Geração Automática do Mês Atual e Anterior para os filtros não ficarem presos num mês
+  const hojeObj = new Date();
+  const mesCorrente = String(hojeObj.getMonth() + 1).padStart(2, '0');
+  const anoCorrente = hojeObj.getFullYear();
+  const mesAtualPadrao = `${mesCorrente}/${anoCorrente}`;
+
+  const mesAntObj = new Date(hojeObj.getFullYear(), hojeObj.getMonth() - 1, 1);
+  const mesAntStr = String(mesAntObj.getMonth() + 1).padStart(2, '0');
+  const anoAntStr = mesAntObj.getFullYear();
+  const mesAnteriorPadrao = `${mesAntStr}/${anoAntStr}`;
+
   // Estados de Período
-  const [mesAtual, setMesAtual] = useState("09/2026");
-  const [mesAnterior, setMesAnterior] = useState("08/2026");
+  const [mesAtual, setMesAtual] = useState(mesAtualPadrao);
+  const [mesAnterior, setMesAnterior] = useState(mesAnteriorPadrao);
 
   // Dicionários para preenchimento automático
   const [catalogoMap, setCatalogoMap] = useState<Map<string, { produto: string, marca: string }>>(new Map());
@@ -99,7 +110,7 @@ export default function DevolucoesPage() {
   const opcoesCondicao = ["Sim", "Não", "Mediação"];
 
   // Estado do Formulário de Input
-  const hoje = new Date().toISOString().split('T')[0];
+  const hoje = hojeObj.toISOString().split('T')[0];
   const [dataGlobalRetorno, setDataGlobalRetorno] = useState(hoje);
   const linhaVazia = { 
     pedido: "", canal: "", nota_fiscal: "", solicitacao: "", sku: "", produto: "", marca: "", pdv: "", frete: "", 
@@ -279,6 +290,12 @@ export default function DevolucoesPage() {
     if (error) alert("Erro ao gravar devoluções: " + error.message);
     else {
       alert("✅ Devoluções registadas com sucesso!");
+      
+      // Ajusta o filtro de mês automaticamente para garantir que o utilizador vê o que acabou de salvar
+      if (mesRef !== mesAtual) {
+        setMesAtual(mesRef);
+      }
+      
       setLinhas([{ ...linhaVazia }]);
       carregarDevolucoesEPlanos();
     }
@@ -412,6 +429,7 @@ export default function DevolucoesPage() {
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período de Análise:</label>
             <select value={mesAtual} onChange={(e) => setMesAtual(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
+              <option value="11/2026">11/2026</option>
               <option value="10/2026">10/2026</option>
               <option value="09/2026">09/2026</option>
               <option value="08/2026">08/2026</option>
@@ -422,6 +440,7 @@ export default function DevolucoesPage() {
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mês Comparativo:</label>
               <select value={mesAnterior} onChange={(e) => setMesAnterior(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
+                <option value="10/2026">10/2026</option>
                 <option value="09/2026">09/2026</option>
                 <option value="08/2026">08/2026</option>
                 <option value="07/2026">07/2026</option>
