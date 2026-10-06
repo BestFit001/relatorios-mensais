@@ -69,6 +69,9 @@ export default function AdsPage() {
   const [idEditando, setIdEditando] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
 
+  // Estado para controlo de seleção de linhas
+  const [selecionadosIds, setSelecionadosIds] = useState<number[]>([]);
+
   const [linhas, setLinhas] = useState([
     { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "" }
   ]);
@@ -90,6 +93,7 @@ export default function AdsPage() {
   useEffect(() => {
     if (canalSelecionado && mesSelecionado) {
       carregarLancamentos();
+      setSelecionadosIds([]); // Limpa seleção ao trocar canal ou mês
     }
   }, [canalSelecionado, mesSelecionado]);
 
@@ -107,7 +111,6 @@ export default function AdsPage() {
       if (ativos.length > 0) setCanalSelecionado(ativos[0].canal);
     }
 
-    // Carrega todos os custos com paginação para garantir 100% de cobertura
     let allCustos: any[] = [];
     let from = 0;
     let step = 1000;
@@ -129,7 +132,6 @@ export default function AdsPage() {
     });
     setCustosMap(mapaC);
 
-    // Carrega regras do ML
     let allMl: any[] = [];
     from = 0;
     keep = true;
@@ -387,6 +389,58 @@ export default function AdsPage() {
     else carregarLancamentos();
   };
 
+  // Funções de exclusão em massa
+  const selecionarTodosCheckbox = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelecionadosIds(lancamentos.map(i => i.id));
+    } else {
+      setSelecionadosIds([]);
+    }
+  };
+
+  const selecionarLinhaCheckbox = (id: number) => {
+    if (selecionadosIds.includes(id)) {
+      setSelecionadosIds(selecionadosIds.filter(i => i !== id));
+    } else {
+      setSelecionadosIds([...selecionadosIds, id]);
+    }
+  };
+
+  const excluirSelecionados = async () => {
+    if (selecionadosIds.length === 0) {
+      alert("Nenhum registo selecionado.");
+      return;
+    }
+    if (!confirm(`Tem certeza que deseja apagar os ${selecionadosIds.length} registos selecionados?`)) return;
+
+    const { error } = await supabase.from('ads_campanhas_lancamentos').delete().in('id', selecionadosIds);
+    if (error) {
+      alert("Erro ao excluir selecionados: " + error.message);
+    } else {
+      alert("✅ Registos selecionados eliminados com sucesso!");
+      setSelecionadosIds([]);
+      carregarLancamentos();
+    }
+  };
+
+  const limparCanalInteiro = async () => {
+    if (!confirm(`ATENÇÃO: Tem certeza que deseja apagar TODOS os registos do canal "${canalSelecionado}" para o período ${mesSelecionado}?`)) return;
+
+    const { error } = await supabase
+      .from('ads_campanhas_lancamentos')
+      .delete()
+      .eq('canal', canalSelecionado)
+      .eq('mes_referencia', mesSelecionado);
+
+    if (error) {
+      alert("Erro ao limpar canal: " + error.message);
+    } else {
+      alert(`🗑️ Todos os registos de "${canalSelecionado}" (${mesSelecionado}) foram eliminados com sucesso!`);
+      setSelecionadosIds([]);
+      carregarLancamentos();
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto">
@@ -575,9 +629,28 @@ export default function AdsPage() {
             </div>
 
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-              <div className="p-6 border-b border-slate-800">
-                <h2 className="text-lg font-bold text-white">Relatório Consolidado ({canalSelecionado} - {mesSelecionado})</h2>
-                <p className="text-xs text-slate-400 mt-1">Demonstrativo completo com custos, tarifas, impostos, fretes e margens calculadas.</p>
+              <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Relatório Consolidado ({canalSelecionado} - {mesSelecionado})</h2>
+                  <p className="text-xs text-slate-400 mt-1">Demonstrativo completo com custos, tarifas, impostos, fretes e margens calculadas.</p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {selecionadosIds.length > 0 && (
+                    <button 
+                      onClick={excluirSelecionados} 
+                      className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm transition-all"
+                    >
+                      🗑️ Excluir Selecionados ({selecionadosIds.length})
+                    </button>
+                  )}
+                  <button 
+                    onClick={limparCanalInteiro} 
+                    className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm transition-all"
+                  >
+                    🗑️ Excluir Tudo do Canal ({canalSelecionado})
+                  </button>
+                </div>
               </div>
 
               {loading ? (
@@ -589,6 +662,14 @@ export default function AdsPage() {
                   <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                       <tr>
+                        <th className="p-3 text-center w-10">
+                          <input 
+                            type="checkbox" 
+                            onChange={selecionarTodosCheckbox}
+                            checked={lancamentos.length > 0 && selecionadosIds.length === lancamentos.length}
+                            className="cursor-pointer accent-purple-600 rounded"
+                          />
+                        </th>
                         <th className="p-3">MLB</th>
                         <th className="p-3">SKU</th>
                         <th className="p-3">Produto</th>
@@ -610,13 +691,22 @@ export default function AdsPage() {
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                       {lancamentos.map((item) => {
                         const isEditing = idEditando === item.id;
+                        const isSelected = selecionadosIds.includes(item.id);
                         const roas = item.investimento > 0 ? (item.retorno_bruto / item.investimento).toFixed(2) : "0.00";
                         const tacos = item.faturamento_total > 0 ? ((item.investimento / item.faturamento_total) * 100).toFixed(2) : "0.00";
                         const margemVal = Number(item.margem_liquida_rs || 0);
                         const margemPct = Number(item.margem_liquida_pct || 0) * 100;
 
                         return (
-                          <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                          <tr key={item.id} className={`hover:bg-slate-800/40 transition-colors ${isSelected ? 'bg-purple-950/20' : ''}`}>
+                            <td className="p-3 text-center">
+                              <input 
+                                type="checkbox" 
+                                checked={isSelected}
+                                onChange={() => selecionarLinhaCheckbox(item.id)}
+                                className="cursor-pointer accent-purple-600 rounded"
+                              />
+                            </td>
                             <td className="p-3 font-mono font-bold text-slate-200">
                               {isEditing ? <input type="text" value={dadosEdicao.identificador_anuncio} onChange={(e) => setDadosEdicao({ ...dadosEdicao, identificador_anuncio: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white" /> : item.identificador_anuncio}
                             </td>
