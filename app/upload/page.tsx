@@ -351,6 +351,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // Atualização inteligente: Limpa os registos anteriores do canal e salva APENAS o que foi encontrado no Tiny
   const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -359,6 +360,7 @@ export default function UploadPage() {
     const indiceColuna = letraParaIndice(letraColuna || "A");
 
     try {
+      // 1. Carregar todos os SKUs da base Tiny para validação
       let allTiny: any[] = [];
       let rangeStep = 1000;
       let from = 0;
@@ -375,8 +377,9 @@ export default function UploadPage() {
       }
       const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
 
-      const skusNoCanalTotal = new Set<string>();
+      const skusEncontradosNoCanal = new Set<string>();
 
+      // 2. Ler os ficheiros e acumular APENAS SKUs válidos que existem no Tiny
       for (let f = 0; f < files.length; f++) {
         const file = files[f];
         const buffer = await file.arrayBuffer();
@@ -389,33 +392,49 @@ export default function UploadPage() {
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        // Para o TikTok e plataformas em lote, os dados reais começam estritamente na linha 5 (índice 5)
-        const linhaInicio = sheetName === "Template" ? 5 : 4;
+        let linhaInicio = 0;
+        for (let i = 0; i < Math.min(json.length, 15); i++) {
+          const row = json[i];
+          if (row && row.some((cell: any) => {
+            const val = String(cell).trim().toLowerCase();
+            return val === 'seller_sku' || val === 'sku' || val === 'sku_id';
+          })) {
+            linhaInicio = i + 1;
+            break;
+          }
+        }
+        if (linhaInicio === 0 || linhaInicio < 5) linhaInicio = 5;
 
         for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
           
           const skuVal = normalizarSku(row[indiceColuna]);
+          // Considera apenas se estiver presente na base do Tiny
           if (skuVal && skusTinySet.has(skuVal)) {
-            skusNoCanalTotal.add(skuVal);
+            skusEncontradosNoCanal.add(skuVal);
           }
         }
       }
 
-      const registrosUpsert: any[] = [];
-      skusTinySet.forEach(sku => {
-        registrosUpsert.push({ canal: canalNome, sku: sku, presente: skusNoCanalTotal.has(sku) });
-      });
+      // 3. Limpar o mapeamento anterior deste canal antes de inserir os novos dados limpos
+      await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
+
+      // 4. Inserir APENAS os SKUs encontrados (presente: true)
+      const registrosUpsert = Array.from(skusEncontradosNoCanal).map(sku => ({
+        canal: canalNome,
+        sku: sku,
+        presente: true
+      }));
 
       const tamanhoLote = 500;
       for (let i = 0; i < registrosUpsert.length; i += tamanhoLote) {
         const lote = registrosUpsert.slice(i, i + tamanhoLote);
-        const { error } = await supabase.from('mapeamento_canais_skus').upsert(lote, { onConflict: 'canal,sku' });
+        const { error } = await supabase.from('mapeamento_canais_skus').insert(lote);
         if (error) throw error;
       }
 
-      alert(`Canal "${canalNome}" sincronizado com sucesso (${files.length} ficheiro(s))! ${skusNoCanalTotal.size} SKUs cruzados com a base.`);
+      alert(`Canal "${canalNome}" sincronizado com sucesso (${files.length} ficheiro(s))! ${registrosUpsert.length} SKUs válidos guardados.`);
       setLoading(false);
     } catch (err: any) {
       alert("Erro ao processar ficheiros: " + err.message);
@@ -552,7 +571,7 @@ export default function UploadPage() {
 
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-              <p className="text-xs text-slate-400 mb-6">Atualize ou limpe o mapeamento de cada marketplace. Pode selecionar <strong>múltiplos ficheiros</strong> em simultâneo.</p>
+              <p className="text-xs text-slate-400 mb-6">Atualize ou limpe o mapeamento de cada marketplace. Apenas os SKUs válidos existentes no Tiny serão guardados.</p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {regrasCanais.map((r, idx) => (
