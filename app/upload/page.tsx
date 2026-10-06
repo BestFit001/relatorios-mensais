@@ -446,6 +446,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // Lógica inteligente para capturar o registro mais completo por MLB e remover duplicadas
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -467,12 +468,13 @@ export default function UploadPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        const registros = [];
+        const mapaMlPendente = new Map<string, { registro: any, score: number }>();
+
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
 
-          const mlb = String(row[idxMlb] || "").trim();
+          const mlb = String(row[idxMlb] || "").trim().toUpperCase();
           const sku = normalizarSku(row[idxSku]);
           const comissao = Number(row[idxCom] || 0);
 
@@ -487,9 +489,24 @@ export default function UploadPage() {
           const comprimento = Number(row[idxComp] || 0);
 
           if (mlb && sku) {
-            registros.push({ mlb, sku, comissao, peso_real: pesoReal, altura, largura, comprimento });
+            // Calcular pontuação de completude desta linha (quantos campos importantes estão preenchidos)
+            let score = 0;
+            if (comissao > 0) score++;
+            if (pesoReal !== 2.000) score++;
+            if (altura > 0) score++;
+            if (largura > 0) score++;
+            if (comprimento > 0++) score++;
+
+            const objReg = { mlb, sku, comissao, peso_real: pesoReal, altura, largura, comprimento };
+
+            // Se o MLB ainda não existe ou se esta linha é mais completa que a anterior, substitui
+            if (!mapaMlPendente.has(mlb) || score > mapaMlPendente.get(mlb)!.score) {
+              mapaMlPendente.set(mlb, { registro: objReg, score });
+            }
           }
         }
+
+        const registros = Array.from(mapaMlPendente.values()).map(item => item.registro);
 
         const tamanhoLote = 500;
         for (let i = 0; i < registros.length; i += tamanhoLote) {
@@ -498,7 +515,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`🚀 Planilha de Regras do ML processada com sucesso! ${registros.length} anúncios mapeados (Peso padrão: 2kg onde ausente).`);
+        alert(`🚀 Planilha de Regras do ML processada com sucesso! ${registros.length} anúncios únicos consolidados (duplicadas de MLB removidas e mantido o mais completo).`);
         carregarRegrasMl();
         setLoading(false);
       } catch (err: any) {
