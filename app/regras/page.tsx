@@ -13,6 +13,17 @@ export default function RegrasPage() {
   const [regrasCustos, setRegrasCustos] = useState({ sku: 'A', produto: 'B', custo: 'C' });
   const [regrasMlCols, setRegrasMlCols] = useState({ mlb: 'A', sku: 'B', comissao: 'C', peso: '', altura: 'E', largura: 'F', comprimento: 'G' });
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
+  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
+
+  // Estados para nova regra de tarifação (Excluindo Mercado Livre)
+  const [novoCanal, setNovoCanal] = useState("Amazon");
+  const [novaFaixa, setNovaFaixa] = useState("R$ 0.00 até R$ 78.99");
+  const [novaComissao, setNovaComissao] = useState("14.00");
+  const [novaTarifaFixa, setNovaTarifaFixa] = useState("4.00");
+  const [novoFrete, setNovoFrete] = useState("0.00");
+  const [salvandoTarifa, setSalvandoTarifa] = useState(false);
+
+  const canaisTarifacao = ["Amazon", "Centauro", "Magalu", "Netshoes", "Shein", "Shopee", "Site", "TikTok Shop"];
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -39,6 +50,9 @@ export default function RegrasPage() {
 
     const { data: canaisConfig } = await supabase.from('config_regras_canais').select('*').order('id');
     if (canaisConfig) setRegrasCanais(canaisConfig);
+
+    const { data: tarifacaoData } = await supabase.from('config_regras_tarifacao').select('*').order('id');
+    if (tarifacaoData) setRegrasTarifacao(tarifacaoData);
 
     setLoading(false);
   };
@@ -78,6 +92,34 @@ export default function RegrasPage() {
     await supabase.from('config_regras_canais').update({ ativo_ads: novoStatus }).eq('id', id);
   };
 
+  const adicionarRegraTarifacao = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSalvandoTarifa(true);
+
+    const { error } = await supabase.from('config_regras_tarifacao').insert([{
+      canal: novoCanal,
+      faixa_preco: novaFaixa,
+      comissao: Number(novaComissao),
+      tarifa_fixa: Number(novaTarifaFixa),
+      frete: Number(novoFrete)
+    }]);
+
+    if (error) {
+      alert("Erro ao adicionar regra: " + error.message);
+    } else {
+      carregarDados();
+      alert("✅ Regra de tarifação adicionada com sucesso!");
+    }
+    setSalvandoTarifa(false);
+  };
+
+  const removerRegraTarifacao = async (id: number) => {
+    if (!confirm("Tem certeza que deseja remover esta regra?")) return;
+    const { error } = await supabase.from('config_regras_tarifacao').delete().eq('id', id);
+    if (error) alert("Erro: " + error.message);
+    else carregarDados();
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-6xl mx-auto">
@@ -85,7 +127,7 @@ export default function RegrasPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Regras</h1>
-            <p className="text-sm font-medium text-slate-400">Configure as colunas das planilhas brutas e visibilidade no Ads</p>
+            <p className="text-sm font-medium text-slate-400">Configure colunas brutas, visibilidade e tarifação por canal</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -103,8 +145,9 @@ export default function RegrasPage() {
         {loading ? (
           <p className="p-8 text-center text-slate-400">A carregar...</p>
         ) : (
-          <form onSubmit={salvarTodasRegras} className="space-y-8">
+          <div className="space-y-8">
 
+            {/* VISIBILIDADE DE CANAIS NO ADS */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-1 text-white">Visibilidade de Canais no Painel Ads</h2>
               <p className="text-xs text-slate-400 mb-6">Marque quais canais aparecem no Painel Ads.</p>
@@ -126,9 +169,79 @@ export default function RegrasPage() {
               </div>
             </div>
 
+            {/* REGRAS DE TARIFAÇÃO POR CANAL (EXCETO MERCADO LIVRE) */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+              <div>
+                <h2 className="text-lg font-bold mb-1 text-white">Regras de Tarifação por Canal (Exceto Mercado Livre)</h2>
+                <p className="text-xs text-slate-400">Defina comissão, tarifa fixa e frete por faixa de preço para os demais markeplaces.</p>
+              </div>
+
+              <form onSubmit={adicionarRegraTarifacao} className="bg-slate-950 p-6 rounded-xl border border-slate-800 grid grid-cols-1 sm:grid-cols-6 gap-4 items-end">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal</label>
+                  <select value={novoCanal} onChange={(e) => setNovoCanal(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none">
+                    {canaisTarifacao.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Faixa de Preço</label>
+                  <input type="text" value={novaFaixa} onChange={(e) => setNovaFaixa(e.target.value)} placeholder="Ex: R$ 0.00 até R$ 78.99" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" required />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Comissão (%)</label>
+                  <input type="number" step="0.01" value={novaComissao} onChange={(e) => setNovaComissao(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" required />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Tarifa Fixa (R$)</label>
+                  <input type="number" step="0.01" value={novaTarifaFixa} onChange={(e) => setNovaTarifaFixa(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" required />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Frete (R$)</label>
+                  <input type="number" step="0.01" value={novoFrete} onChange={(e) => setNovoFrete(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" required />
+                </div>
+                <div>
+                  <button type="submit" disabled={salvandoTarifa} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-lg text-xs uppercase tracking-wider cursor-pointer">
+                    + Adicionar
+                  </button>
+                </div>
+              </form>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[400px]">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                    <tr>
+                      <th className="p-3.5">Canal</th>
+                      <th className="p-3.5">Faixa de Preço</th>
+                      <th className="p-3.5 text-center">Comissão</th>
+                      <th className="p-3.5 text-right">Tarifa Fixa</th>
+                      <th className="p-3.5 text-right">Frete</th>
+                      <th className="p-3.5 text-center">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {regrasTarifacao.map((item) => (
+                      <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3.5 font-bold text-white">{item.canal}</td>
+                        <td className="p-3.5 text-slate-300">{item.faixa_preco}</td>
+                        <td className="p-3.5 text-center font-bold text-indigo-400">{Number(item.comissao).toFixed(2)}%</td>
+                        <td className="p-3.5 text-right font-mono text-slate-300">R$ {Number(item.tarifa_fixa).toFixed(2)}</td>
+                        <td className="p-3.5 text-right font-mono text-emerald-400">R$ {Number(item.frete).toFixed(2)}</td>
+                        <td className="p-3.5 text-center">
+                          <button onClick={() => removerRegraTarifacao(item.id)} className="bg-rose-950/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">
+                            Remover
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* MAPEAMENTO DE COLUNAS DE UPLOAD BRUTO */}
+            <form onSubmit={salvarTodasRegras} className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
               <h2 className="text-lg font-bold mb-1 text-white">Mapeamento de Colunas (Planilhas Brutas)</h2>
-              <p className="text-xs text-slate-400 mb-4">Informe as letras das colunas correspondentes. Deixe em branco caso a planilha não possua coluna de peso real (o sistema assumirá 2kg automaticamente).</p>
+              <p className="text-xs text-slate-400 mb-4">Informe as letras das colunas correspondentes para cada importação.</p>
 
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
                 <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">Planilha de Custos Unitários</h3>
@@ -187,9 +300,9 @@ export default function RegrasPage() {
                   {salvando ? "A salvar..." : "Salvar Todas as Configurações"}
                 </button>
               </div>
-            </div>
+            </form>
 
-          </form>
+          </div>
         )}
 
       </div>

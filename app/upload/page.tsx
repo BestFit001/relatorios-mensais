@@ -464,46 +464,59 @@ export default function UploadPage() {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        
+        let sheetName = workbook.SheetNames[0];
+        if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
+        
+        const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         const mapaMlPendente = new Map<string, { registro: any, score: number }>();
+        const linhaInicio = 6;
 
-        for (let i = 1; i < json.length; i++) {
+        for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
 
           const mlb = String(row[idxMlb] || "").trim().toUpperCase();
           const sku = normalizarSku(row[idxSku]);
-          const comissao = Number(row[idxCom] || 0);
+          
+          if (!mlb || !sku || !mlb.startsWith("MLB")) continue;
+
+          let comissaoVal = String(row[idxCom] || "0").replace("%", "").trim().replace(",", ".");
+          const comissao = Number(comissaoVal) || 0;
 
           let pesoReal = 2.000;
           if (idxPeso >= 0 && row[idxPeso] !== undefined && row[idxPeso] !== "") {
-            const valPeso = Number(row[idxPeso]);
+            const valPeso = Number(String(row[idxPeso]).replace(",", "."));
             if (!isNaN(valPeso) && valPeso > 0) pesoReal = valPeso;
           }
 
-          const altura = Number(row[idxAlt] || 0);
-          const largura = Number(row[idxLarg] || 0);
-          const comprimento = Number(row[idxComp] || 0);
+          const altura = Number(String(row[idxAlt] || "0").replace(",", ".")) || 0;
+          const largura = Number(String(row[idxLarg] || "0").replace(",", ".")) || 0;
+          const comprimento = Number(String(row[idxComp] || "0").replace(",", ".")) || 0;
 
-          if (mlb && sku) {
-            let score = 0;
-            if (comissao > 0) score++;
-            if (pesoReal !== 2.000) score++;
-            if (altura > 0) score++;
-            if (largura > 0) score++;
-            if (comprimento > 0) score++;
+          let score = 0;
+          if (comissao > 0) score++;
+          if (pesoReal !== 2.000) score++;
+          if (altura > 0) score++;
+          if (largura > 0) score++;
+          if (comprimento > 0) score++;
 
-            const objReg = { mlb, sku, comissao, peso_real: pesoReal, altura, largura, comprimento };
+          const objReg = { mlb, sku, comissao, peso_real: pesoReal, altura, largura, comprimento };
 
-            if (!mapaMlPendente.has(mlb) || score > mapaMlPendente.get(mlb)!.score) {
-              mapaMlPendente.set(mlb, { registro: objReg, score });
-            }
+          if (!mapaMlPendente.has(mlb) || score > mapaMlPendente.get(mlb)!.score) {
+            mapaMlPendente.set(mlb, { registro: objReg, score });
           }
         }
 
         const registros = Array.from(mapaMlPendente.values()).map(item => item.registro);
+
+        if (registros.length === 0) {
+          alert("Nenhum anúncio válido foi encontrado. Verifique se as letras das colunas configuradas na aba Regras estão corretas.");
+          setLoading(false);
+          return;
+        }
 
         const tamanhoLote = 500;
         for (let i = 0; i < registros.length; i += tamanhoLote) {
@@ -512,7 +525,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`🚀 Planilha de Regras do ML processada com sucesso! ${registros.length} anúncios únicos consolidados (duplicadas de MLB removidas e mantido o mais completo).`);
+        alert(`🚀 Planilha de Regras do ML processada com sucesso! ${registros.length} anúncios únicos consolidados.`);
         carregarRegrasMl();
         setLoading(false);
       } catch (err: any) {
