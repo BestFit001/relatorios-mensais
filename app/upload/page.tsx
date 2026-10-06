@@ -1,3 +1,9 @@
+import Navbar from "../../components/navbar"; // ajuste o caminho relativo conforme a página
+
+// No cabeçalho da página:
+<div className="flex items-center gap-3">
+  <Navbar />
+</div>
 "use client";
 import { useState, ChangeEvent, useEffect } from "react";
 import * as XLSX from "xlsx";
