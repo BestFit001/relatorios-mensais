@@ -128,7 +128,11 @@ export default function DevolucoesPage() {
   const [paginaAtual, setPaginaAtual] = useState(1);
   const itensPorPagina = 10;
 
-  // Estados de Edição do Plano de Ação e Mediações do Histórico
+  // ESTADOS DE EDIÇÃO E EXCLUSÃO (Novos)
+  const [selecionadosIds, setSelecionadosIds] = useState<number[]>([]);
+  const [idEditando, setIdEditando] = useState<number | null>(null);
+  const [dadosEdicao, setDadosEdicao] = useState<any>({});
+  
   const [editandoPlanoSku, setEditandoPlanoSku] = useState<string | null>(null);
   const [textoProposta, setTextoProposta] = useState("");
 
@@ -148,6 +152,7 @@ export default function DevolucoesPage() {
 
   useEffect(() => {
     carregarDevolucoesEPlanos();
+    setSelecionadosIds([]); // Limpa a seleção ao trocar de mês
   }, [mesAtual, mesAnterior]);
 
   const normalizarSku = (valor: any) => {
@@ -193,12 +198,10 @@ export default function DevolucoesPage() {
   const carregarDevolucoesEPlanos = async () => {
     setLoading(true);
     
-    // Busca Devoluções
     const { data: devData } = await supabase.from('devolucoes').select('*').order('data_retorno', { ascending: false });
     const listaDev = devData || [];
     setDevolucoes(listaDev);
 
-    // Busca Planos de Ação do mês atual
     const { data: planoData } = await supabase.from('plano_acao_devolucoes').select('*').eq('mes_referencia', mesAtual);
     setPlanosAcao(planoData || []);
 
@@ -241,7 +244,6 @@ export default function DevolucoesPage() {
       }
     }
     
-    // Se marcou "Não" em resolvido, limpa a data
     if (campo === "mediacao_resolvido" && valor === "Não") {
       novasLinhas[index].mediacao_data_resolucao = "";
     }
@@ -290,16 +292,95 @@ export default function DevolucoesPage() {
     if (error) alert("Erro ao gravar devoluções: " + error.message);
     else {
       alert("✅ Devoluções registadas com sucesso!");
-      
-      // Ajusta o filtro de mês automaticamente para garantir que o utilizador vê o que acabou de salvar
       if (mesRef !== mesAtual) {
         setMesAtual(mesRef);
       }
-      
       setLinhas([{ ...linhaVazia }]);
       carregarDevolucoesEPlanos();
     }
     setSalvando(false);
+  };
+
+  // FUNÇÕES DE EDIÇÃO E EXCLUSÃO (Histórico)
+  const selecionarTodosCheckbox = (e: React.ChangeEvent<HTMLInputElement>, dadosAtuais: any[]) => {
+    if (e.target.checked) setSelecionadosIds(dadosAtuais.map(i => i.id));
+    else setSelecionadosIds([]);
+  };
+
+  const selecionarLinhaCheckbox = (id: number) => {
+    if (selecionadosIds.includes(id)) setSelecionadosIds(selecionadosIds.filter(i => i !== id));
+    else setSelecionadosIds([...selecionadosIds, id]);
+  };
+
+  const excluirSelecionados = async () => {
+    if (selecionadosIds.length === 0) return;
+    if (!confirm(`Tem certeza que deseja excluir as ${selecionadosIds.length} devoluções selecionadas?`)) return;
+
+    const { error } = await supabase.from('devolucoes').delete().in('id', selecionadosIds);
+    if (error) alert("Erro ao excluir: " + error.message);
+    else {
+      setSelecionadosIds([]);
+      carregarDevolucoesEPlanos();
+    }
+  };
+
+  const limparBaseMes = async () => {
+    if (!confirm(`ATENÇÃO: Tem certeza que deseja apagar TODAS as devoluções do mês de ${mesAtual}? Esta ação é irreversível.`)) return;
+
+    const { error } = await supabase.from('devolucoes').delete().eq('mes_referencia', mesAtual);
+    if (error) alert("Erro ao limpar base: " + error.message);
+    else {
+      alert(`🗑️ Todas as devoluções de ${mesAtual} foram apagadas.`);
+      setSelecionadosIds([]);
+      carregarDevolucoesEPlanos();
+    }
+  };
+
+  const excluirLancamento = async (id: number) => {
+    if (!confirm("Excluir esta devolução?")) return;
+    const { error } = await supabase.from('devolucoes').delete().eq('id', id);
+    if (error) alert("Erro: " + error.message);
+    else carregarDevolucoesEPlanos();
+  };
+
+  const iniciarEdicao = (item: any) => {
+    setIdEditando(item.id);
+    setDadosEdicao({
+      pedido: item.pedido || "",
+      canal: item.canal || "",
+      sku: item.sku || "",
+      motivo: item.motivo || "",
+      observacoes: item.observacoes || "",
+      condicoes: item.condicoes || "Sim",
+      pdv: item.pdv || 0,
+      frete: item.frete || 0
+    });
+  };
+
+  const salvarEdicao = async (id: number) => {
+    const skuNorm = normalizarSku(dadosEdicao.sku);
+    const infoCat = catalogoMap.get(skuNorm);
+    const produtoFinal = infoCat ? infoCat.produto : "Não identificado";
+    const marcaFinal = infoCat ? infoCat.marca : "Sem Marca";
+
+    const { error } = await supabase.from('devolucoes').update({
+      pedido: dadosEdicao.pedido.trim(),
+      canal: dadosEdicao.canal,
+      sku: dadosEdicao.sku.trim(),
+      produto: produtoFinal,
+      marca: marcaFinal,
+      pdv: Number(dadosEdicao.pdv),
+      frete: Number(dadosEdicao.frete),
+      motivo: dadosEdicao.motivo,
+      observacoes: dadosEdicao.observacoes,
+      condicoes: dadosEdicao.condicoes
+    }).eq('id', id);
+
+    if (error) alert("Erro ao atualizar: " + error.message);
+    else {
+      setIdEditando(null);
+      carregarDevolucoesEPlanos();
+    }
   };
 
   const iniciarEdicaoMediacao = (item: any) => {
@@ -324,9 +405,8 @@ export default function DevolucoesPage() {
       mediacao_estorno: Number(dadosEdicaoMediacao.estorno)
     }).eq('id', id);
 
-    if (error) {
-      alert("Erro ao atualizar mediação: " + error.message);
-    } else {
+    if (error) alert("Erro ao atualizar mediação: " + error.message);
+    else {
       setEditandoMediacaoId(null);
       carregarDevolucoesEPlanos();
     }
@@ -373,7 +453,6 @@ export default function DevolucoesPage() {
     return `${diff >= 0 ? '+' : ''}${diff.toFixed(1)}%`;
   };
 
-  // Geração de Dados para o Plano de Ação
   const gerarResumoPlanoAcao = () => {
     const mapaSkus = new Map<string, { produto: string, total: number, motivos: Record<string, number> }>();
     
@@ -429,6 +508,7 @@ export default function DevolucoesPage() {
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período de Análise:</label>
             <select value={mesAtual} onChange={(e) => setMesAtual(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
+              <option value="12/2026">12/2026</option>
               <option value="11/2026">11/2026</option>
               <option value="10/2026">10/2026</option>
               <option value="09/2026">09/2026</option>
@@ -440,6 +520,7 @@ export default function DevolucoesPage() {
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mês Comparativo:</label>
               <select value={mesAnterior} onChange={(e) => setMesAnterior(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
+                <option value="11/2026">11/2026</option>
                 <option value="10/2026">10/2026</option>
                 <option value="09/2026">09/2026</option>
                 <option value="08/2026">08/2026</option>
@@ -602,9 +683,23 @@ export default function DevolucoesPage() {
               </form>
             </div>
 
+            {/* TABELA DE HISTÓRICO COM EDIÇÃO E EXCLUSÃO */}
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden mb-8">
               <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-                <h2 className="text-lg font-bold text-white">Histórico de Devoluções ({mesAtual})</h2>
+                <div>
+                  <h2 className="text-lg font-bold text-white">Histórico de Devoluções ({mesAtual})</h2>
+                  <div className="flex gap-2 mt-3">
+                    {selecionadosIds.length > 0 && (
+                      <button onClick={excluirSelecionados} className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-1.5 px-3 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer shadow-sm transition-all">
+                        🗑️ Excluir Selecionados ({selecionadosIds.length})
+                      </button>
+                    )}
+                    <button onClick={limparBaseMes} className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-1.5 px-3 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer shadow-sm transition-all">
+                      🗑️ Limpar Base do Mês
+                    </button>
+                  </div>
+                </div>
+                
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-2 text-[11px] font-bold text-amber-400 cursor-pointer bg-amber-950/30 border border-amber-900/50 px-3 py-2.5 rounded-xl hover:bg-amber-900/40 transition-colors">
                     <input type="checkbox" checked={filtroMediacao} onChange={e => {setFiltroMediacao(e.target.checked); setPaginaAtual(1);}} className="accent-amber-500 w-4 h-4" />
@@ -620,86 +715,149 @@ export default function DevolucoesPage() {
                     <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                       <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                         <tr>
+                          <th className="p-4 text-center w-10">
+                            <input type="checkbox" onChange={(e) => selecionarTodosCheckbox(e, dadosFiltrados)} checked={dadosFiltrados.length > 0 && selecionadosIds.length === dadosFiltrados.length} className="cursor-pointer accent-indigo-600 rounded w-3.5 h-3.5"/>
+                          </th>
                           <th className="p-4">Data Retorno</th>
                           <th className="p-4">Pedido / Canal</th>
                           <th className="p-4">SKU / Produto</th>
                           <th className="p-4">Marca</th>
                           <th className="p-4">Motivo / Obs</th>
                           <th className="p-4 text-center">Condições</th>
-                          <th className="p-4 text-right">PDV (R$)</th>
+                          <th className="p-4 text-right">PDV / Frete</th>
+                          <th className="p-4 text-center">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                        {itensTabelaAtual.map((item, idx) => (
-                          <React.Fragment key={item.id || idx}>
-                            <tr className="hover:bg-slate-800/40 transition-colors">
-                              <td className="p-4 font-mono text-slate-300">{item.data_retorno ? item.data_retorno.split('-').reverse().join('/') : '-'}</td>
-                              <td className="p-4"><div className="font-bold text-white">{item.pedido}</div><div className="text-[10px] text-slate-500">{item.canal}</div></td>
-                              <td className="p-4"><div className="font-mono text-indigo-400">{item.sku}</div><div className="text-[10px] text-slate-400 max-w-[200px] truncate">{item.produto}</div></td>
-                              <td className="p-4 font-bold text-slate-300">{item.marca}</td>
-                              <td className="p-4"><div className="text-rose-400 truncate max-w-[200px]">{item.motivo}</div><div className="text-[10px] text-slate-500 truncate max-w-[200px]">{item.observacoes || "-"}</div></td>
-                              <td className="p-4 text-center">
-                                <span className={`px-2 py-1 rounded text-[10px] font-bold ${item.condicoes === 'Sim' ? 'bg-emerald-900/50 text-emerald-400' : item.condicoes === 'Não' ? 'bg-rose-900/50 text-rose-400' : 'bg-amber-900/50 text-amber-400'}`}>
-                                  {item.condicoes}
-                                </span>
-                              </td>
-                              <td className="p-4 text-right font-mono font-bold text-emerald-400">R$ {Number(item.pdv).toFixed(2)}</td>
-                            </tr>
+                        {itensTabelaAtual.map((item, idx) => {
+                          const isSelected = selecionadosIds.includes(item.id);
+                          const isEditing = idEditando === item.id;
 
-                            {/* Renderização Condicional da Mediação no Histórico */}
-                            {item.condicoes === "Mediação" && (
-                              <tr className="bg-amber-950/10 border-b border-amber-900/30">
-                                <td colSpan={7} className="p-3 pl-8">
-                                  {editandoMediacaoId === item.id ? (
-                                    <div className="flex flex-wrap items-center gap-4 text-[10px]">
-                                      <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Editar Mediação:</span>
-                                      <div className="flex items-center">
-                                        <label className="text-slate-400 mr-2">ID Protocolo:</label>
-                                        <input type="text" value={dadosEdicaoMediacao.protocolo} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, protocolo: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none"/>
-                                      </div>
-                                      <div className="flex items-center">
-                                        <label className="text-slate-400 mr-2">Resolvido:</label>
-                                        <select value={dadosEdicaoMediacao.resolvido} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, resolvido: e.target.value, data_resolucao: e.target.value === "Não" ? "" : dadosEdicaoMediacao.data_resolucao})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none">
-                                          <option value="Não">Não</option><option value="Sim">Sim</option>
-                                        </select>
-                                      </div>
-                                      <div className="flex items-center">
-                                        <label className={`mr-2 ${dadosEdicaoMediacao.resolvido === 'Sim' ? 'text-slate-400' : 'text-slate-600'}`}>Data Res.:</label>
-                                        <input type="date" value={dadosEdicaoMediacao.data_resolucao} disabled={dadosEdicaoMediacao.resolvido !== "Sim"} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, data_resolucao: e.target.value})} className="w-28 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none disabled:opacity-30"/>
-                                      </div>
-                                      <div className="flex items-center">
-                                        <label className="text-slate-400 mr-2">Afetou Rep.:</label>
-                                        <select value={dadosEdicaoMediacao.reputacao} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, reputacao: e.target.value})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none">
-                                          <option value="Sim">Sim</option><option value="Não">Não</option>
-                                        </select>
-                                      </div>
-                                      <div className="flex items-center">
-                                        <label className="text-slate-400 mr-2">Estorno:</label>
-                                        <input type="number" step="0.01" value={dadosEdicaoMediacao.estorno} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, estorno: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-right text-white outline-none"/>
-                                      </div>
-                                      <div className="ml-auto flex gap-2">
-                                        <button onClick={() => setEditandoMediacaoId(null)} className="text-[10px] font-bold text-slate-400 hover:text-slate-300">Cancelar</button>
-                                        <button onClick={() => salvarEdicaoMediacao(item.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-[10px] font-bold shadow">Salvar</button>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="flex flex-wrap items-center gap-4 text-[11px]">
-                                      <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Dados da Mediação:</span>
-                                      <span className="text-slate-400">Protocolo: <b className="text-white ml-1">{item.mediacao_protocolo}</b></span>
-                                      <span className="text-slate-400">Resolvido: <b className={`ml-1 ${item.mediacao_resolvido === 'Sim' ? 'text-emerald-400' : 'text-white'}`}>{item.mediacao_resolvido}</b></span>
-                                      {item.mediacao_resolvido === 'Sim' && <span className="text-slate-400">Data Resolução: <b className="text-white ml-1">{item.mediacao_data_resolucao ? item.mediacao_data_resolucao.split('-').reverse().join('/') : '-'}</b></span>}
-                                      <span className="text-slate-400">Afetou Reputação: <b className={`ml-1 ${item.mediacao_reputacao === 'Sim' ? 'text-rose-400' : 'text-emerald-400'}`}>{item.mediacao_reputacao}</b></span>
-                                      <span className="text-slate-400">Valor Estorno: <b className="text-white font-mono ml-1">R$ {Number(item.mediacao_estorno).toFixed(2)}</b></span>
-                                      <button onClick={() => iniciarEdicaoMediacao(item)} className="ml-auto bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded text-[10px] font-bold border border-slate-700 transition-colors">
-                                        Acompanhar / Editar
-                                      </button>
-                                    </div>
-                                  )}
+                          return (
+                            <React.Fragment key={item.id || idx}>
+                              <tr className={`hover:bg-slate-800/40 transition-colors ${isSelected ? 'bg-indigo-950/20' : ''}`}>
+                                <td className="p-4 text-center">
+                                  <input type="checkbox" checked={isSelected} onChange={() => selecionarLinhaCheckbox(item.id)} className="cursor-pointer accent-indigo-600 rounded w-3.5 h-3.5" />
                                 </td>
+                                
+                                <td className="p-4 font-mono text-slate-300">
+                                  {item.data_retorno ? item.data_retorno.split('-').reverse().join('/') : '-'}
+                                </td>
+                                
+                                {isEditing ? (
+                                  <>
+                                    <td className="p-2">
+                                      <input type="text" value={dadosEdicao.pedido} onChange={e => setDadosEdicao({...dadosEdicao, pedido: e.target.value})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 mb-1 text-white text-[10px]" />
+                                      <select value={dadosEdicao.canal} onChange={e => setDadosEdicao({...dadosEdicao, canal: e.target.value})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px] block">
+                                        {canais.map(c => <option key={c} value={c}>{c}</option>)}
+                                      </select>
+                                    </td>
+                                    <td className="p-2">
+                                      <input type="text" value={dadosEdicao.sku} onChange={e => setDadosEdicao({...dadosEdicao, sku: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px] font-mono" />
+                                    </td>
+                                    <td className="p-2 font-bold text-slate-300">{item.marca}</td>
+                                    <td className="p-2">
+                                      <select value={dadosEdicao.motivo} onChange={e => setDadosEdicao({...dadosEdicao, motivo: e.target.value})} className="w-32 bg-slate-900 border border-slate-700 rounded p-1 mb-1 text-white text-[10px] block">
+                                        {motivosFixos.map(m => <option key={m} value={m}>{m}</option>)}
+                                      </select>
+                                      <input type="text" value={dadosEdicao.observacoes} onChange={e => setDadosEdicao({...dadosEdicao, observacoes: e.target.value})} className="w-32 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px]" placeholder="Obs..." />
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      <select value={dadosEdicao.condicoes} onChange={e => setDadosEdicao({...dadosEdicao, condicoes: e.target.value})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px]">
+                                        {opcoesCondicao.map(o => <option key={o} value={o}>{o}</option>)}
+                                      </select>
+                                    </td>
+                                    <td className="p-2 text-right">
+                                      <input type="number" step="0.01" value={dadosEdicao.pdv} onChange={e => setDadosEdicao({...dadosEdicao, pdv: e.target.value})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 mb-1 text-white text-[10px] text-right block ml-auto" />
+                                      <input type="number" step="0.01" value={dadosEdicao.frete} onChange={e => setDadosEdicao({...dadosEdicao, frete: e.target.value})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px] text-right block ml-auto" />
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      <div className="flex flex-col gap-1.5 items-center justify-center">
+                                        <button onClick={() => salvarEdicao(item.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded text-[10px] font-bold w-full">Salvar</button>
+                                        <button onClick={() => setIdEditando(null)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded text-[10px] font-bold w-full">Cancelar</button>
+                                      </div>
+                                    </td>
+                                  </>
+                                ) : (
+                                  <>
+                                    <td className="p-4"><div className="font-bold text-white">{item.pedido}</div><div className="text-[10px] text-slate-500">{item.canal}</div></td>
+                                    <td className="p-4"><div className="font-mono text-indigo-400">{item.sku}</div><div className="text-[10px] text-slate-400 max-w-[200px] truncate">{item.produto}</div></td>
+                                    <td className="p-4 font-bold text-slate-300">{item.marca}</td>
+                                    <td className="p-4"><div className="text-rose-400 truncate max-w-[200px]">{item.motivo}</div><div className="text-[10px] text-slate-500 truncate max-w-[200px]">{item.observacoes || "-"}</div></td>
+                                    <td className="p-4 text-center">
+                                      <span className={`px-2 py-1 rounded text-[10px] font-bold ${item.condicoes === 'Sim' ? 'bg-emerald-900/50 text-emerald-400' : item.condicoes === 'Não' ? 'bg-rose-900/50 text-rose-400' : 'bg-amber-900/50 text-amber-400'}`}>
+                                        {item.condicoes}
+                                      </span>
+                                    </td>
+                                    <td className="p-4 text-right">
+                                      <div className="font-mono font-bold text-emerald-400">R$ {Number(item.pdv).toFixed(2)}</div>
+                                      <div className="text-[10px] text-rose-400 font-mono">- R$ {Number(item.frete).toFixed(2)}</div>
+                                    </td>
+                                    <td className="p-4 text-center">
+                                      <div className="flex flex-col gap-1.5 items-center justify-center">
+                                        <button onClick={() => iniciarEdicao(item)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer w-full">Editar</button>
+                                        <button onClick={() => excluirLancamento(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer w-full">Remover</button>
+                                      </div>
+                                    </td>
+                                  </>
+                                )}
                               </tr>
-                            )}
-                          </React.Fragment>
-                        ))}
+
+                              {/* Renderização Condicional da Mediação no Histórico */}
+                              {item.condicoes === "Mediação" && !isEditing && (
+                                <tr className="bg-amber-950/10 border-b border-amber-900/30">
+                                  <td colSpan={9} className="p-3 pl-8">
+                                    {editandoMediacaoId === item.id ? (
+                                      <div className="flex flex-wrap items-center gap-4 text-[10px]">
+                                        <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Editar Mediação:</span>
+                                        <div className="flex items-center">
+                                          <label className="text-slate-400 mr-2">ID Protocolo:</label>
+                                          <input type="text" value={dadosEdicaoMediacao.protocolo} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, protocolo: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none"/>
+                                        </div>
+                                        <div className="flex items-center">
+                                          <label className="text-slate-400 mr-2">Resolvido:</label>
+                                          <select value={dadosEdicaoMediacao.resolvido} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, resolvido: e.target.value, data_resolucao: e.target.value === "Não" ? "" : dadosEdicaoMediacao.data_resolucao})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none">
+                                            <option value="Não">Não</option><option value="Sim">Sim</option>
+                                          </select>
+                                        </div>
+                                        <div className="flex items-center">
+                                          <label className={`mr-2 ${dadosEdicaoMediacao.resolvido === 'Sim' ? 'text-slate-400' : 'text-slate-600'}`}>Data Res.:</label>
+                                          <input type="date" value={dadosEdicaoMediacao.data_resolucao} disabled={dadosEdicaoMediacao.resolvido !== "Sim"} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, data_resolucao: e.target.value})} className="w-28 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none disabled:opacity-30"/>
+                                        </div>
+                                        <div className="flex items-center">
+                                          <label className="text-slate-400 mr-2">Afetou Rep.:</label>
+                                          <select value={dadosEdicaoMediacao.reputacao} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, reputacao: e.target.value})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none">
+                                            <option value="Sim">Sim</option><option value="Não">Não</option>
+                                          </select>
+                                        </div>
+                                        <div className="flex items-center">
+                                          <label className="text-slate-400 mr-2">Estorno:</label>
+                                          <input type="number" step="0.01" value={dadosEdicaoMediacao.estorno} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, estorno: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-right text-white outline-none"/>
+                                        </div>
+                                        <div className="ml-auto flex gap-2">
+                                          <button onClick={() => setEditandoMediacaoId(null)} className="text-[10px] font-bold text-slate-400 hover:text-slate-300">Cancelar</button>
+                                          <button onClick={() => salvarEdicaoMediacao(item.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-[10px] font-bold shadow">Salvar</button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex flex-wrap items-center gap-4 text-[11px]">
+                                        <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Dados da Mediação:</span>
+                                        <span className="text-slate-400">Protocolo: <b className="text-white ml-1">{item.mediacao_protocolo}</b></span>
+                                        <span className="text-slate-400">Resolvido: <b className={`ml-1 ${item.mediacao_resolvido === 'Sim' ? 'text-emerald-400' : 'text-white'}`}>{item.mediacao_resolvido}</b></span>
+                                        {item.mediacao_resolvido === 'Sim' && <span className="text-slate-400">Data Resolução: <b className="text-white ml-1">{item.mediacao_data_resolucao ? item.mediacao_data_resolucao.split('-').reverse().join('/') : '-'}</b></span>}
+                                        <span className="text-slate-400">Afetou Reputação: <b className={`ml-1 ${item.mediacao_reputacao === 'Sim' ? 'text-rose-400' : 'text-emerald-400'}`}>{item.mediacao_reputacao}</b></span>
+                                        <span className="text-slate-400">Valor Estorno: <b className="text-white font-mono ml-1">R$ {Number(item.mediacao_estorno).toFixed(2)}</b></span>
+                                        <button onClick={() => iniciarEdicaoMediacao(item)} className="ml-auto bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded text-[10px] font-bold border border-slate-700 transition-colors">
+                                          Acompanhar / Editar
+                                        </button>
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
