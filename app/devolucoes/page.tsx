@@ -103,7 +103,7 @@ export default function DevolucoesPage() {
   const [dataGlobalRetorno, setDataGlobalRetorno] = useState(hoje);
   const linhaVazia = { 
     pedido: "", canal: "", nota_fiscal: "", solicitacao: "", sku: "", produto: "", marca: "", pdv: "", frete: "", 
-    motivo: "", observacoes: "", condicoes: "Sim", mediacao_protocolo: "", mediacao_resolvido: "", mediacao_reputacao: "", mediacao_estorno: "" 
+    motivo: "", observacoes: "", condicoes: "Sim", mediacao_protocolo: "", mediacao_resolvido: "Não", mediacao_data_resolucao: "", mediacao_reputacao: "", mediacao_estorno: "" 
   };
   const [linhas, setLinhas] = useState([linhaVazia]);
 
@@ -113,12 +113,18 @@ export default function DevolucoesPage() {
   const [kpis, setKpis] = useState({ atual: { unidades: 0, valor: 0, frete: 0 }, anterior: { unidades: 0, valor: 0, frete: 0 } });
   
   const [pesquisaPedido, setPesquisaPedido] = useState("");
+  const [filtroMediacao, setFiltroMediacao] = useState(false);
   const [paginaAtual, setPaginaAtual] = useState(1);
   const itensPorPagina = 10;
 
-  // Estados de Edição do Plano de Ação
+  // Estados de Edição do Plano de Ação e Mediações do Histórico
   const [editandoPlanoSku, setEditandoPlanoSku] = useState<string | null>(null);
   const [textoProposta, setTextoProposta] = useState("");
+
+  const [editandoMediacaoId, setEditandoMediacaoId] = useState<number | null>(null);
+  const [dadosEdicaoMediacao, setDadosEdicaoMediacao] = useState({
+    protocolo: "", resolvido: "Não", data_resolucao: "", reputacao: "", estorno: 0
+  });
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -223,6 +229,12 @@ export default function DevolucoesPage() {
         novasLinhas[index].marca = "";
       }
     }
+    
+    // Se marcou "Não" em resolvido, limpa a data
+    if (campo === "mediacao_resolvido" && valor === "Não") {
+      novasLinhas[index].mediacao_data_resolucao = "";
+    }
+
     setLinhas(novasLinhas);
   };
 
@@ -252,6 +264,7 @@ export default function DevolucoesPage() {
         condicoes: l.condicoes,
         mediacao_protocolo: l.condicoes === "Mediação" ? l.mediacao_protocolo : "",
         mediacao_resolvido: l.condicoes === "Mediação" ? l.mediacao_resolvido : "",
+        mediacao_data_resolucao: l.condicoes === "Mediação" && l.mediacao_resolvido === "Sim" ? l.mediacao_data_resolucao : null,
         mediacao_reputacao: l.condicoes === "Mediação" ? l.mediacao_reputacao : "",
         mediacao_estorno: l.condicoes === "Mediação" ? Number(l.mediacao_estorno || 0) : 0,
       }));
@@ -272,6 +285,36 @@ export default function DevolucoesPage() {
     setSalvando(false);
   };
 
+  const iniciarEdicaoMediacao = (item: any) => {
+    setEditandoMediacaoId(item.id);
+    setDadosEdicaoMediacao({
+      protocolo: item.mediacao_protocolo || "",
+      resolvido: item.mediacao_resolvido || "Não",
+      data_resolucao: item.mediacao_data_resolucao || "",
+      reputacao: item.mediacao_reputacao || "",
+      estorno: item.mediacao_estorno || 0
+    });
+  };
+
+  const salvarEdicaoMediacao = async (id: number) => {
+    const dataUpdate = dadosEdicaoMediacao.resolvido === "Sim" ? dadosEdicaoMediacao.data_resolucao : null;
+    
+    const { error } = await supabase.from('devolucoes').update({
+      mediacao_protocolo: dadosEdicaoMediacao.protocolo,
+      mediacao_resolvido: dadosEdicaoMediacao.resolvido,
+      mediacao_data_resolucao: dataUpdate,
+      mediacao_reputacao: dadosEdicaoMediacao.reputacao,
+      mediacao_estorno: Number(dadosEdicaoMediacao.estorno)
+    }).eq('id', id);
+
+    if (error) {
+      alert("Erro ao atualizar mediação: " + error.message);
+    } else {
+      setEditandoMediacaoId(null);
+      carregarDevolucoesEPlanos();
+    }
+  };
+
   const salvarProposta = async (sku: string) => {
     const registroExistente = planosAcao.find(p => p.sku === sku);
     
@@ -287,9 +330,12 @@ export default function DevolucoesPage() {
   };
 
   // Processamento de Dados (Filtros e Gráficos)
-  const dadosFiltrados = devolucoes.filter(d => 
-    d.mes_referencia === mesAtual && (pesquisaPedido === "" || String(d.pedido).toLowerCase().includes(pesquisaPedido.toLowerCase()))
-  );
+  const dadosFiltrados = devolucoes.filter(d => {
+    const matchMes = d.mes_referencia === mesAtual;
+    const matchPesquisa = pesquisaPedido === "" || String(d.pedido).toLowerCase().includes(pesquisaPedido.toLowerCase()) || String(d.sku).toLowerCase().includes(pesquisaPedido.toLowerCase());
+    const matchMediacao = filtroMediacao ? d.condicoes === "Mediação" : true;
+    return matchMes && matchPesquisa && matchMediacao;
+  });
 
   const totalPaginas = Math.ceil(dadosFiltrados.length / itensPorPagina) || 1;
   const itensTabelaAtual = dadosFiltrados.slice((paginaAtual - 1) * itensPorPagina, paginaAtual * itensPorPagina);
@@ -493,25 +539,29 @@ export default function DevolucoesPage() {
                           {l.condicoes === "Mediação" && (
                             <tr className="bg-amber-950/20 border-b border-amber-900/30">
                               <td colSpan={13} className="p-2 pl-8">
-                                <div className="flex items-center gap-4 text-[10px]">
-                                  <span className="font-bold text-amber-500 uppercase">↳ Dados da Mediação:</span>
-                                  <div>
+                                <div className="flex flex-wrap items-center gap-4 text-[10px]">
+                                  <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Dados da Mediação:</span>
+                                  <div className="flex items-center">
                                     <label className="text-slate-400 mr-2">ID Protocolo:</label>
                                     <input type="text" value={l.mediacao_protocolo} onChange={(e) => atualizarLinha(idx, "mediacao_protocolo", e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none" required/>
                                   </div>
-                                  <div>
+                                  <div className="flex items-center">
                                     <label className="text-slate-400 mr-2">Resolvido:</label>
                                     <select value={l.mediacao_resolvido} onChange={(e) => atualizarLinha(idx, "mediacao_resolvido", e.target.value)} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none" required>
-                                      <option value="">...</option><option value="Sim">Sim</option><option value="Não">Não</option>
+                                      <option value="Não">Não</option><option value="Sim">Sim</option>
                                     </select>
                                   </div>
-                                  <div>
+                                  <div className="flex items-center">
+                                    <label className={`mr-2 ${l.mediacao_resolvido === 'Sim' ? 'text-slate-400' : 'text-slate-600'}`}>Data Res.:</label>
+                                    <input type="date" value={l.mediacao_data_resolucao} disabled={l.mediacao_resolvido !== "Sim"} onChange={(e) => atualizarLinha(idx, "mediacao_data_resolucao", e.target.value)} className="w-28 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none disabled:opacity-30" required={l.mediacao_resolvido === "Sim"}/>
+                                  </div>
+                                  <div className="flex items-center">
                                     <label className="text-slate-400 mr-2">Afetou Reputação:</label>
                                     <select value={l.mediacao_reputacao} onChange={(e) => atualizarLinha(idx, "mediacao_reputacao", e.target.value)} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none" required>
                                       <option value="">...</option><option value="Sim">Sim</option><option value="Não">Não</option>
                                     </select>
                                   </div>
-                                  <div>
+                                  <div className="flex items-center">
                                     <label className="text-slate-400 mr-2">Valor Estorno:</label>
                                     <input type="number" step="0.01" value={l.mediacao_estorno} onChange={(e) => atualizarLinha(idx, "mediacao_estorno", e.target.value)} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-right text-white outline-none" placeholder="0.00" required/>
                                   </div>
@@ -536,7 +586,13 @@ export default function DevolucoesPage() {
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden mb-8">
               <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
                 <h2 className="text-lg font-bold text-white">Histórico de Devoluções ({mesAtual})</h2>
-                <input type="text" placeholder="🔍 Buscar ID Pedido..." value={pesquisaPedido} onChange={(e) => {setPesquisaPedido(e.target.value); setPaginaAtual(1);}} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none w-56"/>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-[11px] font-bold text-amber-400 cursor-pointer bg-amber-950/30 border border-amber-900/50 px-3 py-2.5 rounded-xl hover:bg-amber-900/40 transition-colors">
+                    <input type="checkbox" checked={filtroMediacao} onChange={e => {setFiltroMediacao(e.target.checked); setPaginaAtual(1);}} className="accent-amber-500 w-4 h-4" />
+                    Apenas Mediações
+                  </label>
+                  <input type="text" placeholder="🔍 Buscar ID Pedido ou SKU..." value={pesquisaPedido} onChange={(e) => {setPesquisaPedido(e.target.value); setPaginaAtual(1);}} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none w-56"/>
+                </div>
               </div>
 
               {loading ? <p className="p-8 text-center text-slate-400">A carregar registos...</p> : dadosFiltrados.length === 0 ? <p className="p-8 text-center text-slate-500">Nenhuma devolução encontrada.</p> : (
@@ -556,19 +612,74 @@ export default function DevolucoesPage() {
                       </thead>
                       <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                         {itensTabelaAtual.map((item, idx) => (
-                          <tr key={item.id || idx} className="hover:bg-slate-800/40 transition-colors">
-                            <td className="p-4 font-mono text-slate-300">{item.data_retorno ? item.data_retorno.split('-').reverse().join('/') : '-'}</td>
-                            <td className="p-4"><div className="font-bold text-white">{item.pedido}</div><div className="text-[10px] text-slate-500">{item.canal}</div></td>
-                            <td className="p-4"><div className="font-mono text-indigo-400">{item.sku}</div><div className="text-[10px] text-slate-400 max-w-[200px] truncate">{item.produto}</div></td>
-                            <td className="p-4 font-bold text-slate-300">{item.marca}</td>
-                            <td className="p-4"><div className="text-rose-400 truncate max-w-[200px]">{item.motivo}</div><div className="text-[10px] text-slate-500 truncate max-w-[200px]">{item.observacoes || "-"}</div></td>
-                            <td className="p-4 text-center">
-                              <span className={`px-2 py-1 rounded text-[10px] font-bold ${item.condicoes === 'Sim' ? 'bg-emerald-900/50 text-emerald-400' : item.condicoes === 'Não' ? 'bg-rose-900/50 text-rose-400' : 'bg-amber-900/50 text-amber-400'}`}>
-                                {item.condicoes}
-                              </span>
-                            </td>
-                            <td className="p-4 text-right font-mono font-bold text-emerald-400">R$ {Number(item.pdv).toFixed(2)}</td>
-                          </tr>
+                          <React.Fragment key={item.id || idx}>
+                            <tr className="hover:bg-slate-800/40 transition-colors">
+                              <td className="p-4 font-mono text-slate-300">{item.data_retorno ? item.data_retorno.split('-').reverse().join('/') : '-'}</td>
+                              <td className="p-4"><div className="font-bold text-white">{item.pedido}</div><div className="text-[10px] text-slate-500">{item.canal}</div></td>
+                              <td className="p-4"><div className="font-mono text-indigo-400">{item.sku}</div><div className="text-[10px] text-slate-400 max-w-[200px] truncate">{item.produto}</div></td>
+                              <td className="p-4 font-bold text-slate-300">{item.marca}</td>
+                              <td className="p-4"><div className="text-rose-400 truncate max-w-[200px]">{item.motivo}</div><div className="text-[10px] text-slate-500 truncate max-w-[200px]">{item.observacoes || "-"}</div></td>
+                              <td className="p-4 text-center">
+                                <span className={`px-2 py-1 rounded text-[10px] font-bold ${item.condicoes === 'Sim' ? 'bg-emerald-900/50 text-emerald-400' : item.condicoes === 'Não' ? 'bg-rose-900/50 text-rose-400' : 'bg-amber-900/50 text-amber-400'}`}>
+                                  {item.condicoes}
+                                </span>
+                              </td>
+                              <td className="p-4 text-right font-mono font-bold text-emerald-400">R$ {Number(item.pdv).toFixed(2)}</td>
+                            </tr>
+
+                            {/* Renderização Condicional da Mediação no Histórico */}
+                            {item.condicoes === "Mediação" && (
+                              <tr className="bg-amber-950/10 border-b border-amber-900/30">
+                                <td colSpan={7} className="p-3 pl-8">
+                                  {editandoMediacaoId === item.id ? (
+                                    <div className="flex flex-wrap items-center gap-4 text-[10px]">
+                                      <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Editar Mediação:</span>
+                                      <div className="flex items-center">
+                                        <label className="text-slate-400 mr-2">ID Protocolo:</label>
+                                        <input type="text" value={dadosEdicaoMediacao.protocolo} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, protocolo: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none"/>
+                                      </div>
+                                      <div className="flex items-center">
+                                        <label className="text-slate-400 mr-2">Resolvido:</label>
+                                        <select value={dadosEdicaoMediacao.resolvido} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, resolvido: e.target.value, data_resolucao: e.target.value === "Não" ? "" : dadosEdicaoMediacao.data_resolucao})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none">
+                                          <option value="Não">Não</option><option value="Sim">Sim</option>
+                                        </select>
+                                      </div>
+                                      <div className="flex items-center">
+                                        <label className={`mr-2 ${dadosEdicaoMediacao.resolvido === 'Sim' ? 'text-slate-400' : 'text-slate-600'}`}>Data Res.:</label>
+                                        <input type="date" value={dadosEdicaoMediacao.data_resolucao} disabled={dadosEdicaoMediacao.resolvido !== "Sim"} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, data_resolucao: e.target.value})} className="w-28 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none disabled:opacity-30"/>
+                                      </div>
+                                      <div className="flex items-center">
+                                        <label className="text-slate-400 mr-2">Afetou Rep.:</label>
+                                        <select value={dadosEdicaoMediacao.reputacao} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, reputacao: e.target.value})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none">
+                                          <option value="Sim">Sim</option><option value="Não">Não</option>
+                                        </select>
+                                      </div>
+                                      <div className="flex items-center">
+                                        <label className="text-slate-400 mr-2">Estorno:</label>
+                                        <input type="number" step="0.01" value={dadosEdicaoMediacao.estorno} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, estorno: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-right text-white outline-none"/>
+                                      </div>
+                                      <div className="ml-auto flex gap-2">
+                                        <button onClick={() => setEditandoMediacaoId(null)} className="text-[10px] font-bold text-slate-400 hover:text-slate-300">Cancelar</button>
+                                        <button onClick={() => salvarEdicaoMediacao(item.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-[10px] font-bold shadow">Salvar</button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-wrap items-center gap-4 text-[11px]">
+                                      <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Dados da Mediação:</span>
+                                      <span className="text-slate-400">Protocolo: <b className="text-white ml-1">{item.mediacao_protocolo}</b></span>
+                                      <span className="text-slate-400">Resolvido: <b className={`ml-1 ${item.mediacao_resolvido === 'Sim' ? 'text-emerald-400' : 'text-white'}`}>{item.mediacao_resolvido}</b></span>
+                                      {item.mediacao_resolvido === 'Sim' && <span className="text-slate-400">Data Resolução: <b className="text-white ml-1">{item.mediacao_data_resolucao ? item.mediacao_data_resolucao.split('-').reverse().join('/') : '-'}</b></span>}
+                                      <span className="text-slate-400">Afetou Reputação: <b className={`ml-1 ${item.mediacao_reputacao === 'Sim' ? 'text-rose-400' : 'text-emerald-400'}`}>{item.mediacao_reputacao}</b></span>
+                                      <span className="text-slate-400">Valor Estorno: <b className="text-white font-mono ml-1">R$ {Number(item.mediacao_estorno).toFixed(2)}</b></span>
+                                      <button onClick={() => iniciarEdicaoMediacao(item)} className="ml-auto bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded text-[10px] font-bold border border-slate-700 transition-colors">
+                                        Acompanhar / Editar
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         ))}
                       </tbody>
                     </table>
