@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
+import Navbar from "../components/Navbar";
 
 export default function RegrasPage() {
   const [loading, setLoading] = useState(false);

@@ -3,6 +3,7 @@ import { useState, ChangeEvent, useEffect } from "react";
 import * as XLSX from "xlsx";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
+import Navbar from "../components/Navbar";
 
 export default function UploadPage() {
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml">("relatorios");

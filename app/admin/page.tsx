@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
+import Navbar from "../components/Navbar";
 
 export default function AdminPage() {
   const [email, setEmail] = useState("");
