@@ -41,6 +41,14 @@ function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura:
   return valorFrete || 0;
 }
 
+function normalizarSku(valor: any) {
+  if (valor === null || valor === undefined) return "";
+  let s = String(valor).trim();
+  if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
+  s = s.replace(/^["']|["']$/g, "").trim();
+  return s.toLowerCase();
+}
+
 export default function AdsPage() {
   const [subAba, setSubAba] = useState<"campanhas" | "dashboard">("campanhas");
   const [loading, setLoading] = useState(false);
@@ -99,7 +107,7 @@ export default function AdsPage() {
       if (ativos.length > 0) setCanalSelecionado(ativos[0].canal);
     }
 
-    // Carregar todos os custos com paginação em lotes para garantir 100% de cobertura
+    // Carrega todos os custos com paginação para garantir 100% de cobertura
     let allCustos: any[] = [];
     let from = 0;
     let step = 1000;
@@ -116,12 +124,12 @@ export default function AdsPage() {
     }
     const mapaC = new Map();
     allCustos.forEach((c: any) => {
-      const skuLimpo = String(c.sku || "").trim().toLowerCase();
-      mapaC.set(skuLimpo, c);
+      const skuNorm = normalizarSku(c.sku);
+      if (skuNorm) mapaC.set(skuNorm, c);
     });
     setCustosMap(mapaC);
 
-    // Carregar regras do ML
+    // Carrega regras do ML
     let allMl: any[] = [];
     from = 0;
     keep = true;
@@ -138,7 +146,7 @@ export default function AdsPage() {
     const mapaMl = new Map();
     allMl.forEach((m: any) => {
       const mlbLimpo = String(m.mlb || "").trim().toUpperCase();
-      mapaMl.set(mlbLimpo, m);
+      if (mlbLimpo) mapaMl.set(mlbLimpo, m);
     });
     setRegrasMlMap(mapaMl);
   };
@@ -234,7 +242,7 @@ export default function AdsPage() {
       .filter(l => l.mlb.trim() !== "" && l.sku.trim() !== "")
       .map(l => {
         const skuLimpo = l.sku.trim();
-        const skuKey = skuLimpo.toLowerCase();
+        const skuKey = normalizarSku(skuLimpo);
         const mlbLimpo = l.mlb.trim().toUpperCase();
         const unidades = Number(l.unidades || 0);
         const receitaAds = Number(l.receitaAds || 0);
@@ -318,7 +326,7 @@ export default function AdsPage() {
     const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
     const investimento = Number(dadosEdicao.investimento || 0);
     const skuLimpo = String(dadosEdicao.sku || "").trim();
-    const skuKey = skuLimpo.toLowerCase();
+    const skuKey = normalizarSku(skuLimpo);
     const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
 
     const custoRegra = custosMap.get(skuKey);
