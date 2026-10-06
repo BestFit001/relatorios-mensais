@@ -65,7 +65,7 @@ export default function UploadPage() {
       setRegrasColsDinamicas({
         custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'),
         ml_mlb: getC('ml_mlb', 'A'), ml_sku: getC('ml_sku', 'B'), ml_comissao: getC('ml_comissao', 'C'),
-        ml_peso: getC('ml_peso', 'D'), ml_altura: getC('ml_altura', 'E'), ml_largura: getC('ml_largura', 'F'), ml_comprimento: getC('ml_comprimento', 'G')
+        ml_peso: getC('ml_peso', ''), ml_altura: getC('ml_altura', 'E'), ml_largura: getC('ml_largura', 'F'), ml_comprimento: getC('ml_comprimento', 'G')
       });
     }
 
@@ -454,7 +454,7 @@ export default function UploadPage() {
     const idxMlb = letraParaIndice(regrasColsDinamicas.ml_mlb);
     const idxSku = letraParaIndice(regrasColsDinamicas.ml_sku);
     const idxCom = letraParaIndice(regrasColsDinamicas.ml_comissao);
-    const idxPeso = letraParaIndice(regrasColsDinamicas.ml_peso);
+    const idxPeso = regrasColsDinamicas.ml_peso ? letraParaIndice(regrasColsDinamicas.ml_peso) : -1;
     const idxAlt = letraParaIndice(regrasColsDinamicas.ml_altura);
     const idxLarg = letraParaIndice(regrasColsDinamicas.ml_largura);
     const idxComp = letraParaIndice(regrasColsDinamicas.ml_comprimento);
@@ -475,7 +475,13 @@ export default function UploadPage() {
           const mlb = String(row[idxMlb] || "").trim();
           const sku = normalizarSku(row[idxSku]);
           const comissao = Number(row[idxCom] || 0);
-          const pesoReal = Number(row[idxPeso] || 0);
+
+          let pesoReal = 2.000;
+          if (idxPeso >= 0 && row[idxPeso] !== undefined && row[idxPeso] !== "") {
+            const valPeso = Number(row[idxPeso]);
+            if (!isNaN(valPeso) && valPeso > 0) pesoReal = valPeso;
+          }
+
           const altura = Number(row[idxAlt] || 0);
           const largura = Number(row[idxLarg] || 0);
           const comprimento = Number(row[idxComp] || 0);
@@ -492,7 +498,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`🚀 Planilha de Regras do ML processada com sucesso! ${registros.length} anúncios mapeados.`);
+        alert(`🚀 Planilha de Regras do ML processada com sucesso! ${registros.length} anúncios mapeados (Peso padrão: 2kg onde ausente).`);
         carregarRegrasMl();
         setLoading(false);
       } catch (err: any) {
@@ -904,7 +910,7 @@ export default function UploadPage() {
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (MLB: <strong>{regrasColsDinamicas.ml_mlb}</strong>, SKU: <strong>{regrasColsDinamicas.ml_sku}</strong>, Comissão: <strong>{regrasColsDinamicas.ml_comissao}</strong>, Peso: <strong>{regrasColsDinamicas.ml_peso}</strong>).</p>
+                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (MLB: <strong>{regrasColsDinamicas.ml_mlb}</strong>, SKU: <strong>{regrasColsDinamicas.ml_sku}</strong>, Comissão: <strong>{regrasColsDinamicas.ml_comissao}</strong>, Peso: <strong>{regrasColsDinamicas.ml_peso || 'Opcional (Padrão 2kg)'}</strong>).</p>
               </div>
               <button 
                 onClick={limparRegrasMl}

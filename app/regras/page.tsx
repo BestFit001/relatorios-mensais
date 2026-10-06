@@ -11,7 +11,7 @@ export default function RegrasPage() {
 
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [regrasCustos, setRegrasCustos] = useState({ sku: 'A', produto: 'B', custo: 'C' });
-  const [regrasMlCols, setRegrasMlCols] = useState({ mlb: 'A', sku: 'B', comissao: 'C', peso: 'D', altura: 'E', largura: 'F', comprimento: 'G' });
+  const [regrasMlCols, setRegrasMlCols] = useState({ mlb: 'A', sku: 'B', comissao: 'C', peso: '', altura: 'E', largura: 'F', comprimento: 'G' });
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
 
   useEffect(() => {
@@ -33,7 +33,7 @@ export default function RegrasPage() {
       setRegrasCustos({ sku: getCol('custo_sku', 'A'), produto: getCol('custo_produto', 'B'), custo: getCol('custo_valor', 'C') });
       setRegrasMlCols({ 
         mlb: getCol('ml_mlb', 'A'), sku: getCol('ml_sku', 'B'), comissao: getCol('ml_comissao', 'C'), 
-        peso: getCol('ml_peso', 'D'), altura: getCol('ml_altura', 'E'), largura: getCol('ml_largura', 'F'), comprimento: getCol('ml_comprimento', 'G') 
+        peso: getCol('ml_peso', ''), altura: getCol('ml_altura', 'E'), largura: getCol('ml_largura', 'F'), comprimento: getCol('ml_comprimento', 'G') 
       });
     }
 
@@ -105,7 +105,6 @@ export default function RegrasPage() {
         ) : (
           <form onSubmit={salvarTodasRegras} className="space-y-8">
 
-            {/* VISIBILIDADE DE CANAIS NO ADS */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-1 text-white">Visibilidade de Canais no Painel Ads</h2>
               <p className="text-xs text-slate-400 mb-6">Marque quais canais aparecem no Painel Ads.</p>
@@ -127,12 +126,10 @@ export default function RegrasPage() {
               </div>
             </div>
 
-            {/* CONFIGURAÇÃO DE COLUNAS DE UPLOAD */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
               <h2 className="text-lg font-bold mb-1 text-white">Mapeamento de Colunas (Planilhas Brutas)</h2>
-              <p className="text-xs text-slate-400 mb-4">Informe as letras das colunas correspondentes para cada importação.</p>
+              <p className="text-xs text-slate-400 mb-4">Informe as letras das colunas correspondentes. Deixe em branco caso a planilha não possua coluna de peso real (o sistema assumirá 2kg automaticamente).</p>
 
-              {/* Custos */}
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
                 <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">Planilha de Custos Unitários</h3>
                 <div className="grid grid-cols-3 gap-4">
@@ -151,7 +148,6 @@ export default function RegrasPage() {
                 </div>
               </div>
 
-              {/* Regras ML */}
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
                 <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3">Planilha de Regras & Medidas ML</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -168,8 +164,8 @@ export default function RegrasPage() {
                     <input type="text" maxLength={2} value={regrasMlCols.comissao} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, comissao: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Peso Real</label>
-                    <input type="text" maxLength={2} value={regrasMlCols.peso} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, peso: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" required />
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Peso Real (Opcional)</label>
+                    <input type="text" maxLength={2} value={regrasMlCols.peso} onChange={(e) => setRegrasMlCols({ ...regrasMlCols, peso: e.target.value })} placeholder="Ex: D (ou vazio)" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono uppercase text-center outline-none" />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Altura</label>
