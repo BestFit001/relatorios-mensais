@@ -7,9 +7,9 @@ export default function Navbar() {
   const router = useRouter();
 
   const abas = [
-    { nome: "Dash - Curva ABC", href: "/" },
-    { nome: "Mapeamento - Cadastros", href: "/mapeamento" },
-    { nome: "Painel ADS - Adsense", href: "/ads" },
+    { nome: "Curva ABC", href: "/" },
+    { nome: "Cadastros", href: "/mapeamento" },
+    { nome: "Adsense", href: "/ads" },
     { nome: "Regras", href: "/regras" },
     { nome: "Uploads", href: "/upload" },
     { nome: "Admin", href: "/admin" },
