@@ -47,11 +47,11 @@ export default function AdsPage() {
   const [salvando, setSalvando] = useState(false);
   const router = useRouter();
 
-  const [canalSelecionado, setCanalSelecionado] = useState("Mercado Livre 1");
+  const [canalSelecionado, setCanalSelecionado] = useState("");
   const [mesSelecionado, setMesSelecionado] = useState("09/2026");
   const [mesComparativo, setMesComparativo] = useState("08/2026");
 
-  const [canais, setCanais] = useState<any[]>([]);
+  const [canaisAtivos, setCanaisAtivos] = useState<any[]>([]);
   const [lancamentos, setLancamentos] = useState<any[]>([]);
   const [dadosComparativo, setDadosComparativo] = useState<any[]>([]);
 
@@ -92,18 +92,12 @@ export default function AdsPage() {
   }, [subAba, mesSelecionado, mesComparativo]);
 
   const carregarDadosAuxiliares = async () => {
+    // Carrega apenas canais com ativo_ads = true (ou nulo)
     const { data: regrasCanaisData } = await supabase.from('config_regras_canais').select('*').order('id');
-    if (regrasCanaisData && regrasCanaisData.length > 0) {
-      setCanais(regrasCanaisData);
-      setCanalSelecionado(regrasCanaisData[0].canal);
-    } else {
-      const padrao = [
-        { canal: "Mercado Livre 1" }, { canal: "Mercado Livre 2" },
-        { canal: "Shopee" }, { canal: "Amazon" }, { canal: "TikTok" }, { canal: "Magalu" },
-        { canal: "Shein" }, { canal: "Netshoes" }, { canal: "Site" }, { canal: "Centauro" }
-      ];
-      setCanais(padrao);
-      setCanalSelecionado(padrao[0].canal);
+    if (regrasCanaisData) {
+      const ativos = regrasCanaisData.filter((c: any) => c.ativo_ads !== false);
+      setCanaisAtivos(ativos);
+      if (ativos.length > 0) setCanalSelecionado(ativos[0].canal);
     }
 
     const { data: custosData } = await supabase.from('tabela_custos_skus').select('*');
@@ -136,9 +130,7 @@ export default function AdsPage() {
 
   const carregarDadosDashboard = async () => {
     setLoading(true);
-    // Buscar todos os canais e consolidar dados do mês atual e anterior
-    const { data: todosCanais } = await supabase.from('config_regras_canais').select('canal');
-    const listaCanais = todosCanais && todosCanais.length > 0 ? todosCanais.map(c => c.canal) : canais.map(c => c.canal);
+    const listaCanais = canaisAtivos.map(c => c.canal);
 
     const { data: dadosAtual } = await supabase.from('ads_campanhas_lancamentos').select('*').eq('mes_referencia', mesSelecionado);
     const { data: dadosAnterior } = await supabase.from('ads_campanhas_lancamentos').select('*').eq('mes_referencia', mesComparativo);
@@ -167,11 +159,8 @@ export default function AdsPage() {
       const margemRsAnt = itensB.reduce((sum, i) => sum + Number(i.margem_liquida_rs || 0), 0);
       const diffMargemRs = margemRsAtual - margemRsAnt;
 
-      const margemPctAtual = totFatAtual > 0 ? (margemRsAtual / totFatAtual) * 100 : 0;
-      const margemPctAnt = totFatAnt > 0 ? (margemRsAnt / totFatAnt) * 100 : 0;
-
       const repAds = totFatAtual > 0 ? (fatAdsAtual / totFatAtual) * 100 : 0;
-      const tacosSugerido = fatAdsAtual * 0.15; // Sugestão base 15%
+      const tacosSugerido = fatAdsAtual * 0.15;
 
       return {
         canal,
@@ -185,8 +174,6 @@ export default function AdsPage() {
         margemRsAtual,
         margemRsAnt,
         diffMargemRs,
-        margemPctAtual,
-        margemPctAnt,
         totFatAtual,
         repAds,
         tacosSugerido
@@ -366,7 +353,6 @@ export default function AdsPage() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto">
         
-        {/* TOPO DE NAVEGAÇÃO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Painel Unificado de Ads & Campanhas</h1>
@@ -385,7 +371,6 @@ export default function AdsPage() {
           </div>
         </div>
 
-        {/* SUB-ABAS (CAMPANHAS / DASHBOARD) */}
         <div className="flex gap-3 mb-6">
           <button
             onClick={() => setSubAba("campanhas")}
@@ -408,9 +393,9 @@ export default function AdsPage() {
         {subAba === "campanhas" && (
           <>
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-6">
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Selecione o Canal:</label>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Selecione o Canal (Ativos para Ads):</label>
               <div className="flex flex-wrap gap-2.5">
-                {canais.map((c, i) => {
+                {canaisAtivos.map((c, i) => {
                   const ativo = canalSelecionado === c.canal;
                   return (
                     <button
