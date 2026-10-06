@@ -485,7 +485,91 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Funções de Edição e Exclusão Individual - Custos
+  const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setLoading(true);
+
+    const indiceColuna = letraParaIndice(letraColuna || "A");
+
+    try {
+      let allTiny: any[] = [];
+      let rangeStep = 1000;
+      let from = 0;
+      let keepFetching = true;
+      while (keepFetching) {
+        const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + rangeStep - 1);
+        if (tinyBatch && tinyBatch.length > 0) {
+          allTiny = [...allTiny, ...tinyBatch];
+          from += rangeStep;
+          if (tinyBatch.length < rangeStep) keepFetching = false;
+        } else {
+          keepFetching = false;
+        }
+      }
+      const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
+
+      const skusEncontradosNoCanal = new Set<string>();
+
+      for (let f = 0; f < files.length; f++) {
+        const file = files[f];
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true, raw: false });
+
+        let sheetName = workbook.SheetNames[0];
+        if (workbook.SheetNames.includes("Template")) sheetName = "Template";
+        else if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
+
+        const worksheet = workbook.Sheets[sheetName];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
+        let linhaInicio = 0;
+        for (let i = 0; i < Math.min(json.length, 15); i++) {
+          const row = json[i];
+          if (row && row.some((cell: any) => {
+            const val = String(cell).trim().toLowerCase();
+            return val === 'seller_sku' || val === 'sku' || val === 'sku_id';
+          })) {
+            linhaInicio = i + 1;
+            break;
+          }
+        }
+        if (linhaInicio === 0 || linhaInicio < 5) linhaInicio = sheetName === "Template" ? 5 : 4;
+
+        for (let i = linhaInicio; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length <= indiceColuna) continue;
+          
+          const skuVal = normalizarSku(row[indiceColuna]);
+          if (skuVal && skusTinySet.has(skuVal)) {
+            skusEncontradosNoCanal.add(skuVal);
+          }
+        }
+      }
+
+      await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
+
+      const registrosUpsert = Array.from(skusEncontradosNoCanal).map(sku => ({
+        canal: canalNome,
+        sku: sku,
+        presente: true
+      }));
+
+      const tamanhoLote = 500;
+      for (let i = 0; i < registrosUpsert.length; i += tamanhoLote) {
+        const lote = registrosUpsert.slice(i, i + tamanhoLote);
+        const { error } = await supabase.from('mapeamento_canais_skus').insert(lote);
+        if (error) throw error;
+      }
+
+      alert(`Canal "${canalNome}" sincronizado com sucesso (${files.length} ficheiro(s))! ${registrosUpsert.length} SKUs válidos guardados.`);
+      setLoading(false);
+    } catch (err: any) {
+      alert("Erro ao processar ficheiros: " + err.message);
+      setLoading(false);
+    }
+  };
+
   const salvarEdicaoCusto = async (id: number) => {
     const { error } = await supabase.from('tabela_custos_skus').update({
       sku: dadosEdicaoCusto.sku.trim(),
@@ -507,7 +591,6 @@ export default function UploadPage() {
     else carregarCustos();
   };
 
-  // Funções de Edição e Exclusão Individual - Regras ML
   const salvarEdicaoMl = async (id: number) => {
     const { error } = await supabase.from('ml_anuncios_regras').update({
       mlb: dadosEdicaoMl.mlb.trim().toUpperCase(),
