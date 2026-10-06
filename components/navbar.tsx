@@ -6,7 +6,6 @@ export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
 
-  // Nomes e rotas atualizados centralmente
   const abas = [
     { nome: "Dash - Curva ABC", href: "/" },
     { nome: "Mapeamento - Cadastros", href: "/mapeamento" },
