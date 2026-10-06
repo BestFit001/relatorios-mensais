@@ -446,7 +446,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Lógica inteligente para capturar o registro mais completo por MLB e remover duplicadas
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -489,17 +488,15 @@ export default function UploadPage() {
           const comprimento = Number(row[idxComp] || 0);
 
           if (mlb && sku) {
-            // Calcular pontuação de completude desta linha (quantos campos importantes estão preenchidos)
             let score = 0;
             if (comissao > 0) score++;
             if (pesoReal !== 2.000) score++;
             if (altura > 0) score++;
             if (largura > 0) score++;
-            if (comprimento > 0++) score++;
+            if (comprimento > 0) score++;
 
             const objReg = { mlb, sku, comissao, peso_real: pesoReal, altura, largura, comprimento };
 
-            // Se o MLB ainda não existe ou se esta linha é mais completa que a anterior, substitui
             if (!mapaMlPendente.has(mlb) || score > mapaMlPendente.get(mlb)!.score) {
               mapaMlPendente.set(mlb, { registro: objReg, score });
             }
