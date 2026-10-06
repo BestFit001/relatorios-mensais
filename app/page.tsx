@@ -209,7 +209,7 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+            <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800 flex-wrap gap-1">
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-indigo-600 text-white shadow-sm transition-all" href="/">
                 Dashboard
               </Link>
@@ -218,6 +218,9 @@ export default function Dashboard() {
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/mapeamento">
                 Mapeamento
+              </Link>
+              <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/ads">
+                Painel Ads
               </Link>
               <Link className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-slate-400 hover:text-white transition-all" href="/regras">
                 Regras
