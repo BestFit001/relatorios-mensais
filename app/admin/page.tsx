@@ -27,17 +27,29 @@ export default function AdminPage() {
   const [novoPerfil, setNovoPerfil] = useState("");
   const [editandoPaginas, setEditandoPaginas] = useState<string[]>([]);
 
-  const carregarUsuarios = async () => {
-    const { data, error } = await supabase.from('usuarios_permissoes').select('*');
-    if (data) setUsuarios(data);
+  // Estados para o tamanho da Base de Dados
+  const [tamanhoDb, setTamanhoDb] = useState({ mb: 0, percentual: 0 });
+  const limiteDbMb = 500; // Limite do plano gratuito do Supabase (500MB). Altere para 8192 se for plano Pro (8GB).
+
+  const carregarUsuariosEStatus = async () => {
+    // Carrega Usuários
+    const { data: usersData, error } = await supabase.from('usuarios_permissoes').select('*');
+    if (usersData) setUsuarios(usersData);
     if (error) console.error("Erro ao carregar utilizadores:", error.message);
+
+    // Carrega Tamanho do Banco (chama a função RPC que criamos no SQL)
+    const { data: dbSizeData, error: dbError } = await supabase.rpc('obter_tamanho_db');
+    if (dbSizeData !== null && !dbError) {
+      const mb = Number(dbSizeData);
+      const percentual = (mb / limiteDbMb) * 100;
+      setTamanhoDb({ mb, percentual });
+    }
   };
 
   useEffect(() => {
-    carregarUsuarios();
+    carregarUsuariosEStatus();
   }, []);
 
-  // Quando o dropdown do perfil muda na criação, seleciona automaticamente as abas como atalho
   const handlePerfilChange = (valor: string) => {
     setPerfil(valor);
     if (valor === "admin") {
@@ -77,7 +89,7 @@ export default function AdminPage() {
       setSenha("");
       setPaginasSelecionadas(["/"]);
       setPerfil("compras");
-      carregarUsuarios();
+      carregarUsuariosEStatus();
     }
     setLoading(false);
   };
@@ -89,7 +101,7 @@ export default function AdminPage() {
     if (error) alert("Erro ao excluir: " + error.message);
     else {
       alert("🗑️ Utilizador removido com sucesso!");
-      carregarUsuarios();
+      carregarUsuariosEStatus();
     }
   };
 
@@ -111,21 +123,19 @@ export default function AdminPage() {
     else {
       alert("✅ Permissões atualizadas com sucesso!");
       
-      // Se o admin editou a si próprio, atualiza o localStorage para refletir logo a mudança no menu
       const logado = JSON.parse(localStorage.getItem("usuario_logado") || "{}");
       if (logado.id === id) {
         logado.paginas_permitidas = editandoPaginas;
         logado.perfil = novoPerfil;
         localStorage.setItem("usuario_logado", JSON.stringify(logado));
-        window.location.reload(); // Recarrega para o Navbar reagir
+        window.location.reload(); 
       }
 
       setEditandoId(null);
-      carregarUsuarios();
+      carregarUsuariosEStatus();
     }
   };
 
-  // Função para traduzir os caminhos ("/") nos nomes bonitos ("Dashboard") na tabela
   const formatarPaginasPermitidas = (paginasArray: string[]) => {
     if (!paginasArray || !Array.isArray(paginasArray)) return "-";
     const nomes = paginasArray.map(path => {
@@ -142,9 +152,33 @@ export default function AdminPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Painel Administrativo</h1>
-            <p className="text-sm font-medium text-slate-400">Gestão de Utilizadores e Permissões de Acesso</p>
+            <p className="text-sm font-medium text-slate-400">Gestão de Utilizadores e Monitorização do Sistema</p>
           </div>
           <Navbar />
+        </div>
+
+        {/* PAINEL DE USO DE MEMÓRIA (SUPABASE) */}
+        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div>
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              ☁️ Capacidade da Base de Dados
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">Limite alocado para o projeto Supabase: <strong className="text-slate-300">{limiteDbMb} MB</strong></p>
+          </div>
+          <div className="flex-1 w-full md:max-w-md bg-slate-950 p-4 rounded-xl border border-slate-800">
+            <div className="flex justify-between text-xs font-bold mb-2">
+              <span className={`${tamanhoDb.percentual > 80 ? 'text-rose-400' : 'text-indigo-400'}`}>
+                {tamanhoDb.mb.toFixed(2)} MB Utilizados
+              </span>
+              <span className="text-slate-300">{tamanhoDb.percentual.toFixed(2)}%</span>
+            </div>
+            <div className="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden border border-slate-800">
+              <div 
+                className={`h-full rounded-full transition-all duration-1000 ${tamanhoDb.percentual > 85 ? 'bg-rose-500' : tamanhoDb.percentual > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`} 
+                style={{ width: `${Math.min(tamanhoDb.percentual, 100)}%` }}
+              ></div>
+            </div>
+          </div>
         </div>
 
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
