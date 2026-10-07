@@ -14,6 +14,7 @@ export default function Navbar() {
     { nome: "Cadastros", href: "/mapeamento" },
     { nome: "Adsense", href: "/ads" },
     { nome: "Devoluções", href: "/devolucoes" },
+    { nome: "Agenda", href: "/agenda" }, // ABA DE AGENDA ADICIONADA
     { nome: "Regras", href: "/regras" },
     { nome: "Uploads", href: "/upload" },
     { nome: "Admin", href: "/admin" },

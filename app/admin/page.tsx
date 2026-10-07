@@ -9,6 +9,7 @@ const rotasDisponiveis = [
   { id: "/mapeamento", nome: "Cadastros" },
   { id: "/ads", nome: "Adsense" },
   { id: "/devolucoes", nome: "Devoluções" },
+  { id: "/agenda", nome: "Agenda (Restrito)" }, // ABA DE AGENDA ADICIONADA AQUI
   { id: "/regras", nome: "Regras" },
   { id: "/upload", nome: "Uploads" },
   { id: "/admin", nome: "Admin" }
