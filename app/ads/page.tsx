@@ -180,9 +180,8 @@ export default function AdsPage() {
     setLoading(true);
     const listaCanais = canaisAtivos.map(c => c.canal);
 
-    // Consulta do TACOS na tabela de regras
-    const { data: configTiny } = await supabase.from('config_regras_tiny').select('meta_tacos').limit(1).maybeSingle();
-    const metaAtualDb = configTiny?.meta_tacos !== undefined && configTiny?.meta_tacos !== null ? Number(configTiny.meta_tacos) : 2;
+    const { data: configTiny } = await supabase.from('config_regras_tiny').select('coluna').eq('campo', 'meta_tacos').maybeSingle();
+    const metaAtualDb = configTiny?.coluna ? Number(configTiny.coluna) : 2;
     setMetaTacosGlobal(metaAtualDb);
 
     const { data: dadosAtual } = await supabase.from('ads_campanhas_lancamentos').select('*').eq('mes_referencia', mesSelecionado);
@@ -388,18 +387,32 @@ export default function AdsPage() {
         nome_anuncio: produtoNome,
         sku: raw.sku,
         unidades_vendidas: raw.unidades,
-        investimento: raw.investimento,
-        retorno_bruto: raw.receitaAds,
-        faturamento_total: faturamentoTotal,
-        custo_produto: custoProdutoTotal,
-        imposto: impostoTotal,
-        tarifa: tarifaComissaoTotal,
-        embalagem: embalagemTotal,
-        frete: freteTotal,
-        margem_liquida_rs: margemLiquidaVal,
-        margem_liquida_pct: margemLiquidaPct
+        investimento: Number(raw.investimento.toFixed(2)),
+        retorno_bruto: Number(raw.receitaAds.toFixed(2)),
+        faturamento_total: Number(faturamentoTotal.toFixed(2)),
+        custo_produto: Number(custoProdutoTotal.toFixed(2)),
+        imposto: Number(impostoTotal.toFixed(2)),
+        tarifa: Number(tarifaComissaoTotal.toFixed(2)),
+        embalagem: Number(embalagemTotal.toFixed(2)),
+        frete: Number(freteTotal.toFixed(2)),
+        margem_liquida_rs: Number(margemLiquidaVal.toFixed(2)),
+        margem_liquida_pct: Number(margemLiquidaPct.toFixed(4))
       };
     });
+
+    // TRAVA ANTI-SKU: Deteta se algum número é absurdamente alto (> 100 milhões)
+    const hasOverflow = formatados.some(f => 
+        f.unidades_vendidas > 99999999 || 
+        f.investimento > 999999999 || 
+        f.retorno_bruto > 999999999 ||
+        f.custo_produto > 999999999
+    );
+
+    if (hasOverflow) {
+        alert("⚠️ ATENÇÃO: Um dos valores calculados é anormalmente gigante. É provável que tenha colado um código SKU por engano num campo de 'Unidades', 'Receita' ou 'Investimento'. Por favor, corrija a linha errada e tente novamente.");
+        setSalvando(false);
+        return;
+    }
 
     const { error } = await supabase.from('ads_campanhas_lancamentos').insert(formatados);
     if (error) {
@@ -427,6 +440,13 @@ export default function AdsPage() {
     const unidades = Number(dadosEdicao.unidades_vendidas || 0);
     const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
     const investimento = Number(dadosEdicao.investimento || 0);
+    
+    // TRAVA ANTI-SKU NA EDIÇÃO
+    if (unidades > 99999999 || investimento > 999999999 || receitaAds > 999999999) {
+        alert("⚠️ ATENÇÃO: Valor excessivamente alto. Verifique se não inseriu um SKU no lugar das unidades, receita ou investimento.");
+        return;
+    }
+
     const skuLimpo = String(dadosEdicao.sku || "").trim();
     const skuKey = normalizarSku(skuLimpo);
     const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
@@ -461,16 +481,16 @@ export default function AdsPage() {
       sku: skuLimpo,
       nome_anuncio: produtoNome,
       unidades_vendidas: unidades,
-      retorno_bruto: receitaAds,
-      investimento: investimento,
-      faturamento_total: faturamentoTotal,
-      custo_produto: custoProdutoTotal,
-      imposto: impostoTotal,
-      tarifa: tarifaComissaoTotal,
-      embalagem: embalagemTotal,
-      frete: freteTotal,
-      margem_liquida_rs: margemLiquidaVal,
-      margem_liquida_pct: margemLiquidaPct
+      retorno_bruto: Number(receitaAds.toFixed(2)),
+      investimento: Number(investimento.toFixed(2)),
+      faturamento_total: Number(faturamentoTotal.toFixed(2)),
+      custo_produto: Number(custoProdutoTotal.toFixed(2)),
+      imposto: Number(impostoTotal.toFixed(2)),
+      tarifa: Number(tarifaComissaoTotal.toFixed(2)),
+      embalagem: Number(embalagemTotal.toFixed(2)),
+      frete: Number(freteTotal.toFixed(2)),
+      margem_liquida_rs: Number(margemLiquidaVal.toFixed(2)),
+      margem_liquida_pct: Number(margemLiquidaPct.toFixed(4))
     };
 
     const { error } = await supabase.from('ads_campanhas_lancamentos').update(atualizacao).eq('id', id);
@@ -960,7 +980,6 @@ export default function AdsPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                     {dadosComparativo.map((d, idx) => {
-                      // Recalcula o TACOS Sugerido dinâmico baseado na meta do BD
                       const tacosSugeridoDinamico = (d.totFatAtual * metaTacosGlobal) / 100;
                       
                       return (
