@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
@@ -50,6 +50,8 @@ function normalizarSku(valor: any) {
   return s.toLowerCase();
 }
 
+type SubItemLive = { sku: string; unidades: string | number; receitaAds: string | number };
+
 export default function AdsPage() {
   const [subAba, setSubAba] = useState<"campanhas" | "dashboard">("campanhas");
   const [loading, setLoading] = useState(false);
@@ -70,11 +72,10 @@ export default function AdsPage() {
   const [idEditando, setIdEditando] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
 
-  // Estado para controlo de seleção de linhas
   const [selecionadosIds, setSelecionadosIds] = useState<number[]>([]);
 
   const [linhas, setLinhas] = useState([
-    { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "" }
+    { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] as SubItemLive[] }
   ]);
 
   const mesesCompetencia = [
@@ -94,7 +95,7 @@ export default function AdsPage() {
   useEffect(() => {
     if (canalSelecionado && mesSelecionado) {
       carregarLancamentos();
-      setSelecionadosIds([]); // Limpa seleção ao trocar canal ou mês
+      setSelecionadosIds([]); 
     }
   }, [canalSelecionado, mesSelecionado]);
 
@@ -224,12 +225,20 @@ export default function AdsPage() {
   };
 
   const adicionarLinhaForm = () => {
-    setLinhas([...linhas, { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "" }]);
+    setLinhas([...linhas, { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] }]);
   };
 
   const atualizarLinhaForm = (index: number, campo: string, valor: string) => {
     const novasLinhas = [...linhas];
     novasLinhas[index] = { ...novasLinhas[index], [campo]: valor };
+
+    if (campo === "mlb" && valor.trim().toUpperCase() === "LIVE") {
+      if (novasLinhas[index].itensLive.length === 0) {
+        novasLinhas[index].itensLive = [{ sku: "", unidades: "", receitaAds: "" }];
+      }
+      novasLinhas[index].sku = "";
+    }
+    
     setLinhas(novasLinhas);
   };
 
@@ -237,77 +246,125 @@ export default function AdsPage() {
     setLinhas(linhas.filter((_, i) => i !== index));
   };
 
+  const adicionarItemLive = (index: number) => {
+    const novasLinhas = [...linhas];
+    novasLinhas[index].itensLive.push({ sku: "", unidades: "", receitaAds: "" });
+    setLinhas(novasLinhas);
+  };
+
+  const removerItemLive = (index: number, subIndex: number) => {
+    const novasLinhas = [...linhas];
+    novasLinhas[index].itensLive.splice(subIndex, 1);
+    novasLinhas[index].unidades = novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0);
+    novasLinhas[index].receitaAds = novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0);
+    setLinhas(novasLinhas);
+  };
+
+  const atualizarItemLive = (index: number, subIndex: number, campo: string, valor: string) => {
+    const novasLinhas = [...linhas];
+    novasLinhas[index].itensLive[subIndex] = { ...novasLinhas[index].itensLive[subIndex], [campo]: valor };
+    novasLinhas[index].unidades = novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0);
+    novasLinhas[index].receitaAds = novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0);
+    setLinhas(novasLinhas);
+  };
+
   const salvarLancamentos = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
 
-    const formatados = linhas
-      .filter(l => l.mlb.trim() !== "" && l.sku.trim() !== "")
-      .map(l => {
+    const registrosBrutos = [];
+
+    for (const l of linhas) {
+      const mlbLimpo = l.mlb.trim().toUpperCase();
+      const isLive = mlbLimpo === "LIVE";
+      const investimentoTotal = Number(l.investimento || 0);
+
+      if (isLive) {
+        if (!l.itensLive || l.itensLive.length === 0) continue;
+        const receitaTotalLive = l.itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0);
+
+        for (const sub of l.itensLive) {
+          const skuLimpo = sub.sku.trim();
+          if (!skuLimpo) continue;
+          
+          const subReceita = Number(sub.receitaAds || 0);
+          const subUnidades = Number(sub.unidades || 0);
+          let subInvestimento = 0;
+
+          if (receitaTotalLive > 0) {
+            subInvestimento = (subReceita / receitaTotalLive) * investimentoTotal;
+          } else {
+            subInvestimento = investimentoTotal / l.itensLive.length;
+          }
+
+          registrosBrutos.push({ mlb: "LIVE", sku: skuLimpo, unidades: subUnidades, receitaAds: subReceita, investimento: subInvestimento });
+        }
+      } else {
         const skuLimpo = l.sku.trim();
-        const skuKey = normalizarSku(skuLimpo);
-        const mlbLimpo = l.mlb.trim().toUpperCase();
-        const unidades = Number(l.unidades || 0);
-        const receitaAds = Number(l.receitaAds || 0);
-        const investimento = Number(l.investimento || 0);
+        if (!skuLimpo || !mlbLimpo) continue;
+        registrosBrutos.push({ mlb: mlbLimpo, sku: skuLimpo, unidades: Number(l.unidades || 0), receitaAds: Number(l.receitaAds || 0), investimento: investimentoTotal });
+      }
+    }
 
-        const custoRegra = custosMap.get(skuKey);
-        const mlRegra = regrasMlMap.get(mlbLimpo);
-
-        const produtoNome = custoRegra?.produto || "Produto sem nome";
-        const custoUnitario = Number(custoRegra?.custo_unitario || 0);
-        const custoProdutoTotal = custoUnitario * unidades;
-
-        let comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : 14;
-        let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 2.0;
-        let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
-        let largura = mlRegra ? Number(mlRegra.largura || 0) : 10;
-        let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
-
-        const precoUnitarioEstimado = unidades > 0 ? (receitaAds / unidades) : 100;
-        const freteUnitario = calcularFreteML(precoUnitarioEstimado, pesoReal, altura, largura, comprimento);
-        const freteTotal = freteUnitario * unidades;
-
-        const impostoTotal = receitaAds * 0.08;
-        const tarifaComissaoTotal = receitaAds * (comissaoPct / 100);
-        const embalagemTotal = 0.70 * unidades;
-
-        const faturamentoTotal = receitaAds;
-        const margemLiquidaVal = faturamentoTotal - (investimento + custoProdutoTotal + impostoTotal + tarifaComissaoTotal + embalagemTotal + freteTotal);
-        const margemLiquidaPct = faturamentoTotal > 0 ? (margemLiquidaVal / faturamentoTotal) : 0;
-
-        return {
-          canal: canalSelecionado,
-          mes_referencia: mesSelecionado,
-          identificador_anuncio: mlbLimpo,
-          nome_anuncio: produtoNome,
-          sku: skuLimpo,
-          unidades_vendidas: unidades,
-          investimento: investimento,
-          retorno_bruto: receitaAds,
-          faturamento_total: faturamentoTotal,
-          custo_produto: custoProdutoTotal,
-          imposto: impostoTotal,
-          tarifa: tarifaComissaoTotal,
-          embalagem: embalagemTotal,
-          frete: freteTotal,
-          margem_liquida_rs: margemLiquidaVal,
-          margem_liquida_pct: margemLiquidaPct
-        };
-      });
-
-    if (formatados.length === 0) {
-      alert("Preencha pelo menos um MLB e SKU válidos.");
+    if (registrosBrutos.length === 0) {
+      alert("Preencha pelo menos um MLB/LIVE e SKU válidos.");
       setSalvando(false);
       return;
     }
+
+    const formatados = registrosBrutos.map(raw => {
+      const skuKey = normalizarSku(raw.sku);
+      const custoRegra = custosMap.get(skuKey);
+      const mlRegra = regrasMlMap.get(raw.mlb);
+
+      const produtoNome = custoRegra?.produto || "Produto sem nome";
+      const custoUnitario = Number(custoRegra?.custo_unitario || 0);
+      const custoProdutoTotal = custoUnitario * raw.unidades;
+
+      let comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : 14;
+      let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 2.0;
+      let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
+      let largura = mlRegra ? Number(mlRegra.largura || 0) : 10;
+      let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
+
+      const precoUnitarioEstimado = raw.unidades > 0 ? (raw.receitaAds / raw.unidades) : 100;
+      const freteUnitario = calcularFreteML(precoUnitarioEstimado, pesoReal, altura, largura, comprimento);
+      const freteTotal = freteUnitario * raw.unidades;
+
+      const impostoTotal = raw.receitaAds * 0.08;
+      const tarifaComissaoTotal = raw.receitaAds * (comissaoPct / 100);
+      const embalagemTotal = 0.70 * raw.unidades;
+
+      const faturamentoTotal = raw.receitaAds;
+      const margemLiquidaVal = faturamentoTotal - (raw.investimento + custoProdutoTotal + impostoTotal + tarifaComissaoTotal + embalagemTotal + freteTotal);
+      const margemLiquidaPct = faturamentoTotal > 0 ? (margemLiquidaVal / faturamentoTotal) : 0;
+
+      return {
+        canal: canalSelecionado,
+        mes_referencia: mesSelecionado,
+        identificador_anuncio: raw.mlb,
+        nome_anuncio: produtoNome,
+        sku: raw.sku,
+        unidades_vendidas: raw.unidades,
+        investimento: raw.investimento,
+        retorno_bruto: raw.receitaAds,
+        faturamento_total: faturamentoTotal,
+        custo_produto: custoProdutoTotal,
+        imposto: impostoTotal,
+        tarifa: tarifaComissaoTotal,
+        embalagem: embalagemTotal,
+        frete: freteTotal,
+        margem_liquida_rs: margemLiquidaVal,
+        margem_liquida_pct: margemLiquidaPct
+      };
+    });
 
     const { error } = await supabase.from('ads_campanhas_lancamentos').insert(formatados);
     if (error) {
       alert("Erro ao gravar lançamentos: " + error.message);
     } else {
       alert("✅ Anúncios salvos e calculados com sucesso!");
-      setLinhas([{ mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "" }]);
+      setLinhas([{ mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] }]);
       carregarLancamentos();
     }
     setSalvando(false);
@@ -390,34 +447,23 @@ export default function AdsPage() {
     else carregarLancamentos();
   };
 
-  // Funções de exclusão em massa
   const selecionarTodosCheckbox = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) {
-      setSelecionadosIds(lancamentos.map(i => i.id));
-    } else {
-      setSelecionadosIds([]);
-    }
+    if (e.target.checked) setSelecionadosIds(lancamentos.map(i => i.id));
+    else setSelecionadosIds([]);
   };
 
   const selecionarLinhaCheckbox = (id: number) => {
-    if (selecionadosIds.includes(id)) {
-      setSelecionadosIds(selecionadosIds.filter(i => i !== id));
-    } else {
-      setSelecionadosIds([...selecionadosIds, id]);
-    }
+    if (selecionadosIds.includes(id)) setSelecionadosIds(selecionadosIds.filter(i => i !== id));
+    else setSelecionadosIds([...selecionadosIds, id]);
   };
 
   const excluirSelecionados = async () => {
-    if (selecionadosIds.length === 0) {
-      alert("Nenhum registo selecionado.");
-      return;
-    }
+    if (selecionadosIds.length === 0) return alert("Nenhum registo selecionado.");
     if (!confirm(`Tem certeza que deseja apagar os ${selecionadosIds.length} registos selecionados?`)) return;
 
     const { error } = await supabase.from('ads_campanhas_lancamentos').delete().in('id', selecionadosIds);
-    if (error) {
-      alert("Erro ao excluir selecionados: " + error.message);
-    } else {
+    if (error) alert("Erro ao excluir selecionados: " + error.message);
+    else {
       alert("✅ Registos selecionados eliminados com sucesso!");
       setSelecionadosIds([]);
       carregarLancamentos();
@@ -433,9 +479,8 @@ export default function AdsPage() {
       .eq('canal', canalSelecionado)
       .eq('mes_referencia', mesSelecionado);
 
-    if (error) {
-      alert("Erro ao limpar canal: " + error.message);
-    } else {
+    if (error) alert("Erro ao limpar canal: " + error.message);
+    else {
       alert(`🗑️ Todos os registos de "${canalSelecionado}" (${mesSelecionado}) foram eliminados com sucesso!`);
       setSelecionadosIds([]);
       carregarLancamentos();
@@ -451,7 +496,6 @@ export default function AdsPage() {
             <h1 className="text-2xl font-black text-white tracking-tight">Painel Unificado de Ads & Campanhas</h1>
             <p className="text-sm font-medium text-slate-400">Gestão e Performance de Ads por Canal</p>
           </div>
-
           <Navbar />
         </div>
 
@@ -514,7 +558,10 @@ export default function AdsPage() {
 
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
               <h2 className="text-lg font-bold text-white mb-2">➕ Lançamento de Anúncios</h2>
-              <p className="text-xs text-slate-400 mb-6">Insira o MLB, SKU, Unidades e Receita Ads para o canal <strong>{canalSelecionado}</strong> ({mesSelecionado}).</p>
+              <p className="text-xs text-slate-400 mb-6">
+                Insira o MLB, SKU, Unidades e Receita Ads para o canal <strong>{canalSelecionado}</strong> ({mesSelecionado}). <br/>
+                <span className="text-purple-400 font-bold">Dica:</span> Digite <strong>LIVE</strong> no campo MLB/ID para distribuir um investimento único por vários SKUs vendidos.
+              </p>
 
               <form onSubmit={salvarLancamentos} className="space-y-4">
                 <div className="overflow-x-auto">
@@ -530,72 +577,115 @@ export default function AdsPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
-                      {linhas.map((l, index) => (
-                        <tr key={index} className="bg-slate-950/40">
-                          <td className="p-2">
-                            <input 
-                              type="text" 
-                              value={l.mlb} 
-                              onChange={(e) => atualizarLinhaForm(index, "mlb", e.target.value)}
-                              placeholder="Ex: MLB4384359235" 
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none"
-                              required 
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input 
-                              type="text" 
-                              value={l.sku} 
-                              onChange={(e) => atualizarLinhaForm(index, "sku", e.target.value)}
-                              placeholder="Ex: 22362042067" 
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none"
-                              required 
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input 
-                              type="number" 
-                              value={l.unidades} 
-                              onChange={(e) => atualizarLinhaForm(index, "unidades", e.target.value)}
-                              placeholder="0" 
-                              className="w-24 mx-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center text-white outline-none" 
-                              required
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input 
-                              type="number" 
-                              step="0.01" 
-                              value={l.receitaAds} 
-                              onChange={(e) => atualizarLinhaForm(index, "receitaAds", e.target.value)}
-                              placeholder="0.00" 
-                              className="w-32 ml-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono text-white outline-none" 
-                              required
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input 
-                              type="number" 
-                              step="0.01" 
-                              value={l.investimento} 
-                              onChange={(e) => atualizarLinhaForm(index, "investimento", e.target.value)}
-                              placeholder="0.00" 
-                              className="w-32 ml-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono text-white outline-none" 
-                            />
-                          </td>
-                          <td className="p-2 text-center">
-                            {linhas.length > 1 && (
-                              <button 
-                                type="button" 
-                                onClick={() => removerLinhaForm(index)}
-                                className="bg-rose-950/60 text-rose-400 px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
-                              >
-                                ✕
-                              </button>
+                      {linhas.map((l, index) => {
+                        const isLive = l.mlb.trim().toUpperCase() === "LIVE";
+
+                        return (
+                          <React.Fragment key={index}>
+                            <tr className="bg-slate-950/40">
+                              <td className="p-2">
+                                <input 
+                                  type="text" 
+                                  value={l.mlb} 
+                                  onChange={(e) => atualizarLinhaForm(index, "mlb", e.target.value)}
+                                  placeholder="Ex: MLB4384359235 ou LIVE" 
+                                  className={`w-full bg-slate-900 border ${isLive ? 'border-purple-600 text-purple-400 font-black' : 'border-slate-700 text-white'} rounded-lg p-2 text-xs font-mono outline-none uppercase`}
+                                  required 
+                                />
+                              </td>
+                              <td className="p-2">
+                                <input 
+                                  type="text" 
+                                  value={isLive ? "Múltiplos (Live)" : l.sku} 
+                                  onChange={(e) => atualizarLinhaForm(index, "sku", e.target.value)}
+                                  placeholder="Ex: 22362042067" 
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono outline-none ${isLive ? 'text-slate-500 opacity-60 cursor-not-allowed' : 'text-white'}`}
+                                  required={!isLive}
+                                  disabled={isLive} 
+                                />
+                              </td>
+                              <td className="p-2">
+                                <input 
+                                  type="number" 
+                                  value={l.unidades} 
+                                  onChange={(e) => atualizarLinhaForm(index, "unidades", e.target.value)}
+                                  placeholder="0" 
+                                  className={`w-24 mx-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center outline-none ${isLive ? 'text-purple-400 font-bold opacity-80 cursor-not-allowed' : 'text-white'}`} 
+                                  required={!isLive}
+                                  disabled={isLive}
+                                />
+                              </td>
+                              <td className="p-2">
+                                <input 
+                                  type="number" 
+                                  step="0.01" 
+                                  value={l.receitaAds} 
+                                  onChange={(e) => atualizarLinhaForm(index, "receitaAds", e.target.value)}
+                                  placeholder="0.00" 
+                                  className={`w-32 ml-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono outline-none ${isLive ? 'text-emerald-400 font-bold opacity-80 cursor-not-allowed' : 'text-white'}`} 
+                                  required={!isLive}
+                                  disabled={isLive}
+                                />
+                              </td>
+                              <td className="p-2">
+                                <input 
+                                  type="number" 
+                                  step="0.01" 
+                                  value={l.investimento} 
+                                  onChange={(e) => atualizarLinhaForm(index, "investimento", e.target.value)}
+                                  placeholder="0.00" 
+                                  className={`w-32 ml-auto block bg-slate-900 border ${isLive ? 'border-purple-600/50 focus:border-purple-500' : 'border-slate-700'} rounded-lg p-2 text-xs text-right font-mono text-white outline-none`} 
+                                />
+                              </td>
+                              <td className="p-2 text-center">
+                                {linhas.length > 1 && (
+                                  <button 
+                                    type="button" 
+                                    onClick={() => removerLinhaForm(index)}
+                                    className="bg-rose-950/60 text-rose-400 px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer hover:bg-rose-900"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                            
+                            {/* SUBMENU PARA LIVE */}
+                            {isLive && (
+                              <tr className="bg-purple-950/10 border-b border-purple-900/30">
+                                <td colSpan={6} className="p-4 pl-8">
+                                  <div className="bg-slate-950/50 p-4 rounded-xl border border-purple-900/30">
+                                    <h4 className="text-[10px] font-black text-purple-400 uppercase tracking-wider mb-3">↳ Produtos vendidos na Live (Rateio de Investimento)</h4>
+                                    <div className="space-y-2">
+                                      {l.itensLive.map((sub, subIdx) => (
+                                        <div key={subIdx} className="flex flex-wrap items-center gap-3">
+                                          <div className="flex-1">
+                                            <input type="text" placeholder="SKU do Produto" value={sub.sku} onChange={(e) => atualizarItemLive(index, subIdx, "sku", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500" required />
+                                          </div>
+                                          <div className="w-24">
+                                            <input type="number" placeholder="Unidades" value={sub.unidades} onChange={(e) => atualizarItemLive(index, subIdx, "unidades", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center text-white outline-none focus:border-purple-500" required />
+                                          </div>
+                                          <div className="w-32">
+                                            <input type="number" step="0.01" placeholder="Receita (R$)" value={sub.receitaAds} onChange={(e) => atualizarItemLive(index, subIdx, "receitaAds", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono text-white outline-none focus:border-purple-500" required />
+                                          </div>
+                                          <div>
+                                            {l.itensLive.length > 1 && (
+                                              <button type="button" onClick={() => removerItemLive(index, subIdx)} className="text-rose-400 hover:text-rose-300 font-bold px-2 py-1">✕</button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                      <button type="button" onClick={() => adicionarItemLive(index)} className="mt-2 text-[10px] font-bold uppercase text-purple-400 hover:text-purple-300 flex items-center gap-1">
+                                        <span>+ Adicionar Produto à Live</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
                             )}
-                          </td>
-                        </tr>
-                      ))}
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
