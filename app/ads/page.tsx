@@ -232,7 +232,7 @@ export default function AdsPage() {
     const novasLinhas = [...linhas];
     novasLinhas[index] = { ...novasLinhas[index], [campo]: valor };
 
-    if (campo === "mlb" && valor.trim().toUpperCase() === "LIVE") {
+    if (campo === "mlb" && valor.trim().toUpperCase().startsWith("LIVE")) {
       if (novasLinhas[index].itensLive.length === 0) {
         novasLinhas[index].itensLive = [{ sku: "", unidades: "", receitaAds: "" }];
       }
@@ -256,7 +256,6 @@ export default function AdsPage() {
     const novasLinhas = [...linhas];
     novasLinhas[index].itensLive.splice(subIndex, 1);
     
-    // Converte para String para evitar erro de tipagem TS2322
     novasLinhas[index].unidades = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0));
     novasLinhas[index].receitaAds = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0));
     
@@ -267,7 +266,6 @@ export default function AdsPage() {
     const novasLinhas = [...linhas];
     novasLinhas[index].itensLive[subIndex] = { ...novasLinhas[index].itensLive[subIndex], [campo]: valor };
     
-    // Converte para String para evitar erro de tipagem TS2322
     novasLinhas[index].unidades = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0));
     novasLinhas[index].receitaAds = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0));
     
@@ -282,7 +280,7 @@ export default function AdsPage() {
 
     for (const l of linhas) {
       const mlbLimpo = l.mlb.trim().toUpperCase();
-      const isLive = mlbLimpo === "LIVE";
+      const isLive = mlbLimpo.startsWith("LIVE");
       const investimentoTotal = Number(l.investimento || 0);
 
       if (isLive) {
@@ -303,7 +301,7 @@ export default function AdsPage() {
             subInvestimento = investimentoTotal / l.itensLive.length;
           }
 
-          registrosBrutos.push({ mlb: "LIVE", sku: skuLimpo, unidades: subUnidades, receitaAds: subReceita, investimento: subInvestimento });
+          registrosBrutos.push({ mlb: mlbLimpo, sku: skuLimpo, unidades: subUnidades, receitaAds: subReceita, investimento: subInvestimento });
         }
       } else {
         const skuLimpo = l.sku.trim();
@@ -566,7 +564,7 @@ export default function AdsPage() {
               <h2 className="text-lg font-bold text-white mb-2">➕ Lançamento de Anúncios</h2>
               <p className="text-xs text-slate-400 mb-6">
                 Insira o MLB, SKU, Unidades e Receita Ads para o canal <strong>{canalSelecionado}</strong> ({mesSelecionado}). <br/>
-                <span className="text-purple-400 font-bold">Dica:</span> Digite <strong>LIVE</strong> no campo MLB/ID para distribuir um investimento único por vários SKUs vendidos.
+                <span className="text-purple-400 font-bold">Dica:</span> Inicie o ID com <strong>LIVE</strong> para distribuir um investimento único por vários SKUs vendidos.
               </p>
 
               <form onSubmit={salvarLancamentos} className="space-y-4">
@@ -584,7 +582,7 @@ export default function AdsPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
                       {linhas.map((l, index) => {
-                        const isLive = l.mlb.trim().toUpperCase() === "LIVE";
+                        const isLive = l.mlb.trim().toUpperCase().startsWith("LIVE");
 
                         return (
                           <React.Fragment key={index}>
@@ -594,7 +592,7 @@ export default function AdsPage() {
                                   type="text" 
                                   value={l.mlb} 
                                   onChange={(e) => atualizarLinhaForm(index, "mlb", e.target.value)}
-                                  placeholder="Ex: MLB4384359235 ou LIVE" 
+                                  placeholder="Ex: MLB4384... ou LIVE_..." 
                                   className={`w-full bg-slate-900 border ${isLive ? 'border-purple-600 text-purple-400 font-black' : 'border-slate-700 text-white'} rounded-lg p-2 text-xs font-mono outline-none uppercase`}
                                   required 
                                 />
@@ -758,7 +756,7 @@ export default function AdsPage() {
                             className="cursor-pointer accent-purple-600 rounded"
                           />
                         </th>
-                        <th className="p-3">MLB</th>
+                        <th className="p-3">MLB / ID</th>
                         <th className="p-3">SKU</th>
                         <th className="p-3">Produto</th>
                         <th className="p-3 text-center">Unid.</th>
