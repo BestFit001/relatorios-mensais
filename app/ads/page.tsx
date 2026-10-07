@@ -50,6 +50,11 @@ function normalizarSku(valor: any) {
   return s.toLowerCase();
 }
 
+// Formatador de Moeda BR
+const formatarMoeda = (valor: number) => {
+  return "R$ " + valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
 type SubItemLive = { sku: string; unidades: string | number; receitaAds: string | number };
 
 export default function AdsPage() {
@@ -61,6 +66,9 @@ export default function AdsPage() {
   const [canalSelecionado, setCanalSelecionado] = useState("");
   const [mesSelecionado, setMesSelecionado] = useState("09/2026");
   const [mesComparativo, setMesComparativo] = useState("08/2026");
+  
+  // Meta de TACOS Global (Puxada do BD)
+  const [metaTacosGlobal, setMetaTacosGlobal] = useState(2); 
 
   const [canaisAtivos, setCanaisAtivos] = useState<any[]>([]);
   const [lancamentos, setLancamentos] = useState<any[]>([]);
@@ -172,6 +180,11 @@ export default function AdsPage() {
     setLoading(true);
     const listaCanais = canaisAtivos.map(c => c.canal);
 
+    // Consulta do TACOS na tabela de regras
+    const { data: configTiny } = await supabase.from('config_regras_tiny').select('meta_tacos').limit(1).maybeSingle();
+    const metaAtualDb = configTiny?.meta_tacos !== undefined && configTiny?.meta_tacos !== null ? Number(configTiny.meta_tacos) : 2;
+    setMetaTacosGlobal(metaAtualDb);
+
     const { data: dadosAtual } = await supabase.from('ads_campanhas_lancamentos').select('*').eq('mes_referencia', mesSelecionado);
     const { data: dadosAnterior } = await supabase.from('ads_campanhas_lancamentos').select('*').eq('mes_referencia', mesComparativo);
 
@@ -192,7 +205,6 @@ export default function AdsPage() {
       const roasAtual = invAtual > 0 ? fatAdsAtual / invAtual : 0;
       const roasAnt = invAnt > 0 ? fatAdsAnt / invAnt : 0;
 
-      // Buscar Faturamentos Globais inseridos pelo utilizador
       const fatCanalBrutoAtual = faturamentosAtual?.find(f => f.canal === canal)?.faturamento_total || "";
       const fatCanalAtualDB = Number(fatCanalBrutoAtual);
       const totFatAtual = fatCanalAtualDB > 0 ? fatCanalAtualDB : fatAdsAtual; // Fallback
@@ -208,7 +220,6 @@ export default function AdsPage() {
       const diffMargemRs = margemRsAtual - margemRsAnt;
 
       const repAds = totFatAtual > 0 ? (fatAdsAtual / totFatAtual) * 100 : 0;
-      const tacosSugerido = totFatAtual * 0.15; // Budget de 15% sobre o faturamento total
 
       return {
         canal,
@@ -224,8 +235,7 @@ export default function AdsPage() {
         diffMargemRs,
         totFatAtual,
         totFatAtual_bruto: fatCanalBrutoAtual,
-        repAds,
-        tacosSugerido
+        repAds
       };
     });
 
@@ -234,7 +244,6 @@ export default function AdsPage() {
   };
 
   const atualizarFaturamentoTotal = async (canal: string, valorStr: string) => {
-    // RESOLUÇÃO DO BUG BRASILEIRO: Remove pontos de milhar e troca vírgula por ponto
     let valorLimpo = valorStr.replace(/\./g, '').replace(',', '.');
     const numVal = Number(valorLimpo);
     
@@ -368,7 +377,7 @@ export default function AdsPage() {
       const tarifaComissaoTotal = raw.receitaAds * (comissaoPct / 100);
       const embalagemTotal = 0.70 * raw.unidades;
 
-      const faturamentoTotal = raw.receitaAds; // Apenas faturamento deste anúncio
+      const faturamentoTotal = raw.receitaAds;
       const margemLiquidaVal = faturamentoTotal - (raw.investimento + custoProdutoTotal + impostoTotal + tarifaComissaoTotal + embalagemTotal + freteTotal);
       const margemLiquidaPct = faturamentoTotal > 0 ? (margemLiquidaVal / faturamentoTotal) : 0;
 
@@ -833,19 +842,19 @@ export default function AdsPage() {
                               {isEditing ? <input type="number" value={dadosEdicao.unidades_vendidas} onChange={(e) => setDadosEdicao({ ...dadosEdicao, unidades_vendidas: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white" /> : item.unidades_vendidas}
                             </td>
                             <td className="p-3 text-right font-mono text-emerald-400 font-bold">
-                              {isEditing ? <input type="number" step="0.01" value={dadosEdicao.retorno_bruto} onChange={(e) => setDadosEdicao({ ...dadosEdicao, retorno_bruto: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white" /> : `R$ ${Number(item.retorno_bruto).toFixed(2)}`}
+                              {isEditing ? <input type="number" step="0.01" value={dadosEdicao.retorno_bruto} onChange={(e) => setDadosEdicao({ ...dadosEdicao, retorno_bruto: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white" /> : formatarMoeda(item.retorno_bruto)}
                             </td>
                             <td className="p-3 text-right font-mono text-rose-400">
-                              {isEditing ? <input type="number" step="0.01" value={dadosEdicao.investimento} onChange={(e) => setDadosEdicao({ ...dadosEdicao, investimento: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white" /> : `R$ ${Number(item.investimento).toFixed(2)}`}
+                              {isEditing ? <input type="number" step="0.01" value={dadosEdicao.investimento} onChange={(e) => setDadosEdicao({ ...dadosEdicao, investimento: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white" /> : formatarMoeda(item.investimento)}
                             </td>
-                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.custo_produto || 0).toFixed(2)}</td>
-                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.imposto || 0).toFixed(2)}</td>
-                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.tarifa || 0).toFixed(2)}</td>
-                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.embalagem || 0).toFixed(2)}</td>
-                            <td className="p-3 text-right font-mono text-slate-300">R$ {Number(item.frete || 0).toFixed(2)}</td>
+                            <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.custo_produto || 0)}</td>
+                            <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.imposto || 0)}</td>
+                            <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.tarifa || 0)}</td>
+                            <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.embalagem || 0)}</td>
+                            <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.frete || 0)}</td>
                             <td className="p-3 text-right font-mono font-bold text-indigo-400">{roas}x</td>
                             <td className="p-3 text-right font-mono font-bold text-amber-400">{tacos}%</td>
-                            <td className={`p-3 text-right font-mono font-bold ${margemVal >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>R$ {margemVal.toFixed(2)}</td>
+                            <td className={`p-3 text-right font-mono font-bold ${margemVal >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>{formatarMoeda(margemVal)}</td>
                             <td className={`p-3 text-right font-mono font-bold ${margemPct >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>{margemPct.toFixed(1)}%</td>
                             <td className="p-3 text-center flex items-center justify-center gap-2">
                               {isEditing ? (
@@ -895,9 +904,17 @@ export default function AdsPage() {
               </div>
             </div>
 
-            {/* BARRA DE INSERÇÃO DO FATURAMENTO TOTAL DO MÊS */}
+            {/* BARRA DE INSERÇÃO DO FATURAMENTO TOTAL DO MÊS E META TACOS */}
             <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800 mb-8">
-              <h3 className="text-[11px] font-black text-slate-300 uppercase tracking-wider mb-4">💰 Inserir Faturamento Total do Canal (Orgânico + Ads) - {mesSelecionado}</h3>
+              <div className="flex flex-wrap items-center justify-between mb-4">
+                <h3 className="text-[11px] font-black text-slate-300 uppercase tracking-wider">💰 Inserir Faturamento Total do Canal (Orgânico + Ads) - {mesSelecionado}</h3>
+                <div className="flex items-center gap-2 bg-purple-900/30 border border-purple-800/50 px-3 py-1.5 rounded-lg">
+                  <span className="text-[10px] font-bold text-purple-300 uppercase">Meta TACOS Global:</span>
+                  <span className="text-white font-bold text-xs">{metaTacosGlobal}%</span>
+                  <span className="text-[9px] text-purple-400 ml-1">(Definido na aba Regras)</span>
+                </div>
+              </div>
+              
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {canaisAtivos.map(c => {
                   const valorAtual = dadosComparativo.find(d => d.canal === c.canal)?.totFatAtual_bruto || "";
@@ -909,13 +926,13 @@ export default function AdsPage() {
                         defaultValue={valorAtual} 
                         onBlur={(e) => atualizarFaturamentoTotal(c.canal, e.target.value)}
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-emerald-400 outline-none focus:border-purple-500"
-                        placeholder="Ex: 153000 ou 153.000,00"
+                        placeholder="Ex: 153.000,00"
                       />
                     </div>
                   );
                 })}
               </div>
-              <p className="text-[9px] text-slate-500 mt-3">* Ao clicar fora do campo, o valor é salvo e o TACOS e Budget Sugerido são recalculados automaticamente.</p>
+              <p className="text-[9px] text-slate-500 mt-3">* Ao clicar fora do campo, o valor é salvo. O TACOS e Budget Sugerido ajustam-se automaticamente à sua meta definida acima.</p>
             </div>
 
             {loading ? (
@@ -942,28 +959,33 @@ export default function AdsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                    {dadosComparativo.map((d, idx) => (
-                      <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-3 font-bold text-white">{d.canal}</td>
-                        <td className="p-3 text-right font-mono text-emerald-400">R$ {d.fatAdsAtual.toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-slate-300">R$ {d.fatAdsAnt.toFixed(2)}</td>
-                        <td className={`p-3 text-right font-mono font-bold ${d.diffAds >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
-                          {d.diffAds >= 0 ? '+' : ''}R$ {d.diffAds.toFixed(2)}
-                        </td>
-                        <td className="p-3 text-right font-mono text-indigo-400 font-bold">{d.roasAtual.toFixed(2)}x</td>
-                        <td className="p-3 text-right font-mono text-slate-300">{d.roasAnt.toFixed(2)}x</td>
-                        <td className="p-3 text-right font-mono text-amber-400 font-bold">{d.tacosAtual.toFixed(2)}%</td>
-                        <td className="p-3 text-right font-mono text-slate-300">{d.tacosAnt.toFixed(2)}%</td>
-                        <td className="p-3 text-right font-mono text-emerald-300">R$ {d.margemRsAtual.toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-slate-300">R$ {d.margemRsAnt.toFixed(2)}</td>
-                        <td className={`p-3 text-right font-mono font-bold ${d.diffMargemRs >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
-                          {d.diffMargemRs >= 0 ? '+' : ''}R$ {d.diffMargemRs.toFixed(2)}
-                        </td>
-                        <td className="p-3 text-right font-mono text-white">R$ {d.totFatAtual.toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-violet-400 font-bold">{d.repAds.toFixed(2)}%</td>
-                        <td className="p-3 text-right font-mono font-bold text-emerald-400">R$ {d.tacosSugerido.toFixed(2)}</td>
-                      </tr>
-                    ))}
+                    {dadosComparativo.map((d, idx) => {
+                      // Recalcula o TACOS Sugerido dinâmico baseado na meta do BD
+                      const tacosSugeridoDinamico = (d.totFatAtual * metaTacosGlobal) / 100;
+                      
+                      return (
+                        <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3 font-bold text-white">{d.canal}</td>
+                          <td className="p-3 text-right font-mono text-emerald-400">{formatarMoeda(d.fatAdsAtual)}</td>
+                          <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(d.fatAdsAnt)}</td>
+                          <td className={`p-3 text-right font-mono font-bold ${d.diffAds >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                            {d.diffAds >= 0 ? '+' : ''}{formatarMoeda(d.diffAds)}
+                          </td>
+                          <td className="p-3 text-right font-mono text-indigo-400 font-bold">{d.roasAtual.toFixed(2)}x</td>
+                          <td className="p-3 text-right font-mono text-slate-300">{d.roasAnt.toFixed(2)}x</td>
+                          <td className="p-3 text-right font-mono text-amber-400 font-bold">{d.tacosAtual.toFixed(2)}%</td>
+                          <td className="p-3 text-right font-mono text-slate-300">{d.tacosAnt.toFixed(2)}%</td>
+                          <td className="p-3 text-right font-mono text-emerald-300">{formatarMoeda(d.margemRsAtual)}</td>
+                          <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(d.margemRsAnt)}</td>
+                          <td className={`p-3 text-right font-mono font-bold ${d.diffMargemRs >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                            {d.diffMargemRs >= 0 ? '+' : ''}{formatarMoeda(d.diffMargemRs)}
+                          </td>
+                          <td className="p-3 text-right font-mono text-white">{formatarMoeda(d.totFatAtual)}</td>
+                          <td className="p-3 text-right font-mono text-violet-400 font-bold">{d.repAds.toFixed(2)}%</td>
+                          <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(tacosSugeridoDinamico)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
