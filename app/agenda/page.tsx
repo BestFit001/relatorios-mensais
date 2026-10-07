@@ -183,7 +183,11 @@ export default function AgendaPage() {
               <input type="text" value={novaTarefa.tratativa} onChange={e => setNovaTarefa({...novaTarefa, tratativa: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500" placeholder="Ações tomadas..." />
             </div>
             <div>
-              <button type="submit" disabled={salvando} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-lg text-xs uppercase tracking-wider cursor-pointer shadow-lg">
+              <button 
+                type="submit" 
+                disabled={salvando} 
+                className={`w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-lg text-xs uppercase tracking-wider cursor-pointer shadow-lg`}
+              >
                 {salvando ? "A salvar..." : "Adicionar"}
               </button>
             </div>
@@ -210,4 +214,155 @@ export default function AgendaPage() {
               </div>
             </div>
 
-            <button onClick={() => setVisaoSimplificada(!visaoSimplificada)} className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2.5 px-5
+            <button 
+              onClick={() => setVisaoSimplificada(!visaoSimplificada)} 
+              className={`bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2.5 px-5 rounded-xl text-[11px] uppercase tracking-wider cursor-pointer transition-all`}
+            >
+              {visaoSimplificada ? "👁️ Mostrar Todas as Colunas" : "👁️ Visão Simplificada"}
+            </button>
+          </div>
+
+          {loading ? (
+            <p className="p-8 text-center text-slate-400">A carregar agenda...</p>
+          ) : dadosFiltrados.length === 0 ? (
+            <p className="p-8 text-center text-slate-500">Nenhuma solicitação encontrada.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="p-3 w-16 text-center">Nº</th>
+                    <th className="p-3 min-w-[250px]">Atividade / Solicitação</th>
+                    {!visaoSimplificada && <th className="p-3">Assunto</th>}
+                    {!visaoSimplificada && <th className="p-3">Responsável</th>}
+                    {!visaoSimplificada && <th className="p-3 text-center">Dt. Solicitação</th>}
+                    {!visaoSimplificada && <th className="p-3 text-center">Prioridade</th>}
+                    {!visaoSimplificada && <th className="p-3 text-center">Dt. Entrega</th>}
+                    <th className="p-3 min-w-[200px]">Tratativa</th>
+                    {!visaoSimplificada && <th className="p-3 text-center">Concluído</th>}
+                    {!visaoSimplificada && <th className="p-3">Status Entrega</th>}
+                    <th className="p-3 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                  {dadosFiltrados.map((item) => {
+                    const isEditing = editandoId === item.id;
+                    const atrasado = !item.finalizado && item.data_entrega && hoje > item.data_entrega;
+
+                    return (
+                      <tr key={item.id} className={`hover:bg-slate-800/40 transition-colors ${item.finalizado ? 'opacity-50' : ''}`}>
+                        <td className="p-3 text-center font-black text-indigo-400 text-sm">
+                          {String(item.id).padStart(2, '0')}
+                        </td>
+
+                        <td className="p-3">
+                          {isEditing ? (
+                            <input type="text" value={dadosEdicao.atividade} onChange={e => setDadosEdicao({...dadosEdicao, atividade: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
+                          ) : (
+                            <span className={`font-bold ${atrasado ? 'text-rose-400' : 'text-slate-200'} whitespace-normal line-clamp-2`}>{item.atividade}</span>
+                          )}
+                        </td>
+
+                        {!visaoSimplificada && (
+                          <td className="p-3">
+                            {isEditing ? (
+                              <input type="text" value={dadosEdicao.assunto} onChange={e => setDadosEdicao({...dadosEdicao, assunto: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1.5 text-white uppercase" />
+                            ) : (
+                              <span className="text-slate-300 font-bold">{item.assunto}</span>
+                            )}
+                          </td>
+                        )}
+
+                        {!visaoSimplificada && (
+                          <td className="p-3">
+                            {isEditing ? (
+                              <input type="text" value={dadosEdicao.responsavel} onChange={e => setDadosEdicao({...dadosEdicao, responsavel: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
+                            ) : (
+                              <span className="bg-amber-400/20 text-amber-400 px-2 py-1 rounded font-bold">{item.responsavel}</span>
+                            )}
+                          </td>
+                        )}
+
+                        {!visaoSimplificada && (
+                          <td className="p-3 text-center font-mono text-slate-400">
+                            {item.data_solicitacao.split('-').reverse().join('/')}
+                          </td>
+                        )}
+
+                        {!visaoSimplificada && (
+                          <td className="p-3 text-center">
+                            {isEditing ? (
+                              <select value={dadosEdicao.prioridade} onChange={e => setDadosEdicao({...dadosEdicao, prioridade: e.target.value})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1.5 text-white cursor-pointer">
+                                <option value="Alta">Alta</option><option value="Média">Média</option><option value="Baixa">Baixa</option>
+                              </select>
+                            ) : (
+                              <span className={`font-bold ${item.prioridade === 'Alta' ? 'text-rose-400' : item.prioridade === 'Média' ? 'text-amber-400' : 'text-emerald-400'}`}>{item.prioridade}</span>
+                            )}
+                          </td>
+                        )}
+
+                        {!visaoSimplificada && (
+                          <td className="p-3 text-center font-mono">
+                            {isEditing ? (
+                              <input type="date" value={dadosEdicao.data_entrega} onChange={e => setDadosEdicao({...dadosEdicao, data_entrega: e.target.value})} className="w-28 bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
+                            ) : (
+                              <span className={`font-bold ${atrasado ? 'text-rose-500' : 'text-slate-300'}`}>
+                                {item.data_entrega ? item.data_entrega.split('-').reverse().join('/') : '-'}
+                              </span>
+                            )}
+                          </td>
+                        )}
+
+                        <td className="p-3">
+                          {isEditing ? (
+                            <input type="text" value={dadosEdicao.tratativa} onChange={e => setDadosEdicao({...dadosEdicao, tratativa: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
+                          ) : (
+                            <span className="text-slate-400 italic whitespace-normal line-clamp-2">{item.tratativa || "-"}</span>
+                          )}
+                        </td>
+
+                        {!visaoSimplificada && (
+                          <td className="p-3 text-center">
+                            <input 
+                              type="checkbox" 
+                              checked={item.finalizado} 
+                              onChange={() => alternarFinalizado(item)}
+                              className="w-5 h-5 accent-emerald-500 cursor-pointer"
+                            />
+                          </td>
+                        )}
+
+                        {!visaoSimplificada && (
+                          <td className="p-3">
+                            <span className={`font-bold text-[10px] uppercase ${item.status_entrega?.includes('antecedência') ? 'text-indigo-400' : item.status_entrega?.includes('atraso') ? 'text-rose-400' : 'text-emerald-400'}`}>
+                              {item.status_entrega}
+                            </span>
+                          </td>
+                        )}
+
+                        <td className="p-3 text-center">
+                          {isEditing ? (
+                            <div className="flex flex-col gap-1">
+                              <button onClick={() => salvarEdicao(item.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded text-[10px] font-bold">Salvar</button>
+                              <button onClick={() => setEditandoId(null)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded text-[10px] font-bold">Cancelar</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center gap-2">
+                              <button onClick={() => iniciarEdicao(item)} className="bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white px-2.5 py-1.5 rounded text-[11px] font-bold transition-colors">✏️</button>
+                              <button onClick={() => excluirTarefa(item.id)} className="bg-rose-950/40 hover:bg-rose-900 text-rose-400 border border-rose-900/50 px-2.5 py-1.5 rounded text-[11px] font-bold transition-colors">🗑️</button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
