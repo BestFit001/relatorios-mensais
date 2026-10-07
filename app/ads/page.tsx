@@ -175,6 +175,9 @@ export default function AdsPage() {
     const { data: dadosAtual } = await supabase.from('ads_campanhas_lancamentos').select('*').eq('mes_referencia', mesSelecionado);
     const { data: dadosAnterior } = await supabase.from('ads_campanhas_lancamentos').select('*').eq('mes_referencia', mesComparativo);
 
+    const { data: faturamentosAtual } = await supabase.from('ads_faturamento_canal').select('*').eq('mes_referencia', mesSelecionado);
+    const { data: faturamentosAnt } = await supabase.from('ads_faturamento_canal').select('*').eq('mes_referencia', mesComparativo);
+
     const consolidado = listaCanais.map(canal => {
       const itensA = dadosAtual?.filter(d => d.canal === canal) || [];
       const itensB = dadosAnterior?.filter(d => d.canal === canal) || [];
@@ -189,8 +192,13 @@ export default function AdsPage() {
       const roasAtual = invAtual > 0 ? fatAdsAtual / invAtual : 0;
       const roasAnt = invAnt > 0 ? fatAdsAnt / invAnt : 0;
 
-      const totFatAtual = itensA.reduce((sum, i) => sum + Number(i.faturamento_total || 0), 0);
-      const totFatAnt = itensB.reduce((sum, i) => sum + Number(i.faturamento_total || 0), 0);
+      // Buscar Faturamentos Globais inseridos pelo utilizador
+      const fatCanalBrutoAtual = faturamentosAtual?.find(f => f.canal === canal)?.faturamento_total || "";
+      const fatCanalAtualDB = Number(fatCanalBrutoAtual);
+      const totFatAtual = fatCanalAtualDB > 0 ? fatCanalAtualDB : fatAdsAtual; // Fallback
+
+      const fatCanalAntDB = Number(faturamentosAnt?.find(f => f.canal === canal)?.faturamento_total || 0);
+      const totFatAnt = fatCanalAntDB > 0 ? fatCanalAntDB : fatAdsAnt; // Fallback
 
       const tacosAtual = totFatAtual > 0 ? (invAtual / totFatAtual) * 100 : 0;
       const tacosAnt = totFatAnt > 0 ? (invAnt / totFatAnt) * 100 : 0;
@@ -200,7 +208,7 @@ export default function AdsPage() {
       const diffMargemRs = margemRsAtual - margemRsAnt;
 
       const repAds = totFatAtual > 0 ? (fatAdsAtual / totFatAtual) * 100 : 0;
-      const tacosSugerido = fatAdsAtual > 0 ? (fatAdsAtual * 0.15) : 0;
+      const tacosSugerido = totFatAtual * 0.15; // Budget de 15% sobre o faturamento total
 
       return {
         canal,
@@ -215,6 +223,7 @@ export default function AdsPage() {
         margemRsAnt,
         diffMargemRs,
         totFatAtual,
+        totFatAtual_bruto: fatCanalBrutoAtual, // Para o campo de input não mostrar o fallback
         repAds,
         tacosSugerido
       };
@@ -222,6 +231,22 @@ export default function AdsPage() {
 
     setDadosComparativo(consolidado);
     setLoading(false);
+  };
+
+  const atualizarFaturamentoTotal = async (canal: string, valorStr: string) => {
+    const numVal = Number(valorStr);
+    
+    const { error } = await supabase.from('ads_faturamento_canal').upsert({
+      canal,
+      mes_referencia: mesSelecionado,
+      faturamento_total: numVal
+    }, { onConflict: 'canal, mes_referencia' });
+
+    if (error) {
+      alert("Erro ao salvar faturamento do canal: " + error.message);
+    } else {
+      carregarDadosDashboard();
+    }
   };
 
   const adicionarLinhaForm = () => {
@@ -339,7 +364,7 @@ export default function AdsPage() {
       const tarifaComissaoTotal = raw.receitaAds * (comissaoPct / 100);
       const embalagemTotal = 0.70 * raw.unidades;
 
-      const faturamentoTotal = raw.receitaAds;
+      const faturamentoTotal = raw.receitaAds; // Apenas faturamento deste anúncio
       const margemLiquidaVal = faturamentoTotal - (raw.investimento + custoProdutoTotal + impostoTotal + tarifaComissaoTotal + embalagemTotal + freteTotal);
       const margemLiquidaPct = faturamentoTotal > 0 ? (margemLiquidaVal / faturamentoTotal) : 0;
 
@@ -864,6 +889,30 @@ export default function AdsPage() {
                   </select>
                 </div>
               </div>
+            </div>
+
+            {/* BARRA DE INSERÇÃO DO FATURAMENTO TOTAL DO MÊS */}
+            <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800 mb-8">
+              <h3 className="text-[11px] font-black text-slate-300 uppercase tracking-wider mb-4">💰 Inserir Faturamento Total do Canal (Orgânico + Ads) - {mesSelecionado}</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {canaisAtivos.map(c => {
+                  const valorAtual = dadosComparativo.find(d => d.canal === c.canal)?.totFatAtual_bruto || "";
+                  return (
+                    <div key={c.canal}>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">{c.canal}</label>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        defaultValue={valorAtual} 
+                        onBlur={(e) => atualizarFaturamentoTotal(c.canal, e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-emerald-400 outline-none focus:border-purple-500"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[9px] text-slate-500 mt-3">* Ao clicar fora do campo, o valor é salvo e o TACOS e Budget Sugerido são recalculados automaticamente.</p>
             </div>
 
             {loading ? (
