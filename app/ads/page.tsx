@@ -255,16 +255,22 @@ export default function AdsPage() {
   const removerItemLive = (index: number, subIndex: number) => {
     const novasLinhas = [...linhas];
     novasLinhas[index].itensLive.splice(subIndex, 1);
-    novasLinhas[index].unidades = novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0);
-    novasLinhas[index].receitaAds = novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0);
+    
+    // Converte para String para evitar erro de tipagem TS2322
+    novasLinhas[index].unidades = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0));
+    novasLinhas[index].receitaAds = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0));
+    
     setLinhas(novasLinhas);
   };
 
   const atualizarItemLive = (index: number, subIndex: number, campo: string, valor: string) => {
     const novasLinhas = [...linhas];
     novasLinhas[index].itensLive[subIndex] = { ...novasLinhas[index].itensLive[subIndex], [campo]: valor };
-    novasLinhas[index].unidades = novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0);
-    novasLinhas[index].receitaAds = novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0);
+    
+    // Converte para String para evitar erro de tipagem TS2322
+    novasLinhas[index].unidades = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0));
+    novasLinhas[index].receitaAds = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0));
+    
     setLinhas(novasLinhas);
   };
 
@@ -747,7 +753,7 @@ export default function AdsPage() {
                         <th className="p-3 text-center w-10">
                           <input 
                             type="checkbox" 
-                            onChange={selecionarTodosCheckbox}
+                            onChange={selecionadosIds.length > 0 ? undefined : selecionarTodosCheckbox}
                             checked={lancamentos.length > 0 && selecionadosIds.length === lancamentos.length}
                             className="cursor-pointer accent-purple-600 rounded"
                           />
