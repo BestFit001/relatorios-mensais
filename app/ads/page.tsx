@@ -223,7 +223,7 @@ export default function AdsPage() {
         margemRsAnt,
         diffMargemRs,
         totFatAtual,
-        totFatAtual_bruto: fatCanalBrutoAtual, // Para o campo de input não mostrar o fallback
+        totFatAtual_bruto: fatCanalBrutoAtual,
         repAds,
         tacosSugerido
       };
@@ -234,8 +234,12 @@ export default function AdsPage() {
   };
 
   const atualizarFaturamentoTotal = async (canal: string, valorStr: string) => {
-    const numVal = Number(valorStr);
+    // RESOLUÇÃO DO BUG BRASILEIRO: Remove pontos de milhar e troca vírgula por ponto
+    let valorLimpo = valorStr.replace(/\./g, '').replace(',', '.');
+    const numVal = Number(valorLimpo);
     
+    if (isNaN(numVal)) return;
+
     const { error } = await supabase.from('ads_faturamento_canal').upsert({
       canal,
       mes_referencia: mesSelecionado,
@@ -901,12 +905,11 @@ export default function AdsPage() {
                     <div key={c.canal}>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">{c.canal}</label>
                       <input 
-                        type="number" 
-                        step="0.01"
+                        type="text" 
                         defaultValue={valorAtual} 
                         onBlur={(e) => atualizarFaturamentoTotal(c.canal, e.target.value)}
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-emerald-400 outline-none focus:border-purple-500"
-                        placeholder="0.00"
+                        placeholder="Ex: 153000 ou 153.000,00"
                       />
                     </div>
                   );
