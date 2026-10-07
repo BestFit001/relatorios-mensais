@@ -22,11 +22,13 @@ export default function AgendaPage() {
     data_entrega: "", tratativa: "" 
   };
   const [novaTarefa, setNovaTarefa] = useState(linhaVazia);
+  const [arquivoAnexo, setArquivoAnexo] = useState<File | null>(null);
 
   // Estado da Tabela
   const [tarefas, setTarefas] = useState<any[]>([]);
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
+  const [arquivoEdicao, setArquivoEdicao] = useState<File | null>(null);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -53,56 +55,99 @@ export default function AgendaPage() {
       const lista = data || [];
       setTarefas(lista);
       
-      // Extrair assuntos únicos para o filtro
       const assuntos = Array.from(new Set(lista.map(t => t.assunto).filter(Boolean)));
       setAssuntosDisponiveis(assuntos as string[]);
     }
     setLoading(false);
   };
 
+  const fazerUploadAnexo = async (ficheiro: File) => {
+    const fileExt = ficheiro.name.split('.').pop();
+    const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+    const filePath = `evidencias/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('anexos')
+      .upload(filePath, ficheiro);
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { data: publicUrlData } = supabase.storage.from('anexos').getPublicUrl(filePath);
+    return publicUrlData.publicUrl;
+  };
+
   const adicionarTarefa = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
 
-    const insercao = {
-      atividade: novaTarefa.atividade.trim(),
-      assunto: novaTarefa.assunto.trim().toUpperCase(),
-      responsavel: novaTarefa.responsavel.trim(),
-      prioridade: novaTarefa.prioridade,
-      data_solicitacao: hoje,
-      data_entrega: novaTarefa.data_entrega || null,
-      tratativa: novaTarefa.tratativa.trim()
-    };
+    let anexoUrl = null;
 
-    const { error } = await supabase.from('agenda_tarefas').insert([insercao]);
+    try {
+      if (arquivoAnexo) {
+        anexoUrl = await fazerUploadAnexo(arquivoAnexo);
+      }
 
-    if (error) alert("Erro ao criar tarefa: " + error.message);
-    else {
+      const insercao = {
+        atividade: novaTarefa.atividade.trim(),
+        assunto: novaTarefa.assunto.trim().toUpperCase(),
+        responsavel: novaTarefa.responsavel.trim(),
+        prioridade: novaTarefa.prioridade,
+        data_solicitacao: hoje,
+        data_entrega: novaTarefa.data_entrega || null,
+        tratativa: novaTarefa.tratativa.trim(),
+        anexo_url: anexoUrl
+      };
+
+      const { error } = await supabase.from('agenda_tarefas').insert([insercao]);
+
+      if (error) throw error;
+      
       setNovaTarefa(linhaVazia);
+      setArquivoAnexo(null);
       carregarTarefas();
+      
+    } catch (err: any) {
+      alert("Erro ao criar tarefa: " + err.message);
+    } finally {
+      setSalvando(false);
     }
-    setSalvando(false);
   };
 
   const iniciarEdicao = (item: any) => {
     setEditandoId(item.id);
     setDadosEdicao(item);
+    setArquivoEdicao(null);
   };
 
   const salvarEdicao = async (id: number) => {
-    const { error } = await supabase.from('agenda_tarefas').update({
-      atividade: dadosEdicao.atividade,
-      assunto: dadosEdicao.assunto.toUpperCase(),
-      responsavel: dadosEdicao.responsavel,
-      prioridade: dadosEdicao.prioridade,
-      data_entrega: dadosEdicao.data_entrega || null,
-      tratativa: dadosEdicao.tratativa
-    }).eq('id', id);
+    setSalvando(true);
+    let anexoUrlUpdate = dadosEdicao.anexo_url;
 
-    if (error) alert("Erro ao atualizar: " + error.message);
-    else {
+    try {
+      if (arquivoEdicao) {
+        anexoUrlUpdate = await fazerUploadAnexo(arquivoEdicao);
+      }
+
+      const { error } = await supabase.from('agenda_tarefas').update({
+        atividade: dadosEdicao.atividade,
+        assunto: dadosEdicao.assunto.toUpperCase(),
+        responsavel: dadosEdicao.responsavel,
+        prioridade: dadosEdicao.prioridade,
+        data_entrega: dadosEdicao.data_entrega || null,
+        tratativa: dadosEdicao.tratativa,
+        anexo_url: anexoUrlUpdate
+      }).eq('id', id);
+
+      if (error) throw error;
+
       setEditandoId(null);
       carregarTarefas();
+    } catch (err: any) {
+      alert("Erro ao atualizar: " + err.message);
+    } finally {
+      setSalvando(false);
     }
   };
 
@@ -178,11 +223,21 @@ export default function AgendaPage() {
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entrega</label>
               <input type="date" value={novaTarefa.data_entrega} onChange={e => setNovaTarefa({...novaTarefa, data_entrega: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none cursor-pointer" required />
             </div>
-            <div className="md:col-span-5">
+            
+            <div className="md:col-span-4">
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Tratativa Inicial (Opcional)</label>
               <input type="text" value={novaTarefa.tratativa} onChange={e => setNovaTarefa({...novaTarefa, tratativa: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500" placeholder="Ações tomadas..." />
             </div>
-            <div>
+            <div className="md:col-span-1">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Anexar Evidência</label>
+              <input 
+                type="file" 
+                accept="image/*, application/pdf"
+                onChange={e => setArquivoAnexo(e.target.files ? e.target.files[0] : null)} 
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-[10px] text-slate-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-bold file:bg-slate-800 file:text-white cursor-pointer outline-none" 
+              />
+            </div>
+            <div className="md:col-span-1">
               <button 
                 type="submit" 
                 disabled={salvando} 
@@ -238,6 +293,7 @@ export default function AgendaPage() {
                     {!visaoSimplificada && <th className="p-3 text-center">Dt. Solicitação</th>}
                     {!visaoSimplificada && <th className="p-3 text-center">Prioridade</th>}
                     {!visaoSimplificada && <th className="p-3 text-center">Dt. Entrega</th>}
+                    {!visaoSimplificada && <th className="p-3 text-center">Anexo</th>}
                     <th className="p-3 min-w-[200px]">Tratativa</th>
                     {!visaoSimplificada && <th className="p-3 text-center">Concluído</th>}
                     {!visaoSimplificada && <th className="p-3">Status Entrega</th>}
@@ -250,7 +306,7 @@ export default function AgendaPage() {
                     const atrasado = !item.finalizado && item.data_entrega && hoje > item.data_entrega;
 
                     return (
-                      <tr key={item.id} className={`hover:bg-slate-800/40 transition-colors ${item.finalizado ? 'opacity-50' : ''}`}>
+                      <tr key={item.id} className={`transition-colors ${item.finalizado ? 'bg-emerald-900/20 hover:bg-emerald-900/30' : 'hover:bg-slate-800/40'}`}>
                         <td className="p-3 text-center font-black text-indigo-400 text-sm">
                           {String(item.id).padStart(2, '0')}
                         </td>
@@ -259,7 +315,7 @@ export default function AgendaPage() {
                           {isEditing ? (
                             <input type="text" value={dadosEdicao.atividade} onChange={e => setDadosEdicao({...dadosEdicao, atividade: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
                           ) : (
-                            <span className={`font-bold ${atrasado ? 'text-rose-400' : 'text-slate-200'} whitespace-normal line-clamp-2`}>{item.atividade}</span>
+                            <span className={`font-bold ${item.finalizado ? 'text-emerald-400' : atrasado ? 'text-rose-400' : 'text-slate-200'} whitespace-normal line-clamp-2`}>{item.atividade}</span>
                           )}
                         </td>
 
@@ -313,11 +369,30 @@ export default function AgendaPage() {
                           </td>
                         )}
 
+                        {!visaoSimplificada && (
+                          <td className="p-3 text-center">
+                            {isEditing ? (
+                              <input 
+                                type="file" 
+                                onChange={e => setArquivoEdicao(e.target.files ? e.target.files[0] : null)} 
+                                className="w-24 bg-slate-900 border border-slate-700 rounded p-1 text-[9px] text-slate-400 file:mr-1 file:py-0.5 file:px-1 file:rounded file:border-0 file:text-[9px] file:bg-slate-800 file:text-white cursor-pointer outline-none" 
+                                title="Substituir anexo"
+                              />
+                            ) : item.anexo_url ? (
+                              <a href={item.anexo_url} target="_blank" rel="noopener noreferrer" className="bg-indigo-950/60 text-indigo-400 border border-indigo-900/50 hover:bg-indigo-900/60 px-2 py-1 rounded text-[10px] font-bold transition-colors inline-block">
+                                📸 Ver
+                              </a>
+                            ) : (
+                              <span className="text-slate-600">-</span>
+                            )}
+                          </td>
+                        )}
+
                         <td className="p-3">
                           {isEditing ? (
                             <input type="text" value={dadosEdicao.tratativa} onChange={e => setDadosEdicao({...dadosEdicao, tratativa: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
                           ) : (
-                            <span className="text-slate-400 italic whitespace-normal line-clamp-2">{item.tratativa || "-"}</span>
+                            <span className={`italic whitespace-normal line-clamp-2 ${item.finalizado ? 'text-emerald-200/70' : 'text-slate-400'}`}>{item.tratativa || "-"}</span>
                           )}
                         </td>
 
@@ -343,7 +418,7 @@ export default function AgendaPage() {
                         <td className="p-3 text-center">
                           {isEditing ? (
                             <div className="flex flex-col gap-1">
-                              <button onClick={() => salvarEdicao(item.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded text-[10px] font-bold">Salvar</button>
+                              <button onClick={() => salvarEdicao(item.id)} disabled={salvando} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded text-[10px] font-bold">{salvando ? "..." : "Salvar"}</button>
                               <button onClick={() => setEditandoId(null)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded text-[10px] font-bold">Cancelar</button>
                             </div>
                           ) : (
