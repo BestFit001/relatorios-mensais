@@ -51,6 +51,30 @@ function normalizarSku(valor: any) {
   return s.toLowerCase();
 }
 
+function colLetraParaIndice(colStr: string): number {
+  const s = colStr.trim().toUpperCase().replace(/[^A-Z]/g, "");
+  let idx = 0;
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code >= 65 && code <= 90) {
+      idx = idx * 26 + (code - 64);
+    }
+  }
+  return idx - 1;
+}
+
+function extrairLetraERow(val: string): { coluna: string; linha?: number } {
+  const limpo = String(val || "").trim().toUpperCase();
+  const match = limpo.match(/^([A-Z]+)(\d+)?$/);
+  if (match) {
+    return {
+      coluna: match[1],
+      linha: match[2] ? parseInt(match[2], 10) : undefined
+    };
+  }
+  return { coluna: limpo };
+}
+
 function parseNumero(valor: any): number {
   if (valor === null || valor === undefined || valor === "") return 0;
   if (typeof valor === "number") return valor;
@@ -107,15 +131,15 @@ export default function AdsPage() {
 
   // ==================== ESTADOS DA ABA SUGESTÕES ====================
   const [canalSugestao, setCanalSugestao] = useState("");
-  const [colunasPlanilha, setColunasPlanilha] = useState<string[]>([]);
-  const [dadosBrutosPlanilha, setDadosBrutosPlanilha] = useState<any[]>([]);
-  const [colunaSku, setColunaSku] = useState("");
-  const [colunaPdv, setColunaPdv] = useState("");
-  const [colunaRepasse, setColunaRepasse] = useState("");
-  const [colunaQtd, setColunaQtd] = useState("");
-  const [colunaRebate, setColunaRebate] = useState("");
+  const [matrizPlanilha, setMatrizPlanilha] = useState<any[][]>([]);
+  const [linhaInicial, setLinhaInicial] = useState("6");
+  const [colunaSku, setColunaSku] = useState("A6");
+  const [colunaPdv, setColunaPdv] = useState("B6");
+  const [colunaRepasse, setColunaRepasse] = useState("C6");
+  const [colunaQtd, setColunaQtd] = useState("D6");
+  const [colunaRebate, setColunaRebate] = useState("E6");
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
-  const [formulaLiquidez, setFormulaLiquidez] = useState("C - (B * (IMPOSTO / 100)) - (D * CUSTO) + E");
+  const [formulaLiquidez, setFormulaLiquidez] = useState("C6 - (B6 * 9%) - (D6 * CUSTO) + E6");
   const [sugestoesCalculadas, setSugestoesCalculadas] = useState<any[]>([]);
   const [filtroSugestao, setFiltroSugestao] = useState<"vendas" | "liquidez_valor" | "liquidez_pct">("vendas");
   const [pesquisaSkuSugestao, setPesquisaSkuSugestao] = useState("");
@@ -148,7 +172,6 @@ export default function AdsPage() {
     }
   }, [subAba, mesSelecionado, mesComparativo]);
 
-  // Carrega mapeamento permanente ao alterar canal da sugestão
   useEffect(() => {
     if (canalSugestao) {
       carregarConfiguracoesSugestao(canalSugestao);
@@ -160,11 +183,12 @@ export default function AdsPage() {
     if (salvo) {
       try {
         const parsed = JSON.parse(salvo);
-        setColunaSku(parsed.colunaSku || "");
-        setColunaPdv(parsed.colunaPdv || "");
-        setColunaRepasse(parsed.colunaRepasse || "");
-        setColunaQtd(parsed.colunaQtd || "");
-        setColunaRebate(parsed.colunaRebate || "");
+        if (parsed.linhaInicial) setLinhaInicial(parsed.linhaInicial);
+        if (parsed.colunaSku) setColunaSku(parsed.colunaSku);
+        if (parsed.colunaPdv) setColunaPdv(parsed.colunaPdv);
+        if (parsed.colunaRepasse) setColunaRepasse(parsed.colunaRepasse);
+        if (parsed.colunaQtd) setColunaQtd(parsed.colunaQtd);
+        if (parsed.colunaRebate !== undefined) setColunaRebate(parsed.colunaRebate);
         if (parsed.aliquotaImposto) setAliquotaImposto(parsed.aliquotaImposto);
         if (parsed.formulaLiquidez) setFormulaLiquidez(parsed.formulaLiquidez);
       } catch (err) {
@@ -176,6 +200,7 @@ export default function AdsPage() {
   const salvarConfiguracoesSugestao = (canal: string, overrides: any = {}) => {
     if (!canal) return;
     const config = {
+      linhaInicial: overrides.linhaInicial ?? linhaInicial,
       colunaSku: overrides.colunaSku ?? colunaSku,
       colunaPdv: overrides.colunaPdv ?? colunaPdv,
       colunaRepasse: overrides.colunaRepasse ?? colunaRepasse,
@@ -654,7 +679,7 @@ export default function AdsPage() {
 
     const produtoNome = custoRegra?.produto || "Produto sem nome";
     const custoUnitario = Number(custoRegra?.custo_unitario || 0);
-    const custoProdutoTotal = custoUnitario * unidades;
+    const custoProdutoTotal = custoUnitario * units_vendidas(unidades);
     const precoUnitarioEstimado = unidades > 0 ? (receitaAds / unidades) : 100;
     
     const { freteTotal, tarifaComissaoTotal } = calcularCustoCanal(canalSelecionado, precoUnitarioEstimado, receitaAds, unidades, mlRegra);
@@ -691,6 +716,8 @@ export default function AdsPage() {
       carregarLancamentos();
     }
   };
+
+  const units_vendidas = (u: number) => u;
 
   const excluirLancamento = async (id: number) => {
     if (!confirm("Tem certeza que deseja apagar este registo?")) return;
@@ -739,7 +766,7 @@ export default function AdsPage() {
     }
   };
 
-  // ==================== LÓGICA DA ABA DE SUGESTÕES ====================
+  // ==================== PROCESSAMENTO DE SUGESTÕES VIA LETRAS/COODERNADAS ====================
 
   const handleUploadPlanilhaSugestao = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -752,40 +779,15 @@ export default function AdsPage() {
         const wb = XLSX.read(bstr, { type: "binary" });
         const wsName = wb.SheetNames[0];
         const ws = wb.Sheets[wsName];
-        const data: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        // Lê a planilha inteira como matriz 2D (linhas x colunas)
+        const matrix: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
 
-        if (data.length === 0) {
+        if (!matrix || matrix.length === 0) {
           alert("A planilha está vazia.");
           return;
         }
 
-        const cols = Object.keys(data[0]);
-        setColunasPlanilha(cols);
-        setDadosBrutosPlanilha(data);
-
-        // Auto-selecionar caso já existam colunas com nomes parecidos
-        const findCol = (terms: string[]) => cols.find(c => terms.some(t => c.toLowerCase().includes(t))) || "";
-        
-        const autoSku = colunaSku || findCol(["sku", "código", "codigo", "item"]);
-        const autoPdv = colunaPdv || findCol(["pdv", "preço", "preco", "faturamento", "venda"]);
-        const autoRepasse = colunaRepasse || findCol(["repasse", "líquido", "liquido", "receber"]);
-        const autoQtd = colunaQtd || findCol(["quantidade", "qtd", "unidades", "unid"]);
-        const autoRebate = colunaRebate || findCol(["rebate", "incentivo", "bonificacao", "bonificação"]);
-
-        if (autoSku) setColunaSku(autoSku);
-        if (autoPdv) setColunaPdv(autoPdv);
-        if (autoRepasse) setColunaRepasse(autoRepasse);
-        if (autoQtd) setColunaQtd(autoQtd);
-        if (autoRebate) setColunaRebate(autoRebate);
-
-        salvarConfiguracoesSugestao(canalSugestao, {
-          colunaSku: autoSku,
-          colunaPdv: autoPdv,
-          colunaRepasse: autoRepasse,
-          colunaQtd: autoQtd,
-          colunaRebate: autoRebate
-        });
-
+        setMatrizPlanilha(matrix);
       } catch (err: any) {
         alert("Erro ao ler o ficheiro: " + err.message);
       }
@@ -793,23 +795,55 @@ export default function AdsPage() {
     reader.readAsBinaryString(file);
   };
 
+  const handleMapeamentoChange = (campo: string, valor: string) => {
+    const parsed = extrairLetraERow(valor);
+    if (parsed.linha && !isNaN(parsed.linha)) {
+      setLinhaInicial(String(parsed.linha));
+    }
+
+    if (campo === "sku") setColunaSku(valor.toUpperCase());
+    if (campo === "pdv") setColunaPdv(valor.toUpperCase());
+    if (campo === "repasse") setColunaRepasse(valor.toUpperCase());
+    if (campo === "qtd") setColunaQtd(valor.toUpperCase());
+    if (campo === "rebate") setColunaRebate(valor.toUpperCase());
+
+    salvarConfiguracoesSugestao(canalSugestao, {
+      [campo === "sku" ? "colunaSku" :
+       campo === "pdv" ? "colunaPdv" :
+       campo === "repasse" ? "colunaRepasse" :
+       campo === "qtd" ? "colunaQtd" : "colunaRebate"]: valor.toUpperCase(),
+      linhaInicial: parsed.linha ? String(parsed.linha) : linhaInicial
+    });
+  };
+
   const calcularSugestoes = () => {
-    if (!dadosBrutosPlanilha || dadosBrutosPlanilha.length === 0) {
+    if (!matrizPlanilha || matrizPlanilha.length === 0) {
       alert("Por favor, carregue uma planilha primeiro.");
       return;
     }
 
-    if (!colunaSku || !colunaPdv || !colunaRepasse || !colunaQtd) {
-      alert("Por favor, selecione ao menos as colunas de SKU, PDV, Repasse e Quantidade.");
+    const { coluna: cSku } = extrairLetraERow(colunaSku);
+    const { coluna: cPdv } = extrairLetraERow(colunaPdv);
+    const { coluna: cRepasse } = extrairLetraERow(colunaRepasse);
+    const { coluna: cQtd } = extrairLetraERow(colunaQtd);
+    const { coluna: cRebate } = extrairLetraERow(colunaRebate);
+
+    if (!cSku || !cPdv || !cRepasse || !cQtd) {
+      alert("Por favor, preencha as letras das colunas de SKU, PDV, Repasse e Quantidade (ex: A6, B6, C6, D6).");
       return;
     }
 
-    // Salvar configurações no localStorage
     salvarConfiguracoesSugestao(canalSugestao);
 
+    const idxSku = colLetraParaIndice(cSku);
+    const idxPdv = colLetraParaIndice(cPdv);
+    const idxRepasse = colLetraParaIndice(cRepasse);
+    const idxQtd = colLetraParaIndice(cQtd);
+    const idxRebate = cRebate ? colLetraParaIndice(cRebate) : -1;
+
+    const startRowIndex = Math.max(0, parseInt(linhaInicial, 10) - 1 || 0);
     const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
 
-    // Agregação por SKU
     const mapaAgrupado = new Map<string, {
       sku: string;
       produto: string;
@@ -823,15 +857,18 @@ export default function AdsPage() {
       liquidezValor: number;
     }>();
 
-    for (const row of dadosBrutosPlanilha) {
-      const skuOriginal = String(row[colunaSku] || "").trim();
-      const skuKey = normalizarSku(skuOriginal);
-      if (!skuKey) continue;
+    for (let r = startRowIndex; r < matrizPlanilha.length; r++) {
+      const row = matrizPlanilha[r];
+      if (!row || row.length === 0) continue;
 
-      const pdv = parseNumero(row[colunaPdv]);
-      const repasse = parseNumero(row[colunaRepasse]);
-      const qtd = parseNumero(row[colunaQtd]) || 1;
-      const rebate = colunaRebate ? parseNumero(row[colunaRebate]) : 0;
+      const skuOriginal = String(row[idxSku] || "").trim();
+      const skuKey = normalizarSku(skuOriginal);
+      if (!skuKey || skuKey === "sku" || skuKey === "codigo" || skuKey === "total") continue;
+
+      const pdv = parseNumero(row[idxPdv]);
+      const repasse = parseNumero(row[idxRepasse]);
+      const qtd = parseNumero(row[idxQtd]) || 1;
+      const rebate = idxRebate >= 0 ? parseNumero(row[idxRebate]) : 0;
 
       const custoData = custosMap.get(skuKey);
       const custoUnitario = Number(custoData?.custo_unitario || 0);
@@ -840,22 +877,36 @@ export default function AdsPage() {
       const impostoLinha = pdv * (impostoPct / 100);
       const custoLinha = qtd * custoUnitario;
 
-      // Executa fórmula do motor: (C - (B * Imposto%) - (D * Custo) + E)
-      // C = Repasse, B = PDV, D = Quantidade, E = Rebate
+      // Execução da fórmula dinâmica estilo Excel
       let liquidezLinha = 0;
       try {
-        let formulaParse = formulaLiquidez
-          .replace(/%/g, "/100")
-          .replace(/\bC\b/g, String(repasse))
-          .replace(/\bB\b/g, String(pdv))
-          .replace(/\bD\b/g, String(qtd))
-          .replace(/\bE\b/g, String(rebate))
-          .replace(/custo.*coluna\s*a/gi, String(custoUnitario))
-          .replace(/\bcusto\b/gi, String(custoUnitario))
-          .replace(/\bimposto\b/gi, String(impostoPct));
+        let formulaProcessada = formulaLiquidez
+          .replace(/\bCUSTO\b/gi, String(custoUnitario))
+          .replace(/\bIMPOSTO\s*%/gi, `(${impostoPct}/100)`)
+          .replace(/\bIMPOSTO\s*\/\s*100\b/gi, `(${impostoPct}/100)`)
+          .replace(/\bIMPOSTO\b/gi, `(${impostoPct}/100)`)
+          .replace(/(\d+(?:\.\d+)?)%/g, '($1/100)');
 
-        if (/^[0-9+\-*/().\s]+$/.test(formulaParse)) {
-          liquidezLinha = Function(`"use strict"; return (${formulaParse})`)();
+        // Substitui referências de células com número de linha (ex: A6, B6, C6, etc.) pegando a coluna na linha atual
+        formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]+)\d+\b/g, (_match, colLetters) => {
+          const cIndex = colLetraParaIndice(colLetters);
+          if (cIndex >= 0 && cIndex < row.length) {
+            return String(parseNumero(row[cIndex]));
+          }
+          return "0";
+        });
+
+        // Substitui letras soltas de coluna (ex: C, B, D, E)
+        formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]{1,2})\b/g, (match) => {
+          const cIndex = colLetraParaIndice(match);
+          if (cIndex >= 0 && cIndex < row.length) {
+            return String(parseNumero(row[cIndex]));
+          }
+          return "0";
+        });
+
+        if (/^[0-9+\-*/().\s]+$/.test(formulaProcessada)) {
+          liquidezLinha = Function(`"use strict"; return (${formulaProcessada})`)();
         } else {
           liquidezLinha = repasse - impostoLinha - custoLinha + rebate;
         }
@@ -899,7 +950,6 @@ export default function AdsPage() {
     setSugestoesCalculadas(lista);
   };
 
-  // Ordenação e Filtros na Tabela de Sugestões
   const sugestoesExibidas = [...sugestoesCalculadas]
     .filter(item => {
       const matchBusca = !pesquisaSkuSugestao || 
@@ -1242,7 +1292,7 @@ export default function AdsPage() {
                             </td>
                             <td className="p-3 text-slate-300 max-w-[200px] truncate">{item.nome_anuncio}</td>
                             <td className="p-3 text-center font-bold text-white">
-                              {isEditing ? <input type="number" value={dadosEdicao.unidades_vendidas} onChange={(e) => setDadosEdicao({ ...dadosEdicao, units_vendidas: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white" /> : item.unidades_vendidas}
+                              {isEditing ? <input type="number" value={dadosEdicao.unidades_vendidas} onChange={(e) => setDadosEdicao({ ...dadosEdicao, unidades_vendidas: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white" /> : item.unidades_vendidas}
                             </td>
                             <td className="p-3 text-right font-mono text-emerald-400 font-bold">
                               {isEditing ? <input type="number" step="0.01" value={dadosEdicao.retorno_bruto} onChange={(e) => setDadosEdicao({ ...dadosEdicao, retorno_bruto: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white" /> : formatarMoeda(item.retorno_bruto)}
@@ -1492,13 +1542,13 @@ export default function AdsPage() {
                     <span>💡 Análise de Vendas e Sugestões para Ads</span>
                   </h2>
                   <p className="text-xs text-slate-400 mt-1">
-                    Carregue o relatório de vendas do canal para calcular a liquidez real de cada SKU e descobrir oportunidades de investimento.
+                    Insira as coordenadas das colunas (ex: <strong>A6</strong>, <strong>B6</strong>) para ler os dados da planilha e calcular a liquidez de cada SKU.
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-[10px] font-bold text-slate-500 uppercase">Memória Volátil:</span>
                   <span className="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300 text-[11px] font-mono">
-                    {dadosBrutosPlanilha.length} linhas carregadas
+                    {matrizPlanilha.length} linhas carregadas
                   </span>
                 </div>
               </div>
@@ -1529,89 +1579,83 @@ export default function AdsPage() {
                 </div>
               </div>
 
-              {/* MAPEAMENTO DAS COLUNAS (SALVO PERMANENTEMENTE) */}
+              {/* MAPEAMENTO DAS COORDENADAS / COLUNAS */}
               <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800 mb-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-xs font-black text-purple-400 uppercase tracking-wider">
-                    📌 Mapeamento de Colunas (Salvo no Motor para {canalSugestao || "o Canal"})
+                    📌 Mapeamento de Colunas / Coordenadas ({canalSugestao || "Canal"})
                   </h3>
-                  <span className="text-[10px] text-slate-500">* Lembra a seleção após recarregar a página</span>
+                  <span className="text-[10px] text-slate-500">* Salvo no navegador para este canal</span>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna SKU [A]:</label>
-                    <select
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha Inicial:</label>
+                    <input
+                      type="number"
+                      value={linhaInicial}
+                      onChange={(e) => {
+                        setLinhaInicial(e.target.value);
+                        salvarConfiguracoesSugestao(canalSugestao, { linhaInicial: e.target.value });
+                      }}
+                      placeholder="6"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna SKU:</label>
+                    <input
+                      type="text"
                       value={colunaSku}
-                      onChange={(e) => {
-                        setColunaSku(e.target.value);
-                        salvarConfiguracoesSugestao(canalSugestao, { colunaSku: e.target.value });
-                      }}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
-                    >
-                      <option value="">Selecione...</option>
-                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
-                    </select>
+                      onChange={(e) => handleMapeamentoChange("sku", e.target.value)}
+                      placeholder="A6 ou A"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
+                    />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna PDV [B]:</label>
-                    <select
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna PDV:</label>
+                    <input
+                      type="text"
                       value={colunaPdv}
-                      onChange={(e) => {
-                        setColunaPdv(e.target.value);
-                        salvarConfiguracoesSugestao(canalSugestao, { colunaPdv: e.target.value });
-                      }}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
-                    >
-                      <option value="">Selecione...</option>
-                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
-                    </select>
+                      onChange={(e) => handleMapeamentoChange("pdv", e.target.value)}
+                      placeholder="B6 ou B"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
+                    />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna REPASSE [C]:</label>
-                    <select
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Repasse:</label>
+                    <input
+                      type="text"
                       value={colunaRepasse}
-                      onChange={(e) => {
-                        setColunaRepasse(e.target.value);
-                        salvarConfiguracoesSugestao(canalSugestao, { colunaRepasse: e.target.value });
-                      }}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
-                    >
-                      <option value="">Selecione...</option>
-                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
-                    </select>
+                      onChange={(e) => handleMapeamentoChange("repasse", e.target.value)}
+                      placeholder="C6 ou C"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
+                    />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna QTD [D]:</label>
-                    <select
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Qtd:</label>
+                    <input
+                      type="text"
                       value={colunaQtd}
-                      onChange={(e) => {
-                        setColunaQtd(e.target.value);
-                        salvarConfiguracoesSugestao(canalSugestao, { colunaQtd: e.target.value });
-                      }}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
-                    >
-                      <option value="">Selecione...</option>
-                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
-                    </select>
+                      onChange={(e) => handleMapeamentoChange("qtd", e.target.value)}
+                      placeholder="D6 ou D"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
+                    />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna REBATE [E]:</label>
-                    <select
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Rebate:</label>
+                    <input
+                      type="text"
                       value={colunaRebate}
-                      onChange={(e) => {
-                        setColunaRebate(e.target.value);
-                        salvarConfiguracoesSugestao(canalSugestao, { colunaRebate: e.target.value });
-                      }}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
-                    >
-                      <option value="">(Opcional / Vazio)</option>
-                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
-                    </select>
+                      onChange={(e) => handleMapeamentoChange("rebate", e.target.value)}
+                      placeholder="E6 ou E"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
+                    />
                   </div>
                 </div>
               </div>
@@ -1619,7 +1663,7 @@ export default function AdsPage() {
               {/* CAMPOS FIXOS: IMPOSTO E FÓRMULA DE LIQUIDEZ */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Alíquota de Imposto (%):</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Alíquota Imposto (%):</label>
                   <input
                     type="text"
                     value={aliquotaImposto}
@@ -1634,7 +1678,7 @@ export default function AdsPage() {
 
                 <div className="md:col-span-3">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                    Fórmula de Liquidez (A=SKU, B=PDV, C=REPASSE, D=QTD, E=REBATE, CUSTO):
+                    Fórmula de Liquidez (Ex: C6 - (B6 * 9%) - (D6 * CUSTO) + E6):
                   </label>
                   <input
                     type="text"
@@ -1643,7 +1687,7 @@ export default function AdsPage() {
                       setFormulaLiquidez(e.target.value);
                       salvarConfiguracoesSugestao(canalSugestao, { formulaLiquidez: e.target.value });
                     }}
-                    placeholder="C - (B * 9%) - (D * CUSTO) + E"
+                    placeholder="C6 - (B6 * 9%) - (D6 * CUSTO) + E6"
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-purple-300 outline-none"
                   />
                 </div>
@@ -1653,9 +1697,9 @@ export default function AdsPage() {
                 <button
                   type="button"
                   onClick={calcularSugestoes}
-                  disabled={dadosBrutosPlanilha.length === 0}
+                  disabled={matrizPlanilha.length === 0}
                   className={`py-3 px-8 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg ${
-                    dadosBrutosPlanilha.length === 0
+                    matrizPlanilha.length === 0
                       ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                       : 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer'
                   }`}
@@ -1671,7 +1715,7 @@ export default function AdsPage() {
                 <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <h3 className="text-lg font-bold text-white">Ranking de Sugestões de Ads ({canalSugestao})</h3>
-                    <p className="text-xs text-slate-400 mt-1">Produtos consolidados com maiores volumes de vendas e liquidez para direcionamento de verba.</p>
+                    <p className="text-xs text-slate-400 mt-1">Produtos calculados linha a linha a partir da linha {linhaInicial} com a fórmula definida.</p>
                   </div>
 
                   {/* FILTROS E ORDENAÇÃO */}
