@@ -132,14 +132,14 @@ export default function AdsPage() {
   // ==================== ESTADOS DA ABA SUGESTÕES ====================
   const [canalSugestao, setCanalSugestao] = useState("");
   const [matrizPlanilha, setMatrizPlanilha] = useState<any[][]>([]);
-  const [linhaInicial, setLinhaInicial] = useState("6");
-  const [colunaSku, setColunaSku] = useState("A6");
-  const [colunaPdv, setColunaPdv] = useState("B6");
-  const [colunaRepasse, setColunaRepasse] = useState("C6");
-  const [colunaQtd, setColunaQtd] = useState("D6");
-  const [colunaRebate, setColunaRebate] = useState("E6");
+  const [linhaInicial, setLinhaInicial] = useState("7");
+  const [colunaSku, setColunaSku] = useState("W7");
+  const [colunaPdv, setColunaPdv] = useState("I7");
+  const [colunaRepasse, setColunaRepasse] = useState("S7");
+  const [colunaQtd, setColunaQtd] = useState("H7");
+  const [colunaRebate, setColunaRebate] = useState("");
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
-  const [formulaLiquidez, setFormulaLiquidez] = useState("C6 - (B6 * 9%) - (D6 * CUSTO) + E6");
+  const [formulaLiquidez, setFormulaLiquidez] = useState("S - (H * CUSTO) - (I * IMPOSTO)");
   const [sugestoesCalculadas, setSugestoesCalculadas] = useState<any[]>([]);
   const [filtroSugestao, setFiltroSugestao] = useState<"vendas" | "liquidez_valor" | "liquidez_pct">("vendas");
   const [pesquisaSkuSugestao, setPesquisaSkuSugestao] = useState("");
@@ -679,7 +679,7 @@ export default function AdsPage() {
 
     const produtoNome = custoRegra?.produto || "Produto sem nome";
     const custoUnitario = Number(custoRegra?.custo_unitario || 0);
-    const custoProdutoTotal = custoUnitario * units_vendidas(unidades);
+    const custoProdutoTotal = custoUnitario * unidades;
     const precoUnitarioEstimado = unidades > 0 ? (receitaAds / unidades) : 100;
     
     const { freteTotal, tarifaComissaoTotal } = calcularCustoCanal(canalSelecionado, precoUnitarioEstimado, receitaAds, unidades, mlRegra);
@@ -716,8 +716,6 @@ export default function AdsPage() {
       carregarLancamentos();
     }
   };
-
-  const units_vendidas = (u: number) => u;
 
   const excluirLancamento = async (id: number) => {
     if (!confirm("Tem certeza que deseja apagar este registo?")) return;
@@ -766,7 +764,7 @@ export default function AdsPage() {
     }
   };
 
-  // ==================== PROCESSAMENTO DE SUGESTÕES VIA LETRAS/COODERNADAS ====================
+  // ==================== PROCESSAMENTO DE SUGESTÕES VIA COORDENADAS ====================
 
   const handleUploadPlanilhaSugestao = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -779,7 +777,6 @@ export default function AdsPage() {
         const wb = XLSX.read(bstr, { type: "binary" });
         const wsName = wb.SheetNames[0];
         const ws = wb.Sheets[wsName];
-        // Lê a planilha inteira como matriz 2D (linhas x colunas)
         const matrix: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
 
         if (!matrix || matrix.length === 0) {
@@ -829,7 +826,7 @@ export default function AdsPage() {
     const { coluna: cRebate } = extrairLetraERow(colunaRebate);
 
     if (!cSku || !cPdv || !cRepasse || !cQtd) {
-      alert("Por favor, preencha as letras das colunas de SKU, PDV, Repasse e Quantidade (ex: A6, B6, C6, D6).");
+      alert("Por favor, preencha as letras das colunas de SKU, PDV, Repasse e Quantidade.");
       return;
     }
 
@@ -877,7 +874,7 @@ export default function AdsPage() {
       const impostoLinha = pdv * (impostoPct / 100);
       const custoLinha = qtd * custoUnitario;
 
-      // Execução da fórmula dinâmica estilo Excel
+      // Execução da fórmula
       let liquidezLinha = 0;
       try {
         let formulaProcessada = formulaLiquidez
@@ -887,7 +884,7 @@ export default function AdsPage() {
           .replace(/\bIMPOSTO\b/gi, `(${impostoPct}/100)`)
           .replace(/(\d+(?:\.\d+)?)%/g, '($1/100)');
 
-        // Substitui referências de células com número de linha (ex: A6, B6, C6, etc.) pegando a coluna na linha atual
+        // Substituição das células por coluna linha a linha
         formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]+)\d+\b/g, (_match, colLetters) => {
           const cIndex = colLetraParaIndice(colLetters);
           if (cIndex >= 0 && cIndex < row.length) {
@@ -896,7 +893,7 @@ export default function AdsPage() {
           return "0";
         });
 
-        // Substitui letras soltas de coluna (ex: C, B, D, E)
+        // Letras avulsas
         formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]{1,2})\b/g, (match) => {
           const cIndex = colLetraParaIndice(match);
           if (cIndex >= 0 && cIndex < row.length) {
@@ -950,6 +947,7 @@ export default function AdsPage() {
     setSugestoesCalculadas(lista);
   };
 
+  // Ordenação com rigor semântico entre Liquidez R$ e Margem %
   const sugestoesExibidas = [...sugestoesCalculadas]
     .filter(item => {
       const matchBusca = !pesquisaSkuSugestao || 
@@ -960,8 +958,8 @@ export default function AdsPage() {
     })
     .sort((a, b) => {
       if (filtroSugestao === "vendas") return b.quantidade - a.quantidade;
-      if (filtroSugestao === "liquidez_valor") return b.liquidezValor - a.liquidezValor;
-      if (filtroSugestao === "liquidez_pct") return b.liquidezMargemPct - a.liquidezMargemPct;
+      if (filtroSugestao === "liquidez_valor") return b.liquidezValor - a.liquidezValor; // Dinheiro real em caixa
+      if (filtroSugestao === "liquidez_pct") return b.liquidezMargemPct - a.liquidezMargemPct; // Eficiência percentual
       return 0;
     });
 
@@ -1542,7 +1540,7 @@ export default function AdsPage() {
                     <span>💡 Análise de Vendas e Sugestões para Ads</span>
                   </h2>
                   <p className="text-xs text-slate-400 mt-1">
-                    Insira as coordenadas das colunas (ex: <strong>A6</strong>, <strong>B6</strong>) para ler os dados da planilha e calcular a liquidez de cada SKU.
+                    Insira as coordenadas das colunas (ex: <strong>W7</strong>, <strong>I7</strong>) para ler os dados da planilha e calcular a liquidez de cada SKU.
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -1598,7 +1596,7 @@ export default function AdsPage() {
                         setLinhaInicial(e.target.value);
                         salvarConfiguracoesSugestao(canalSugestao, { linhaInicial: e.target.value });
                       }}
-                      placeholder="6"
+                      placeholder="7"
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
                     />
                   </div>
@@ -1609,7 +1607,7 @@ export default function AdsPage() {
                       type="text"
                       value={colunaSku}
                       onChange={(e) => handleMapeamentoChange("sku", e.target.value)}
-                      placeholder="A6 ou A"
+                      placeholder="W7 ou W"
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
                     />
                   </div>
@@ -1620,7 +1618,7 @@ export default function AdsPage() {
                       type="text"
                       value={colunaPdv}
                       onChange={(e) => handleMapeamentoChange("pdv", e.target.value)}
-                      placeholder="B6 ou B"
+                      placeholder="I7 ou I"
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
                     />
                   </div>
@@ -1631,7 +1629,7 @@ export default function AdsPage() {
                       type="text"
                       value={colunaRepasse}
                       onChange={(e) => handleMapeamentoChange("repasse", e.target.value)}
-                      placeholder="C6 ou C"
+                      placeholder="S7 ou S"
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
                     />
                   </div>
@@ -1642,7 +1640,7 @@ export default function AdsPage() {
                       type="text"
                       value={colunaQtd}
                       onChange={(e) => handleMapeamentoChange("qtd", e.target.value)}
-                      placeholder="D6 ou D"
+                      placeholder="H7 ou H"
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
                     />
                   </div>
@@ -1653,7 +1651,7 @@ export default function AdsPage() {
                       type="text"
                       value={colunaRebate}
                       onChange={(e) => handleMapeamentoChange("rebate", e.target.value)}
-                      placeholder="E6 ou E"
+                      placeholder="Opcional"
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
                     />
                   </div>
@@ -1678,7 +1676,7 @@ export default function AdsPage() {
 
                 <div className="md:col-span-3">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                    Fórmula de Liquidez (Ex: C6 - (B6 * 9%) - (D6 * CUSTO) + E6):
+                    Fórmula de Liquidez (Ex: S - (H * CUSTO) - (I * IMPOSTO)):
                   </label>
                   <input
                     type="text"
@@ -1687,7 +1685,7 @@ export default function AdsPage() {
                       setFormulaLiquidez(e.target.value);
                       salvarConfiguracoesSugestao(canalSugestao, { formulaLiquidez: e.target.value });
                     }}
-                    placeholder="C6 - (B6 * 9%) - (D6 * CUSTO) + E6"
+                    placeholder="S - (H * CUSTO) - (I * IMPOSTO)"
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-purple-300 outline-none"
                   />
                 </div>
@@ -1742,6 +1740,7 @@ export default function AdsPage() {
                         className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${
                           filtroSugestao === "liquidez_valor" ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
                         }`}
+                        title="Ordena pelo valor bruto em R$ que sobra em caixa"
                       >
                         💰 Maior Liquidez R$
                       </button>
@@ -1750,6 +1749,7 @@ export default function AdsPage() {
                         className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${
                           filtroSugestao === "liquidez_pct" ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
                         }`}
+                        title="Ordena pela margem percentual de lucro sobre o faturamento"
                       >
                         📈 Maior Margem %
                       </button>
@@ -1788,9 +1788,9 @@ export default function AdsPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                       {sugestoesExibidas.map((item, idx) => {
-                        const isForte = item.quantidade >= 5 && item.liquidezMargemPct >= 20;
-                        const isViavel = item.liquidezValor > 0 && item.liquidezMargemPct >= 10;
-                        const isAlerta = item.liquidezValor <= 0;
+                        const margem = item.liquidezMargemPct;
+                        const liquidezR = item.liquidezValor;
+                        const permiteRisco = liquidezR >= 40.0;
 
                         return (
                           <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
@@ -1804,30 +1804,42 @@ export default function AdsPage() {
                             <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.custoTotal)}</td>
                             <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.impostoTotal)}</td>
                             <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.rebateTotal)}</td>
-                            <td className={`p-3 text-right font-mono font-bold ${item.liquidezValor >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
-                              {formatarMoeda(item.liquidezValor)}
+                            <td className={`p-3 text-right font-mono font-bold ${liquidezR >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                              {formatarMoeda(liquidezR)}
                             </td>
-                            <td className={`p-3 text-right font-mono font-bold ${item.liquidezMargemPct >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
-                              {item.liquidezMargemPct.toFixed(1)}%
+                            <td className={`p-3 text-right font-mono font-bold ${margem >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                              {margem.toFixed(1)}%
                             </td>
                             <td className="p-3 text-center">
-                              {isForte ? (
-                                <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 px-2.5 py-1 rounded text-[10px] font-bold">
-                                  🌟 Forte Potencial
-                                </span>
-                              ) : isViavel ? (
-                                <span className="bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 px-2.5 py-1 rounded text-[10px] font-bold">
-                                  ✅ Viável p/ Ads
-                                </span>
-                              ) : isAlerta ? (
-                                <span className="bg-rose-950/80 text-rose-300 border border-rose-700/60 px-2.5 py-1 rounded text-[10px] font-bold">
-                                  ❌ Prejuízo / Não Usar
-                                </span>
-                              ) : (
-                                <span className="bg-amber-950/80 text-amber-300 border border-amber-700/60 px-2.5 py-1 rounded text-[10px] font-bold">
-                                  ⚠️ Margem Baixa
-                                </span>
-                              )}
+                              <div className="flex flex-col items-center gap-1">
+                                {liquidezR <= 0 ? (
+                                  <span className="bg-rose-950/80 text-rose-300 border border-rose-700/60 px-2.5 py-0.5 rounded text-[10px] font-bold">
+                                    ❌ Prejuízo / Não Usar
+                                  </span>
+                                ) : margem >= 15 ? (
+                                  <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 px-2.5 py-0.5 rounded text-[10px] font-bold">
+                                    🌟 Forte Potencial
+                                  </span>
+                                ) : margem >= 12 ? (
+                                  <span className="bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 px-2.5 py-0.5 rounded text-[10px] font-bold">
+                                    ✅ Viável p/ Ads
+                                  </span>
+                                ) : margem <= 10 ? (
+                                  <span className="bg-rose-950/80 text-rose-300 border border-rose-700/60 px-2.5 py-0.5 rounded text-[10px] font-bold">
+                                    ⚠️ Margem Baixa
+                                  </span>
+                                ) : (
+                                  <span className="bg-amber-950/80 text-amber-300 border border-amber-700/60 px-2.5 py-0.5 rounded text-[10px] font-bold">
+                                    ⚠️ Margem Regular
+                                  </span>
+                                )}
+
+                                {permiteRisco && (
+                                  <span className="bg-cyan-950/80 text-cyan-300 border border-cyan-700/60 px-2 py-0.5 rounded text-[9px] font-bold">
+                                    🛡️ Liquidez permite risco
+                                  </span>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
