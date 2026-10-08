@@ -4,6 +4,7 @@ import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
+import * as XLSX from "xlsx";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -50,14 +51,27 @@ function normalizarSku(valor: any) {
   return s.toLowerCase();
 }
 
+function parseNumero(valor: any): number {
+  if (valor === null || valor === undefined || valor === "") return 0;
+  if (typeof valor === "number") return valor;
+  let s = String(valor).replace(/R\$/g, "").replace(/\s/g, "").trim();
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  }
+  const num = parseFloat(s);
+  return isNaN(num) ? 0 : num;
+}
+
 const formatarMoeda = (valor: number) => {
-  return "R$ " + valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 type SubItemLive = { sku: string; unidades: string | number; receitaAds: string | number };
 
 export default function AdsPage() {
-  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget">("campanhas");
+  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes">("campanhas");
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const router = useRouter();
@@ -67,7 +81,7 @@ export default function AdsPage() {
   const [mesComparativo, setMesComparativo] = useState("08/2026");
   
   const [metaTacosGlobal, setMetaTacosGlobal] = useState(2); 
-  const [ocultarComparacao, setOcultarComparacao] = useState(false); // Novo estado do botão
+  const [ocultarComparacao, setOcultarComparacao] = useState(false);
 
   const [canaisAtivos, setCanaisAtivos] = useState<any[]>([]);
   const [lancamentos, setLancamentos] = useState<any[]>([]);
@@ -90,6 +104,22 @@ export default function AdsPage() {
   const [mlbsPendentes, setMlbsPendentes] = useState<any[]>([]);
   const [dadosPendentesTemp, setDadosPendentesTemp] = useState<any>(null);
   const [modoPendente, setModoPendente] = useState<"novo" | "edicao">("novo");
+
+  // ==================== ESTADOS DA ABA SUGESTÕES ====================
+  const [canalSugestao, setCanalSugestao] = useState("");
+  const [colunasPlanilha, setColunasPlanilha] = useState<string[]>([]);
+  const [dadosBrutosPlanilha, setDadosBrutosPlanilha] = useState<any[]>([]);
+  const [colunaSku, setColunaSku] = useState("");
+  const [colunaPdv, setColunaPdv] = useState("");
+  const [colunaRepasse, setColunaRepasse] = useState("");
+  const [colunaQtd, setColunaQtd] = useState("");
+  const [colunaRebate, setColunaRebate] = useState("");
+  const [aliquotaImposto, setAliquotaImposto] = useState("9");
+  const [formulaLiquidez, setFormulaLiquidez] = useState("C - (B * (IMPOSTO / 100)) - (D * CUSTO) + E");
+  const [sugestoesCalculadas, setSugestoesCalculadas] = useState<any[]>([]);
+  const [filtroSugestao, setFiltroSugestao] = useState<"vendas" | "liquidez_valor" | "liquidez_pct">("vendas");
+  const [pesquisaSkuSugestao, setPesquisaSkuSugestao] = useState("");
+  const [apenasPositivos, setApenasPositivos] = useState(false);
 
   const mesesCompetencia = [
     "01/2026", "02/2026", "03/2026", "04/2026", "05/2026", "06/2026", 
@@ -118,12 +148,55 @@ export default function AdsPage() {
     }
   }, [subAba, mesSelecionado, mesComparativo]);
 
+  // Carrega mapeamento permanente ao alterar canal da sugestão
+  useEffect(() => {
+    if (canalSugestao) {
+      carregarConfiguracoesSugestao(canalSugestao);
+    }
+  }, [canalSugestao]);
+
+  const carregarConfiguracoesSugestao = (canal: string) => {
+    const salvo = localStorage.getItem(`sugestoes_config_${canal.toLowerCase()}`);
+    if (salvo) {
+      try {
+        const parsed = JSON.parse(salvo);
+        setColunaSku(parsed.colunaSku || "");
+        setColunaPdv(parsed.colunaPdv || "");
+        setColunaRepasse(parsed.colunaRepasse || "");
+        setColunaQtd(parsed.colunaQtd || "");
+        setColunaRebate(parsed.colunaRebate || "");
+        if (parsed.aliquotaImposto) setAliquotaImposto(parsed.aliquotaImposto);
+        if (parsed.formulaLiquidez) setFormulaLiquidez(parsed.formulaLiquidez);
+      } catch (err) {
+        console.error("Erro ao carregar configurações salvas:", err);
+      }
+    }
+  };
+
+  const salvarConfiguracoesSugestao = (canal: string, overrides: any = {}) => {
+    if (!canal) return;
+    const config = {
+      colunaSku: overrides.colunaSku ?? colunaSku,
+      colunaPdv: overrides.colunaPdv ?? colunaPdv,
+      colunaRepasse: overrides.colunaRepasse ?? colunaRepasse,
+      colunaQtd: overrides.colunaQtd ?? colunaQtd,
+      colunaRebate: overrides.colunaRebate ?? colunaRebate,
+      aliquotaImposto: overrides.aliquotaImposto ?? aliquotaImposto,
+      formulaLiquidez: overrides.formulaLiquidez ?? formulaLiquidez,
+    };
+    localStorage.setItem(`sugestoes_config_${canal.toLowerCase()}`, JSON.stringify(config));
+  };
+
   const carregarDadosAuxiliares = async () => {
     const { data: regrasCanaisData } = await supabase.from('config_regras_canais').select('*').order('id');
     if (regrasCanaisData) {
       const ativos = regrasCanaisData.filter((c: any) => c.ativo_ads !== false);
       setCanaisAtivos(ativos);
-      if (ativos.length > 0) setCanalSelecionado(ativos[0].canal);
+      if (ativos.length > 0) {
+        setCanalSelecionado(ativos[0].canal);
+        setCanalSugestao(ativos[0].canal);
+        carregarConfiguracoesSugestao(ativos[0].canal);
+      }
     }
 
     let allCustos: any[] = [];
@@ -666,6 +739,182 @@ export default function AdsPage() {
     }
   };
 
+  // ==================== LÓGICA DA ABA DE SUGESTÕES ====================
+
+  const handleUploadPlanilhaSugestao = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt: any) => {
+      try {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: "binary" });
+        const wsName = wb.SheetNames[0];
+        const ws = wb.Sheets[wsName];
+        const data: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+        if (data.length === 0) {
+          alert("A planilha está vazia.");
+          return;
+        }
+
+        const cols = Object.keys(data[0]);
+        setColunasPlanilha(cols);
+        setDadosBrutosPlanilha(data);
+
+        // Auto-selecionar caso já existam colunas com nomes parecidos
+        const findCol = (terms: string[]) => cols.find(c => terms.some(t => c.toLowerCase().includes(t))) || "";
+        
+        const autoSku = colunaSku || findCol(["sku", "código", "codigo", "item"]);
+        const autoPdv = colunaPdv || findCol(["pdv", "preço", "preco", "faturamento", "venda"]);
+        const autoRepasse = colunaRepasse || findCol(["repasse", "líquido", "liquido", "receber"]);
+        const autoQtd = colunaQtd || findCol(["quantidade", "qtd", "unidades", "unid"]);
+        const autoRebate = colunaRebate || findCol(["rebate", "incentivo", "bonificacao", "bonificação"]);
+
+        if (autoSku) setColunaSku(autoSku);
+        if (autoPdv) setColunaPdv(autoPdv);
+        if (autoRepasse) setColunaRepasse(autoRepasse);
+        if (autoQtd) setColunaQtd(autoQtd);
+        if (autoRebate) setColunaRebate(autoRebate);
+
+        salvarConfiguracoesSugestao(canalSugestao, {
+          colunaSku: autoSku,
+          colunaPdv: autoPdv,
+          colunaRepasse: autoRepasse,
+          colunaQtd: autoQtd,
+          colunaRebate: autoRebate
+        });
+
+      } catch (err: any) {
+        alert("Erro ao ler o ficheiro: " + err.message);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const calcularSugestoes = () => {
+    if (!dadosBrutosPlanilha || dadosBrutosPlanilha.length === 0) {
+      alert("Por favor, carregue uma planilha primeiro.");
+      return;
+    }
+
+    if (!colunaSku || !colunaPdv || !colunaRepasse || !colunaQtd) {
+      alert("Por favor, selecione ao menos as colunas de SKU, PDV, Repasse e Quantidade.");
+      return;
+    }
+
+    // Salvar configurações no localStorage
+    salvarConfiguracoesSugestao(canalSugestao);
+
+    const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
+
+    // Agregação por SKU
+    const mapaAgrupado = new Map<string, {
+      sku: string;
+      produto: string;
+      quantidade: number;
+      pdvTotal: number;
+      repasseTotal: number;
+      rebateTotal: number;
+      custoUnitario: number;
+      custoTotal: number;
+      impostoTotal: number;
+      liquidezValor: number;
+    }>();
+
+    for (const row of dadosBrutosPlanilha) {
+      const skuOriginal = String(row[colunaSku] || "").trim();
+      const skuKey = normalizarSku(skuOriginal);
+      if (!skuKey) continue;
+
+      const pdv = parseNumero(row[colunaPdv]);
+      const repasse = parseNumero(row[colunaRepasse]);
+      const qtd = parseNumero(row[colunaQtd]) || 1;
+      const rebate = colunaRebate ? parseNumero(row[colunaRebate]) : 0;
+
+      const custoData = custosMap.get(skuKey);
+      const custoUnitario = Number(custoData?.custo_unitario || 0);
+      const produtoNome = custoData?.produto || "Produto sem cadastro de custo";
+
+      const impostoLinha = pdv * (impostoPct / 100);
+      const custoLinha = qtd * custoUnitario;
+
+      // Executa fórmula do motor: (C - (B * Imposto%) - (D * Custo) + E)
+      // C = Repasse, B = PDV, D = Quantidade, E = Rebate
+      let liquidezLinha = 0;
+      try {
+        let formulaParse = formulaLiquidez
+          .replace(/%/g, "/100")
+          .replace(/\bC\b/g, String(repasse))
+          .replace(/\bB\b/g, String(pdv))
+          .replace(/\bD\b/g, String(qtd))
+          .replace(/\bE\b/g, String(rebate))
+          .replace(/custo.*coluna\s*a/gi, String(custoUnitario))
+          .replace(/\bcusto\b/gi, String(custoUnitario))
+          .replace(/\bimposto\b/gi, String(impostoPct));
+
+        if (/^[0-9+\-*/().\s]+$/.test(formulaParse)) {
+          liquidezLinha = Function(`"use strict"; return (${formulaParse})`)();
+        } else {
+          liquidezLinha = repasse - impostoLinha - custoLinha + rebate;
+        }
+      } catch {
+        liquidezLinha = repasse - impostoLinha - custoLinha + rebate;
+      }
+
+      if (mapaAgrupado.has(skuKey)) {
+        const item = mapaAgrupado.get(skuKey)!;
+        item.quantidade += qtd;
+        item.pdvTotal += pdv;
+        item.repasseTotal += repasse;
+        item.rebateTotal += rebate;
+        item.custoTotal += custoLinha;
+        item.impostoTotal += impostoLinha;
+        item.liquidezValor += liquidezLinha;
+      } else {
+        mapaAgrupado.set(skuKey, {
+          sku: skuOriginal,
+          produto: produtoNome,
+          quantidade: qtd,
+          pdvTotal: pdv,
+          repasseTotal: repasse,
+          rebateTotal: rebate,
+          custoUnitario: custoUnitario,
+          custoTotal: custoLinha,
+          impostoTotal: impostoLinha,
+          liquidezValor: liquidezLinha
+        });
+      }
+    }
+
+    const lista = Array.from(mapaAgrupado.values()).map(item => {
+      const margemPct = item.pdvTotal > 0 ? (item.liquidezValor / item.pdvTotal) * 100 : 0;
+      return {
+        ...item,
+        liquidezMargemPct: margemPct
+      };
+    });
+
+    setSugestoesCalculadas(lista);
+  };
+
+  // Ordenação e Filtros na Tabela de Sugestões
+  const sugestoesExibidas = [...sugestoesCalculadas]
+    .filter(item => {
+      const matchBusca = !pesquisaSkuSugestao || 
+        item.sku.toLowerCase().includes(pesquisaSkuSugestao.toLowerCase()) || 
+        item.produto.toLowerCase().includes(pesquisaSkuSugestao.toLowerCase());
+      const matchPositivo = !apenasPositivos || item.liquidezValor > 0;
+      return matchBusca && matchPositivo;
+    })
+    .sort((a, b) => {
+      if (filtroSugestao === "vendas") return b.quantidade - a.quantidade;
+      if (filtroSugestao === "liquidez_valor") return b.liquidezValor - a.liquidezValor;
+      if (filtroSugestao === "liquidez_pct") return b.liquidezMargemPct - a.liquidezMargemPct;
+      return 0;
+    });
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto relative">
@@ -678,7 +927,8 @@ export default function AdsPage() {
           <Navbar />
         </div>
 
-        <div className="flex gap-3 mb-6">
+        {/* NAVEGAÇÃO ENTRE ABAS */}
+        <div className="flex flex-wrap gap-3 mb-6">
           <button
             onClick={() => setSubAba("campanhas")}
             className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
@@ -703,8 +953,17 @@ export default function AdsPage() {
           >
             ⚖️ Disponibilizado x Usado
           </button>
+          <button
+            onClick={() => setSubAba("sugestoes")}
+            className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              subAba === "sugestoes" ? 'bg-purple-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+            }`}
+          >
+            💡 Sugestões de Ads
+          </button>
         </div>
 
+        {/* ===================== ABA 1: CAMPANHAS ===================== */}
         {subAba === "campanhas" && (
           <>
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-6">
@@ -983,7 +1242,7 @@ export default function AdsPage() {
                             </td>
                             <td className="p-3 text-slate-300 max-w-[200px] truncate">{item.nome_anuncio}</td>
                             <td className="p-3 text-center font-bold text-white">
-                              {isEditing ? <input type="number" value={dadosEdicao.unidades_vendidas} onChange={(e) => setDadosEdicao({ ...dadosEdicao, unidades_vendidas: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white" /> : item.unidades_vendidas}
+                              {isEditing ? <input type="number" value={dadosEdicao.unidades_vendidas} onChange={(e) => setDadosEdicao({ ...dadosEdicao, units_vendidas: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-center text-white" /> : item.unidades_vendidas}
                             </td>
                             <td className="p-3 text-right font-mono text-emerald-400 font-bold">
                               {isEditing ? <input type="number" step="0.01" value={dadosEdicao.retorno_bruto} onChange={(e) => setDadosEdicao({ ...dadosEdicao, retorno_bruto: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-right text-white" /> : formatarMoeda(item.retorno_bruto)}
@@ -1024,6 +1283,7 @@ export default function AdsPage() {
           </>
         )}
 
+        {/* ===================== ABA 2: DASHBOARD ===================== */}
         {subAba === "dashboard" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-8 pb-6 border-b border-slate-800">
@@ -1145,6 +1405,7 @@ export default function AdsPage() {
           </div>
         )}
 
+        {/* ===================== ABA 3: BUDGET ===================== */}
         {subAba === "budget" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-8 pb-6 border-b border-slate-800">
@@ -1185,7 +1446,6 @@ export default function AdsPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                     {dadosComparativo.map((d, idx) => {
-                      // Disponível é o TACOS calculado sobre o Faturamento Total do MÊS ANTERIOR
                       const budgetDisponivel = (d.totFatAnt * metaTacosGlobal) / 100;
                       const valorGastoReal = Number(d.gastoAdsBrutoAtual || 0);
                       const saldo = budgetDisponivel - valorGastoReal;
@@ -1217,6 +1477,320 @@ export default function AdsPage() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ===================== ABA 4: SUGESTÕES DE ADS ===================== */}
+        {subAba === "sugestoes" && (
+          <div className="space-y-6">
+            <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <span>💡 Análise de Vendas e Sugestões para Ads</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Carregue o relatório de vendas do canal para calcular a liquidez real de cada SKU e descobrir oportunidades de investimento.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">Memória Volátil:</span>
+                  <span className="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300 text-[11px] font-mono">
+                    {dadosBrutosPlanilha.length} linhas carregadas
+                  </span>
+                </div>
+              </div>
+
+              {/* SELEÇÃO DE CANAL E UPLOAD */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">1. Selecione o Canal:</label>
+                  <select
+                    value={canalSugestao}
+                    onChange={(e) => setCanalSugestao(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer"
+                  >
+                    {canaisAtivos.map((c, i) => (
+                      <option key={i} value={c.canal}>{c.canal}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">2. Ficheiro de Vendas (.xlsx, .xls, .csv):</label>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleUploadPlanilhaSugestao}
+                    className="w-full bg-slate-950 border border-slate-700 file:border-0 file:bg-purple-600 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              {/* MAPEAMENTO DAS COLUNAS (SALVO PERMANENTEMENTE) */}
+              <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xs font-black text-purple-400 uppercase tracking-wider">
+                    📌 Mapeamento de Colunas (Salvo no Motor para {canalSugestao || "o Canal"})
+                  </h3>
+                  <span className="text-[10px] text-slate-500">* Lembra a seleção após recarregar a página</span>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna SKU [A]:</label>
+                    <select
+                      value={colunaSku}
+                      onChange={(e) => {
+                        setColunaSku(e.target.value);
+                        salvarConfiguracoesSugestao(canalSugestao, { colunaSku: e.target.value });
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                    >
+                      <option value="">Selecione...</option>
+                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna PDV [B]:</label>
+                    <select
+                      value={colunaPdv}
+                      onChange={(e) => {
+                        setColunaPdv(e.target.value);
+                        salvarConfiguracoesSugestao(canalSugestao, { colunaPdv: e.target.value });
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                    >
+                      <option value="">Selecione...</option>
+                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna REPASSE [C]:</label>
+                    <select
+                      value={colunaRepasse}
+                      onChange={(e) => {
+                        setColunaRepasse(e.target.value);
+                        salvarConfiguracoesSugestao(canalSugestao, { colunaRepasse: e.target.value });
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                    >
+                      <option value="">Selecione...</option>
+                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna QTD [D]:</label>
+                    <select
+                      value={colunaQtd}
+                      onChange={(e) => {
+                        setColunaQtd(e.target.value);
+                        salvarConfiguracoesSugestao(canalSugestao, { colunaQtd: e.target.value });
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                    >
+                      <option value="">Selecione...</option>
+                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna REBATE [E]:</label>
+                    <select
+                      value={colunaRebate}
+                      onChange={(e) => {
+                        setColunaRebate(e.target.value);
+                        salvarConfiguracoesSugestao(canalSugestao, { colunaRebate: e.target.value });
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                    >
+                      <option value="">(Opcional / Vazio)</option>
+                      {colunasPlanilha.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* CAMPOS FIXOS: IMPOSTO E FÓRMULA DE LIQUIDEZ */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Alíquota de Imposto (%):</label>
+                  <input
+                    type="text"
+                    value={aliquotaImposto}
+                    onChange={(e) => {
+                      setAliquotaImposto(e.target.value);
+                      salvarConfiguracoesSugestao(canalSugestao, { aliquotaImposto: e.target.value });
+                    }}
+                    placeholder="9"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-emerald-400 outline-none"
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                    Fórmula de Liquidez (A=SKU, B=PDV, C=REPASSE, D=QTD, E=REBATE, CUSTO):
+                  </label>
+                  <input
+                    type="text"
+                    value={formulaLiquidez}
+                    onChange={(e) => {
+                      setFormulaLiquidez(e.target.value);
+                      salvarConfiguracoesSugestao(canalSugestao, { formulaLiquidez: e.target.value });
+                    }}
+                    placeholder="C - (B * 9%) - (D * CUSTO) + E"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-purple-300 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={calcularSugestoes}
+                  disabled={dadosBrutosPlanilha.length === 0}
+                  className={`py-3 px-8 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg ${
+                    dadosBrutosPlanilha.length === 0
+                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer'
+                  }`}
+                >
+                  ⚡ Executar Motor & Calcular Sugestões
+                </button>
+              </div>
+            </div>
+
+            {/* TABELA DE RESULTADOS DAS SUGESTÕES */}
+            {sugestoesCalculadas.length > 0 && (
+              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+                <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Ranking de Sugestões de Ads ({canalSugestao})</h3>
+                    <p className="text-xs text-slate-400 mt-1">Produtos consolidados com maiores volumes de vendas e liquidez para direcionamento de verba.</p>
+                  </div>
+
+                  {/* FILTROS E ORDENAÇÃO */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <input
+                      type="text"
+                      placeholder="Pesquisar SKU ou Produto..."
+                      value={pesquisaSkuSugestao}
+                      onChange={(e) => setPesquisaSkuSugestao(e.target.value)}
+                      className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-48"
+                    />
+
+                    <div className="flex rounded-xl bg-slate-950 p-1 border border-slate-800">
+                      <button
+                        onClick={() => setFiltroSugestao("vendas")}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${
+                          filtroSugestao === "vendas" ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        🔥 Mais Vendas
+                      </button>
+                      <button
+                        onClick={() => setFiltroSugestao("liquidez_valor")}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${
+                          filtroSugestao === "liquidez_valor" ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        💰 Maior Liquidez R$
+                      </button>
+                      <button
+                        onClick={() => setFiltroSugestao("liquidez_pct")}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${
+                          filtroSugestao === "liquidez_pct" ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        📈 Maior Margem %
+                      </button>
+                    </div>
+
+                    <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer pl-2">
+                      <input
+                        type="checkbox"
+                        checked={apenasPositivos}
+                        onChange={(e) => setApenasPositivos(e.target.checked)}
+                        className="rounded accent-purple-600"
+                      />
+                      <span>Apenas Positivos</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto max-h-[600px]">
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                      <tr>
+                        <th className="p-3 text-center">#</th>
+                        <th className="p-3">SKU</th>
+                        <th className="p-3 min-w-[220px]">Produto</th>
+                        <th className="p-3 text-center">Qtd Vendida</th>
+                        <th className="p-3 text-right">PDV Total</th>
+                        <th className="p-3 text-right">Repasse Total</th>
+                        <th className="p-3 text-right">Custo Unitário</th>
+                        <th className="p-3 text-right">Custo Total</th>
+                        <th className="p-3 text-right">Imposto Estimado</th>
+                        <th className="p-3 text-right">Rebate</th>
+                        <th className="p-3 text-right">Liquidez R$</th>
+                        <th className="p-3 text-right">Margem Líq. %</th>
+                        <th className="p-3 text-center">Recomendação Ads</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                      {sugestoesExibidas.map((item, idx) => {
+                        const isForte = item.quantidade >= 5 && item.liquidezMargemPct >= 20;
+                        const isViavel = item.liquidezValor > 0 && item.liquidezMargemPct >= 10;
+                        const isAlerta = item.liquidezValor <= 0;
+
+                        return (
+                          <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="p-3 text-center text-slate-500 font-mono">{idx + 1}</td>
+                            <td className="p-3 font-mono font-bold text-white">{item.sku}</td>
+                            <td className="p-3 text-slate-300 max-w-[240px] truncate" title={item.produto}>{item.produto}</td>
+                            <td className="p-3 text-center font-bold text-indigo-400">{item.quantidade}</td>
+                            <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.pdvTotal)}</td>
+                            <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.repasseTotal)}</td>
+                            <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.custoUnitario)}</td>
+                            <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.custoTotal)}</td>
+                            <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.impostoTotal)}</td>
+                            <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.rebateTotal)}</td>
+                            <td className={`p-3 text-right font-mono font-bold ${item.liquidezValor >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                              {formatarMoeda(item.liquidezValor)}
+                            </td>
+                            <td className={`p-3 text-right font-mono font-bold ${item.liquidezMargemPct >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                              {item.liquidezMargemPct.toFixed(1)}%
+                            </td>
+                            <td className="p-3 text-center">
+                              {isForte ? (
+                                <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 px-2.5 py-1 rounded text-[10px] font-bold">
+                                  🌟 Forte Potencial
+                                </span>
+                              ) : isViavel ? (
+                                <span className="bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 px-2.5 py-1 rounded text-[10px] font-bold">
+                                  ✅ Viável p/ Ads
+                                </span>
+                              ) : isAlerta ? (
+                                <span className="bg-rose-950/80 text-rose-300 border border-rose-700/60 px-2.5 py-1 rounded text-[10px] font-bold">
+                                  ❌ Prejuízo / Não Usar
+                                </span>
+                              ) : (
+                                <span className="bg-amber-950/80 text-amber-300 border border-amber-700/60 px-2.5 py-1 rounded text-[10px] font-bold">
+                                  ⚠️ Margem Baixa
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
