@@ -1,145 +1,74 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
-// Componente do Gráfico de Pizza (Donut)
-const GraficoPizza = ({ dados, titulo, tipoValor = "numero" }: { dados: any[], titulo: string, tipoValor?: "numero" | "moeda" }) => {
-  const total = dados.reduce((acc, item) => acc + item.valor, 0);
-  let offsetAcumulado = 0;
-  const cores = ["#6366f1", "#10b981", "#f43f5e", "#f59e0b", "#8b5cf6", "#06b6d4", "#ec4899", "#64748b"];
+type SubItemCarrinho = {
+  sku: string;
+  produto: string;
+  marca: string;
+};
 
-  return (
-    <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col items-center">
-      <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4 text-center">{titulo}</h3>
-      {total === 0 ? (
-        <p className="text-xs text-slate-500 my-auto py-10">Sem dados</p>
-      ) : (
-        <div className="flex flex-col xl:flex-row items-center gap-6 w-full">
-          <div className="relative w-32 h-32 flex-shrink-0">
-            <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
-              {dados.map((item, index) => {
-                const percentual = (item.valor / total) * 100;
-                const circunferencia = 2 * Math.PI * 40;
-                const strokeDasharray = `${(percentual * circunferencia) / 100} ${circunferencia}`;
-                const strokeDashoffset = -offsetAcumulado;
-                offsetAcumulado += (percentual * circunferencia) / 100;
+type LinhaRegistro = {
+  isCarrinho: boolean;
+  pedido: string;
+  canal: string;
+  nf: string;
+  solicitacao: string;
+  sku: string;
+  produto: string;
+  marca: string;
+  pdv: string;
+  frete: string;
+  motivo: string;
+  observacoes: string;
+  condicoes: string;
+  subItens: SubItemCarrinho[];
+};
 
-                return (
-                  <circle
-                    key={index}
-                    cx="50"
-                    cy="50"
-                    r="40"
-                    fill="transparent"
-                    stroke={cores[index % cores.length]}
-                    strokeWidth="16"
-                    strokeDasharray={strokeDasharray}
-                    strokeDashoffset={strokeDashoffset}
-                    className="transition-all duration-500 ease-in-out"
-                  />
-                );
-              })}
-            </svg>
-          </div>
-          <div className="flex-1 w-full max-h-40 overflow-y-auto pr-2">
-            <ul className="space-y-2">
-              {dados.map((item, index) => {
-                const percentual = ((item.valor / total) * 100).toFixed(1);
-                const valorExibicao = tipoValor === "moeda" ? `R$ ${item.valor.toFixed(2)}` : item.valor;
-                return (
-                  <li key={index} className="flex items-center justify-between text-[10px] lg:text-[11px]">
-                    <div className="flex items-center gap-2 overflow-hidden">
-                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: cores[index % cores.length] }}></span>
-                      <span className="text-slate-300 truncate max-w-[120px] lg:max-w-[150px]" title={item.nome}>{item.nome}</span>
-                    </div>
-                    <div className="text-right flex-shrink-0 ml-2">
-                      <span className="font-bold text-white">{valorExibicao}</span>
-                      <span className="text-slate-500 ml-1">({percentual}%)</span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+const formatarMoeda = (valor: number) => {
+  return "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 export default function DevolucoesPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
-  const [subAba, setSubAba] = useState<"controle" | "plano">("controle");
 
-  // Geração Automática do Mês Atual e Anterior para os filtros não ficarem presos num mês
-  const hojeObj = new Date();
-  const mesCorrente = String(hojeObj.getMonth() + 1).padStart(2, '0');
-  const anoCorrente = hojeObj.getFullYear();
-  const mesAtualPadrao = `${mesCorrente}/${anoCorrente}`;
-
-  const mesAntObj = new Date(hojeObj.getFullYear(), hojeObj.getMonth() - 1, 1);
-  const mesAntStr = String(mesAntObj.getMonth() + 1).padStart(2, '0');
-  const anoAntStr = mesAntObj.getFullYear();
-  const mesAnteriorPadrao = `${mesAntStr}/${anoAntStr}`;
-
-  // Estados de Período
-  const [mesAtual, setMesAtual] = useState(mesAtualPadrao);
-  const [mesAnterior, setMesAnterior] = useState(mesAnteriorPadrao);
-
-  // Dicionários para preenchimento automático
-  const [catalogoMap, setCatalogoMap] = useState<Map<string, { produto: string, marca: string }>>(new Map());
-  const [canais, setCanais] = useState<string[]>([
-    "Site", "Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", 
-    "Shopee", "Magazine Luiza", "Netshoes", "Centauro", "Amazon", "Shein", "Tiktok", "Outro"
-  ]);
-
-  // Motivos e Condições Fixas
-  const motivosFixos = [
-    "Arrependimento da compra.",
-    "É o tamanho comprado, mas não serviu.",
-    "Cor diferente da solicitada.",
-    "Tamanho diferente do solicitado.",
-    "Faltaram itens no pedido.",
-    "Problema de fabricação do fornecedor."
-  ];
-  const opcoesCondicao = ["Sim", "Não", "Mediação"];
-
-  // Estado do Formulário de Input
-  const hoje = hojeObj.toISOString().split('T')[0];
+  const hoje = new Date().toISOString().split("T")[0];
   const [dataGlobalRetorno, setDataGlobalRetorno] = useState(hoje);
-  const linhaVazia = { 
-    pedido: "", canal: "", nota_fiscal: "", solicitacao: "", sku: "", produto: "", marca: "", pdv: "", frete: "", 
-    motivo: "", observacoes: "", condicoes: "Sim", mediacao_protocolo: "", mediacao_resolvido: "Não", mediacao_data_resolucao: "", mediacao_reputacao: "", mediacao_estorno: "" 
-  };
-  const [linhas, setLinhas] = useState([linhaVazia]);
 
-  // Estado da Tabela de Consulta e Planos de Ação
+  const [canaisAtivos, setCanaisAtivos] = useState<string[]>([]);
+  const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [devolucoes, setDevolucoes] = useState<any[]>([]);
-  const [planosAcao, setPlanosAcao] = useState<any[]>([]);
-  const [kpis, setKpis] = useState({ atual: { unidades: 0, valor: 0, frete: 0 }, anterior: { unidades: 0, valor: 0, frete: 0 } });
-  
-  const [pesquisaPedido, setPesquisaPedido] = useState("");
-  const [filtroMediacao, setFiltroMediacao] = useState(false);
-  const [paginaAtual, setPaginaAtual] = useState(1);
-  const itensPorPagina = 10;
 
-  // ESTADOS DE EDIÇÃO E EXCLUSÃO (Novos)
-  const [selecionadosIds, setSelecionadosIds] = useState<number[]>([]);
+  // Filtros
+  const [filtroCanal, setFiltroCanal] = useState("");
+  const [filtroMes, setFiltroMes] = useState("");
+
+  // Edição
   const [idEditando, setIdEditando] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
-  
-  const [editandoPlanoSku, setEditandoPlanoSku] = useState<string | null>(null);
-  const [textoProposta, setTextoProposta] = useState("");
 
-  const [editandoMediacaoId, setEditandoMediacaoId] = useState<number | null>(null);
-  const [dadosEdicaoMediacao, setDadosEdicaoMediacao] = useState({
-    protocolo: "", resolvido: "Não", data_resolucao: "", reputacao: "", estorno: 0
-  });
+  const linhaInicial: LinhaRegistro = {
+    isCarrinho: false,
+    pedido: "",
+    canal: "",
+    nf: "",
+    solicitacao: "Devolução",
+    sku: "",
+    produto: "",
+    marca: "",
+    pdv: "",
+    frete: "",
+    motivo: "",
+    observacoes: "",
+    condicoes: "Sim",
+    subItens: []
+  };
+
+  const [linhas, setLinhas] = useState<LinhaRegistro[]>([{ ...linhaInicial }]);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -147,815 +76,681 @@ export default function DevolucoesPage() {
       router.push("/login");
       return;
     }
-    carregarAuxiliares();
+    carregarDadosAuxiliares();
+    carregarDevolucoes();
   }, []);
 
-  useEffect(() => {
-    carregarDevolucoesEPlanos();
-    setSelecionadosIds([]); // Limpa a seleção ao trocar de mês
-  }, [mesAtual, mesAnterior]);
-
-  const normalizarSku = (valor: any) => {
-    if (!valor) return "";
-    let s = String(valor).trim();
-    if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-    return s.toLowerCase();
-  };
-
-  const extrairMesAno = (dataString: string) => {
-    if (!dataString) return "";
-    const partes = dataString.split("-");
-    if (partes.length >= 2) return `${partes[1]}/${partes[0]}`;
-    return "";
-  };
-
-  const carregarAuxiliares = async () => {
-    const { data: canaisData } = await supabase.from('config_regras_canais').select('canal').order('id');
-    if (canaisData && canaisData.length > 0) {
-      const canaisUnicos = Array.from(new Set([...canaisData.map(c => c.canal), ...canais]));
-      setCanais(canaisUnicos);
-    }
+  const carregarDadosAuxiliares = async () => {
+    const { data: canaisData } = await supabase.from("config_regras_canais").select("canal").order("id");
+    if (canaisData) setCanaisAtivos(canaisData.map(c => c.canal));
 
     let allCustos: any[] = [];
-    let from = 0; let step = 1000; let keep = true;
+    let from = 0;
+    let step = 1000;
+    let keep = true;
     while (keep) {
-      const { data } = await supabase.from('tabela_custos_skus').select('sku, produto, marca').range(from, from + step - 1);
+      const { data } = await supabase.from("tabela_custos_skus").select("*").range(from, from + step - 1);
       if (data && data.length > 0) {
         allCustos = [...allCustos, ...data];
         from += step;
         if (data.length < step) keep = false;
       } else keep = false;
     }
-    
+
     const mapa = new Map();
     allCustos.forEach((c: any) => {
-      const skuNorm = normalizarSku(c.sku);
-      if (skuNorm) mapa.set(skuNorm, { produto: c.produto || "", marca: c.marca || "Sem Marca" });
+      const s = String(c.sku || "").trim().toLowerCase();
+      if (s) mapa.set(s, c);
     });
-    setCatalogoMap(mapa);
+    setCustosMap(mapa);
   };
 
-  const carregarDevolucoesEPlanos = async () => {
+  const carregarDevolucoes = async () => {
     setLoading(true);
-    
-    const { data: devData } = await supabase.from('devolucoes').select('*').order('data_retorno', { ascending: false });
-    const listaDev = devData || [];
-    setDevolucoes(listaDev);
-
-    const { data: planoData } = await supabase.from('plano_acao_devolucoes').select('*').eq('mes_referencia', mesAtual);
-    setPlanosAcao(planoData || []);
-
-    const dadosAtual = listaDev.filter(d => d.mes_referencia === mesAtual);
-    const dadosAnterior = listaDev.filter(d => d.mes_referencia === mesAnterior);
-
-    setKpis({
-      atual: {
-        unidades: dadosAtual.length,
-        valor: dadosAtual.reduce((acc, curr) => acc + Number(curr.pdv || 0), 0),
-        frete: dadosAtual.reduce((acc, curr) => acc + Number(curr.frete || 0), 0)
-      },
-      anterior: {
-        unidades: dadosAnterior.length,
-        valor: dadosAnterior.reduce((acc, curr) => acc + Number(curr.pdv || 0), 0),
-        frete: dadosAnterior.reduce((acc, curr) => acc + Number(curr.frete || 0), 0)
-      }
-    });
-
-    setPaginaAtual(1);
+    const { data, error } = await supabase.from("devolucoes").select("*").order("id", { ascending: false });
+    if (!error && data) setDevolucoes(data);
     setLoading(false);
   };
 
-  const adicionarLinha = () => setLinhas([...linhas, { ...linhaVazia }]);
-  const removerLinha = (index: number) => setLinhas(linhas.filter((_, i) => i !== index));
+  const buscarProdutoSku = (sku: string) => {
+    const limpo = String(sku || "").trim().toLowerCase();
+    const item = custosMap.get(limpo);
+    return {
+      produto: item?.produto || "",
+      marca: item?.marca || ""
+    };
+  };
 
-  const atualizarLinha = (index: number, campo: string, valor: string) => {
-    const novasLinhas = [...linhas];
-    novasLinhas[index] = { ...novasLinhas[index], [campo]: valor };
+  const atualizarLinha = (index: number, campo: keyof LinhaRegistro, valor: any) => {
+    const novas = [...linhas];
+    novas[index] = { ...novas[index], [campo]: valor };
 
     if (campo === "sku") {
-      const skuNorm = normalizarSku(valor);
-      const infoCatalogo = catalogoMap.get(skuNorm);
-      if (infoCatalogo) {
-        novasLinhas[index].produto = infoCatalogo.produto;
-        novasLinhas[index].marca = infoCatalogo.marca;
-      } else {
-        novasLinhas[index].produto = "";
-        novasLinhas[index].marca = "";
-      }
-    }
-    
-    if (campo === "mediacao_resolvido" && valor === "Não") {
-      novasLinhas[index].mediacao_data_resolucao = "";
+      const { produto, marca } = buscarProdutoSku(valor);
+      novas[index].produto = produto;
+      novas[index].marca = marca;
     }
 
-    setLinhas(novasLinhas);
+    if (campo === "isCarrinho" && valor === true && novas[index].subItens.length === 0) {
+      novas[index].subItens = [{ sku: "", produto: "", marca: "" }];
+    }
+
+    setLinhas(novas);
+  };
+
+  const adicionarSubItem = (indexLinha: number) => {
+    const novas = [...linhas];
+    novas[indexLinha].subItens.push({ sku: "", produto: "", marca: "" });
+    setLinhas(novas);
+  };
+
+  const removerSubItem = (indexLinha: number, subIndex: number) => {
+    const novas = [...linhas];
+    novas[indexLinha].subItens.splice(subIndex, 1);
+    setLinhas(novas);
+  };
+
+  const atualizarSubItem = (indexLinha: number, subIndex: number, skuValor: string) => {
+    const novas = [...linhas];
+    const { produto, marca } = buscarProdutoSku(skuValor);
+    novas[indexLinha].subItens[subIndex] = {
+      sku: skuValor,
+      produto,
+      marca
+    };
+    setLinhas(novas);
+  };
+
+  const adicionarLinha = () => {
+    setLinhas([...linhas, { ...linhaInicial, canal: canaisAtivos[0] || "" }]);
+  };
+
+  const removerLinha = (index: number) => {
+    setLinhas(linhas.filter((_, i) => i !== index));
   };
 
   const salvarDevolucoes = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!dataGlobalRetorno) return alert("Selecione a Data de Retorno no topo do formulário.");
-
     setSalvando(true);
-    const mesRef = extrairMesAno(dataGlobalRetorno);
 
-    const formatados = linhas
-      .filter(l => l.pedido.trim() !== "" && l.sku.trim() !== "")
-      .map(l => ({
-        data_retorno: dataGlobalRetorno,
-        mes_referencia: mesRef,
+    const registrosParaSalvar: any[] = [];
+
+    for (const l of linhas) {
+      if (!l.pedido.trim() || !l.sku.trim()) continue;
+
+      const freteNum = l.frete ? -Math.abs(Number(l.frete.replace(/\./g, "").replace(",", "."))) : 0;
+      const pdvNum = l.pdv ? Number(l.pdv.replace(/\./g, "").replace(",", ".")) : 0;
+
+      // Item principal da linha
+      registrosParaSalvar.push({
         pedido: l.pedido.trim(),
         canal: l.canal,
-        nota_fiscal: l.nota_fiscal.trim(),
-        solicitacao: l.solicitacao.trim(),
+        nota_fiscal: l.nf.trim(),
+        solicitacao: l.solicitacao,
         sku: l.sku.trim(),
-        produto: l.produto.trim() || "Não identificado",
-        marca: l.marca.trim() || "Sem Marca",
-        pdv: Number(l.pdv || 0),
-        frete: Number(l.frete || 0),
+        produto: l.produto || "Produto sem cadastro",
+        marca: l.marca || "-",
+        valor_pdv: pdvNum,
+        custo_frete: freteNum,
         motivo: l.motivo,
-        observacoes: l.observacoes.trim(),
+        observacoes: l.observacoes,
         condicoes: l.condicoes,
-        mediacao_protocolo: l.condicoes === "Mediação" ? l.mediacao_protocolo : "",
-        mediacao_resolvido: l.condicoes === "Mediação" ? l.mediacao_resolvido : "",
-        mediacao_data_resolucao: l.condicoes === "Mediação" && l.mediacao_resolvido === "Sim" ? l.mediacao_data_resolucao : null,
-        mediacao_reputacao: l.condicoes === "Mediação" ? l.mediacao_reputacao : "",
-        mediacao_estorno: l.condicoes === "Mediação" ? Number(l.mediacao_estorno || 0) : 0,
-      }));
+        data_retorno: dataGlobalRetorno,
+        valor_convertido: 0
+      });
 
-    if (formatados.length === 0) {
-      alert("Preencha pelo menos um Pedido e SKU válidos.");
+      // Itens adicionais do carrinho (se houver)
+      if (l.isCarrinho && l.subItens.length > 0) {
+        for (const sub of l.subItens) {
+          if (!sub.sku.trim()) continue;
+          registrosParaSalvar.push({
+            pedido: l.pedido.trim(),
+            canal: l.canal,
+            nota_fiscal: l.nf.trim(),
+            solicitacao: l.solicitacao,
+            sku: sub.sku.trim(),
+            produto: sub.produto || "Produto sem cadastro",
+            marca: sub.marca || "-",
+            valor_pdv: 0,
+            custo_frete: 0,
+            motivo: l.motivo,
+            observacoes: l.observacoes,
+            condicoes: l.condicoes,
+            data_retorno: dataGlobalRetorno,
+            valor_convertido: 0
+          });
+        }
+      }
+    }
+
+    if (registrosParaSalvar.length === 0) {
+      alert("Preencha ao menos um Pedido e SKU válidos.");
       setSalvando(false);
       return;
     }
 
-    const { error } = await supabase.from('devolucoes').insert(formatados);
-    if (error) alert("Erro ao gravar devoluções: " + error.message);
-    else {
-      alert("✅ Devoluções registadas com sucesso!");
-      if (mesRef !== mesAtual) {
-        setMesAtual(mesRef);
-      }
-      setLinhas([{ ...linhaVazia }]);
-      carregarDevolucoesEPlanos();
+    const { error } = await supabase.from("devolucoes").insert(registrosParaSalvar);
+    if (error) {
+      alert("Erro ao salvar devoluções: " + error.message);
+    } else {
+      alert("✅ Devoluções salvas com sucesso!");
+      setLinhas([{ ...linhaInicial, canal: canaisAtivos[0] || "" }]);
+      carregarDevolucoes();
     }
     setSalvando(false);
   };
 
-  // FUNÇÕES DE EDIÇÃO E EXCLUSÃO (Histórico)
-  const selecionarTodosCheckbox = (e: React.ChangeEvent<HTMLInputElement>, dadosAtuais: any[]) => {
-    if (e.target.checked) setSelecionadosIds(dadosAtuais.map(i => i.id));
-    else setSelecionadosIds([]);
-  };
-
-  const selecionarLinhaCheckbox = (id: number) => {
-    if (selecionadosIds.includes(id)) setSelecionadosIds(selecionadosIds.filter(i => i !== id));
-    else setSelecionadosIds([...selecionadosIds, id]);
-  };
-
-  const excluirSelecionados = async () => {
-    if (selecionadosIds.length === 0) return;
-    if (!confirm(`Tem certeza que deseja excluir as ${selecionadosIds.length} devoluções selecionadas?`)) return;
-
-    const { error } = await supabase.from('devolucoes').delete().in('id', selecionadosIds);
-    if (error) alert("Erro ao excluir: " + error.message);
-    else {
-      setSelecionadosIds([]);
-      carregarDevolucoesEPlanos();
-    }
-  };
-
-  const limparBaseMes = async () => {
-    if (!confirm(`ATENÇÃO: Tem certeza que deseja apagar TODAS as devoluções do mês de ${mesAtual}? Esta ação é irreversível.`)) return;
-
-    const { error } = await supabase.from('devolucoes').delete().eq('mes_referencia', mesAtual);
-    if (error) alert("Erro ao limpar base: " + error.message);
-    else {
-      alert(`🗑️ Todas as devoluções de ${mesAtual} foram apagadas.`);
-      setSelecionadosIds([]);
-      carregarDevolucoesEPlanos();
-    }
-  };
-
-  const excluirLancamento = async (id: number) => {
-    if (!confirm("Excluir esta devolução?")) return;
-    const { error } = await supabase.from('devolucoes').delete().eq('id', id);
-    if (error) alert("Erro: " + error.message);
-    else carregarDevolucoesEPlanos();
-  };
-
   const iniciarEdicao = (item: any) => {
     setIdEditando(item.id);
-    setDadosEdicao({
-      pedido: item.pedido || "",
-      canal: item.canal || "",
-      sku: item.sku || "",
-      motivo: item.motivo || "",
-      observacoes: item.observacoes || "",
-      condicoes: item.condicoes || "Sim",
-      pdv: item.pdv || 0,
-      frete: item.frete || 0
-    });
+    setDadosEdicao({ ...item });
   };
 
   const salvarEdicao = async (id: number) => {
-    const skuNorm = normalizarSku(dadosEdicao.sku);
-    const infoCat = catalogoMap.get(skuNorm);
-    const produtoFinal = infoCat ? infoCat.produto : "Não identificado";
-    const marcaFinal = infoCat ? infoCat.marca : "Sem Marca";
+    const freteNum = dadosEdicao.custo_frete ? -Math.abs(Number(String(dadosEdicao.custo_frete).replace(",", "."))) : 0;
+    const convert = dadosEdicao.valor_convertido ? Number(String(dadosEdicao.valor_convertido).replace(",", ".")) : 0;
+    const pdvNum = dadosEdicao.valor_pdv ? Number(String(dadosEdicao.valor_pdv).replace(",", ".")) : 0;
 
-    const { error } = await supabase.from('devolucoes').update({
-      pedido: dadosEdicao.pedido.trim(),
+    const { error } = await supabase.from("devolucoes").update({
+      pedido: dadosEdicao.pedido,
       canal: dadosEdicao.canal,
-      sku: dadosEdicao.sku.trim(),
-      produto: produtoFinal,
-      marca: marcaFinal,
-      pdv: Number(dadosEdicao.pdv),
-      frete: Number(dadosEdicao.frete),
+      nota_fiscal: dadosEdicao.nota_fiscal,
+      solicitacao: dadosEdicao.solicitacao,
+      sku: dadosEdicao.sku,
+      produto: dadosEdicao.produto,
+      marca: dadosEdicao.marca,
+      valor_pdv: pdvNum,
+      custo_frete: freteNum,
       motivo: dadosEdicao.motivo,
       observacoes: dadosEdicao.observacoes,
-      condicoes: dadosEdicao.condicoes
-    }).eq('id', id);
+      condicoes: dadosEdicao.condicoes,
+      valor_convertido: convert
+    }).eq("id", id);
 
     if (error) alert("Erro ao atualizar: " + error.message);
     else {
       setIdEditando(null);
-      carregarDevolucoesEPlanos();
+      carregarDevolucoes();
     }
   };
 
-  const iniciarEdicaoMediacao = (item: any) => {
-    setEditandoMediacaoId(item.id);
-    setDadosEdicaoMediacao({
-      protocolo: item.mediacao_protocolo || "",
-      resolvido: item.mediacao_resolvido || "Não",
-      data_resolucao: item.mediacao_data_resolucao || "",
-      reputacao: item.mediacao_reputacao || "",
-      estorno: item.mediacao_estorno || 0
-    });
+  const excluirDevolucao = async (id: number) => {
+    if (!confirm("Excluir este registo definitivamente?")) return;
+    const { error } = await supabase.from("devolucoes").delete().eq("id", id);
+    if (error) alert("Erro: " + error.message);
+    else carregarDevolucoes();
   };
 
-  const salvarEdicaoMediacao = async (id: number) => {
-    const dataUpdate = dadosEdicaoMediacao.resolvido === "Sim" ? dadosEdicaoMediacao.data_resolucao : null;
-    
-    const { error } = await supabase.from('devolucoes').update({
-      mediacao_protocolo: dadosEdicaoMediacao.protocolo,
-      mediacao_resolvido: dadosEdicaoMediacao.resolvido,
-      mediacao_data_resolucao: dataUpdate,
-      mediacao_reputacao: dadosEdicaoMediacao.reputacao,
-      mediacao_estorno: Number(dadosEdicaoMediacao.estorno)
-    }).eq('id', id);
-
-    if (error) alert("Erro ao atualizar mediação: " + error.message);
-    else {
-      setEditandoMediacaoId(null);
-      carregarDevolucoesEPlanos();
-    }
-  };
-
-  const salvarProposta = async (sku: string) => {
-    const registroExistente = planosAcao.find(p => p.sku === sku);
-    
-    if (registroExistente) {
-      await supabase.from('plano_acao_devolucoes').update({ proposta: textoProposta }).eq('id', registroExistente.id);
-    } else {
-      await supabase.from('plano_acao_devolucoes').insert([{ mes_referencia: mesAtual, sku: sku, proposta: textoProposta }]);
-    }
-    
-    setEditandoPlanoSku(null);
-    setTextoProposta("");
-    carregarDevolucoesEPlanos();
-  };
-
-  // Processamento de Dados (Filtros e Gráficos)
-  const dadosFiltrados = devolucoes.filter(d => {
-    const matchMes = d.mes_referencia === mesAtual;
-    const matchPesquisa = pesquisaPedido === "" || String(d.pedido).toLowerCase().includes(pesquisaPedido.toLowerCase()) || String(d.sku).toLowerCase().includes(pesquisaPedido.toLowerCase());
-    const matchMediacao = filtroMediacao ? d.condicoes === "Mediação" : true;
-    return matchMes && matchPesquisa && matchMediacao;
+  // Filtragem
+  const devolucoesFiltradas = devolucoes.filter(d => {
+    const matchCanal = !filtroCanal || d.canal === filtroCanal;
+    const matchMes = !filtroMes || (d.data_retorno && d.data_retorno.startsWith(filtroMes));
+    return matchCanal && matchMes;
   });
 
-  const totalPaginas = Math.ceil(dadosFiltrados.length / itensPorPagina) || 1;
-  const itensTabelaAtual = dadosFiltrados.slice((paginaAtual - 1) * itensPorPagina, paginaAtual * itensPorPagina);
-
-  const agruparPor = (campo: string, tipoSoma: "quantidade" | "valor") => {
-    const mapa = new Map<string, number>();
-    dadosFiltrados.forEach(item => {
-      const chave = item[campo] || "Não Identificado";
-      const valorAdicionar = tipoSoma === "quantidade" ? 1 : Number(item.pdv || 0);
-      mapa.set(chave, (mapa.get(chave) || 0) + valorAdicionar);
-    });
-    return Array.from(mapa.entries()).map(([nome, valor]) => ({ nome, valor })).sort((a, b) => b.valor - a.valor);
-  };
-
-  const calcProgresso = (atual: number, anterior: number) => {
-    if (anterior === 0) return atual > 0 ? "+100%" : "0%";
-    const diff = ((atual - anterior) / anterior) * 100;
-    return `${diff >= 0 ? '+' : ''}${diff.toFixed(1)}%`;
-  };
-
-  const gerarResumoPlanoAcao = () => {
-    const mapaSkus = new Map<string, { produto: string, total: number, motivos: Record<string, number> }>();
-    
-    dadosFiltrados.forEach(d => {
-      const sku = d.sku;
-      if (!mapaSkus.has(sku)) {
-        mapaSkus.set(sku, { produto: d.produto, total: 0, motivos: {} });
-      }
-      const info = mapaSkus.get(sku)!;
-      info.total += 1;
-      info.motivos[d.motivo] = (info.motivos[d.motivo] || 0) + 1;
-    });
-
-    return Array.from(mapaSkus.entries())
-      .map(([sku, info]) => {
-        const motivosFormatados = Object.entries(info.motivos)
-          .sort((a, b) => b[1] - a[1])
-          .map(([motivo, qtd]) => `${motivo} (${qtd})`)
-          .join(" | ");
-        
-        const planoBanco = planosAcao.find(p => p.sku === sku);
-        
-        return { sku, produto: info.produto, total: info.total, principaisMotivos: motivosFormatados, proposta: planoBanco?.proposta || "" };
-      })
-      .sort((a, b) => b.total - a.total);
-  };
-
-  const listaPlanoAcao = gerarResumoPlanoAcao();
+  // Totais
+  const totalPDV = devolucoesFiltradas.reduce((acc, d) => acc + Number(d.valor_pdv || 0), 0);
+  const totalFreteReverso = devolucoesFiltradas.reduce((acc, d) => acc + Number(d.custo_frete || 0), 0);
+  const totalConvertido = devolucoesFiltradas.reduce((acc, d) => acc + Number(d.valor_convertido || 0), 0);
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto">
-        
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Relatório de Devoluções</h1>
-            <p className="text-sm font-medium text-slate-400">Logística Reversa, Auditoria e Planos de Ação</p>
+            <h1 className="text-2xl font-black text-white tracking-tight">Registo & Controlo de Devoluções</h1>
+            <p className="text-sm font-medium text-slate-400">Gestão de Fretes Reversos, Avarias e Mediações</p>
           </div>
           <Navbar />
         </div>
 
-        <div className="flex gap-3 mb-6">
-          <button onClick={() => setSubAba("controle")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "controle" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
-            📦 Controle de Devoluções
-          </button>
-          <button onClick={() => setSubAba("plano")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "plano" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
-            🎯 Plano de Ação
-          </button>
+        {/* CARDS DE RESUMO */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Total Devoluções</span>
+            <span className="text-2xl font-black text-white">{devolucoesFiltradas.length} itens</span>
+          </div>
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Total em PDV</span>
+            <span className="text-2xl font-black text-emerald-400">{formatarMoeda(totalPDV)}</span>
+          </div>
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Custo C/ Frete Reverso (Prejuízo)</span>
+            <span className="text-2xl font-black text-rose-400">{formatarMoeda(totalFreteReverso)}</span>
+          </div>
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl">
+            <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider block mb-1">Valor Convertido (Mediações)</span>
+            <span className="text-2xl font-black text-purple-400">{formatarMoeda(totalConvertido)}</span>
+          </div>
         </div>
 
-        {/* TOP BAR / FILTROS GLOBAIS COMUNS ÀS DUAS ABAS */}
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-6 flex flex-wrap items-center gap-4">
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período de Análise:</label>
-            <select value={mesAtual} onChange={(e) => setMesAtual(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
-              <option value="12/2026">12/2026</option>
-              <option value="11/2026">11/2026</option>
-              <option value="10/2026">10/2026</option>
-              <option value="09/2026">09/2026</option>
-              <option value="08/2026">08/2026</option>
-              <option value="07/2026">07/2026</option>
-            </select>
-          </div>
-          {subAba === "controle" && (
+        {/* FORMULÁRIO DE REGISTO */}
+        <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mês Comparativo:</label>
-              <select value={mesAnterior} onChange={(e) => setMesAnterior(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
-                <option value="11/2026">11/2026</option>
-                <option value="10/2026">10/2026</option>
-                <option value="09/2026">09/2026</option>
-                <option value="08/2026">08/2026</option>
-                <option value="07/2026">07/2026</option>
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">➕ Registar Devoluções</h2>
+              <p className="text-xs text-slate-400 mt-1">Marque o carrinho para pedidos com múltiplos SKUs.</p>
+            </div>
+            <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center gap-3">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Data Global de Retorno:</label>
+              <input
+                type="date"
+                value={dataGlobalRetorno}
+                onChange={(e) => setDataGlobalRetorno(e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-white outline-none cursor-pointer"
+              />
+            </div>
+          </div>
+
+          <form onSubmit={salvarDevolucoes} className="space-y-4">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[10px] border-b border-slate-800">
+                  <tr>
+                    <th className="p-3 w-10 text-center" title="Marque se for pedido em carrinho com múltiplos SKUs">🛒</th>
+                    <th className="p-3">Pedido</th>
+                    <th className="p-3">Canal</th>
+                    <th className="p-3">NF</th>
+                    <th className="p-3">Solicitação</th>
+                    <th className="p-3">SKU</th>
+                    <th className="p-3 min-w-[200px]">Produto (Auto)</th>
+                    <th className="p-3">Marca</th>
+                    <th className="p-3 text-right">PDV (R$)</th>
+                    <th className="p-3 text-right">Frete Reverso</th>
+                    <th className="p-3">Motivo</th>
+                    <th className="p-3 min-w-[180px]">Observações</th>
+                    <th className="p-3 text-center">Condições?</th>
+                    {linhas.length > 1 && <th className="p-3 text-center w-8"></th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {linhas.map((l, index) => (
+                    <React.Fragment key={index}>
+                      <tr className="bg-slate-950/40 hover:bg-slate-800/30 transition-colors">
+                        <td className="p-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={l.isCarrinho}
+                            onChange={(e) => atualizarLinha(index, "isCarrinho", e.target.checked)}
+                            className="w-4 h-4 accent-purple-600 cursor-pointer"
+                            title="Pedido em Carrinho"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={l.pedido}
+                            onChange={(e) => atualizarLinha(index, "pedido", e.target.value)}
+                            placeholder="Ex: 42372"
+                            className="w-24 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                            required
+                          />
+                        </td>
+                        <td className="p-2">
+                          <select
+                            value={l.canal}
+                            onChange={(e) => atualizarLinha(index, "canal", e.target.value)}
+                            className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer"
+                            required
+                          >
+                            <option value="">Canal...</option>
+                            {canaisAtivos.map((c, i) => (
+                              <option key={i} value={c}>{c}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={l.nf}
+                            onChange={(e) => atualizarLinha(index, "nf", e.target.value)}
+                            placeholder="NF"
+                            className="w-20 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={l.solicitacao}
+                            onChange={(e) => atualizarLinha(index, "solicitacao", e.target.value)}
+                            className="w-28 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={l.sku}
+                            onChange={(e) => atualizarLinha(index, "sku", e.target.value)}
+                            placeholder="SKU"
+                            className="w-28 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono outline-none"
+                            required
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={l.produto}
+                            readOnly
+                            placeholder="Auto"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-slate-400 outline-none"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={l.marca}
+                            readOnly
+                            placeholder="Auto"
+                            className="w-20 bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-slate-400 outline-none"
+                          />
+                        </td>
+                        <td className="p-2 text-right">
+                          <input
+                            type="text"
+                            value={l.pdv}
+                            onChange={(e) => atualizarLinha(index, "pdv", e.target.value)}
+                            placeholder="0,00"
+                            className="w-24 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right text-emerald-400 font-mono outline-none"
+                          />
+                        </td>
+                        <td className="p-2 text-right">
+                          <input
+                            type="text"
+                            value={l.frete}
+                            onChange={(e) => atualizarLinha(index, "frete", e.target.value)}
+                            placeholder="-0,00"
+                            className="w-24 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right text-rose-400 font-mono outline-none"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <select
+                            value={l.motivo}
+                            onChange={(e) => atualizarLinha(index, "motivo", e.target.value)}
+                            className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer"
+                          >
+                            <option value="">Selecione...</option>
+                            <option value="Arrependimento">Arrependimento</option>
+                            <option value="Defeito">Defeito</option>
+                            <option value="Produto Incorreto">Produto Incorreto</option>
+                            <option value="Extravio">Extravio</option>
+                            <option value="Outros">Outros</option>
+                          </select>
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={l.observacoes}
+                            onChange={(e) => atualizarLinha(index, "observacoes", e.target.value)}
+                            placeholder="Obs..."
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                          />
+                        </td>
+                        <td className="p-2 text-center">
+                          <select
+                            value={l.condicoes}
+                            onChange={(e) => atualizarLinha(index, "condicoes", e.target.value)}
+                            className="bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer"
+                          >
+                            <option value="Sim">Sim</option>
+                            <option value="Não">Não</option>
+                          </select>
+                        </td>
+                        {linhas.length > 1 && (
+                          <td className="p-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => removerLinha(index)}
+                              className="text-rose-400 hover:text-rose-300 font-bold p-1"
+                              title="Remover linha"
+                            >
+                              ✕
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+
+                      {/* GAVETA DE ITENS ADICIONAIS DO CARRINHO */}
+                      {l.isCarrinho && (
+                        <tr className="bg-purple-950/15 border-b border-purple-900/30">
+                          <td colSpan={14} className="p-4 pl-12">
+                            <div className="bg-slate-950/60 p-4 rounded-xl border border-purple-900/30">
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="text-[11px] font-black text-purple-400 uppercase tracking-wider flex items-center gap-2">
+                                  🛒 Itens Adicionais do Carrinho (Pedido: {l.pedido || "..."})
+                                </h4>
+                                <span className="text-[10px] text-slate-500">
+                                  Herda NF, Canal, Solicitação, Motivo e Condições. PDV e Frete permanecem apenas na 1ª linha.
+                                </span>
+                              </div>
+
+                              <div className="space-y-2">
+                                {l.subItens.map((sub, sIdx) => (
+                                  <div key={sIdx} className="flex flex-wrap items-center gap-3">
+                                    <div className="w-36">
+                                      <input
+                                        type="text"
+                                        placeholder="SKU adicional"
+                                        value={sub.sku}
+                                        onChange={(e) => atualizarSubItem(index, sIdx, e.target.value)}
+                                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500"
+                                        required
+                                      />
+                                    </div>
+                                    <div className="flex-1 min-w-[200px]">
+                                      <input
+                                        type="text"
+                                        readOnly
+                                        placeholder="Produto (Auto)"
+                                        value={sub.produto}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-slate-400 outline-none"
+                                      />
+                                    </div>
+                                    <div className="w-28">
+                                      <input
+                                        type="text"
+                                        readOnly
+                                        placeholder="Marca (Auto)"
+                                        value={sub.marca}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-slate-400 outline-none"
+                                      />
+                                    </div>
+                                    <div>
+                                      {l.subItens.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => removerSubItem(index, sIdx)}
+                                          className="text-rose-400 hover:text-rose-300 font-bold p-1.5"
+                                          title="Remover este SKU do carrinho"
+                                        >
+                                          ✕
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+
+                                <button
+                                  type="button"
+                                  onClick={() => adicionarSubItem(index)}
+                                  className="mt-2 text-[10px] font-bold uppercase text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer pt-1"
+                                >
+                                  + Adicionar Outro SKU ao Carrinho
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={adicionarLinha}
+                className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
+              >
+                + Adicionar Outra Linha
+              </button>
+              <button
+                type="submit"
+                disabled={salvando}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg transition-all"
+              >
+                {salvando ? "A salvar..." : "💾 Salvar Devoluções"}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* LISTAGEM CONSOLIDADA */}
+        <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden mb-8">
+          <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-white">Devoluções Registadas</h2>
+              <p className="text-xs text-slate-400 mt-1">Histórico completo com controlo de frete reverso e valores convertidos.</p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <select
+                value={filtroCanal}
+                onChange={(e) => setFiltroCanal(e.target.value)}
+                className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer"
+              >
+                <option value="">Todos os Canais</option>
+                {canaisAtivos.map((c, i) => (
+                  <option key={i} value={c}>{c}</option>
+                ))}
               </select>
+              <input
+                type="month"
+                value={filtroMes}
+                onChange={(e) => setFiltroMes(e.target.value)}
+                className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {loading ? (
+            <p className="p-8 text-center text-slate-400">A carregar devoluções...</p>
+          ) : devolucoesFiltradas.length === 0 ? (
+            <p className="p-8 text-center text-slate-500">Nenhuma devolução encontrada.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-[600px]">
+              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                  <tr>
+                    <th className="p-3">Data Retorno</th>
+                    <th className="p-3">Pedido</th>
+                    <th className="p-3">Canal</th>
+                    <th className="p-3">NF</th>
+                    <th className="p-3">SKU</th>
+                    <th className="p-3 min-w-[200px]">Produto</th>
+                    <th className="p-3">Marca</th>
+                    <th className="p-3 text-right">PDV</th>
+                    <th className="p-3 text-right">Frete Reverso</th>
+                    <th className="p-3 text-right text-purple-400">Valor Convertido</th>
+                    <th className="p-3">Motivo</th>
+                    <th className="p-3">Observações</th>
+                    <th className="p-3 text-center">Condições</th>
+                    <th className="p-3 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                  {devolucoesFiltradas.map((item) => {
+                    const isEditing = idEditando === item.id;
+                    return (
+                      <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3 font-mono text-slate-400">
+                          {item.data_retorno ? item.data_retorno.split("-").reverse().join("/") : "-"}
+                        </td>
+                        <td className="p-3 font-bold text-white">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={dadosEdicao.pedido}
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, pedido: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-white"
+                            />
+                          ) : item.pedido}
+                        </td>
+                        <td className="p-3 text-slate-300">{item.canal}</td>
+                        <td className="p-3 text-slate-400">{item.nota_fiscal || "-"}</td>
+                        <td className="p-3 font-mono font-bold text-indigo-400">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={dadosEdicao.sku}
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, sku: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-white font-mono"
+                            />
+                          ) : item.sku}
+                        </td>
+                        <td className="p-3 text-slate-300 max-w-[220px] truncate">{item.produto}</td>
+                        <td className="p-3 text-slate-400">{item.marca}</td>
+                        <td className="p-3 text-right font-mono text-emerald-400">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={dadosEdicao.valor_pdv}
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, valor_pdv: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-right text-white"
+                            />
+                          ) : formatarMoeda(item.valor_pdv)}
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold text-rose-400">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={dadosEdicao.custo_frete}
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, custo_frete: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-right text-white"
+                            />
+                          ) : formatarMoeda(item.custo_frete)}
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold text-purple-400">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={dadosEdicao.valor_convertido}
+                              onChange={(e) => setDadosEdicao({ ...dadosEdicao, valor_convertido: e.target.value })}
+                              className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-right text-purple-300"
+                            />
+                          ) : formatarMoeda(item.valor_convertido)}
+                        </td>
+                        <td className="p-3 text-slate-300">{item.motivo || "-"}</td>
+                        <td className="p-3 text-slate-400 max-w-[180px] truncate">{item.observacoes || "-"}</td>
+                        <td className="p-3 text-center">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.condicoes === "Sim" ? "bg-emerald-950/60 text-emerald-400" : "bg-rose-950/60 text-rose-400"}`}>
+                            {item.condicoes}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          {isEditing ? (
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button onClick={() => salvarEdicao(item.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded text-[10px] font-bold">Salvar</button>
+                              <button onClick={() => setIdEditando(null)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded text-[10px] font-bold">Cancelar</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button onClick={() => iniciarEdicao(item)} className="bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white px-2.5 py-1 rounded text-[11px] font-bold transition-colors">✏️</button>
+                              <button onClick={() => excluirDevolucao(item.id)} className="bg-rose-950/40 hover:bg-rose-900 text-rose-400 border border-rose-900/50 px-2.5 py-1 rounded text-[11px] font-bold transition-colors">🗑️</button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
-
-        {subAba === "controle" && (
-          <>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-8">
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg relative overflow-hidden">
-                <div className="relative z-10">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Unidades Devolvidas</span>
-                  <div className="flex items-end gap-3 mt-2">
-                    <p className="text-3xl font-black text-white">{kpis.atual.unidades}</p>
-                    <span className={`text-xs font-bold mb-1 ${kpis.atual.unidades > kpis.anterior.unidades ? 'text-rose-400' : 'text-emerald-400'}`}>
-                      {calcProgresso(kpis.atual.unidades, kpis.anterior.unidades)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg relative overflow-hidden">
-                <div className="relative z-10">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Valor em Produtos (PDV)</span>
-                  <div className="flex items-end gap-3 mt-2">
-                    <p className="text-3xl font-black text-white">R$ {kpis.atual.valor.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
-                    <span className={`text-xs font-bold mb-1 ${kpis.atual.valor > kpis.anterior.valor ? 'text-rose-400' : 'text-emerald-400'}`}>
-                      {calcProgresso(kpis.atual.valor, kpis.anterior.valor)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg relative overflow-hidden">
-                <div className="relative z-10">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Custo C/ Frete Reverso</span>
-                  <div className="flex items-end gap-3 mt-2">
-                    <p className="text-3xl font-black text-white">R$ {kpis.atual.frete.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
-                    <span className={`text-xs font-bold mb-1 ${kpis.atual.frete > kpis.anterior.frete ? 'text-rose-400' : 'text-emerald-400'}`}>
-                      {calcProgresso(kpis.atual.frete, kpis.anterior.frete)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
-              <div className="flex items-center justify-between mb-6 border-b border-slate-800 pb-4">
-                <div>
-                  <h2 className="text-lg font-bold text-white">➕ Registar Devoluções</h2>
-                  <p className="text-xs text-slate-400 mt-1">Insira o SKU para autopreencher Nome e Marca. Todos os itens salvos terão a mesma Data de Retorno.</p>
-                </div>
-                <div className="bg-slate-950 border border-indigo-900/50 p-3 rounded-xl">
-                  <label className="block text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-1">Data Global de Retorno</label>
-                  <input type="date" value={dataGlobalRetorno} onChange={(e) => setDataGlobalRetorno(e.target.value)} className="bg-transparent text-sm font-bold text-white outline-none cursor-pointer" />
-                </div>
-              </div>
-
-              <form onSubmit={salvarDevolucoes} className="space-y-4">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                    <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[10px] border-b border-slate-800">
-                      <tr>
-                        <th className="p-2">Pedido</th>
-                        <th className="p-2">Canal</th>
-                        <th className="p-2">NF</th>
-                        <th className="p-2">Solicitação</th>
-                        <th className="p-2">SKU</th>
-                        <th className="p-2 w-32">Produto (Auto)</th>
-                        <th className="p-2">Marca</th>
-                        <th className="p-2 text-right">PDV (R$)</th>
-                        <th className="p-2 text-right">Frete</th>
-                        <th className="p-2 w-48">Motivo</th>
-                        <th className="p-2">Observações</th>
-                        <th className="p-2">Condições?</th>
-                        <th className="p-2 text-center">Ação</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60">
-                      {linhas.map((l, idx) => (
-                        <React.Fragment key={idx}>
-                          <tr className="bg-slate-950/40">
-                            <td className="p-1"><input type="text" value={l.pedido} onChange={(e) => atualizarLinha(idx, "pedido", e.target.value)} className="w-16 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] text-white outline-none focus:border-indigo-500" required /></td>
-                            <td className="p-1">
-                              <select value={l.canal} onChange={(e) => atualizarLinha(idx, "canal", e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] text-white outline-none cursor-pointer" required>
-                                <option value="">Canal...</option>
-                                {canais.map(c => <option key={c} value={c}>{c}</option>)}
-                              </select>
-                            </td>
-                            <td className="p-1"><input type="text" value={l.nota_fiscal} onChange={(e) => atualizarLinha(idx, "nota_fiscal", e.target.value)} className="w-14 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] text-white outline-none focus:border-indigo-500" /></td>
-                            <td className="p-1"><input type="text" value={l.solicitacao} onChange={(e) => atualizarLinha(idx, "solicitacao", e.target.value)} className="w-16 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] text-white outline-none focus:border-indigo-500" /></td>
-                            <td className="p-1"><input type="text" value={l.sku} onChange={(e) => atualizarLinha(idx, "sku", e.target.value)} placeholder="SKU" className="w-20 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] font-mono text-white outline-none focus:border-indigo-500" required /></td>
-                            <td className="p-1"><input type="text" value={l.produto} readOnly className="w-full bg-slate-950 border border-slate-800 rounded p-1.5 text-[10px] text-slate-400 outline-none truncate" placeholder="Auto" /></td>
-                            <td className="p-1"><input type="text" value={l.marca} readOnly className="w-16 bg-slate-950 border border-slate-800 rounded p-1.5 text-[10px] text-slate-400 outline-none" placeholder="Auto" /></td>
-                            <td className="p-1"><input type="number" step="0.01" value={l.pdv} onChange={(e) => atualizarLinha(idx, "pdv", e.target.value)} className="w-16 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] text-right font-mono text-white outline-none focus:border-indigo-500" required /></td>
-                            <td className="p-1"><input type="number" step="0.01" value={l.frete} onChange={(e) => atualizarLinha(idx, "frete", e.target.value)} className="w-14 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] text-right font-mono text-white outline-none focus:border-indigo-500" /></td>
-                            <td className="p-1">
-                              <select value={l.motivo} onChange={(e) => atualizarLinha(idx, "motivo", e.target.value)} className="w-32 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] text-white outline-none cursor-pointer truncate" required>
-                                <option value="">Selecione...</option>
-                                {motivosFixos.map(m => <option key={m} value={m}>{m}</option>)}
-                              </select>
-                            </td>
-                            <td className="p-1"><input type="text" value={l.observacoes} onChange={(e) => atualizarLinha(idx, "observacoes", e.target.value)} placeholder="Obs..." className="w-24 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] text-white outline-none focus:border-indigo-500" /></td>
-                            <td className="p-1">
-                              <select value={l.condicoes} onChange={(e) => atualizarLinha(idx, "condicoes", e.target.value)} className="w-20 bg-slate-900 border border-slate-700 rounded p-1.5 text-[10px] text-white outline-none cursor-pointer">
-                                {opcoesCondicao.map(o => <option key={o} value={o}>{o}</option>)}
-                              </select>
-                            </td>
-                            <td className="p-1 text-center">
-                              {linhas.length > 1 && <button type="button" onClick={() => removerLinha(idx)} className="text-rose-400 hover:bg-rose-950 px-2 py-1 rounded cursor-pointer">✕</button>}
-                            </td>
-                          </tr>
-                          
-                          {/* Linha Oculta de Mediação */}
-                          {l.condicoes === "Mediação" && (
-                            <tr className="bg-amber-950/20 border-b border-amber-900/30">
-                              <td colSpan={13} className="p-2 pl-8">
-                                <div className="flex flex-wrap items-center gap-4 text-[10px]">
-                                  <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Dados da Mediação:</span>
-                                  <div className="flex items-center">
-                                    <label className="text-slate-400 mr-2">ID Protocolo:</label>
-                                    <input type="text" value={l.mediacao_protocolo} onChange={(e) => atualizarLinha(idx, "mediacao_protocolo", e.target.value)} className="w-24 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none" required/>
-                                  </div>
-                                  <div className="flex items-center">
-                                    <label className="text-slate-400 mr-2">Resolvido:</label>
-                                    <select value={l.mediacao_resolvido} onChange={(e) => atualizarLinha(idx, "mediacao_resolvido", e.target.value)} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none" required>
-                                      <option value="Não">Não</option><option value="Sim">Sim</option>
-                                    </select>
-                                  </div>
-                                  <div className="flex items-center">
-                                    <label className={`mr-2 ${l.mediacao_resolvido === 'Sim' ? 'text-slate-400' : 'text-slate-600'}`}>Data Res.:</label>
-                                    <input type="date" value={l.mediacao_data_resolucao} disabled={l.mediacao_resolvido !== "Sim"} onChange={(e) => atualizarLinha(idx, "mediacao_data_resolucao", e.target.value)} className="w-28 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none disabled:opacity-30" required={l.mediacao_resolvido === "Sim"}/>
-                                  </div>
-                                  <div className="flex items-center">
-                                    <label className="text-slate-400 mr-2">Afetou Reputação:</label>
-                                    <select value={l.mediacao_reputacao} onChange={(e) => atualizarLinha(idx, "mediacao_reputacao", e.target.value)} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none" required>
-                                      <option value="">...</option><option value="Sim">Sim</option><option value="Não">Não</option>
-                                    </select>
-                                  </div>
-                                  <div className="flex items-center">
-                                    <label className="text-slate-400 mr-2">Valor Estorno:</label>
-                                    <input type="number" step="0.01" value={l.mediacao_estorno} onChange={(e) => atualizarLinha(idx, "mediacao_estorno", e.target.value)} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-right text-white outline-none" placeholder="0.00" required/>
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="flex justify-between items-center pt-3">
-                  <button type="button" onClick={adicionarLinha} className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer">+ Adicionar Linha</button>
-                  <button type="submit" disabled={salvando} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg">
-                    {salvando ? "A salvar..." : "💾 Salvar Devoluções"}
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            {/* TABELA DE HISTÓRICO COM EDIÇÃO E EXCLUSÃO */}
-            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden mb-8">
-              <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-bold text-white">Histórico de Devoluções ({mesAtual})</h2>
-                  <div className="flex gap-2 mt-3">
-                    {selecionadosIds.length > 0 && (
-                      <button onClick={excluirSelecionados} className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-1.5 px-3 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer shadow-sm transition-all">
-                        🗑️ Excluir Selecionados ({selecionadosIds.length})
-                      </button>
-                    )}
-                    <button onClick={limparBaseMes} className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-1.5 px-3 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer shadow-sm transition-all">
-                      🗑️ Limpar Base do Mês
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-2 text-[11px] font-bold text-amber-400 cursor-pointer bg-amber-950/30 border border-amber-900/50 px-3 py-2.5 rounded-xl hover:bg-amber-900/40 transition-colors">
-                    <input type="checkbox" checked={filtroMediacao} onChange={e => {setFiltroMediacao(e.target.checked); setPaginaAtual(1);}} className="accent-amber-500 w-4 h-4" />
-                    Apenas Mediações
-                  </label>
-                  <input type="text" placeholder="🔍 Buscar ID Pedido ou SKU..." value={pesquisaPedido} onChange={(e) => {setPesquisaPedido(e.target.value); setPaginaAtual(1);}} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none w-56"/>
-                </div>
-              </div>
-
-              {loading ? <p className="p-8 text-center text-slate-400">A carregar registos...</p> : dadosFiltrados.length === 0 ? <p className="p-8 text-center text-slate-500">Nenhuma devolução encontrada.</p> : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                      <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                        <tr>
-                          <th className="p-4 text-center w-10">
-                            <input type="checkbox" onChange={(e) => selecionarTodosCheckbox(e, dadosFiltrados)} checked={dadosFiltrados.length > 0 && selecionadosIds.length === dadosFiltrados.length} className="cursor-pointer accent-indigo-600 rounded w-3.5 h-3.5"/>
-                          </th>
-                          <th className="p-4">Data Retorno</th>
-                          <th className="p-4">Pedido / Canal</th>
-                          <th className="p-4">SKU / Produto</th>
-                          <th className="p-4">Marca</th>
-                          <th className="p-4">Motivo / Obs</th>
-                          <th className="p-4 text-center">Condições</th>
-                          <th className="p-4 text-right">PDV / Frete</th>
-                          <th className="p-4 text-center">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                        {itensTabelaAtual.map((item, idx) => {
-                          const isSelected = selecionadosIds.includes(item.id);
-                          const isEditing = idEditando === item.id;
-
-                          return (
-                            <React.Fragment key={item.id || idx}>
-                              <tr className={`hover:bg-slate-800/40 transition-colors ${isSelected ? 'bg-indigo-950/20' : ''}`}>
-                                <td className="p-4 text-center">
-                                  <input type="checkbox" checked={isSelected} onChange={() => selecionarLinhaCheckbox(item.id)} className="cursor-pointer accent-indigo-600 rounded w-3.5 h-3.5" />
-                                </td>
-                                
-                                <td className="p-4 font-mono text-slate-300">
-                                  {item.data_retorno ? item.data_retorno.split('-').reverse().join('/') : '-'}
-                                </td>
-                                
-                                {isEditing ? (
-                                  <>
-                                    <td className="p-2">
-                                      <input type="text" value={dadosEdicao.pedido} onChange={e => setDadosEdicao({...dadosEdicao, pedido: e.target.value})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 mb-1 text-white text-[10px]" />
-                                      <select value={dadosEdicao.canal} onChange={e => setDadosEdicao({...dadosEdicao, canal: e.target.value})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px] block">
-                                        {canais.map(c => <option key={c} value={c}>{c}</option>)}
-                                      </select>
-                                    </td>
-                                    <td className="p-2">
-                                      <input type="text" value={dadosEdicao.sku} onChange={e => setDadosEdicao({...dadosEdicao, sku: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px] font-mono" />
-                                    </td>
-                                    <td className="p-2 font-bold text-slate-300">{item.marca}</td>
-                                    <td className="p-2">
-                                      <select value={dadosEdicao.motivo} onChange={e => setDadosEdicao({...dadosEdicao, motivo: e.target.value})} className="w-32 bg-slate-900 border border-slate-700 rounded p-1 mb-1 text-white text-[10px] block">
-                                        {motivosFixos.map(m => <option key={m} value={m}>{m}</option>)}
-                                      </select>
-                                      <input type="text" value={dadosEdicao.observacoes} onChange={e => setDadosEdicao({...dadosEdicao, observacoes: e.target.value})} className="w-32 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px]" placeholder="Obs..." />
-                                    </td>
-                                    <td className="p-2 text-center">
-                                      <select value={dadosEdicao.condicoes} onChange={e => setDadosEdicao({...dadosEdicao, condicoes: e.target.value})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px]">
-                                        {opcoesCondicao.map(o => <option key={o} value={o}>{o}</option>)}
-                                      </select>
-                                    </td>
-                                    <td className="p-2 text-right">
-                                      <input type="number" step="0.01" value={dadosEdicao.pdv} onChange={e => setDadosEdicao({...dadosEdicao, pdv: e.target.value})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 mb-1 text-white text-[10px] text-right block ml-auto" />
-                                      <input type="number" step="0.01" value={dadosEdicao.frete} onChange={e => setDadosEdicao({...dadosEdicao, frete: e.target.value})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white text-[10px] text-right block ml-auto" />
-                                    </td>
-                                    <td className="p-2 text-center">
-                                      <div className="flex flex-col gap-1.5 items-center justify-center">
-                                        <button onClick={() => salvarEdicao(item.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded text-[10px] font-bold w-full">Salvar</button>
-                                        <button onClick={() => setIdEditando(null)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded text-[10px] font-bold w-full">Cancelar</button>
-                                      </div>
-                                    </td>
-                                  </>
-                                ) : (
-                                  <>
-                                    <td className="p-4"><div className="font-bold text-white">{item.pedido}</div><div className="text-[10px] text-slate-500">{item.canal}</div></td>
-                                    <td className="p-4"><div className="font-mono text-indigo-400">{item.sku}</div><div className="text-[10px] text-slate-400 max-w-[200px] truncate">{item.produto}</div></td>
-                                    <td className="p-4 font-bold text-slate-300">{item.marca}</td>
-                                    <td className="p-4"><div className="text-rose-400 truncate max-w-[200px]">{item.motivo}</div><div className="text-[10px] text-slate-500 truncate max-w-[200px]">{item.observacoes || "-"}</div></td>
-                                    <td className="p-4 text-center">
-                                      <span className={`px-2 py-1 rounded text-[10px] font-bold ${item.condicoes === 'Sim' ? 'bg-emerald-900/50 text-emerald-400' : item.condicoes === 'Não' ? 'bg-rose-900/50 text-rose-400' : 'bg-amber-900/50 text-amber-400'}`}>
-                                        {item.condicoes}
-                                      </span>
-                                    </td>
-                                    <td className="p-4 text-right">
-                                      <div className="font-mono font-bold text-emerald-400">R$ {Number(item.pdv).toFixed(2)}</div>
-                                      <div className="text-[10px] text-rose-400 font-mono">- R$ {Number(item.frete).toFixed(2)}</div>
-                                    </td>
-                                    <td className="p-4 text-center">
-                                      <div className="flex flex-col gap-1.5 items-center justify-center">
-                                        <button onClick={() => iniciarEdicao(item)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer w-full">Editar</button>
-                                        <button onClick={() => excluirLancamento(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer w-full">Remover</button>
-                                      </div>
-                                    </td>
-                                  </>
-                                )}
-                              </tr>
-
-                              {/* Renderização Condicional da Mediação no Histórico */}
-                              {item.condicoes === "Mediação" && !isEditing && (
-                                <tr className="bg-amber-950/10 border-b border-amber-900/30">
-                                  <td colSpan={9} className="p-3 pl-8">
-                                    {editandoMediacaoId === item.id ? (
-                                      <div className="flex flex-wrap items-center gap-4 text-[10px]">
-                                        <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Editar Mediação:</span>
-                                        <div className="flex items-center">
-                                          <label className="text-slate-400 mr-2">ID Protocolo:</label>
-                                          <input type="text" value={dadosEdicaoMediacao.protocolo} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, protocolo: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none"/>
-                                        </div>
-                                        <div className="flex items-center">
-                                          <label className="text-slate-400 mr-2">Resolvido:</label>
-                                          <select value={dadosEdicaoMediacao.resolvido} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, resolvido: e.target.value, data_resolucao: e.target.value === "Não" ? "" : dadosEdicaoMediacao.data_resolucao})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none">
-                                            <option value="Não">Não</option><option value="Sim">Sim</option>
-                                          </select>
-                                        </div>
-                                        <div className="flex items-center">
-                                          <label className={`mr-2 ${dadosEdicaoMediacao.resolvido === 'Sim' ? 'text-slate-400' : 'text-slate-600'}`}>Data Res.:</label>
-                                          <input type="date" value={dadosEdicaoMediacao.data_resolucao} disabled={dadosEdicaoMediacao.resolvido !== "Sim"} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, data_resolucao: e.target.value})} className="w-28 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none disabled:opacity-30"/>
-                                        </div>
-                                        <div className="flex items-center">
-                                          <label className="text-slate-400 mr-2">Afetou Rep.:</label>
-                                          <select value={dadosEdicaoMediacao.reputacao} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, reputacao: e.target.value})} className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-white outline-none">
-                                            <option value="Sim">Sim</option><option value="Não">Não</option>
-                                          </select>
-                                        </div>
-                                        <div className="flex items-center">
-                                          <label className="text-slate-400 mr-2">Estorno:</label>
-                                          <input type="number" step="0.01" value={dadosEdicaoMediacao.estorno} onChange={(e) => setDadosEdicaoMediacao({...dadosEdicaoMediacao, estorno: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1 text-right text-white outline-none"/>
-                                        </div>
-                                        <div className="ml-auto flex gap-2">
-                                          <button onClick={() => setEditandoMediacaoId(null)} className="text-[10px] font-bold text-slate-400 hover:text-slate-300">Cancelar</button>
-                                          <button onClick={() => salvarEdicaoMediacao(item.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-[10px] font-bold shadow">Salvar</button>
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div className="flex flex-wrap items-center gap-4 text-[11px]">
-                                        <span className="font-bold text-amber-500 uppercase flex-shrink-0">↳ Dados da Mediação:</span>
-                                        <span className="text-slate-400">Protocolo: <b className="text-white ml-1">{item.mediacao_protocolo}</b></span>
-                                        <span className="text-slate-400">Resolvido: <b className={`ml-1 ${item.mediacao_resolvido === 'Sim' ? 'text-emerald-400' : 'text-white'}`}>{item.mediacao_resolvido}</b></span>
-                                        {item.mediacao_resolvido === 'Sim' && <span className="text-slate-400">Data Resolução: <b className="text-white ml-1">{item.mediacao_data_resolucao ? item.mediacao_data_resolucao.split('-').reverse().join('/') : '-'}</b></span>}
-                                        <span className="text-slate-400">Afetou Reputação: <b className={`ml-1 ${item.mediacao_reputacao === 'Sim' ? 'text-rose-400' : 'text-emerald-400'}`}>{item.mediacao_reputacao}</b></span>
-                                        <span className="text-slate-400">Valor Estorno: <b className="text-white font-mono ml-1">R$ {Number(item.mediacao_estorno).toFixed(2)}</b></span>
-                                        <button onClick={() => iniciarEdicaoMediacao(item)} className="ml-auto bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded text-[10px] font-bold border border-slate-700 transition-colors">
-                                          Acompanhar / Editar
-                                        </button>
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="p-5 bg-slate-950 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
-                    <span>Página {paginaAtual} de {totalPaginas} ({dadosFiltrados.length} itens)</span>
-                    <div className="flex gap-2">
-                      <button onClick={() => setPaginaAtual(p => Math.max(p - 1, 1))} disabled={paginaAtual === 1} className="px-4 py-2 bg-slate-900 rounded-xl font-bold text-slate-300 disabled:opacity-40">Anterior</button>
-                      <button onClick={() => setPaginaAtual(p => Math.min(p + 1, totalPaginas))} disabled={paginaAtual === totalPaginas} className="px-4 py-2 bg-slate-900 rounded-xl font-bold text-slate-300 disabled:opacity-40">Próxima</button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {!loading && dadosFiltrados.length > 0 && (
-              <div className="mb-8">
-                <h2 className="text-xl font-black text-white tracking-tight mb-4">Análise Percentual ({mesAtual})</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <GraficoPizza dados={agruparPor("marca", "quantidade")} titulo="Marcas Mais Devolvidas (Qtd)" />
-                  <GraficoPizza dados={agruparPor("marca", "valor")} titulo="Impacto Financeiro por Marca (PDV)" tipoValor="moeda" />
-                  <GraficoPizza dados={agruparPor("motivo", "quantidade")} titulo="Motivos de Devolução" />
-                  <GraficoPizza dados={agruparPor("produto", "quantidade").slice(0, 8)} titulo="Top Produtos Devolvidos (SKU)" />
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        {/* SUBA ABA: PLANO DE AÇÃO */}
-        {subAba === "plano" && (
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden mb-8 p-6">
-            <h2 className="text-lg font-bold text-white mb-2">🎯 Plano de Ação por SKU ({mesAtual})</h2>
-            <p className="text-xs text-slate-400 mb-6">Produtos mais devolvidos neste mês com a listagem dos principais erros. Escreva a proposta de solução.</p>
-            
-            {listaPlanoAcao.length === 0 ? (
-              <p className="text-center text-slate-500 py-10">Nenhum produto devolvido no período {mesAtual}.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                    <tr>
-                      <th className="p-4 w-24 text-center">Total Dev.</th>
-                      <th className="p-4">SKU / Produto</th>
-                      <th className="p-4 w-1/3">Principais Erros / Motivos</th>
-                      <th className="p-4 w-1/3">PROPOSTA DE AÇÃO</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60">
-                    {listaPlanoAcao.map((item, idx) => {
-                      const isEditing = editandoPlanoSku === item.sku;
-                      return (
-                        <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="p-4 text-center">
-                            <span className="bg-rose-950/60 text-rose-400 border border-rose-900/50 px-3 py-1.5 rounded-lg font-black text-sm">{item.total}</span>
-                          </td>
-                          <td className="p-4">
-                            <div className="font-mono font-bold text-indigo-400">{item.sku}</div>
-                            <div className="text-slate-300 max-w-[250px] truncate" title={item.produto}>{item.produto}</div>
-                          </td>
-                          <td className="p-4 text-slate-400 italic text-[11px] leading-relaxed">
-                            {item.principaisMotivos}
-                          </td>
-                          <td className="p-4">
-                            {isEditing ? (
-                              <div className="flex flex-col gap-2">
-                                <textarea 
-                                  value={textoProposta} 
-                                  onChange={(e) => setTextoProposta(e.target.value)}
-                                  className="w-full bg-slate-950 border border-indigo-500/50 rounded-lg p-2 text-white outline-none min-h-[60px] text-xs resize-none"
-                                  placeholder="Escreva a solução..."
-                                  autoFocus
-                                />
-                                <div className="flex justify-end gap-2">
-                                  <button onClick={() => setEditandoPlanoSku(null)} className="text-[10px] font-bold text-slate-400 hover:text-slate-300">Cancelar</button>
-                                  <button onClick={() => salvarProposta(item.sku)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-[10px] font-bold">Salvar Proposta</button>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="flex justify-between items-start gap-3 group">
-                                <span className={`flex-1 text-[11px] ${item.proposta ? 'text-emerald-300' : 'text-slate-500'}`}>
-                                  {item.proposta || "Nenhuma proposta definida..."}
-                                </span>
-                                <button onClick={() => {setEditandoPlanoSku(item.sku); setTextoProposta(item.proposta);}} className="text-slate-500 hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-slate-800 rounded">
-                                  ✏️
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
       </div>
     </div>
   );
