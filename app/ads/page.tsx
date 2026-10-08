@@ -57,7 +57,7 @@ const formatarMoeda = (valor: number) => {
 type SubItemLive = { sku: string; unidades: string | number; receitaAds: string | number };
 
 export default function AdsPage() {
-  const [subAba, setSubAba] = useState<"campanhas" | "dashboard">("campanhas");
+  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget">("campanhas");
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const router = useRouter();
@@ -67,6 +67,7 @@ export default function AdsPage() {
   const [mesComparativo, setMesComparativo] = useState("08/2026");
   
   const [metaTacosGlobal, setMetaTacosGlobal] = useState(2); 
+  const [ocultarComparacao, setOcultarComparacao] = useState(false); // Novo estado do botão
 
   const [canaisAtivos, setCanaisAtivos] = useState<any[]>([]);
   const [lancamentos, setLancamentos] = useState<any[]>([]);
@@ -74,7 +75,7 @@ export default function AdsPage() {
 
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [regrasMlMap, setRegrasMlMap] = useState<Map<string, any>>(new Map());
-  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]); // Regras de Outros Canais
+  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
 
   const [idEditando, setIdEditando] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
@@ -112,7 +113,7 @@ export default function AdsPage() {
   }, [canalSelecionado, mesSelecionado]);
 
   useEffect(() => {
-    if (subAba === "dashboard") {
+    if (subAba === "dashboard" || subAba === "budget") {
       carregarDadosDashboard();
     }
   }, [subAba, mesSelecionado, mesComparativo]);
@@ -126,18 +127,14 @@ export default function AdsPage() {
     }
 
     let allCustos: any[] = [];
-    let from = 0;
-    let step = 1000;
-    let keep = true;
+    let from = 0; let step = 1000; let keep = true;
     while (keep) {
       const { data } = await supabase.from('tabela_custos_skus').select('*').range(from, from + step - 1);
       if (data && data.length > 0) {
         allCustos = [...allCustos, ...data];
         from += step;
         if (data.length < step) keep = false;
-      } else {
-        keep = false;
-      }
+      } else keep = false;
     }
     const mapaC = new Map();
     allCustos.forEach((c: any) => {
@@ -147,17 +144,14 @@ export default function AdsPage() {
     setCustosMap(mapaC);
 
     let allMl: any[] = [];
-    from = 0;
-    keep = true;
+    from = 0; keep = true;
     while (keep) {
       const { data } = await supabase.from('ml_anuncios_regras').select('*').range(from, from + step - 1);
       if (data && data.length > 0) {
         allMl = [...allMl, ...data];
         from += step;
         if (data.length < step) keep = false;
-      } else {
-        keep = false;
-      }
+      } else keep = false;
     }
     const mapaMl = new Map();
     allMl.forEach((m: any) => {
@@ -166,7 +160,6 @@ export default function AdsPage() {
     });
     setRegrasMlMap(mapaMl);
 
-    // Carregar Regras de Tarifação dos outros Canais
     const { data: tarifacaoData } = await supabase.from('config_regras_tarifacao').select('*').order('id');
     if (tarifacaoData) setRegrasTarifacao(tarifacaoData);
   };
@@ -212,11 +205,15 @@ export default function AdsPage() {
       const roasAtual = invAtual > 0 ? fatAdsAtual / invAtual : 0;
       const roasAnt = invAnt > 0 ? fatAdsAnt / invAnt : 0;
 
-      const fatCanalBrutoAtual = faturamentosAtual?.find(f => f.canal === canal)?.faturamento_total || "";
+      const dadosFatAtual = faturamentosAtual?.find(f => f.canal === canal);
+      const fatCanalBrutoAtual = dadosFatAtual?.faturamento_total || "";
+      const gastoAdsBrutoAtual = dadosFatAtual?.gasto_ads || "";
+      
       const fatCanalAtualDB = Number(fatCanalBrutoAtual);
       const totFatAtual = fatCanalAtualDB > 0 ? fatCanalAtualDB : fatAdsAtual;
 
-      const fatCanalAntDB = Number(faturamentosAnt?.find(f => f.canal === canal)?.faturamento_total || 0);
+      const dadosFatAnt = faturamentosAnt?.find(f => f.canal === canal);
+      const fatCanalAntDB = Number(dadosFatAnt?.faturamento_total || 0);
       const totFatAnt = fatCanalAntDB > 0 ? fatCanalAntDB : fatAdsAnt;
 
       const tacosAtual = totFatAtual > 0 ? (invAtual / totFatAtual) * 100 : 0;
@@ -231,7 +228,8 @@ export default function AdsPage() {
       return {
         canal, fatAdsAtual, fatAdsAnt, diffAds, roasAtual, roasAnt,
         tacosAtual, tacosAnt, margemRsAtual, margemRsAnt, diffMargemRs,
-        totFatAtual, totFatAtual_bruto: fatCanalBrutoAtual, repAds
+        totFatAtual, totFatAnt, totFatAtual_bruto: fatCanalBrutoAtual,
+        gastoAdsBrutoAtual, repAds
       };
     });
 
@@ -239,22 +237,29 @@ export default function AdsPage() {
     setLoading(false);
   };
 
-  const atualizarFaturamentoTotal = async (canal: string, valorStr: string) => {
+  const salvarFaturamentoEGasto = async (canal: string, campo: "faturamento_total" | "gasto_ads", valorStr: string) => {
     let valorLimpo = valorStr.replace(/\./g, '').replace(',', '.');
     const numVal = Number(valorLimpo);
     if (isNaN(numVal)) return;
 
-    const { error } = await supabase.from('ads_faturamento_canal').upsert({
-      canal, mes_referencia: mesSelecionado, faturamento_total: numVal
-    }, { onConflict: 'canal, mes_referencia' });
+    const { data: existente } = await supabase.from('ads_faturamento_canal')
+      .select('*').eq('canal', canal).eq('mes_referencia', mesSelecionado).maybeSingle();
 
-    if (error) alert("Erro ao salvar faturamento do canal: " + error.message);
+    const payload = {
+      canal,
+      mes_referencia: mesSelecionado,
+      faturamento_total: existente?.faturamento_total || 0,
+      gasto_ads: existente?.gasto_ads || 0,
+      [campo]: numVal
+    };
+
+    const { error } = await supabase.from('ads_faturamento_canal').upsert(payload, { onConflict: 'canal, mes_referencia' });
+    if (error) alert("Erro ao salvar: " + error.message);
     else carregarDadosDashboard();
   };
 
-  const adicionarLinhaForm = () => {
-    setLinhas([...linhas, { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] }]);
-  };
+  const adicionarLinhaForm = () => setLinhas([...linhas, { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] }]);
+  const removerLinhaForm = (index: number) => setLinhas(linhas.filter((_, i) => i !== index));
 
   const atualizarLinhaForm = (index: number, campo: string, valor: string) => {
     const novasLinhas = [...linhas];
@@ -267,10 +272,6 @@ export default function AdsPage() {
       novasLinhas[index].sku = "";
     }
     setLinhas(novasLinhas);
-  };
-
-  const removerLinhaForm = (index: number) => {
-    setLinhas(linhas.filter((_, i) => i !== index));
   };
 
   const adicionarItemLive = (index: number) => {
@@ -323,27 +324,21 @@ export default function AdsPage() {
       };
 
       const regraExistente = regrasMlMap.get(item.mlb);
-
       if (regraExistente) {
         await supabase.from('ml_anuncios_regras').update(dadosInsercao).eq('id', regraExistente.id);
       } else {
         await supabase.from('ml_anuncios_regras').insert([dadosInsercao]);
       }
-
       novoMapaMl.set(item.mlb, dadosInsercao);
     }
 
     setRegrasMlMap(novoMapaMl);
     setShowModalMLB(false);
 
-    if (modoPendente === "novo") {
-      processarGravacaoFinal(dadosPendentesTemp, novoMapaMl);
-    } else {
-      processarEdicaoFinal(dadosPendentesTemp, novoMapaMl);
-    }
+    if (modoPendente === "novo") processarGravacaoFinal(dadosPendentesTemp, novoMapaMl);
+    else processarEdicaoFinal(dadosPendentesTemp, novoMapaMl);
   };
 
-  // CALCULADOR UNIVERSAL DE TARIFAS E FRETES
   const calcularCustoCanal = (canal: string, precoUnit: number, receita: number, unidades: number, mlRegra: any) => {
     let comissaoPct = 14;
     let tarifaFixa = 0;
@@ -361,7 +356,7 @@ export default function AdsPage() {
     } else {
       const regrasDoCanal = regrasTarifacao.filter(r => r.canal.toLowerCase() === canal.toLowerCase());
       if (regrasDoCanal.length > 0) {
-        let regraAplicavel = regrasDoCanal[0]; // fallback
+        let regraAplicavel = regrasDoCanal[0];
         for (const r of regrasDoCanal) {
           const numeros = r.faixa_preco.match(/\d+[\.,]?\d*/g);
           if (numeros && numeros.length >= 2) {
@@ -416,11 +411,8 @@ export default function AdsPage() {
           const subUnidades = Number(sub.unidades || 0);
           let subInvestimento = 0;
 
-          if (receitaTotalLive > 0) {
-            subInvestimento = (subReceita / receitaTotalLive) * investimentoTotal;
-          } else {
-            subInvestimento = investimentoTotal / l.itensLive.length;
-          }
+          if (receitaTotalLive > 0) subInvestimento = (subReceita / receitaTotalLive) * investimentoTotal;
+          else subInvestimento = investimentoTotal / l.itensLive.length;
 
           registrosBrutos.push({ mlb: mlbLimpo, sku: skuLimpo, unidades: subUnidades, receitaAds: subReceita, investimento: subInvestimento });
         }
@@ -437,14 +429,9 @@ export default function AdsPage() {
       return;
     }
 
-    const hasOverflow = registrosBrutos.some(f => 
-        f.unidades > 9999999 || 
-        f.investimento > 99999999 || 
-        f.receitaAds > 99999999
-    );
-
+    const hasOverflow = registrosBrutos.some(f => f.unidades > 9999999 || f.investimento > 99999999 || f.receitaAds > 99999999);
     if (hasOverflow) {
-        alert("⚠️ ATENÇÃO: Um valor excessivamente alto foi detetado.\n\nVerifique se não colou acidentalmente um código de campanha (como no TikTok ou Shopee) num campo de Unidades, Receita ou Investimento.");
+        alert("⚠️ ATENÇÃO: Um valor excessivamente alto foi detetado. Verifique se não colou um código SKU num campo numérico.");
         setSalvando(false);
         return;
     }
@@ -464,9 +451,7 @@ export default function AdsPage() {
           
           if (!regra || !regra.comissao || Number(regra.comissao) === 0) {
             missing.push({
-              mlb: raw.mlb,
-              sku: raw.sku,
-              comissao: "",
+              mlb: raw.mlb, sku: raw.sku, comissao: "",
               peso_real: regra?.peso_real || "2.0",
               altura: regra?.altura || "10",
               largura: regra?.largura || "10",
@@ -498,7 +483,6 @@ export default function AdsPage() {
       const produtoNome = custoRegra?.produto || "Produto sem nome";
       const custoUnitario = Number(custoRegra?.custo_unitario || 0);
       const custoProdutoTotal = custoUnitario * raw.unidades;
-
       const precoUnitarioEstimado = raw.unidades > 0 ? (raw.receitaAds / raw.unidades) : 100;
       
       const { freteTotal, tarifaComissaoTotal } = calcularCustoCanal(canalSelecionado, precoUnitarioEstimado, raw.receitaAds, raw.unidades, mlRegra);
@@ -531,9 +515,8 @@ export default function AdsPage() {
     });
 
     const { error } = await supabase.from('ads_campanhas_lancamentos').insert(formatados);
-    if (error) {
-      alert("Erro ao gravar lançamentos: " + error.message);
-    } else {
+    if (error) alert("Erro ao gravar lançamentos: " + error.message);
+    else {
       alert("✅ Anúncios salvos e calculados com sucesso!");
       setLinhas([{ mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] }]);
       carregarLancamentos();
@@ -558,22 +541,19 @@ export default function AdsPage() {
     const investimento = Number(dadosEdicao.investimento || 0);
     
     if (unidades > 9999999 || investimento > 99999999 || receitaAds > 99999999) {
-        alert("⚠️ ATENÇÃO: Valor excessivamente alto. Verifique se não inseriu um SKU no lugar das unidades, receita ou investimento.");
+        alert("⚠️ ATENÇÃO: Valor excessivamente alto. Verifique se não inseriu um SKU num campo numérico.");
         return;
     }
 
     const skuLimpo = String(dadosEdicao.sku || "").trim();
     const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
-
     const isMercadoLivre = canalSelecionado.toLowerCase().includes("mercado livre");
 
     if (isMercadoLivre && !mlbLimpo.startsWith("LIVE")) {
       const regra = regrasMlMap.get(mlbLimpo);
       if (!regra || !regra.comissao || Number(regra.comissao) === 0) {
         setMlbsPendentes([{
-          mlb: mlbLimpo,
-          sku: skuLimpo,
-          comissao: "",
+          mlb: mlbLimpo, sku: skuLimpo, comissao: "",
           peso_real: regra?.peso_real || "2.0",
           altura: regra?.altura || "10",
           largura: regra?.largura || "10",
@@ -585,7 +565,6 @@ export default function AdsPage() {
         return;
       }
     }
-
     processarEdicaoFinal(id, regrasMlMap);
   };
 
@@ -603,7 +582,6 @@ export default function AdsPage() {
     const produtoNome = custoRegra?.produto || "Produto sem nome";
     const custoUnitario = Number(custoRegra?.custo_unitario || 0);
     const custoProdutoTotal = custoUnitario * unidades;
-
     const precoUnitarioEstimado = unidades > 0 ? (receitaAds / unidades) : 100;
     
     const { freteTotal, tarifaComissaoTotal } = calcularCustoCanal(canalSelecionado, precoUnitarioEstimado, receitaAds, unidades, mlRegra);
@@ -633,9 +611,8 @@ export default function AdsPage() {
     };
 
     const { error } = await supabase.from('ads_campanhas_lancamentos').update(atualizacao).eq('id', id);
-    if (error) {
-      alert("Erro ao atualizar: " + error.message);
-    } else {
+    if (error) alert("Erro ao atualizar: " + error.message);
+    else {
       setIdEditando(null);
       setSalvando(false);
       carregarLancamentos();
@@ -716,7 +693,15 @@ export default function AdsPage() {
               subAba === "dashboard" ? 'bg-purple-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
             }`}
           >
-            📊 Dashboard Comparativo & Budget
+            📊 Dashboard Comparativo
+          </button>
+          <button
+            onClick={() => setSubAba("budget")}
+            className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              subAba === "budget" ? 'bg-purple-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+            }`}
+          >
+            ⚖️ Disponibilizado x Usado
           </button>
         </div>
 
@@ -852,7 +837,6 @@ export default function AdsPage() {
                               </td>
                             </tr>
                             
-                            {/* SUBMENU PARA LIVE */}
                             {isLive && (
                               <tr className="bg-purple-950/10 border-b border-purple-900/30">
                                 <td colSpan={6} className="p-4 pl-8">
@@ -1061,6 +1045,12 @@ export default function AdsPage() {
                     {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
                   </select>
                 </div>
+                <button 
+                  onClick={() => setOcultarComparacao(!ocultarComparacao)}
+                  className="mt-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2.5 px-4 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer transition-all"
+                >
+                  {ocultarComparacao ? "👁️ Mostrar Comparação" : "👁️ Ocultar Comparação"}
+                </button>
               </div>
             </div>
 
@@ -1083,7 +1073,7 @@ export default function AdsPage() {
                       <input 
                         type="text" 
                         defaultValue={valorAtual} 
-                        onBlur={(e) => atualizarFaturamentoTotal(c.canal, e.target.value)}
+                        onBlur={(e) => salvarFaturamentoEGasto(c.canal, "faturamento_total", e.target.value)}
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-emerald-400 outline-none focus:border-purple-500"
                         placeholder="Ex: 153.000,00"
                       />
@@ -1103,15 +1093,15 @@ export default function AdsPage() {
                     <tr>
                       <th className="p-3">Canal</th>
                       <th className="p-3 text-right">Fat. Ads (Atual)</th>
-                      <th className="p-3 text-right">Fat. Ads (Anterior)</th>
-                      <th className="p-3 text-right">Dif. Ads (R$)</th>
+                      {!ocultarComparacao && <th className="p-3 text-right">Fat. Ads (Anterior)</th>}
+                      {!ocultarComparacao && <th className="p-3 text-right">Dif. Ads (R$)</th>}
                       <th className="p-3 text-right">ROAS Atual</th>
-                      <th className="p-3 text-right">ROAS Anterior</th>
+                      {!ocultarComparacao && <th className="p-3 text-right">ROAS Anterior</th>}
                       <th className="p-3 text-right">TACOS Atual</th>
-                      <th className="p-3 text-right">TACOS Anterior</th>
+                      {!ocultarComparacao && <th className="p-3 text-right">TACOS Anterior</th>}
                       <th className="p-3 text-right">Margem Líq. R$ (Atual)</th>
-                      <th className="p-3 text-right">Margem Líq. R$ (Ant)</th>
-                      <th className="p-3 text-right">Dif. Margem R$</th>
+                      {!ocultarComparacao && <th className="p-3 text-right">Margem Líq. R$ (Ant)</th>}
+                      {!ocultarComparacao && <th className="p-3 text-right">Dif. Margem R$</th>}
                       <th className="p-3 text-right">Total Faturado</th>
                       <th className="p-3 text-right">Rep. Ads %</th>
                       <th className="p-3 text-right">TACOS Sugerido (Budget)</th>
@@ -1125,22 +1115,103 @@ export default function AdsPage() {
                         <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                           <td className="p-3 font-bold text-white">{d.canal}</td>
                           <td className="p-3 text-right font-mono text-emerald-400">{formatarMoeda(d.fatAdsAtual)}</td>
-                          <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(d.fatAdsAnt)}</td>
-                          <td className={`p-3 text-right font-mono font-bold ${d.diffAds >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
-                            {d.diffAds >= 0 ? '+' : ''}{formatarMoeda(d.diffAds)}
-                          </td>
+                          {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(d.fatAdsAnt)}</td>}
+                          {!ocultarComparacao && (
+                            <td className={`p-3 text-right font-mono font-bold ${d.diffAds >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                              {d.diffAds >= 0 ? '+' : ''}{formatarMoeda(d.diffAds)}
+                            </td>
+                          )}
                           <td className="p-3 text-right font-mono text-indigo-400 font-bold">{d.roasAtual.toFixed(2)}x</td>
-                          <td className="p-3 text-right font-mono text-slate-300">{d.roasAnt.toFixed(2)}x</td>
+                          {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{d.roasAnt.toFixed(2)}x</td>}
                           <td className="p-3 text-right font-mono text-amber-400 font-bold">{d.tacosAtual.toFixed(2)}%</td>
-                          <td className="p-3 text-right font-mono text-slate-300">{d.tacosAnt.toFixed(2)}%</td>
+                          {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{d.tacosAnt.toFixed(2)}%</td>}
                           <td className="p-3 text-right font-mono text-emerald-300">{formatarMoeda(d.margemRsAtual)}</td>
-                          <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(d.margemRsAnt)}</td>
-                          <td className={`p-3 text-right font-mono font-bold ${d.diffMargemRs >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
-                            {d.diffMargemRs >= 0 ? '+' : ''}{formatarMoeda(d.diffMargemRs)}
-                          </td>
+                          {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(d.margemRsAnt)}</td>}
+                          {!ocultarComparacao && (
+                            <td className={`p-3 text-right font-mono font-bold ${d.diffMargemRs >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                              {d.diffMargemRs >= 0 ? '+' : ''}{formatarMoeda(d.diffMargemRs)}
+                            </td>
+                          )}
                           <td className="p-3 text-right font-mono text-white">{formatarMoeda(d.totFatAtual)}</td>
                           <td className="p-3 text-right font-mono text-violet-400 font-bold">{d.repAds.toFixed(2)}%</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(tacosSugeridoDinamico)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {subAba === "budget" && (
+          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-8 pb-6 border-b border-slate-800">
+              <div>
+                <h2 className="text-xl font-bold text-white">Disponibilizado x Usado</h2>
+                <p className="text-xs text-slate-400 mt-1">Comparativo entre o Budget Sugerido do Mês Anterior e o Valor Realmente Gasto no Mês Atual.</p>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mês de Referência (Gasto):</label>
+                  <select value={mesSelecionado} onChange={(e) => setMesSelecionado(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none">
+                    {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Base do TACOS (Anterior):</label>
+                  <select value={mesComparativo} onChange={(e) => setMesComparativo(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none">
+                    {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {loading ? (
+              <p className="p-8 text-center text-slate-400">A processar dados de budget...</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="p-4">Canal</th>
+                      <th className="p-4 text-right">Budget Mês Anterior (Disponível)</th>
+                      <th className="p-4 text-right w-48">Valor Gasto (Inserir)</th>
+                      <th className="p-4 text-right">Saldo</th>
+                      <th className="p-4 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {dadosComparativo.map((d, idx) => {
+                      // Disponível é o TACOS calculado sobre o Faturamento Total do MÊS ANTERIOR
+                      const budgetDisponivel = (d.totFatAnt * metaTacosGlobal) / 100;
+                      const valorGastoReal = Number(d.gastoAdsBrutoAtual || 0);
+                      const saldo = budgetDisponivel - valorGastoReal;
+                      const status = saldo >= 0 ? "Dentro do Budget" : "Estourou Budget";
+
+                      return (
+                        <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-4 font-bold text-white">{d.canal}</td>
+                          <td className="p-4 text-right font-mono font-bold text-emerald-400">{formatarMoeda(budgetDisponivel)}</td>
+                          <td className="p-4 text-right">
+                            <input 
+                              type="text" 
+                              defaultValue={d.gastoAdsBrutoAtual} 
+                              onBlur={(e) => salvarFaturamentoEGasto(d.canal, "gasto_ads", e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500 text-right"
+                              placeholder="Ex: 1530,00"
+                            />
+                          </td>
+                          <td className={`p-4 text-right font-mono font-black ${saldo >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                            {saldo >= 0 ? '+' : ''}{formatarMoeda(saldo)}
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider ${saldo >= 0 ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/50' : 'bg-rose-950/60 text-rose-400 border border-rose-900/50'}`}>
+                              {status}
+                            </span>
+                          </td>
                         </tr>
                       );
                     })}
