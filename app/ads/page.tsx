@@ -50,7 +50,6 @@ function normalizarSku(valor: any) {
   return s.toLowerCase();
 }
 
-// Formatador de Moeda BR
 const formatarMoeda = (valor: number) => {
   return "R$ " + valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -67,7 +66,6 @@ export default function AdsPage() {
   const [mesSelecionado, setMesSelecionado] = useState("09/2026");
   const [mesComparativo, setMesComparativo] = useState("08/2026");
   
-  // Meta de TACOS Global (Puxada do BD)
   const [metaTacosGlobal, setMetaTacosGlobal] = useState(2); 
 
   const [canaisAtivos, setCanaisAtivos] = useState<any[]>([]);
@@ -85,6 +83,12 @@ export default function AdsPage() {
   const [linhas, setLinhas] = useState([
     { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] as SubItemLive[] }
   ]);
+
+  // Estados do Modal de Interceção de MLBs Pendentes
+  const [showModalMLB, setShowModalMLB] = useState(false);
+  const [mlbsPendentes, setMlbsPendentes] = useState<any[]>([]);
+  const [dadosPendentesTemp, setDadosPendentesTemp] = useState<any>(null);
+  const [modoPendente, setModoPendente] = useState<"novo" | "edicao">("novo");
 
   const mesesCompetencia = [
     "01/2026", "02/2026", "03/2026", "04/2026", "05/2026", "06/2026", 
@@ -206,10 +210,10 @@ export default function AdsPage() {
 
       const fatCanalBrutoAtual = faturamentosAtual?.find(f => f.canal === canal)?.faturamento_total || "";
       const fatCanalAtualDB = Number(fatCanalBrutoAtual);
-      const totFatAtual = fatCanalAtualDB > 0 ? fatCanalAtualDB : fatAdsAtual; // Fallback
+      const totFatAtual = fatCanalAtualDB > 0 ? fatCanalAtualDB : fatAdsAtual;
 
       const fatCanalAntDB = Number(faturamentosAnt?.find(f => f.canal === canal)?.faturamento_total || 0);
-      const totFatAnt = fatCanalAntDB > 0 ? fatCanalAntDB : fatAdsAnt; // Fallback
+      const totFatAnt = fatCanalAntDB > 0 ? fatCanalAntDB : fatAdsAnt;
 
       const tacosAtual = totFatAtual > 0 ? (invAtual / totFatAtual) * 100 : 0;
       const tacosAnt = totFatAnt > 0 ? (invAnt / totFatAnt) * 100 : 0;
@@ -221,20 +225,9 @@ export default function AdsPage() {
       const repAds = totFatAtual > 0 ? (fatAdsAtual / totFatAtual) * 100 : 0;
 
       return {
-        canal,
-        fatAdsAtual,
-        fatAdsAnt,
-        diffAds,
-        roasAtual,
-        roasAnt,
-        tacosAtual,
-        tacosAnt,
-        margemRsAtual,
-        margemRsAnt,
-        diffMargemRs,
-        totFatAtual,
-        totFatAtual_bruto: fatCanalBrutoAtual,
-        repAds
+        canal, fatAdsAtual, fatAdsAnt, diffAds, roasAtual, roasAnt,
+        tacosAtual, tacosAnt, margemRsAtual, margemRsAnt, diffMargemRs,
+        totFatAtual, totFatAtual_bruto: fatCanalBrutoAtual, repAds
       };
     });
 
@@ -245,20 +238,14 @@ export default function AdsPage() {
   const atualizarFaturamentoTotal = async (canal: string, valorStr: string) => {
     let valorLimpo = valorStr.replace(/\./g, '').replace(',', '.');
     const numVal = Number(valorLimpo);
-    
     if (isNaN(numVal)) return;
 
     const { error } = await supabase.from('ads_faturamento_canal').upsert({
-      canal,
-      mes_referencia: mesSelecionado,
-      faturamento_total: numVal
+      canal, mes_referencia: mesSelecionado, faturamento_total: numVal
     }, { onConflict: 'canal, mes_referencia' });
 
-    if (error) {
-      alert("Erro ao salvar faturamento do canal: " + error.message);
-    } else {
-      carregarDadosDashboard();
-    }
+    if (error) alert("Erro ao salvar faturamento do canal: " + error.message);
+    else carregarDadosDashboard();
   };
 
   const adicionarLinhaForm = () => {
@@ -275,7 +262,6 @@ export default function AdsPage() {
       }
       novasLinhas[index].sku = "";
     }
-    
     setLinhas(novasLinhas);
   };
 
@@ -292,28 +278,72 @@ export default function AdsPage() {
   const removerItemLive = (index: number, subIndex: number) => {
     const novasLinhas = [...linhas];
     novasLinhas[index].itensLive.splice(subIndex, 1);
-    
     novasLinhas[index].unidades = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0));
     novasLinhas[index].receitaAds = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0));
-    
     setLinhas(novasLinhas);
   };
 
   const atualizarItemLive = (index: number, subIndex: number, campo: string, valor: string) => {
     const novasLinhas = [...linhas];
     novasLinhas[index].itensLive[subIndex] = { ...novasLinhas[index].itensLive[subIndex], [campo]: valor };
-    
     novasLinhas[index].unidades = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.unidades || 0), 0));
     novasLinhas[index].receitaAds = String(novasLinhas[index].itensLive.reduce((acc, sub) => acc + Number(sub.receitaAds || 0), 0));
-    
     setLinhas(novasLinhas);
+  };
+
+  const atualizarDadoPendente = (index: number, campo: string, valor: string) => {
+    const novaLista = [...mlbsPendentes];
+    novaLista[index][campo] = valor;
+    setMlbsPendentes(novaLista);
+  };
+
+  const confirmarMlbsPendentes = async () => {
+    for (const item of mlbsPendentes) {
+      if (!item.comissao || Number(item.comissao) <= 0) {
+        return alert(`Preencha a comissão (maior que 0) para o MLB: ${item.mlb}`);
+      }
+    }
+
+    setSalvando(true);
+    const novoMapaMl = new Map(regrasMlMap);
+
+    for (const item of mlbsPendentes) {
+      const dadosInsercao = {
+        mlb: item.mlb,
+        sku: item.sku,
+        comissao: Number(item.comissao),
+        peso_real: Number(item.peso_real || 2),
+        altura: Number(item.altura || 10),
+        largura: Number(item.largura || 10),
+        comprimento: Number(item.comprimento || 10)
+      };
+
+      const regraExistente = regrasMlMap.get(item.mlb);
+
+      if (regraExistente) {
+        await supabase.from('ml_anuncios_regras').update(dadosInsercao).eq('id', regraExistente.id);
+      } else {
+        await supabase.from('ml_anuncios_regras').insert([dadosInsercao]);
+      }
+
+      novoMapaMl.set(item.mlb, dadosInsercao);
+    }
+
+    setRegrasMlMap(novoMapaMl);
+    setShowModalMLB(false);
+
+    if (modoPendente === "novo") {
+      processarGravacaoFinal(dadosPendentesTemp, novoMapaMl);
+    } else {
+      processarEdicaoFinal(dadosPendentesTemp, novoMapaMl);
+    }
   };
 
   const salvarLancamentos = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
 
-    const registrosBrutos = [];
+    const registrosBrutos: any[] = [];
 
     for (const l of linhas) {
       const mlbLimpo = l.mlb.trim().toUpperCase();
@@ -353,15 +383,61 @@ export default function AdsPage() {
       return;
     }
 
+    const hasOverflow = registrosBrutos.some(f => f.unidades > 99999999 || f.investimento > 999999999 || f.receitaAds > 999999999);
+    if (hasOverflow) {
+        alert("⚠️ ATENÇÃO: Um dos valores é anormalmente gigante. Verifique se não colou um SKU num campo de Unidades, Receita ou Investimento.");
+        setSalvando(false);
+        return;
+    }
+
+    // INTERCEÇÃO: VERIFICA SE FALTA A COMISSÃO EM ALGUM MLB NOVO
+    const missing: any[] = [];
+    const processados = new Set();
+
+    for (const raw of registrosBrutos) {
+      if (raw.mlb.startsWith("LIVE")) continue;
+      
+      if (!processados.has(raw.mlb)) {
+        processados.add(raw.mlb);
+        const regra = regrasMlMap.get(raw.mlb);
+        
+        if (!regra || !regra.comissao || Number(regra.comissao) === 0) {
+          missing.push({
+            mlb: raw.mlb,
+            sku: raw.sku,
+            comissao: "",
+            peso_real: regra?.peso_real || "2.0",
+            altura: regra?.altura || "10",
+            largura: regra?.largura || "10",
+            comprimento: regra?.comprimento || "10"
+          });
+        }
+      }
+    }
+
+    if (missing.length > 0) {
+      setMlbsPendentes(missing);
+      setDadosPendentesTemp(registrosBrutos);
+      setModoPendente("novo");
+      setShowModalMLB(true);
+      setSalvando(false);
+      return;
+    }
+
+    processarGravacaoFinal(registrosBrutos, regrasMlMap);
+  };
+
+  const processarGravacaoFinal = async (registrosBrutos: any[], mapaMlAtual: Map<string, any>) => {
     const formatados = registrosBrutos.map(raw => {
       const skuKey = normalizarSku(raw.sku);
       const custoRegra = custosMap.get(skuKey);
-      const mlRegra = regrasMlMap.get(raw.mlb);
+      const mlRegra = mapaMlAtual.get(raw.mlb);
 
       const produtoNome = custoRegra?.produto || "Produto sem nome";
       const custoUnitario = Number(custoRegra?.custo_unitario || 0);
       const custoProdutoTotal = custoUnitario * raw.unidades;
 
+      // Se for LIVE, não tem MLB, cai no fallback seguro de 14. Senão, puxa a comissão obrigatória do BD
       let comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : 14;
       let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 2.0;
       let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
@@ -400,20 +476,6 @@ export default function AdsPage() {
       };
     });
 
-    // TRAVA ANTI-SKU: Deteta se algum número é absurdamente alto (> 100 milhões)
-    const hasOverflow = formatados.some(f => 
-        f.unidades_vendidas > 99999999 || 
-        f.investimento > 999999999 || 
-        f.retorno_bruto > 999999999 ||
-        f.custo_produto > 999999999
-    );
-
-    if (hasOverflow) {
-        alert("⚠️ ATENÇÃO: Um dos valores calculados é anormalmente gigante. É provável que tenha colado um código SKU por engano num campo de 'Unidades', 'Receita' ou 'Investimento'. Por favor, corrija a linha errada e tente novamente.");
-        setSalvando(false);
-        return;
-    }
-
     const { error } = await supabase.from('ads_campanhas_lancamentos').insert(formatados);
     if (error) {
       alert("Erro ao gravar lançamentos: " + error.message);
@@ -441,18 +503,47 @@ export default function AdsPage() {
     const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
     const investimento = Number(dadosEdicao.investimento || 0);
     
-    // TRAVA ANTI-SKU NA EDIÇÃO
     if (unidades > 99999999 || investimento > 999999999 || receitaAds > 999999999) {
         alert("⚠️ ATENÇÃO: Valor excessivamente alto. Verifique se não inseriu um SKU no lugar das unidades, receita ou investimento.");
         return;
     }
 
     const skuLimpo = String(dadosEdicao.sku || "").trim();
+    const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
+
+    // INTERCEÇÃO NA EDIÇÃO
+    if (!mlbLimpo.startsWith("LIVE")) {
+      const regra = regrasMlMap.get(mlbLimpo);
+      if (!regra || !regra.comissao || Number(regra.comissao) === 0) {
+        setMlbsPendentes([{
+          mlb: mlbLimpo,
+          sku: skuLimpo,
+          comissao: "",
+          peso_real: regra?.peso_real || "2.0",
+          altura: regra?.altura || "10",
+          largura: regra?.largura || "10",
+          comprimento: regra?.comprimento || "10"
+        }]);
+        setDadosPendentesTemp(id);
+        setModoPendente("edicao");
+        setShowModalMLB(true);
+        return;
+      }
+    }
+
+    processarEdicaoFinal(id, regrasMlMap);
+  };
+
+  const processarEdicaoFinal = async (id: number, mapaMlAtual: Map<string, any>) => {
+    const unidades = Number(dadosEdicao.unidades_vendidas || 0);
+    const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
+    const investimento = Number(dadosEdicao.investimento || 0);
+    const skuLimpo = String(dadosEdicao.sku || "").trim();
     const skuKey = normalizarSku(skuLimpo);
     const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
 
     const custoRegra = custosMap.get(skuKey);
-    const mlRegra = regrasMlMap.get(mlbLimpo);
+    const mlRegra = mapaMlAtual.get(mlbLimpo);
 
     const produtoNome = custoRegra?.produto || "Produto sem nome";
     const custoUnitario = Number(custoRegra?.custo_unitario || 0);
@@ -498,6 +589,7 @@ export default function AdsPage() {
       alert("Erro ao atualizar: " + error.message);
     } else {
       setIdEditando(null);
+      setSalvando(false);
       carregarLancamentos();
     }
   };
@@ -551,7 +643,7 @@ export default function AdsPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
-      <div className="max-w-[98%] mx-auto">
+      <div className="max-w-[98%] mx-auto relative">
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
@@ -924,7 +1016,6 @@ export default function AdsPage() {
               </div>
             </div>
 
-            {/* BARRA DE INSERÇÃO DO FATURAMENTO TOTAL DO MÊS E META TACOS */}
             <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800 mb-8">
               <div className="flex flex-wrap items-center justify-between mb-4">
                 <h3 className="text-[11px] font-black text-slate-300 uppercase tracking-wider">💰 Inserir Faturamento Total do Canal (Orgânico + Ads) - {mesSelecionado}</h3>
@@ -1009,6 +1100,73 @@ export default function AdsPage() {
                 </table>
               </div>
             )}
+          </div>
+        )}
+
+        {/* MODAL DE INTERCEÇÃO: PREENCHIMENTO DE MLB SEM COMISSÃO */}
+        {showModalMLB && (
+          <div className="fixed inset-0 bg-slate-950/90 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+              
+              <div className="p-6 border-b border-slate-800">
+                <h2 className="text-xl font-black text-rose-400 flex items-center gap-2">⚠️ Atenção: Informações Ausentes</h2>
+                <p className="text-xs text-slate-400 mt-2">
+                  Os seguintes anúncios <strong className="text-white">não possuem percentual de comissão registado</strong> (ou estão com 0%) na base de dados. 
+                  Preencha os valores reais abaixo para que as tarifas e margens sejam calculadas corretamente. Eles serão salvos no sistema para as próximas vezes.
+                </p>
+              </div>
+
+              <div className="p-6 overflow-y-auto flex-1 space-y-4">
+                {mlbsPendentes.map((item, index) => (
+                  <div key={index} className="bg-slate-950 border border-slate-800 p-4 rounded-xl flex flex-col lg:flex-row gap-4 lg:items-center">
+                    <div className="lg:w-1/4">
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">MLB / ID</p>
+                      <p className="font-mono font-bold text-white text-sm truncate">{item.mlb}</p>
+                    </div>
+                    
+                    <div className="flex-1 grid grid-cols-2 md:grid-cols-5 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-rose-300 uppercase mb-1">Comissão % *</label>
+                        <input type="number" step="0.01" value={item.comissao} onChange={(e) => atualizarDadoPendente(index, "comissao", e.target.value)} className="w-full bg-slate-900 border border-rose-500/50 rounded-lg p-2 text-xs text-white outline-none focus:border-rose-400" required />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Peso (kg)</label>
+                        <input type="number" step="0.01" value={item.peso_real} onChange={(e) => atualizarDadoPendente(index, "peso_real", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Alt. (cm)</label>
+                        <input type="number" value={item.altura} onChange={(e) => atualizarDadoPendente(index, "altura", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Larg. (cm)</label>
+                        <input type="number" value={item.largura} onChange={(e) => atualizarDadoPendente(index, "largura", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Comp. (cm)</label>
+                        <input type="number" value={item.comprimento} onChange={(e) => atualizarDadoPendente(index, "comprimento", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-6 border-t border-slate-800 bg-slate-900/50 flex justify-end gap-4 rounded-b-2xl">
+                <button 
+                  onClick={() => { setShowModalMLB(false); setSalvando(false); }} 
+                  className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer"
+                >
+                  Cancelar e Fechar
+                </button>
+                <button 
+                  onClick={confirmarMlbsPendentes}
+                  disabled={salvando}
+                  className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg"
+                >
+                  {salvando ? "A Processar..." : "Salvar na Base e Concluir Gravação"}
+                </button>
+              </div>
+
+            </div>
           </div>
         )}
 
