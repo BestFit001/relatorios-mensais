@@ -74,6 +74,7 @@ export default function AdsPage() {
 
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [regrasMlMap, setRegrasMlMap] = useState<Map<string, any>>(new Map());
+  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]); // Regras de Outros Canais
 
   const [idEditando, setIdEditando] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
@@ -84,7 +85,6 @@ export default function AdsPage() {
     { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] as SubItemLive[] }
   ]);
 
-  // Estados do Modal de Interceção de MLBs Pendentes
   const [showModalMLB, setShowModalMLB] = useState(false);
   const [mlbsPendentes, setMlbsPendentes] = useState<any[]>([]);
   const [dadosPendentesTemp, setDadosPendentesTemp] = useState<any>(null);
@@ -165,6 +165,10 @@ export default function AdsPage() {
       if (mlbLimpo) mapaMl.set(mlbLimpo, m);
     });
     setRegrasMlMap(mapaMl);
+
+    // Carregar Regras de Tarifação dos outros Canais
+    const { data: tarifacaoData } = await supabase.from('config_regras_tarifacao').select('*').order('id');
+    if (tarifacaoData) setRegrasTarifacao(tarifacaoData);
   };
 
   const carregarLancamentos = async () => {
@@ -339,6 +343,56 @@ export default function AdsPage() {
     }
   };
 
+  // CALCULADOR UNIVERSAL DE TARIFAS E FRETES
+  const calcularCustoCanal = (canal: string, precoUnit: number, receita: number, unidades: number, mlRegra: any) => {
+    let comissaoPct = 14;
+    let tarifaFixa = 0;
+    let freteUnitario = 0;
+
+    const isMercadoLivre = canal.toLowerCase().includes("mercado livre");
+
+    if (isMercadoLivre) {
+      comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : 14;
+      let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 2.0;
+      let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
+      let largura = mlRegra ? Number(mlRegra.largura || 0) : 10;
+      let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
+      freteUnitario = calcularFreteML(precoUnit, pesoReal, altura, largura, comprimento);
+    } else {
+      const regrasDoCanal = regrasTarifacao.filter(r => r.canal.toLowerCase() === canal.toLowerCase());
+      if (regrasDoCanal.length > 0) {
+        let regraAplicavel = regrasDoCanal[0]; // fallback
+        for (const r of regrasDoCanal) {
+          const numeros = r.faixa_preco.match(/\d+[\.,]?\d*/g);
+          if (numeros && numeros.length >= 2) {
+            const min = parseFloat(numeros[0].replace(',', '.'));
+            const max = parseFloat(numeros[1].replace(',', '.'));
+            if (precoUnit >= min && precoUnit <= max) {
+              regraAplicavel = r;
+              break;
+            }
+          } else if (numeros && numeros.length === 1) {
+            const val = parseFloat(numeros[0].replace(',', '.'));
+            if (r.faixa_preco.toLowerCase().includes("acima") || r.faixa_preco.toLowerCase().includes("maior")) {
+              if (precoUnit >= val) {
+                regraAplicavel = r;
+                break;
+              }
+            }
+          }
+        }
+        comissaoPct = Number(regraAplicavel.comissao || 0);
+        tarifaFixa = Number(regraAplicavel.tarifa_fixa || 0);
+        freteUnitario = Number(regraAplicavel.frete || 0);
+      }
+    }
+
+    const freteTotal = freteUnitario * unidades;
+    const tarifaComissaoTotal = (receita * (comissaoPct / 100)) + (tarifaFixa * unidades);
+
+    return { freteTotal, tarifaComissaoTotal };
+  };
+
   const salvarLancamentos = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
@@ -383,45 +437,53 @@ export default function AdsPage() {
       return;
     }
 
-    const hasOverflow = registrosBrutos.some(f => f.unidades > 99999999 || f.investimento > 999999999 || f.receitaAds > 999999999);
+    const hasOverflow = registrosBrutos.some(f => 
+        f.unidades > 9999999 || 
+        f.investimento > 99999999 || 
+        f.receitaAds > 99999999
+    );
+
     if (hasOverflow) {
-        alert("⚠️ ATENÇÃO: Um dos valores é anormalmente gigante. Verifique se não colou um SKU num campo de Unidades, Receita ou Investimento.");
+        alert("⚠️ ATENÇÃO: Um valor excessivamente alto foi detetado.\n\nVerifique se não colou acidentalmente um código de campanha (como no TikTok ou Shopee) num campo de Unidades, Receita ou Investimento.");
         setSalvando(false);
         return;
     }
 
-    // INTERCEÇÃO: VERIFICA SE FALTA A COMISSÃO EM ALGUM MLB NOVO
-    const missing: any[] = [];
-    const processados = new Set();
+    const isMercadoLivre = canalSelecionado.toLowerCase().includes("mercado livre");
 
-    for (const raw of registrosBrutos) {
-      if (raw.mlb.startsWith("LIVE")) continue;
-      
-      if (!processados.has(raw.mlb)) {
-        processados.add(raw.mlb);
-        const regra = regrasMlMap.get(raw.mlb);
+    if (isMercadoLivre) {
+      const missing: any[] = [];
+      const processados = new Set();
+
+      for (const raw of registrosBrutos) {
+        if (raw.mlb.startsWith("LIVE")) continue;
         
-        if (!regra || !regra.comissao || Number(regra.comissao) === 0) {
-          missing.push({
-            mlb: raw.mlb,
-            sku: raw.sku,
-            comissao: "",
-            peso_real: regra?.peso_real || "2.0",
-            altura: regra?.altura || "10",
-            largura: regra?.largura || "10",
-            comprimento: regra?.comprimento || "10"
-          });
+        if (!processados.has(raw.mlb)) {
+          processados.add(raw.mlb);
+          const regra = regrasMlMap.get(raw.mlb);
+          
+          if (!regra || !regra.comissao || Number(regra.comissao) === 0) {
+            missing.push({
+              mlb: raw.mlb,
+              sku: raw.sku,
+              comissao: "",
+              peso_real: regra?.peso_real || "2.0",
+              altura: regra?.altura || "10",
+              largura: regra?.largura || "10",
+              comprimento: regra?.comprimento || "10"
+            });
+          }
         }
       }
-    }
 
-    if (missing.length > 0) {
-      setMlbsPendentes(missing);
-      setDadosPendentesTemp(registrosBrutos);
-      setModoPendente("novo");
-      setShowModalMLB(true);
-      setSalvando(false);
-      return;
+      if (missing.length > 0) {
+        setMlbsPendentes(missing);
+        setDadosPendentesTemp(registrosBrutos);
+        setModoPendente("novo");
+        setShowModalMLB(true);
+        setSalvando(false);
+        return;
+      }
     }
 
     processarGravacaoFinal(registrosBrutos, regrasMlMap);
@@ -437,19 +499,11 @@ export default function AdsPage() {
       const custoUnitario = Number(custoRegra?.custo_unitario || 0);
       const custoProdutoTotal = custoUnitario * raw.unidades;
 
-      // Se for LIVE, não tem MLB, cai no fallback seguro de 14. Senão, puxa a comissão obrigatória do BD
-      let comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : 14;
-      let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 2.0;
-      let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
-      let largura = mlRegra ? Number(mlRegra.largura || 0) : 10;
-      let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
-
       const precoUnitarioEstimado = raw.unidades > 0 ? (raw.receitaAds / raw.unidades) : 100;
-      const freteUnitario = calcularFreteML(precoUnitarioEstimado, pesoReal, altura, largura, comprimento);
-      const freteTotal = freteUnitario * raw.unidades;
+      
+      const { freteTotal, tarifaComissaoTotal } = calcularCustoCanal(canalSelecionado, precoUnitarioEstimado, raw.receitaAds, raw.unidades, mlRegra);
 
       const impostoTotal = raw.receitaAds * 0.08;
-      const tarifaComissaoTotal = raw.receitaAds * (comissaoPct / 100);
       const embalagemTotal = 0.70 * raw.unidades;
 
       const faturamentoTotal = raw.receitaAds;
@@ -503,7 +557,7 @@ export default function AdsPage() {
     const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
     const investimento = Number(dadosEdicao.investimento || 0);
     
-    if (unidades > 99999999 || investimento > 999999999 || receitaAds > 999999999) {
+    if (unidades > 9999999 || investimento > 99999999 || receitaAds > 99999999) {
         alert("⚠️ ATENÇÃO: Valor excessivamente alto. Verifique se não inseriu um SKU no lugar das unidades, receita ou investimento.");
         return;
     }
@@ -511,8 +565,9 @@ export default function AdsPage() {
     const skuLimpo = String(dadosEdicao.sku || "").trim();
     const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
 
-    // INTERCEÇÃO NA EDIÇÃO
-    if (!mlbLimpo.startsWith("LIVE")) {
+    const isMercadoLivre = canalSelecionado.toLowerCase().includes("mercado livre");
+
+    if (isMercadoLivre && !mlbLimpo.startsWith("LIVE")) {
       const regra = regrasMlMap.get(mlbLimpo);
       if (!regra || !regra.comissao || Number(regra.comissao) === 0) {
         setMlbsPendentes([{
@@ -549,18 +604,11 @@ export default function AdsPage() {
     const custoUnitario = Number(custoRegra?.custo_unitario || 0);
     const custoProdutoTotal = custoUnitario * unidades;
 
-    let comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : 14;
-    let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 2.0;
-    let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
-    let largura = mlRegra ? Number(mlRegra.largura || 0) : 10;
-    let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
-
     const precoUnitarioEstimado = unidades > 0 ? (receitaAds / unidades) : 100;
-    const freteUnitario = calcularFreteML(precoUnitarioEstimado, pesoReal, altura, largura, comprimento);
-    const freteTotal = freteUnitario * unidades;
+    
+    const { freteTotal, tarifaComissaoTotal } = calcularCustoCanal(canalSelecionado, precoUnitarioEstimado, receitaAds, unidades, mlRegra);
 
     const impostoTotal = receitaAds * 0.08;
-    const tarifaComissaoTotal = receitaAds * (comissaoPct / 100);
     const embalagemTotal = 0.70 * unidades;
 
     const faturamentoTotal = receitaAds;
@@ -1111,7 +1159,7 @@ export default function AdsPage() {
               <div className="p-6 border-b border-slate-800">
                 <h2 className="text-xl font-black text-rose-400 flex items-center gap-2">⚠️ Atenção: Informações Ausentes</h2>
                 <p className="text-xs text-slate-400 mt-2">
-                  Os seguintes anúncios <strong className="text-white">não possuem percentual de comissão registado</strong> (ou estão com 0%) na base de dados. 
+                  Os seguintes anúncios do Mercado Livre <strong className="text-white">não possuem percentual de comissão registado</strong> na base de dados. 
                   Preencha os valores reais abaixo para que as tarifas e margens sejam calculadas corretamente. Eles serão salvos no sistema para as próximas vezes.
                 </p>
               </div>
