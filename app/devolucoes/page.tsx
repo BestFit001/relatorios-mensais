@@ -41,9 +41,11 @@ const formatarMoeda = (valor: number) => {
 
 type SubItemCarrinho = {
   sku: string;
+  quantidade: string | number;
   produto: string;
   marca: string;
   pdv: string;
+  custo_unitario: number;
   motivo: string;
   observacoes: string;
   condicoes: "Sim" | "Não";
@@ -60,9 +62,11 @@ type LinhaDevolucao = {
   protocolo_mediacao: string;
   // Campos para quando carrinho for falso:
   sku: string;
+  quantidade: string | number;
   produto: string;
   marca: string;
   pdv: string;
+  custo_unitario: number;
   motivo: string;
   observacoes: string;
   condicoes: "Sim" | "Não";
@@ -116,18 +120,22 @@ export default function DevolucoesPage() {
     mediacao: "Nenhuma",
     protocolo_mediacao: "",
     sku: "",
+    quantidade: "1",
     produto: "",
     marca: "Auto",
     pdv: "",
+    custo_unitario: 0,
     motivo: MOTIVOS_OFICIAIS[0],
     observacoes: "",
     condicoes: "Não",
     itensCarrinho: [
       {
         sku: "",
+        quantidade: "1",
         produto: "",
         marca: "Auto",
         pdv: "",
+        custo_unitario: 0,
         motivo: MOTIVOS_OFICIAIS[0],
         observacoes: "",
         condicoes: "Não"
@@ -187,7 +195,6 @@ export default function DevolucoesPage() {
     setLoading(false);
   };
 
-  // Manipulação de Linhas Principais
   const adicionarLinha = () => {
     setLinhas([...linhas, criarLinhaVazia()]);
   };
@@ -205,9 +212,11 @@ export default function DevolucoesPage() {
       novas[index].itensCarrinho = [
         {
           sku: novas[index].sku || "",
+          quantidade: novas[index].quantidade || "1",
           produto: novas[index].produto || "",
           marca: novas[index].marca || "Auto",
           pdv: novas[index].pdv || "",
+          custo_unitario: novas[index].custo_unitario || 0,
           motivo: novas[index].motivo || MOTIVOS_OFICIAIS[0],
           observacoes: novas[index].observacoes || "",
           condicoes: novas[index].condicoes || "Não"
@@ -221,20 +230,22 @@ export default function DevolucoesPage() {
       if (match) {
         novas[index].produto = match.produto || "";
         novas[index].marca = match.marca || "BEST FIT";
+        novas[index].custo_unitario = Number(match.custo_unitario || 0);
       }
     }
 
     setLinhas(novas);
   };
 
-  // Manipulação dos Itens da Caixinha do Carrinho
   const adicionarItemCarrinho = (indexLinha: number) => {
     const novas = [...linhas];
     novas[indexLinha].itensCarrinho.push({
       sku: "",
+      quantidade: "1",
       produto: "",
       marca: "Auto",
       pdv: "",
+      custo_unitario: 0,
       motivo: MOTIVOS_OFICIAIS[0],
       observacoes: "",
       condicoes: "Não"
@@ -261,13 +272,13 @@ export default function DevolucoesPage() {
       if (match) {
         novas[indexLinha].itensCarrinho[indexSub].produto = match.produto || "";
         novas[indexLinha].itensCarrinho[indexSub].marca = match.marca || "BEST FIT";
+        novas[indexLinha].itensCarrinho[indexSub].custo_unitario = Number(match.custo_unitario || 0);
       }
     }
 
     setLinhas(novas);
   };
 
-  // Salvar no Banco
   const salvarDevolucoes = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
@@ -283,6 +294,9 @@ export default function DevolucoesPage() {
 
         for (const sub of l.itensCarrinho) {
           if (!sub.sku.trim()) continue;
+          const skuKey = normalizarSku(sub.sku);
+          const custoCalculado = sub.custo_unitario || Number(custosMap.get(skuKey)?.custo_unitario || 0);
+
           registrosFormatados.push({
             data_retorno: dataGlobalRetorno,
             pedido: l.pedido.trim(),
@@ -290,10 +304,12 @@ export default function DevolucoesPage() {
             nf: l.nf.trim(),
             solicitacao: l.solicitacao,
             sku: sub.sku.trim(),
+            quantidade: Math.max(1, parseInt(String(sub.quantidade), 10) || 1),
             produto: sub.produto.trim() || "Produto sem cadastro",
             marca: sub.marca.trim() || "Auto",
             pdv: Number(parseNumero(sub.pdv)),
             custo_frete: freteRateado,
+            custo_unitario: custoCalculado,
             motivo: sub.motivo,
             observacoes: (sub.observacoes.trim() + (l.protocolo_mediacao ? ` [Protocolo: ${l.protocolo_mediacao}]` : "")).trim(),
             condicoes: sub.condicoes,
@@ -303,6 +319,9 @@ export default function DevolucoesPage() {
         }
       } else {
         if (!l.sku.trim()) continue;
+        const skuKey = normalizarSku(l.sku);
+        const custoCalculado = l.custo_unitario || Number(custosMap.get(skuKey)?.custo_unitario || 0);
+
         registrosFormatados.push({
           data_retorno: dataGlobalRetorno,
           pedido: l.pedido.trim(),
@@ -310,10 +329,12 @@ export default function DevolucoesPage() {
           nf: l.nf.trim(),
           solicitacao: l.solicitacao,
           sku: l.sku.trim(),
+          quantidade: Math.max(1, parseInt(String(l.quantidade), 10) || 1),
           produto: l.produto.trim() || "Produto sem cadastro",
           marca: l.marca.trim() || "Auto",
           pdv: Number(parseNumero(l.pdv)),
           custo_frete: Number(parseNumero(l.custo_frete)),
+          custo_unitario: custoCalculado,
           motivo: l.motivo,
           observacoes: (l.observacoes.trim() + (l.protocolo_mediacao ? ` [Protocolo: ${l.protocolo_mediacao}]` : "")).trim(),
           condicoes: l.condicoes,
@@ -338,6 +359,8 @@ export default function DevolucoesPage() {
           copy.frete = copy.custo_frete;
           delete copy.custo_frete;
         }
+        if (res.error?.message.includes("quantidade")) delete copy.quantidade;
+        if (res.error?.message.includes("custo_unitario")) delete copy.custo_unitario;
         if (res.error?.message.includes("plano_acao")) delete copy.plano_acao;
         if (res.error?.message.includes("mediacao")) delete copy.mediacao;
         return copy;
@@ -363,16 +386,21 @@ export default function DevolucoesPage() {
   };
 
   const salvarEdicaoInline = async (id: number) => {
+    const skuKey = normalizarSku(dadosEdicao.sku);
+    const custoCalc = Number(dadosEdicao.custo_unitario || custosMap.get(skuKey)?.custo_unitario || 0);
+
     const payload: any = {
       pedido: dadosEdicao.pedido,
       canal: dadosEdicao.canal,
       nf: dadosEdicao.nf,
       solicitacao: dadosEdicao.solicitacao,
       sku: dadosEdicao.sku,
+      quantidade: Math.max(1, parseInt(String(dadosEdicao.quantidade), 10) || 1),
       produto: dadosEdicao.produto,
       marca: dadosEdicao.marca,
       pdv: Number(parseNumero(dadosEdicao.pdv)),
       custo_frete: Number(parseNumero(dadosEdicao.custo_frete ?? dadosEdicao.frete)),
+      custo_unitario: custoCalc,
       motivo: dadosEdicao.motivo,
       observacoes: dadosEdicao.observacoes,
       condicoes: dadosEdicao.condicoes,
@@ -383,6 +411,8 @@ export default function DevolucoesPage() {
     if (error && error.message.includes("custo_frete")) {
       payload.frete = payload.custo_frete;
       delete payload.custo_frete;
+      delete payload.quantidade;
+      delete payload.custo_unitario;
       const res = await supabase.from("devolucoes").update(payload).eq("id", id);
       error = res.error;
     }
@@ -394,12 +424,10 @@ export default function DevolucoesPage() {
     }
   };
 
-  // Lista dinâmica de marcas extraídas das devoluções existentes
   const marcasDisponiveis = Array.from(
     new Set(devolucoes.map((d) => d.marca).filter(Boolean))
   );
 
-  // Filtragem
   const devolucoesFiltradas = devolucoes.filter((item) => {
     const matchCanal = filtroCanal === "TODOS" || item.canal === filtroCanal;
     const matchMarca = filtroMarca === "TODAS" || item.marca === filtroMarca;
@@ -420,19 +448,26 @@ export default function DevolucoesPage() {
   });
 
   // Métricas do Topo
-  const totalItens = devolucoesFiltradas.length;
+  const totalItens = devolucoesFiltradas.reduce((acc, cur) => acc + Number(cur.quantidade || 1), 0);
   const totalPdv = devolucoesFiltradas.reduce((acc, cur) => acc + Number(cur.pdv || 0), 0);
   const totalFreteReverso = devolucoesFiltradas.reduce(
     (acc, cur) => acc + Number(cur.custo_frete ?? cur.frete ?? 0),
     0
   );
+
   const valorMediacoesGanhas = devolucoesFiltradas
     .filter((cur) => cur.mediacao === "Ganha" || cur.mediacao === "Convertida / Ganha")
     .reduce((acc, cur) => acc + Number(cur.pdv || 0), 0);
 
+  // CÁLCULO EXATO: QUANTIDADE x CUSTO DO SKU (CMV PERDIDO)
   const valorMediacoesPerdidas = devolucoesFiltradas
     .filter((cur) => cur.mediacao === "Perdida")
-    .reduce((acc, cur) => acc + Number(cur.pdv || 0), 0);
+    .reduce((acc, cur) => {
+      const qtd = Math.max(1, Number(cur.quantidade || 1));
+      const skuKey = normalizarSku(cur.sku);
+      const custo = Number(cur.custo_unitario || custosMap.get(skuKey)?.custo_unitario || 0);
+      return acc + (qtd * custo);
+    }, 0);
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -483,12 +518,14 @@ export default function DevolucoesPage() {
           </div>
 
           <div className="bg-slate-900/90 border border-emerald-900/40 p-5 rounded-2xl shadow-xl bg-gradient-to-b from-emerald-950/20 to-slate-900">
-            <span className="block text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-2">Mediações Ganhas (Recuperado)</span>
+            <span className="block text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1">Mediações Ganhas (Recuperado)</span>
+            <span className="block text-[9px] text-slate-500 mb-2">Valor Total PDV Restituído</span>
             <span className="text-2xl font-black text-emerald-400">{formatarMoeda(valorMediacoesGanhas)}</span>
           </div>
 
           <div className="bg-slate-900/90 border border-rose-900/40 p-5 rounded-2xl shadow-xl bg-gradient-to-b from-rose-950/20 to-slate-900">
-            <span className="block text-[10px] font-bold text-rose-400 uppercase tracking-wider mb-2">Mediações Perdidas (Prejuízo)</span>
+            <span className="block text-[10px] font-bold text-rose-400 uppercase tracking-wider mb-1">Mediações Perdidas (Prejuízo)</span>
+            <span className="block text-[9px] text-slate-500 mb-2">Quantidade × Custo SKU (CMV)</span>
             <span className="text-2xl font-black text-rose-400">{formatarMoeda(valorMediacoesPerdidas)}</span>
           </div>
         </div>
@@ -529,6 +566,7 @@ export default function DevolucoesPage() {
                         <th className="p-2 w-24">NF</th>
                         <th className="p-2 w-28">Solicitação</th>
                         <th className="p-2 w-32">SKU</th>
+                        <th className="p-2 text-center w-16">Qtd</th>
                         <th className="p-2 min-w-[180px]">Produto</th>
                         <th className="p-2 w-24">Marca</th>
                         <th className="p-2 w-24 text-right">PDV (R$)</th>
@@ -596,7 +634,7 @@ export default function DevolucoesPage() {
                                 />
                               </td>
 
-                              {/* SOLICITAÇÃO (SELEÇÃO) */}
+                              {/* Solicitação */}
                               <td className="p-2">
                                 <select
                                   value={l.solicitacao}
@@ -622,6 +660,20 @@ export default function DevolucoesPage() {
                                     l.carrinho ? "text-purple-400 opacity-70 cursor-not-allowed italic" : "text-white focus:border-purple-500"
                                   }`}
                                   required={!l.carrinho}
+                                />
+                              </td>
+
+                              {/* QUANTIDADE */}
+                              <td className="p-2 text-center">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={l.carrinho ? l.itensCarrinho.reduce((acc, sub) => acc + (parseInt(String(sub.quantidade), 10) || 1), 0) : l.quantidade}
+                                  onChange={(e) => atualizarLinha(index, "quantidade", e.target.value)}
+                                  disabled={l.carrinho}
+                                  className={`w-14 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center outline-none ${
+                                    l.carrinho ? "text-purple-400 opacity-70 cursor-not-allowed font-bold" : "text-indigo-400 font-bold focus:border-purple-500"
+                                  }`}
                                 />
                               </td>
 
@@ -679,7 +731,7 @@ export default function DevolucoesPage() {
                                 />
                               </td>
 
-                              {/* Motivo (6 Novos Motivos) */}
+                              {/* Motivo */}
                               <td className="p-2">
                                 <select
                                   value={l.motivo}
@@ -763,7 +815,7 @@ export default function DevolucoesPage() {
                             {/* CAIXINHA EXPANSÍVEL: MÚLTIPLOS PRODUTOS DO CARRINHO */}
                             {l.carrinho && (
                               <tr className="bg-purple-950/15 border-b border-purple-900/40">
-                                <td colSpan={15} className="p-4 pl-6 md:pl-10">
+                                <td colSpan={16} className="p-4 pl-6 md:pl-10">
                                   <div className="bg-slate-950/80 p-5 rounded-2xl border border-purple-800/40 shadow-2xl">
                                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-2 border-b border-slate-800">
                                       <h4 className="text-xs font-black text-purple-400 uppercase tracking-wider flex items-center gap-2">
@@ -785,6 +837,18 @@ export default function DevolucoesPage() {
                                               value={sub.sku}
                                               onChange={(e) => atualizarItemCarrinho(index, subIdx, "sku", e.target.value)}
                                               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs font-mono text-white outline-none focus:border-purple-500"
+                                              required
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-1">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Qtd</label>
+                                            <input
+                                              type="number"
+                                              min="1"
+                                              value={sub.quantidade}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "quantidade", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs font-mono text-indigo-400 font-bold outline-none text-center"
                                               required
                                             />
                                           </div>
@@ -836,11 +900,11 @@ export default function DevolucoesPage() {
                                             </select>
                                           </div>
 
-                                          <div className="md:col-span-2">
+                                          <div className="md:col-span-1">
                                             <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Obs</label>
                                             <input
                                               type="text"
-                                              placeholder="Observações"
+                                              placeholder="Obs"
                                               value={sub.observacoes}
                                               onChange={(e) => atualizarItemCarrinho(index, subIdx, "observacoes", e.target.value)}
                                               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-300 outline-none"
@@ -878,7 +942,7 @@ export default function DevolucoesPage() {
                             {/* CAIXINHA EXPANSÍVEL: DETALHES DE MEDIAÇÃO */}
                             {l.mediacao !== "Nenhuma" && (
                               <tr className="bg-amber-950/10 border-b border-amber-900/30">
-                                <td colSpan={15} className="p-3 pl-6 md:pl-10">
+                                <td colSpan={16} className="p-3 pl-6 md:pl-10">
                                   <div className="bg-slate-950/90 p-3 rounded-xl border border-amber-800/40 flex flex-wrap items-center gap-4">
                                     <span className="text-[11px] font-black uppercase text-amber-400">
                                       ⚖️ Detalhes da Mediação ({l.mediacao}):
@@ -1001,6 +1065,7 @@ export default function DevolucoesPage() {
                         <th className="p-3">Canal</th>
                         <th className="p-3 text-center">Tipo</th>
                         <th className="p-3">SKU</th>
+                        <th className="p-3 text-center">Qtd</th>
                         <th className="p-3 min-w-[200px]">Produto</th>
                         <th className="p-3 text-center">Marca</th>
                         <th className="p-3 text-right">PDV</th>
@@ -1015,6 +1080,10 @@ export default function DevolucoesPage() {
                       {devolucoesFiltradas.map((item) => {
                         const isEditing = idEditando === item.id;
                         const custoFreteItem = Number(item.custo_frete ?? item.frete ?? 0);
+                        const skuKey = normalizarSku(item.sku);
+                        const custoUnit = Number(item.custo_unitario || custosMap.get(skuKey)?.custo_unitario || 0);
+                        const qtdItem = Math.max(1, Number(item.quantidade || 1));
+                        const perdaTotalItem = qtdItem * custoUnit;
 
                         return (
                           <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
@@ -1058,6 +1127,21 @@ export default function DevolucoesPage() {
 
                             {/* SKU */}
                             <td className="p-3 font-mono text-indigo-400 font-bold">{item.sku}</td>
+
+                            {/* QTD */}
+                            <td className="p-3 text-center font-bold text-indigo-300">
+                              {isEditing ? (
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={dadosEdicao.quantidade}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, quantidade: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 w-12 text-center text-white"
+                                />
+                              ) : (
+                                `${qtdItem} un.`
+                              )}
+                            </td>
 
                             {/* Produto */}
                             <td className="p-3 text-slate-300 max-w-[200px] truncate" title={item.produto}>
@@ -1172,19 +1256,26 @@ export default function DevolucoesPage() {
                                   <option value="Perdida">Perdida</option>
                                 </select>
                               ) : (
-                                <span
-                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
-                                    item.mediacao === "Ganha" || item.mediacao === "Convertida / Ganha"
-                                      ? "bg-emerald-950/80 text-emerald-300 border-emerald-700"
-                                      : item.mediacao === "Perdida"
-                                      ? "bg-rose-950/80 text-rose-300 border-rose-700"
-                                      : item.mediacao === "Em Disputa"
-                                      ? "bg-amber-950/80 text-amber-300 border-amber-700"
-                                      : "bg-slate-900 text-slate-500 border-slate-800"
-                                  }`}
-                                >
-                                  {item.mediacao || "Nenhuma"}
-                                </span>
+                                <div className="flex flex-col items-center gap-0.5">
+                                  <span
+                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
+                                      item.mediacao === "Ganha" || item.mediacao === "Convertida / Ganha"
+                                        ? "bg-emerald-950/80 text-emerald-300 border-emerald-700"
+                                        : item.mediacao === "Perdida"
+                                        ? "bg-rose-950/80 text-rose-300 border-rose-700"
+                                        : item.mediacao === "Em Disputa"
+                                        ? "bg-amber-950/80 text-amber-300 border-amber-700"
+                                        : "bg-slate-900 text-slate-500 border-slate-800"
+                                    }`}
+                                  >
+                                    {item.mediacao || "Nenhuma"}
+                                  </span>
+                                  {item.mediacao === "Perdida" && (
+                                    <span className="text-[9px] font-mono font-bold text-rose-400" title={`Prejuízo = ${qtdItem} un x ${formatarMoeda(custoUnit)}`}>
+                                      Prejuízo: {formatarMoeda(perdaTotalItem)}
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </td>
 
@@ -1212,6 +1303,8 @@ export default function DevolucoesPage() {
                                       setIdEditando(item.id);
                                       setDadosEdicao({
                                         ...item,
+                                        quantidade: item.quantidade || 1,
+                                        custo_unitario: custoUnit,
                                         custo_frete: custoFreteItem
                                       });
                                     }}
@@ -1258,8 +1351,9 @@ export default function DevolucoesPage() {
                     <th className="p-3">Pedido / NF</th>
                     <th className="p-3">Canal</th>
                     <th className="p-3">SKU</th>
+                    <th className="p-3 text-center">Qtd</th>
                     <th className="p-3">Produto</th>
-                    <th className="p-3">Marca</th>
+                    <th className="p-3 text-center">Marca</th>
                     <th className="p-3">Motivo Reclamado</th>
                     <th className="p-3 min-w-[300px]">Plano de Ação Corretivo</th>
                     <th className="p-3 text-center">Salvar</th>
@@ -1271,8 +1365,9 @@ export default function DevolucoesPage() {
                       <td className="p-3 font-mono font-bold text-white">{item.pedido}</td>
                       <td className="p-3 text-slate-300">{item.canal}</td>
                       <td className="p-3 font-mono text-indigo-400">{item.sku}</td>
+                      <td className="p-3 text-center font-bold text-slate-300">{item.quantidade || 1} un.</td>
                       <td className="p-3 text-slate-300 max-w-[200px] truncate">{item.produto}</td>
-                      <td className="p-3 font-mono text-slate-400">{item.marca || "-"}</td>
+                      <td className="p-3 text-center font-mono text-slate-400">{item.marca || "-"}</td>
                       <td className="p-3 text-rose-400 font-bold">{item.motivo}</td>
                       <td className="p-3">
                         <input
