@@ -5,6 +5,15 @@ import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
+const MOTIVOS_OFICIAIS = [
+  "Arrependimento da compra.",
+  "O produto chegou com defeito.",
+  "O pedido chegou incompleto.",
+  "A cor recebida é diferente.",
+  "O tamanho recebido é diferente.",
+  "Defeito de fabricação."
+];
+
 function normalizarSku(valor: any) {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim();
@@ -30,22 +39,35 @@ const formatarMoeda = (valor: number) => {
   return "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+type SubItemCarrinho = {
+  sku: string;
+  produto: string;
+  marca: string;
+  pdv: string;
+  motivo: string;
+  observacoes: string;
+  condicoes: "Sim" | "Não";
+};
+
 type LinhaDevolucao = {
   carrinho: boolean;
   pedido: string;
   canal: string;
   nf: string;
   solicitacao: "Devolução" | "Troca";
+  custo_frete: string;
+  mediacao: "Nenhuma" | "Em Disputa" | "Ganha" | "Perdida";
+  protocolo_mediacao: string;
+  // Campos para quando carrinho for falso:
   sku: string;
   produto: string;
   marca: string;
   pdv: string;
-  custo_frete: string;
   motivo: string;
   observacoes: string;
   condicoes: "Sim" | "Não";
-  mediacao: "Nenhuma" | "Em Disputa" | "Convertida / Ganha";
-  plano_acao: string;
+  // Sub-itens quando carrinho for verdadeiro:
+  itensCarrinho: SubItemCarrinho[];
 };
 
 export default function DevolucoesPage() {
@@ -54,11 +76,9 @@ export default function DevolucoesPage() {
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
-  // Data global do formulário
   const hojeIso = new Date().toISOString().split("T")[0];
   const [dataGlobalRetorno, setDataGlobalRetorno] = useState(hojeIso);
 
-  // Canais ativos
   const [canais, setCanais] = useState<string[]>([
     "Mercado Livre 1",
     "Mercado Livre 2.0",
@@ -72,44 +92,50 @@ export default function DevolucoesPage() {
     "Site"
   ]);
 
-  // Mapa de SKUs para auto-preenchimento
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
-
-  // Lista de devoluções carregadas do Supabase
   const [devolucoes, setDevolucoes] = useState<any[]>([]);
 
-  // Filtros de listagem
+  // Filtros
   const [filtroCanal, setFiltroCanal] = useState("TODOS");
+  const [filtroMarca, setFiltroMarca] = useState("TODAS");
   const [filtroSolicitacao, setFiltroSolicitacao] = useState("TODOS");
   const [filtroMediacao, setFiltroMediacao] = useState("TODOS");
   const [buscaTexto, setBuscaTexto] = useState("");
-  const [filtroDataInicio, setFiltroDataInicio] = useState("");
-  const [filtroDataFim, setFiltroFim] = useState("");
 
-  // Edição inline
+  // Edição Inline
   const [idEditando, setIdEditando] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
 
-  // Linhas do formulário
-  const linhaVaziaPadrao: LinhaDevolucao = {
+  const criarLinhaVazia = (): LinhaDevolucao => ({
     carrinho: false,
     pedido: "",
-    canal: "Mercado Livre 1",
+    canal: canais[0] || "Mercado Livre 1",
     nf: "",
     solicitacao: "Devolução",
+    custo_frete: "0",
+    mediacao: "Nenhuma",
+    protocolo_mediacao: "",
     sku: "",
     produto: "",
     marca: "Auto",
     pdv: "",
-    custo_frete: "0",
-    motivo: "Defeito",
+    motivo: MOTIVOS_OFICIAIS[0],
     observacoes: "",
     condicoes: "Não",
-    mediacao: "Nenhuma",
-    plano_acao: ""
-  };
+    itensCarrinho: [
+      {
+        sku: "",
+        produto: "",
+        marca: "Auto",
+        pdv: "",
+        motivo: MOTIVOS_OFICIAIS[0],
+        observacoes: "",
+        condicoes: "Não"
+      }
+    ]
+  });
 
-  const [linhas, setLinhas] = useState<LinhaDevolucao[]>([{ ...linhaVaziaPadrao }]);
+  const [linhas, setLinhas] = useState<LinhaDevolucao[]>([criarLinhaVazia()]);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -122,13 +148,11 @@ export default function DevolucoesPage() {
   }, []);
 
   const carregarAuxiliares = async () => {
-    // 1. Canais
     const { data: canaisData } = await supabase.from("config_regras_canais").select("canal").order("id");
     if (canaisData && canaisData.length > 0) {
       setCanais(canaisData.map((c: any) => c.canal));
     }
 
-    // 2. SKUs para Autopreenchimento
     let allCustos: any[] = [];
     let from = 0;
     const step = 1000;
@@ -163,25 +187,9 @@ export default function DevolucoesPage() {
     setLoading(false);
   };
 
+  // Manipulação de Linhas Principais
   const adicionarLinha = () => {
-    const ultimaLinha = linhas[linhas.length - 1];
-    // Se a última linha tiver 'carrinho' marcado, replica os dados comuns do pedido
-    if (ultimaLinha && ultimaLinha.carrinho) {
-      setLinhas([
-        ...linhas,
-        {
-          ...linhaVaziaPadrao,
-          carrinho: true,
-          pedido: ultimaLinha.pedido,
-          canal: ultimaLinha.canal,
-          nf: ultimaLinha.nf,
-          solicitacao: ultimaLinha.solicitacao,
-          mediacao: ultimaLinha.mediacao
-        }
-      ]);
-    } else {
-      setLinhas([...linhas, { ...linhaVaziaPadrao, canal: canais[0] || "Mercado Livre 1" }]);
-    }
+    setLinhas([...linhas, criarLinhaVazia()]);
   };
 
   const removerLinha = (index: number) => {
@@ -193,7 +201,20 @@ export default function DevolucoesPage() {
     const novas = [...linhas];
     novas[index] = { ...novas[index], [campo]: valor };
 
-    // Auto-preenchimento por SKU
+    if (campo === "carrinho" && valor === true && novas[index].itensCarrinho.length === 0) {
+      novas[index].itensCarrinho = [
+        {
+          sku: novas[index].sku || "",
+          produto: novas[index].produto || "",
+          marca: novas[index].marca || "Auto",
+          pdv: novas[index].pdv || "",
+          motivo: novas[index].motivo || MOTIVOS_OFICIAIS[0],
+          observacoes: novas[index].observacoes || "",
+          condicoes: novas[index].condicoes || "Não"
+        }
+      ];
+    }
+
     if (campo === "sku") {
       const skuKey = normalizarSku(valor);
       const match = custosMap.get(skuKey);
@@ -206,7 +227,47 @@ export default function DevolucoesPage() {
     setLinhas(novas);
   };
 
-  // Gravação resiliente para evitar erro de schema cache
+  // Manipulação dos Itens da Caixinha do Carrinho
+  const adicionarItemCarrinho = (indexLinha: number) => {
+    const novas = [...linhas];
+    novas[indexLinha].itensCarrinho.push({
+      sku: "",
+      produto: "",
+      marca: "Auto",
+      pdv: "",
+      motivo: MOTIVOS_OFICIAIS[0],
+      observacoes: "",
+      condicoes: "Não"
+    });
+    setLinhas(novas);
+  };
+
+  const removerItemCarrinho = (indexLinha: number, indexSub: number) => {
+    const novas = [...linhas];
+    novas[indexLinha].itensCarrinho.splice(indexSub, 1);
+    setLinhas(novas);
+  };
+
+  const atualizarItemCarrinho = (indexLinha: number, indexSub: number, campo: keyof SubItemCarrinho, valor: any) => {
+    const novas = [...linhas];
+    novas[indexLinha].itensCarrinho[indexSub] = {
+      ...novas[indexLinha].itensCarrinho[indexSub],
+      [campo]: valor
+    };
+
+    if (campo === "sku") {
+      const skuKey = normalizarSku(valor);
+      const match = custosMap.get(skuKey);
+      if (match) {
+        novas[indexLinha].itensCarrinho[indexSub].produto = match.produto || "";
+        novas[indexLinha].itensCarrinho[indexSub].marca = match.marca || "BEST FIT";
+      }
+    }
+
+    setLinhas(novas);
+  };
+
+  // Salvar no Banco
   const salvarDevolucoes = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
@@ -214,71 +275,88 @@ export default function DevolucoesPage() {
     const registrosFormatados: any[] = [];
 
     for (const l of linhas) {
-      if (!l.pedido.trim() || !l.sku.trim()) continue;
+      if (!l.pedido.trim()) continue;
 
-      registrosFormatados.push({
-        data_retorno: dataGlobalRetorno,
-        pedido: l.pedido.trim(),
-        canal: l.canal,
-        nf: l.nf.trim(),
-        solicitacao: l.solicitacao,
-        sku: l.sku.trim(),
-        produto: l.produto.trim() || "Produto não identificado",
-        marca: l.marca.trim() || "Auto",
-        pdv: Number(parseNumero(l.pdv)),
-        custo_frete: Number(parseNumero(l.custo_frete)),
-        motivo: l.motivo,
-        observacoes: l.observacoes.trim(),
-        condicoes: l.condicoes,
-        mediacao: l.mediacao,
-        plano_acao: l.plano_acao.trim()
-      });
+      if (l.carrinho) {
+        const totalSubItens = l.itensCarrinho.length || 1;
+        const freteRateado = Number((parseNumero(l.custo_frete) / totalSubItens).toFixed(2));
+
+        for (const sub of l.itensCarrinho) {
+          if (!sub.sku.trim()) continue;
+          registrosFormatados.push({
+            data_retorno: dataGlobalRetorno,
+            pedido: l.pedido.trim(),
+            canal: l.canal,
+            nf: l.nf.trim(),
+            solicitacao: l.solicitacao,
+            sku: sub.sku.trim(),
+            produto: sub.produto.trim() || "Produto sem cadastro",
+            marca: sub.marca.trim() || "Auto",
+            pdv: Number(parseNumero(sub.pdv)),
+            custo_frete: freteRateado,
+            motivo: sub.motivo,
+            observacoes: (sub.observacoes.trim() + (l.protocolo_mediacao ? ` [Protocolo: ${l.protocolo_mediacao}]` : "")).trim(),
+            condicoes: sub.condicoes,
+            mediacao: l.mediacao,
+            plano_acao: ""
+          });
+        }
+      } else {
+        if (!l.sku.trim()) continue;
+        registrosFormatados.push({
+          data_retorno: dataGlobalRetorno,
+          pedido: l.pedido.trim(),
+          canal: l.canal,
+          nf: l.nf.trim(),
+          solicitacao: l.solicitacao,
+          sku: l.sku.trim(),
+          produto: l.produto.trim() || "Produto sem cadastro",
+          marca: l.marca.trim() || "Auto",
+          pdv: Number(parseNumero(l.pdv)),
+          custo_frete: Number(parseNumero(l.custo_frete)),
+          motivo: l.motivo,
+          observacoes: (l.observacoes.trim() + (l.protocolo_mediacao ? ` [Protocolo: ${l.protocolo_mediacao}]` : "")).trim(),
+          condicoes: l.condicoes,
+          mediacao: l.mediacao,
+          plano_acao: ""
+        });
+      }
     }
 
     if (registrosFormatados.length === 0) {
-      alert("Preencha ao menos uma linha com Pedido e SKU válidos.");
+      alert("Preencha ao menos um item válido com Pedido e SKU.");
       setSalvando(false);
       return;
     }
 
-    // Tentativa 1: Inserção completa padrão
     let res = await supabase.from("devolucoes").insert(registrosFormatados);
 
-    // Fallback inteligente caso colunas opcionais ainda não estejam criadas
     if (res.error) {
-      console.warn("Tentativa padrão falhou:", res.error.message);
-
-      // Se o erro for na coluna 'custo_frete', faz o mapa para 'frete'
-      let fallbackPayload = registrosFormatados.map((item) => {
+      let fallback = registrosFormatados.map((item) => {
         const copy = { ...item };
         if (res.error?.message.includes("custo_frete")) {
           copy.frete = copy.custo_frete;
           delete copy.custo_frete;
         }
-        if (res.error?.message.includes("plano_acao")) {
-          delete copy.plano_acao;
-        }
-        if (res.error?.message.includes("mediacao")) {
-          delete copy.mediacao;
-        }
+        if (res.error?.message.includes("plano_acao")) delete copy.plano_acao;
+        if (res.error?.message.includes("mediacao")) delete copy.mediacao;
         return copy;
       });
-
-      res = await supabase.from("devolucoes").insert(fallbackPayload);
+      res = await supabase.from("devolucoes").insert(fallback);
     }
 
     if (res.error) {
-      alert("Erro ao salvar devoluções: " + res.error.message);
+      alert("Erro ao gravar: " + res.error.message);
     } else {
-      alert("✅ Devoluções salvas com sucesso!");
-      setLinhas([{ ...linhaVaziaPadrao, canal: canais[0] || "Mercado Livre 1" }]);
+      alert("✅ Devoluções gravadas com sucesso!");
+      setLinhas([criarLinhaVazia()]);
       carregarDevolucoes();
     }
     setSalvando(false);
   };
 
   const excluirDevolucao = async (id: number) => {
-    if (!confirm("Tem certeza que deseja excluir este registo?")) return;
+    if (!confirm("Tem certeza que deseja apagar este registo?")) return;
     const { error } = await supabase.from("devolucoes").delete().eq("id", id);
     if (error) alert("Erro ao excluir: " + error.message);
     else carregarDevolucoes();
@@ -298,8 +376,7 @@ export default function DevolucoesPage() {
       motivo: dadosEdicao.motivo,
       observacoes: dadosEdicao.observacoes,
       condicoes: dadosEdicao.condicoes,
-      mediacao: dadosEdicao.mediacao,
-      plano_acao: dadosEdicao.plano_acao
+      mediacao: dadosEdicao.mediacao
     };
 
     let { error } = await supabase.from("devolucoes").update(payload).eq("id", id);
@@ -317,34 +394,44 @@ export default function DevolucoesPage() {
     }
   };
 
-  // Filtragem dos registos
+  // Lista dinâmica de marcas extraídas das devoluções existentes
+  const marcasDisponiveis = Array.from(
+    new Set(devolucoes.map((d) => d.marca).filter(Boolean))
+  );
+
+  // Filtragem
   const devolucoesFiltradas = devolucoes.filter((item) => {
     const matchCanal = filtroCanal === "TODOS" || item.canal === filtroCanal;
+    const matchMarca = filtroMarca === "TODAS" || item.marca === filtroMarca;
     const matchSol = filtroSolicitacao === "TODOS" || item.solicitacao === filtroSolicitacao;
-    const matchMed = filtroMediacao === "TODOS" || item.mediacao === filtroMediacao;
+    const matchMed =
+      filtroMediacao === "TODOS" ||
+      (filtroMediacao === "Ganha" && (item.mediacao === "Ganha" || item.mediacao === "Convertida / Ganha")) ||
+      item.mediacao === filtroMediacao;
     const matchBusca =
       !buscaTexto ||
       String(item.pedido || "").toLowerCase().includes(buscaTexto.toLowerCase()) ||
       String(item.nf || "").toLowerCase().includes(buscaTexto.toLowerCase()) ||
       String(item.sku || "").toLowerCase().includes(buscaTexto.toLowerCase()) ||
-      String(item.produto || "").toLowerCase().includes(buscaTexto.toLowerCase());
+      String(item.produto || "").toLowerCase().includes(buscaTexto.toLowerCase()) ||
+      String(item.marca || "").toLowerCase().includes(buscaTexto.toLowerCase());
 
-    let matchData = true;
-    if (filtroDataInicio && item.data_retorno) matchData = matchData && item.data_retorno >= filtroDataInicio;
-    if (filtroDataFim && item.data_retorno) matchData = matchData && item.data_retorno <= filtroDataFim;
-
-    return matchCanal && matchSol && matchMed && matchBusca && matchData;
+    return matchCanal && matchMarca && matchSol && matchMed && matchBusca;
   });
 
-  // Métricas dos Cards do Topo
+  // Métricas do Topo
   const totalItens = devolucoesFiltradas.length;
   const totalPdv = devolucoesFiltradas.reduce((acc, cur) => acc + Number(cur.pdv || 0), 0);
   const totalFreteReverso = devolucoesFiltradas.reduce(
     (acc, cur) => acc + Number(cur.custo_frete ?? cur.frete ?? 0),
     0
   );
-  const valorConvertidoMediacoes = devolucoesFiltradas
-    .filter((cur) => cur.mediacao === "Convertida / Ganha")
+  const valorMediacoesGanhas = devolucoesFiltradas
+    .filter((cur) => cur.mediacao === "Ganha" || cur.mediacao === "Convertida / Ganha")
+    .reduce((acc, cur) => acc + Number(cur.pdv || 0), 0);
+
+  const valorMediacoesPerdidas = devolucoesFiltradas
+    .filter((cur) => cur.mediacao === "Perdida")
     .reduce((acc, cur) => acc + Number(cur.pdv || 0), 0);
 
   return (
@@ -353,7 +440,7 @@ export default function DevolucoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Painel de Devoluções & Mediações</h1>
-            <p className="text-sm font-medium text-slate-400">Controlo de Logística Reversa, Reembolsos e Planos de Ação</p>
+            <p className="text-sm font-medium text-slate-400">Controlo de Logística Reversa, Disputas e Planos de Ação</p>
           </div>
           <Navbar />
         </div>
@@ -379,7 +466,7 @@ export default function DevolucoesPage() {
         </div>
 
         {/* CARDS DE RESUMO (KPIs) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
           <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-xl">
             <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Total de Itens</span>
             <span className="text-2xl font-black text-white">{totalItens} un.</span>
@@ -387,31 +474,37 @@ export default function DevolucoesPage() {
 
           <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-xl">
             <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Total em PDV</span>
-            <span className="text-2xl font-black text-emerald-400">{formatarMoeda(totalPdv)}</span>
+            <span className="text-2xl font-black text-slate-200">{formatarMoeda(totalPdv)}</span>
           </div>
 
           <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-xl">
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Custo Frete Reverso (Prejuízo)</span>
+            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Custo Frete Reverso</span>
             <span className="text-2xl font-black text-rose-400">{formatarMoeda(totalFreteReverso)}</span>
           </div>
 
-          <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-xl">
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Valor Convertido (Mediações)</span>
-            <span className="text-2xl font-black text-purple-400">{formatarMoeda(valorConvertidoMediacoes)}</span>
+          <div className="bg-slate-900/90 border border-emerald-900/40 p-5 rounded-2xl shadow-xl bg-gradient-to-b from-emerald-950/20 to-slate-900">
+            <span className="block text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-2">Mediações Ganhas (Recuperado)</span>
+            <span className="text-2xl font-black text-emerald-400">{formatarMoeda(valorMediacoesGanhas)}</span>
+          </div>
+
+          <div className="bg-slate-900/90 border border-rose-900/40 p-5 rounded-2xl shadow-xl bg-gradient-to-b from-rose-950/20 to-slate-900">
+            <span className="block text-[10px] font-bold text-rose-400 uppercase tracking-wider mb-2">Mediações Perdidas (Prejuízo)</span>
+            <span className="text-2xl font-black text-rose-400">{formatarMoeda(valorMediacoesPerdidas)}</span>
           </div>
         </div>
 
         {/* ABA 1: REGISTOS E DEVOLUÇÕES */}
         {subAba === "registros" && (
           <div className="space-y-8">
-            {/* FORMULÁRIO DE LANÇAMENTO */}
             <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                    <span>➕ Registar Devoluções</span>
+                    <span>➕ Registar Devoluções & Mediações</span>
                   </h2>
-                  <p className="text-xs text-slate-400 mt-1">Marque a caixa de carrinho (🛒) para pedidos com múltiplos SKUs.</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Marque <strong>🛒</strong> para abrir a caixinha de múltiplos SKUs no mesmo pedido. Ao selecionar Mediação, registre a contestação.
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
@@ -430,219 +523,382 @@ export default function DevolucoesPage() {
                   <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                     <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[10px] border-b border-slate-800">
                       <tr>
-                        <th className="p-2 text-center w-8">🛒</th>
+                        <th className="p-2 text-center w-8" title="Múltiplos SKUs / Carrinho">🛒</th>
                         <th className="p-2 w-28">Pedido</th>
                         <th className="p-2 w-36">Canal</th>
                         <th className="p-2 w-24">NF</th>
                         <th className="p-2 w-28">Solicitação</th>
                         <th className="p-2 w-32">SKU</th>
-                        <th className="p-2 min-w-[180px]">Produto (Auto)</th>
+                        <th className="p-2 min-w-[180px]">Produto</th>
                         <th className="p-2 w-24">Marca</th>
                         <th className="p-2 w-24 text-right">PDV (R$)</th>
                         <th className="p-2 w-20 text-right">Frete</th>
-                        <th className="p-2 w-36">Motivo</th>
-                        <th className="p-2 min-w-[150px]">Observações</th>
+                        <th className="p-2 w-48">Motivo</th>
+                        <th className="p-2 min-w-[140px]">Observações</th>
                         <th className="p-2 w-20 text-center">Condições?</th>
                         <th className="p-2 w-36">Mediação / Status</th>
                         <th className="p-2 text-center w-12">Ação</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                      {linhas.map((l, index) => (
-                        <tr key={index} className="hover:bg-slate-800/20">
-                          {/* Carrinho Multi-SKU */}
-                          <td className="p-2 text-center">
-                            <input
-                              type="checkbox"
-                              checked={l.carrinho}
-                              onChange={(e) => atualizarLinha(index, "carrinho", e.target.checked)}
-                              className="accent-purple-600 rounded cursor-pointer"
-                              title="Marque para replicar dados ao adicionar linha"
-                            />
-                          </td>
+                      {linhas.map((l, index) => {
+                        const totalPdvCarrinho = l.carrinho
+                          ? l.itensCarrinho.reduce((acc, sub) => acc + Number(parseNumero(sub.pdv)), 0)
+                          : 0;
 
-                          {/* Pedido */}
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              value={l.pedido}
-                              onChange={(e) => atualizarLinha(index, "pedido", e.target.value)}
-                              placeholder="123456789"
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500"
-                              required
-                            />
-                          </td>
+                        return (
+                          <React.Fragment key={index}>
+                            <tr className={`hover:bg-slate-800/20 ${l.carrinho ? "bg-purple-950/20" : ""}`}>
+                              {/* CARRINHO CHECKBOX */}
+                              <td className="p-2 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={l.carrinho}
+                                  onChange={(e) => atualizarLinha(index, "carrinho", e.target.checked)}
+                                  className="accent-purple-600 rounded cursor-pointer w-4 h-4"
+                                  title="Marque para abrir a caixinha de múltiplos SKUs"
+                                />
+                              </td>
 
-                          {/* Canal */}
-                          <td className="p-2">
-                            <select
-                              value={l.canal}
-                              onChange={(e) => atualizarLinha(index, "canal", e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500 cursor-pointer"
-                            >
-                              {canais.map((c, i) => (
-                                <option key={i} value={c}>{c}</option>
-                              ))}
-                            </select>
-                          </td>
+                              {/* Pedido */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.pedido}
+                                  onChange={(e) => atualizarLinha(index, "pedido", e.target.value)}
+                                  placeholder="123456789"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500"
+                                  required
+                                />
+                              </td>
 
-                          {/* NF */}
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              value={l.nf}
-                              onChange={(e) => atualizarLinha(index, "nf", e.target.value)}
-                              placeholder="12345"
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500"
-                            />
-                          </td>
+                              {/* Canal */}
+                              <td className="p-2">
+                                <select
+                                  value={l.canal}
+                                  onChange={(e) => atualizarLinha(index, "canal", e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500 cursor-pointer"
+                                >
+                                  {canais.map((c, i) => (
+                                    <option key={i} value={c}>{c}</option>
+                                  ))}
+                                </select>
+                              </td>
 
-                          {/* SOLICITAÇÃO (LISTA SELETORA) */}
-                          <td className="p-2">
-                            <select
-                              value={l.solicitacao}
-                              onChange={(e) => atualizarLinha(index, "solicitacao", e.target.value as any)}
-                              className={`w-full bg-slate-900 border rounded-lg p-2 text-xs font-bold outline-none cursor-pointer ${
-                                l.solicitacao === "Troca" ? "text-amber-400 border-amber-600/50" : "text-purple-400 border-purple-600/50"
-                              }`}
-                            >
-                              <option value="Devolução">Devolução</option>
-                              <option value="Troca">Troca</option>
-                            </select>
-                          </td>
+                              {/* NF */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.nf}
+                                  onChange={(e) => atualizarLinha(index, "nf", e.target.value)}
+                                  placeholder="12345"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500"
+                                />
+                              </td>
 
-                          {/* SKU */}
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              value={l.sku}
-                              onChange={(e) => atualizarLinha(index, "sku", e.target.value)}
-                              placeholder="SKU..."
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500"
-                              required
-                            />
-                          </td>
+                              {/* SOLICITAÇÃO (SELEÇÃO) */}
+                              <td className="p-2">
+                                <select
+                                  value={l.solicitacao}
+                                  onChange={(e) => atualizarLinha(index, "solicitacao", e.target.value as any)}
+                                  className={`w-full bg-slate-900 border rounded-lg p-2 text-xs font-bold outline-none cursor-pointer ${
+                                    l.solicitacao === "Troca" ? "text-amber-400 border-amber-600/50" : "text-purple-400 border-purple-600/50"
+                                  }`}
+                                >
+                                  <option value="Devolução">Devolução</option>
+                                  <option value="Troca">Troca</option>
+                                </select>
+                              </td>
 
-                          {/* Produto Auto */}
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              value={l.produto}
-                              onChange={(e) => atualizarLinha(index, "produto", e.target.value)}
-                              placeholder="Auto-preenchido"
-                              className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-300 outline-none truncate"
-                            />
-                          </td>
+                              {/* SKU */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.carrinho ? "Múltiplos (Caixinha)" : l.sku}
+                                  onChange={(e) => atualizarLinha(index, "sku", e.target.value)}
+                                  placeholder="SKU..."
+                                  disabled={l.carrinho}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono outline-none ${
+                                    l.carrinho ? "text-purple-400 opacity-70 cursor-not-allowed italic" : "text-white focus:border-purple-500"
+                                  }`}
+                                  required={!l.carrinho}
+                                />
+                              </td>
 
-                          {/* Marca */}
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              value={l.marca}
-                              onChange={(e) => atualizarLinha(index, "marca", e.target.value)}
-                              placeholder="Auto"
-                              className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-400 outline-none text-center"
-                            />
-                          </td>
+                              {/* Produto */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.carrinho ? `${l.itensCarrinho.length} item(ns) no carrinho` : l.produto}
+                                  onChange={(e) => atualizarLinha(index, "produto", e.target.value)}
+                                  placeholder="Auto-preenchido"
+                                  disabled={l.carrinho}
+                                  className={`w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs outline-none truncate ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed italic" : "text-slate-300"
+                                  }`}
+                                />
+                              </td>
 
-                          {/* PDV (R$) */}
-                          <td className="p-2">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={l.pdv}
-                              onChange={(e) => atualizarLinha(index, "pdv", e.target.value)}
-                              placeholder="0.00"
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-emerald-400 text-right outline-none focus:border-purple-500"
-                            />
-                          </td>
+                              {/* Marca */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.carrinho ? "-" : l.marca}
+                                  onChange={(e) => atualizarLinha(index, "marca", e.target.value)}
+                                  placeholder="Marca"
+                                  disabled={l.carrinho}
+                                  className={`w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs outline-none text-center ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed" : "text-slate-300"
+                                  }`}
+                                />
+                              </td>
 
-                          {/* CUSTO FRETE */}
-                          <td className="p-2">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={l.custo_frete}
-                              onChange={(e) => atualizarLinha(index, "custo_frete", e.target.value)}
-                              placeholder="0"
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-rose-400 text-right outline-none focus:border-purple-500"
-                            />
-                          </td>
+                              {/* PDV (R$) */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.carrinho ? formatarMoeda(totalPdvCarrinho) : l.pdv}
+                                  onChange={(e) => atualizarLinha(index, "pdv", e.target.value)}
+                                  placeholder="0.00"
+                                  disabled={l.carrinho}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-right outline-none ${
+                                    l.carrinho ? "text-emerald-400 font-bold bg-slate-950/80 cursor-not-allowed" : "text-emerald-400 focus:border-purple-500"
+                                  }`}
+                                />
+                              </td>
 
-                          {/* Motivo */}
-                          <td className="p-2">
-                            <select
-                              value={l.motivo}
-                              onChange={(e) => atualizarLinha(index, "motivo", e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer"
-                            >
-                              <option value="Defeito">Defeito</option>
-                              <option value="Arrependimento">Arrependimento</option>
-                              <option value="Produto Incorreto">Produto Incorreto</option>
-                              <option value="Atributo de Produto">Atributo de Produto (Tamanho)</option>
-                              <option value="Não Entregue">Não Entregue</option>
-                              <option value="Atraso na Entrega">Atraso na Entrega</option>
-                              <option value="Sem estoque">Sem estoque</option>
-                              <option value="Outros">Outros</option>
-                            </select>
-                          </td>
+                              {/* Frete */}
+                              <td className="p-2">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={l.custo_frete}
+                                  onChange={(e) => atualizarLinha(index, "custo_frete", e.target.value)}
+                                  placeholder="0"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-rose-400 text-right outline-none focus:border-purple-500"
+                                />
+                              </td>
 
-                          {/* Observações */}
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              value={l.observacoes}
-                              onChange={(e) => atualizarLinha(index, "observacoes", e.target.value)}
-                              placeholder="Detalhes..."
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-slate-300 outline-none"
-                            />
-                          </td>
+                              {/* Motivo (6 Novos Motivos) */}
+                              <td className="p-2">
+                                <select
+                                  value={l.motivo}
+                                  disabled={l.carrinho}
+                                  onChange={(e) => atualizarLinha(index, "motivo", e.target.value)}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs outline-none cursor-pointer truncate ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed opacity-60" : "text-white"
+                                  }`}
+                                >
+                                  {MOTIVOS_OFICIAIS.map((m, i) => (
+                                    <option key={i} value={m}>{m}</option>
+                                  ))}
+                                </select>
+                              </td>
 
-                          {/* CONDIÇÕES? */}
-                          <td className="p-2 text-center">
-                            <select
-                              value={l.condicoes}
-                              onChange={(e) => atualizarLinha(index, "condicoes", e.target.value as any)}
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer text-center"
-                            >
-                              <option value="Não">Não</option>
-                              <option value="Sim">Sim</option>
-                            </select>
-                          </td>
+                              {/* Observações */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.observacoes}
+                                  disabled={l.carrinho}
+                                  onChange={(e) => atualizarLinha(index, "observacoes", e.target.value)}
+                                  placeholder={l.carrinho ? "Preencha na caixinha abaixo" : "Detalhes..."}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs outline-none ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed opacity-60" : "text-slate-300"
+                                  }`}
+                                />
+                              </td>
 
-                          {/* MEDIAÇÃO / STATUS */}
-                          <td className="p-2">
-                            <select
-                              value={l.mediacao}
-                              onChange={(e) => atualizarLinha(index, "mediacao", e.target.value as any)}
-                              className={`w-full bg-slate-900 border rounded-lg p-2 text-xs font-bold outline-none cursor-pointer ${
-                                l.mediacao === "Convertida / Ganha"
-                                  ? "border-emerald-500 text-emerald-400"
-                                  : l.mediacao === "Em Disputa"
-                                  ? "border-amber-500 text-amber-400"
-                                  : "border-slate-700 text-slate-400"
-                              }`}
-                            >
-                              <option value="Nenhuma">Nenhuma</option>
-                              <option value="Em Disputa">Em Disputa</option>
-                              <option value="Convertida / Ganha">Convertida / Ganha</option>
-                            </select>
-                          </td>
+                              {/* Condições */}
+                              <td className="p-2 text-center">
+                                <select
+                                  value={l.condicoes}
+                                  disabled={l.carrinho}
+                                  onChange={(e) => atualizarLinha(index, "condicoes", e.target.value as any)}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs outline-none cursor-pointer text-center ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed opacity-60" : "text-white"
+                                  }`}
+                                >
+                                  <option value="Não">Não</option>
+                                  <option value="Sim">Sim</option>
+                                </select>
+                              </td>
 
-                          {/* Botão Remover Linha */}
-                          <td className="p-2 text-center">
-                            {linhas.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => removerLinha(index)}
-                                className="bg-rose-950/60 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded-lg text-xs font-bold cursor-pointer"
-                              >
-                                ✕
-                              </button>
+                              {/* MEDIAÇÃO / STATUS */}
+                              <td className="p-2">
+                                <select
+                                  value={l.mediacao}
+                                  onChange={(e) => atualizarLinha(index, "mediacao", e.target.value as any)}
+                                  className={`w-full bg-slate-900 border rounded-lg p-2 text-xs font-black outline-none cursor-pointer ${
+                                    l.mediacao === "Ganha"
+                                      ? "border-emerald-500 text-emerald-400 bg-emerald-950/20"
+                                      : l.mediacao === "Perdida"
+                                      ? "border-rose-500 text-rose-400 bg-rose-950/20"
+                                      : l.mediacao === "Em Disputa"
+                                      ? "border-amber-500 text-amber-400 bg-amber-950/20"
+                                      : "border-slate-700 text-slate-400"
+                                  }`}
+                                >
+                                  <option value="Nenhuma">Nenhuma</option>
+                                  <option value="Em Disputa">Em Disputa</option>
+                                  <option value="Ganha">Ganha</option>
+                                  <option value="Perdida">Perdida</option>
+                                </select>
+                              </td>
+
+                              {/* Remover Linha Principal */}
+                              <td className="p-2 text-center">
+                                {linhas.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removerLinha(index)}
+                                    className="bg-rose-950/60 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded-lg text-xs font-bold cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+
+                            {/* CAIXINHA EXPANSÍVEL: MÚLTIPLOS PRODUTOS DO CARRINHO */}
+                            {l.carrinho && (
+                              <tr className="bg-purple-950/15 border-b border-purple-900/40">
+                                <td colSpan={15} className="p-4 pl-6 md:pl-10">
+                                  <div className="bg-slate-950/80 p-5 rounded-2xl border border-purple-800/40 shadow-2xl">
+                                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-2 border-b border-slate-800">
+                                      <h4 className="text-xs font-black text-purple-400 uppercase tracking-wider flex items-center gap-2">
+                                        <span>🛒 Caixinha do Carrinho · Pedido #{l.pedido || "---"} ({l.canal})</span>
+                                      </h4>
+                                      <span className="text-[11px] font-mono font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-900 px-3 py-1 rounded-lg">
+                                        Total PDV: {formatarMoeda(totalPdvCarrinho)} | Frete p/ item: {formatarMoeda(Number((parseNumero(l.custo_frete) / (l.itensCarrinho.length || 1)).toFixed(2)))}
+                                      </span>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                      {l.itensCarrinho.map((sub, subIdx) => (
+                                        <div key={subIdx} className="grid grid-cols-1 md:grid-cols-12 gap-2 bg-slate-900/90 p-3 rounded-xl border border-slate-800 items-center">
+                                          <div className="md:col-span-2">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">SKU</label>
+                                            <input
+                                              type="text"
+                                              placeholder="SKU"
+                                              value={sub.sku}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "sku", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs font-mono text-white outline-none focus:border-purple-500"
+                                              required
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-3">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Produto</label>
+                                            <input
+                                              type="text"
+                                              placeholder="Nome do Produto"
+                                              value={sub.produto}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "produto", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-300 outline-none truncate"
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-1">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Marca</label>
+                                            <input
+                                              type="text"
+                                              placeholder="Marca"
+                                              value={sub.marca}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "marca", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-400 outline-none text-center"
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-1">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">PDV (R$)</label>
+                                            <input
+                                              type="number"
+                                              step="0.01"
+                                              placeholder="0.00"
+                                              value={sub.pdv}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "pdv", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs font-mono text-emerald-400 outline-none text-right"
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-2">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Motivo</label>
+                                            <select
+                                              value={sub.motivo}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "motivo", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-white outline-none cursor-pointer truncate"
+                                            >
+                                              {MOTIVOS_OFICIAIS.map((m, i) => (
+                                                <option key={i} value={m}>{m}</option>
+                                              ))}
+                                            </select>
+                                          </div>
+
+                                          <div className="md:col-span-2">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Obs</label>
+                                            <input
+                                              type="text"
+                                              placeholder="Observações"
+                                              value={sub.observacoes}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "observacoes", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-300 outline-none"
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-1 flex items-center justify-end gap-1 pt-3">
+                                            {l.itensCarrinho.length > 1 && (
+                                              <button
+                                                type="button"
+                                                onClick={() => removerItemCarrinho(index, subIdx)}
+                                                className="text-rose-400 hover:text-rose-300 font-bold px-2 py-1 text-xs bg-rose-950/60 rounded"
+                                                title="Remover este item do carrinho"
+                                              >
+                                                ✕
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+
+                                      <button
+                                        type="button"
+                                        onClick={() => adicionarItemCarrinho(index)}
+                                        className="mt-3 text-[10px] font-bold uppercase text-purple-400 hover:text-purple-300 flex items-center gap-1.5 cursor-pointer bg-purple-950/30 px-3 py-1.5 rounded-lg border border-purple-800/40"
+                                      >
+                                        <span>+ Adicionar Outro Produto a Este Pedido (Carrinho)</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
                             )}
-                          </td>
-                        </tr>
-                      ))}
+
+                            {/* CAIXINHA EXPANSÍVEL: DETALHES DE MEDIAÇÃO */}
+                            {l.mediacao !== "Nenhuma" && (
+                              <tr className="bg-amber-950/10 border-b border-amber-900/30">
+                                <td colSpan={15} className="p-3 pl-6 md:pl-10">
+                                  <div className="bg-slate-950/90 p-3 rounded-xl border border-amber-800/40 flex flex-wrap items-center gap-4">
+                                    <span className="text-[11px] font-black uppercase text-amber-400">
+                                      ⚖️ Detalhes da Mediação ({l.mediacao}):
+                                    </span>
+                                    <div className="flex-1 min-w-[200px]">
+                                      <input
+                                        type="text"
+                                        value={l.protocolo_mediacao}
+                                        onChange={(e) => atualizarLinha(index, "protocolo_mediacao", e.target.value)}
+                                        placeholder="Protocolo da Disputa / Chamado / Motivo do Ganho ou Perda..."
+                                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-white outline-none focus:border-amber-500"
+                                      />
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -653,7 +909,7 @@ export default function DevolucoesPage() {
                     onClick={adicionarLinha}
                     className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer"
                   >
-                    + Adicionar Outra Linha
+                    + Adicionar Outro Pedido
                   </button>
 
                   <button
@@ -667,22 +923,22 @@ export default function DevolucoesPage() {
               </form>
             </div>
 
-            {/* TABELA DE DEVOLUÇÕES REGISTADAS COM FILTROS */}
+            {/* TABELA DE DEVOLUÇÕES REGISTADAS */}
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
               <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <h2 className="text-lg font-bold text-white">Devoluções Registadas</h2>
-                  <p className="text-xs text-slate-400 mt-1">Histórico completo de pedidos devolvidos e status de mediação.</p>
+                  <p className="text-xs text-slate-400 mt-1">Histórico completo com marcas, custos de logística reversa e desfecho das mediações.</p>
                 </div>
 
-                {/* Filtros Superiores */}
+                {/* Filtros */}
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     type="text"
                     placeholder="Buscar Pedido, NF, SKU..."
                     value={buscaTexto}
                     onChange={(e) => setBuscaTexto(e.target.value)}
-                    className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-48"
+                    className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-44"
                   />
 
                   <select
@@ -693,6 +949,17 @@ export default function DevolucoesPage() {
                     <option value="TODOS">Todos os Canais</option>
                     {canais.map((c, i) => (
                       <option key={i} value={c}>{c}</option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={filtroMarca}
+                    onChange={(e) => setFiltroMarca(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer"
+                  >
+                    <option value="TODAS">Todas as Marcas</option>
+                    {marcasDisponiveis.map((m, i) => (
+                      <option key={i} value={m}>{m}</option>
                     ))}
                   </select>
 
@@ -714,7 +981,8 @@ export default function DevolucoesPage() {
                     <option value="TODOS">Todas Mediações</option>
                     <option value="Nenhuma">Nenhuma</option>
                     <option value="Em Disputa">Em Disputa</option>
-                    <option value="Convertida / Ganha">Convertida / Ganha</option>
+                    <option value="Ganha">Ganha</option>
+                    <option value="Perdida">Perdida</option>
                   </select>
                 </div>
               </div>
@@ -734,6 +1002,7 @@ export default function DevolucoesPage() {
                         <th className="p-3 text-center">Tipo</th>
                         <th className="p-3">SKU</th>
                         <th className="p-3 min-w-[200px]">Produto</th>
+                        <th className="p-3 text-center">Marca</th>
                         <th className="p-3 text-right">PDV</th>
                         <th className="p-3 text-right">Frete Reverso</th>
                         <th className="p-3">Motivo / Obs</th>
@@ -774,7 +1043,7 @@ export default function DevolucoesPage() {
                             {/* Canal */}
                             <td className="p-3 font-bold text-white">{item.canal}</td>
 
-                            {/* Solicitação */}
+                            {/* Tipo */}
                             <td className="p-3 text-center">
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
@@ -791,8 +1060,24 @@ export default function DevolucoesPage() {
                             <td className="p-3 font-mono text-indigo-400 font-bold">{item.sku}</td>
 
                             {/* Produto */}
-                            <td className="p-3 text-slate-300 max-w-[220px] truncate" title={item.produto}>
+                            <td className="p-3 text-slate-300 max-w-[200px] truncate" title={item.produto}>
                               {item.produto}
+                            </td>
+
+                            {/* MARCA */}
+                            <td className="p-3 text-center">
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  value={dadosEdicao.marca}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, marca: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-center text-white"
+                                />
+                              ) : (
+                                <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px] font-bold font-mono">
+                                  {item.marca || "-"}
+                                </span>
+                              )}
                             </td>
 
                             {/* PDV */}
@@ -825,27 +1110,52 @@ export default function DevolucoesPage() {
                               )}
                             </td>
 
-                            {/* Motivo / Obs */}
+                            {/* Motivo */}
                             <td className="p-3">
-                              <span className="font-bold text-slate-200">{item.motivo}</span>
-                              {item.observacoes && (
-                                <span className="block text-[11px] text-slate-400 max-w-[200px] truncate" title={item.observacoes}>
-                                  {item.observacoes}
-                                </span>
+                              {isEditing ? (
+                                <select
+                                  value={dadosEdicao.motivo}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, motivo: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white max-w-[200px]"
+                                >
+                                  {MOTIVOS_OFICIAIS.map((m, i) => (
+                                    <option key={i} value={m}>{m}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <>
+                                  <span className="font-bold text-slate-200">{item.motivo}</span>
+                                  {item.observacoes && (
+                                    <span className="block text-[11px] text-slate-400 max-w-[200px] truncate" title={item.observacoes}>
+                                      {item.observacoes}
+                                    </span>
+                                  )}
+                                </>
                               )}
                             </td>
 
                             {/* Condições */}
                             <td className="p-3 text-center">
-                              <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  item.condicoes === "Sim"
-                                    ? "bg-emerald-950/60 text-emerald-400 border border-emerald-900/40"
-                                    : "bg-rose-950/60 text-rose-400 border border-rose-900/40"
-                                }`}
-                              >
-                                {item.condicoes || "Não"}
-                              </span>
+                              {isEditing ? (
+                                <select
+                                  value={dadosEdicao.condicoes}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, condicoes: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white"
+                                >
+                                  <option value="Não">Não</option>
+                                  <option value="Sim">Sim</option>
+                                </select>
+                              ) : (
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    item.condicoes === "Sim"
+                                      ? "bg-emerald-950/60 text-emerald-400 border border-emerald-900/40"
+                                      : "bg-rose-950/60 text-rose-400 border border-rose-900/40"
+                                  }`}
+                                >
+                                  {item.condicoes || "Não"}
+                                </span>
+                              )}
                             </td>
 
                             {/* Mediação */}
@@ -854,17 +1164,20 @@ export default function DevolucoesPage() {
                                 <select
                                   value={dadosEdicao.mediacao || "Nenhuma"}
                                   onChange={(e) => setDadosEdicao({ ...dadosEdicao, mediacao: e.target.value })}
-                                  className="bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white"
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white font-bold"
                                 >
                                   <option value="Nenhuma">Nenhuma</option>
                                   <option value="Em Disputa">Em Disputa</option>
-                                  <option value="Convertida / Ganha">Convertida / Ganha</option>
+                                  <option value="Ganha">Ganha</option>
+                                  <option value="Perdida">Perdida</option>
                                 </select>
                               ) : (
                                 <span
                                   className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
-                                    item.mediacao === "Convertida / Ganha"
+                                    item.mediacao === "Ganha" || item.mediacao === "Convertida / Ganha"
                                       ? "bg-emerald-950/80 text-emerald-300 border-emerald-700"
+                                      : item.mediacao === "Perdida"
+                                      ? "bg-rose-950/80 text-rose-300 border-rose-700"
                                       : item.mediacao === "Em Disputa"
                                       ? "bg-amber-950/80 text-amber-300 border-amber-700"
                                       : "bg-slate-900 text-slate-500 border-slate-800"
@@ -934,7 +1247,7 @@ export default function DevolucoesPage() {
                 <span>🎯 Gestão de Planos de Ação Operacionais</span>
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Aponte medidas corretivas para os principais motivos de devolução (erros operacionais, defeitos de lote e problemas de atributos).
+                Aponte medidas corretivas para os principais motivos de devolução e reduza o índice nos canais.
               </p>
             </div>
 
@@ -946,6 +1259,7 @@ export default function DevolucoesPage() {
                     <th className="p-3">Canal</th>
                     <th className="p-3">SKU</th>
                     <th className="p-3">Produto</th>
+                    <th className="p-3">Marca</th>
                     <th className="p-3">Motivo Reclamado</th>
                     <th className="p-3 min-w-[300px]">Plano de Ação Corretivo</th>
                     <th className="p-3 text-center">Salvar</th>
@@ -958,12 +1272,13 @@ export default function DevolucoesPage() {
                       <td className="p-3 text-slate-300">{item.canal}</td>
                       <td className="p-3 font-mono text-indigo-400">{item.sku}</td>
                       <td className="p-3 text-slate-300 max-w-[200px] truncate">{item.produto}</td>
+                      <td className="p-3 font-mono text-slate-400">{item.marca || "-"}</td>
                       <td className="p-3 text-rose-400 font-bold">{item.motivo}</td>
                       <td className="p-3">
                         <input
                           type="text"
                           defaultValue={item.plano_acao || ""}
-                          placeholder="Ex: Ajustar tabela de medidas no canal, notificar fornecedor..."
+                          placeholder="Ex: Ajustar tabela de medidas no canal, reforçar embalagem..."
                           onBlur={async (e) => {
                             const val = e.target.value.trim();
                             await supabase.from("devolucoes").update({ plano_acao: val }).eq("id", item.id);
@@ -972,7 +1287,7 @@ export default function DevolucoesPage() {
                         />
                       </td>
                       <td className="p-3 text-center text-slate-500 text-[10px]">
-                        Auto-salvo ao sair do campo
+                        Auto-salvo ao sair
                       </td>
                     </tr>
                   ))}
