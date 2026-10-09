@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 
-// Matriz de Frete Padrão (utilizada no ML e adaptável para FBA)
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
   { atePeso: 0.5, faixas: { "78.99": 8.25, "99.99": 13.85, "119.99": 16.15, "149.99": 18.15, "199.99": 20.45, "200": 23.25 } },
@@ -23,7 +22,6 @@ function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura:
   if (pdv < 79.00) return 0.00;
   const pesoVolumetrico = (altura * largura * comprimento) / 6000;
   const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
-
   let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
   if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
 
@@ -34,7 +32,6 @@ function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura:
   else if (pdv < 150) valorFrete = linhaFrete.faixas["149.99"];
   else if (pdv < 200) valorFrete = linhaFrete.faixas["199.99"];
   else valorFrete = linhaFrete.faixas["200"];
-
   return valorFrete || 0;
 }
 
@@ -50,21 +47,9 @@ function colLetraParaIndice(colStr: string): number {
   const s = colStr.trim().toUpperCase().replace(/[^A-Z]/g, "");
   let idx = 0;
   for (let i = 0; i < s.length; i++) {
-    const code = s.charCodeAt(i);
-    if (code >= 65 && code <= 90) {
-      idx = idx * 26 + (code - 64);
-    }
+    idx = idx * 26 + (s.charCodeAt(i) - 64);
   }
   return idx - 1;
-}
-
-function extrairLetraERow(val: string): { coluna: string; linha?: number } {
-  const limpo = String(val || "").trim().toUpperCase();
-  const match = limpo.match(/^([A-Z]+)(\d+)?$/);
-  if (match) {
-    return { coluna: match[1], linha: match[2] ? parseInt(match[2], 10) : undefined };
-  }
-  return { coluna: limpo };
 }
 
 function parseNumero(valor: any): number {
@@ -85,7 +70,7 @@ export default function FullPage() {
   const [salvando, setSalvando] = useState(false);
 
   // Guias principais
-  const [subAba, setSubAba] = useState<"estoque" | "vendas">("vendas");
+  const [subAba, setSubAba] = useState<"estoque" | "vendas" | "relatorio">("vendas");
 
   // Filtros Globais
   const [canais, setCanais] = useState<string[]>(["Mercado Livre Full 1", "Amazon FBA", "Shopee Full"]);
@@ -98,14 +83,15 @@ export default function FullPage() {
   const [regrasMlMap, setRegrasMlMap] = useState<Map<string, any>>(new Map());
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
   const [tinyMap, setTinyMap] = useState<Map<string, number>>(new Map());
+  const [lancamentosGravados, setLancamentosGravados] = useState<any[]>([]);
 
   // ----------------------------------------------------
   // ESTADOS - ABA ESTOQUE
   // ----------------------------------------------------
   const [matrizEstoque, setMatrizEstoque] = useState<any[][]>([]);
-  const [linhaEstoque, setLinhaEstoque] = useState("2");
-  const [colSkuEstoque, setColSkuEstoque] = useState("A");
-  const [colQtdEstoque, setColQtdEstoque] = useState("B");
+  const [linhaEstoque, setLinhaEstoque] = useState("13");
+  const [colSkuEstoque, setColSkuEstoque] = useState("D");
+  const [colQtdEstoque, setColQtdEstoque] = useState("X");
   const [previewEstoque, setPreviewEstoque] = useState<any[]>([]);
 
   // ----------------------------------------------------
@@ -130,8 +116,11 @@ export default function FullPage() {
   }, []);
 
   useEffect(() => {
-    if (canalSelecionado) carregarConfiguracoes(canalSelecionado);
-  }, [canalSelecionado]);
+    if (canalSelecionado && mesSelecionado) {
+      carregarConfiguracoes(canalSelecionado);
+      carregarHistoricoGravado();
+    }
+  }, [canalSelecionado, mesSelecionado]);
 
   const carregarDadosBase = async () => {
     const { data: canaisData } = await supabase.from('config_regras_canais').select('*').order('id');
@@ -189,6 +178,19 @@ export default function FullPage() {
     setTinyMap(mapaTiny);
   };
 
+  const carregarHistoricoGravado = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('full_lancamentos')
+      .select('*')
+      .eq('canal', canalSelecionado)
+      .eq('mes_referencia', mesSelecionado)
+      .order('receita_bruta', { ascending: false });
+
+    if (data) setLancamentosGravados(data);
+    setLoading(false);
+  };
+
   const carregarConfiguracoes = (canal: string) => {
     const salvoEst = localStorage.getItem(`full_estoque_${canal.toLowerCase()}`);
     if (salvoEst) {
@@ -243,21 +245,34 @@ export default function FullPage() {
     if (matrizEstoque.length === 0) return alert("Suba a planilha de Estoque primeiro.");
     salvarConfiguracoes("estoque");
 
-    const idxSku = colLetraParaIndice(extrairLetraERow(colSkuEstoque).coluna);
-    const idxQtd = colLetraParaIndice(extrairLetraERow(colQtdEstoque).coluna);
+    const idxSku = colLetraParaIndice(colSkuEstoque);
+    const idxQtd = colLetraParaIndice(colQtdEstoque);
     const startRow = Math.max(0, parseInt(linhaEstoque, 10) - 1 || 0);
 
-    const extraidos = [];
+    const mapaAgrupado = new Map<string, number>();
+
     for (let r = startRow; r < matrizEstoque.length; r++) {
       const row = matrizEstoque[r];
-      if (!row) continue;
+      if (!row || row.length === 0) continue;
+      
       const skuOriginal = String(row[idxSku] || "").trim();
       const skuNorm = normalizarSku(skuOriginal);
       if (!skuNorm || skuNorm.toLowerCase() === "sku") continue;
 
       const qtd = parseNumero(row[idxQtd]);
-      extraidos.push({ sku: skuOriginal, skuNorm, quantidade: qtd });
+      
+      // Agrupa quantidades do mesmo SKU para evitar o erro de ON CONFLICT do Supabase
+      if (mapaAgrupado.has(skuNorm)) {
+        mapaAgrupado.set(skuNorm, mapaAgrupado.get(skuNorm)! + qtd);
+      } else {
+        mapaAgrupado.set(skuNorm, qtd);
+      }
     }
+
+    const extraidos = Array.from(mapaAgrupado.entries()).map(([skuNorm, qtd]) => ({
+      sku: skuNorm, skuNorm: skuNorm, quantidade: qtd
+    }));
+    
     setPreviewEstoque(extraidos);
   };
 
@@ -276,10 +291,10 @@ export default function FullPage() {
     if (error) {
       alert("Erro ao salvar estoque no banco: " + error.message);
     } else {
-      alert(`✅ Estoque do CD (${canalSelecionado} - ${mesSelecionado}) atualizado com sucesso! Foram guardados ${payload.length} SKUs.`);
+      alert(`✅ Estoque do CD (${canalSelecionado} - ${mesSelecionado}) atualizado com sucesso! Foram guardados ${payload.length} SKUs consolidados.`);
       setPreviewEstoque([]);
       setMatrizEstoque([]);
-      setSubAba("vendas"); // Vai automaticamente para a aba de Vendas após salvar
+      setSubAba("vendas"); 
     }
     setSalvando(false);
   };
@@ -349,9 +364,9 @@ export default function FullPage() {
     const mapaEstoqueCD = new Map();
     if (estData) estData.forEach(e => mapaEstoqueCD.set(e.sku, Number(e.estoque)));
 
-    const idxSku = colLetraParaIndice(extrairLetraERow(colSkuVendas).coluna);
-    const idxQtd = colLetraParaIndice(extrairLetraERow(colQtdVendas).coluna);
-    const idxReceita = colLetraParaIndice(extrairLetraERow(colReceitaVendas).coluna);
+    const idxSku = colLetraParaIndice(colSkuVendas);
+    const idxQtd = colLetraParaIndice(colQtdVendas);
+    const idxReceita = colLetraParaIndice(colReceitaVendas);
     const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
     
     const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
@@ -396,7 +411,12 @@ export default function FullPage() {
       const impostoTotal = item.receitaBruta * (impostoPct / 100);
       const custoProdutoTotal = custoUnitario * item.qtdVendida;
 
-      const lucroRs = item.receitaBruta - custoProdutoTotal - impostoTotal - tarifaComissaoTotal - freteTotal;
+      const tarifaFreteSoma = tarifaComissaoTotal + freteTotal;
+      const lucroRs = item.receitaBruta - custoProdutoTotal - impostoTotal - tarifaFreteSoma;
+      
+      // Margem Bruta e Líquida
+      const margemBrutaRs = item.receitaBruta - custoProdutoTotal - impostoTotal;
+      const margemBrutaPct = item.receitaBruta > 0 ? (margemBrutaRs / item.receitaBruta) * 100 : 0;
       const margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
 
       // MOTOR
@@ -429,28 +449,79 @@ export default function FullPage() {
       }
 
       return {
-        ...item, produto: produtoNome, estoqueCD, estoqueCentral, custoUnitario,
-        lucroRs, margemPct, vmd, coberturaAtual, qtdEnviar, statusEstoque, statusEnvio
+        canal: canalSelecionado,
+        mes_referencia: mesSelecionado,
+        sku: item.sku,
+        produto: produtoNome,
+        qtd_vendida: item.qtdVendida,
+        receita_bruta: item.receitaBruta,
+        estoque_cd: estoqueCD,
+        armazenagem: 0,
+        estoque_central: estoqueCentral,
+        custo_produto: custoProdutoTotal,
+        imposto: impostoTotal,
+        tarifa_frete: tarifaFreteSoma,
+        lucro_liquido: lucroRs,
+        margem_pct: margemPct,
+        margem_bruta_pct: margemBrutaPct,
+        vmd: Number(vmd.toFixed(2)),
+        cobertura_dias: Number(coberturaAtual.toFixed(1)),
+        sugestao_envio: qtdEnviar,
+        status_estoque: statusEstoque,
+        status_envio: statusEnvio
       };
     });
 
-    setDadosProcessados(resultados.sort((a, b) => b.receitaBruta - a.receitaBruta));
+    setDadosProcessados(resultados.sort((a, b) => b.receita_bruta - a.receita_bruta));
     setLoading(false);
   };
 
-  const filtrados = dadosProcessados.filter(item => {
+  const salvarDadosNoBanco = async () => {
+    if (dadosProcessados.length === 0) return;
+    setSalvando(true);
+    
+    // Deleta os anteriores do mesmo mês para não duplicar se rodar de novo
+    await supabase.from('full_lancamentos').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
+    
+    const { error } = await supabase.from('full_lancamentos').insert(dadosProcessados);
+    
+    if (error) {
+      alert("Erro ao gravar resultados no banco: " + error.message);
+    } else {
+      alert("✅ Relatório de Vendas e Reposição gravado com sucesso no banco de dados!");
+      setMatrizVendas([]);
+      setDadosProcessados([]);
+      carregarHistoricoGravado();
+      setSubAba("relatorio"); // Vai para a aba do histórico
+    }
+    setSalvando(false);
+  };
+
+  const limparCanalInteiro = async () => {
+    if (!confirm(`ATENÇÃO: Deseja apagar o histórico salvo de ${canalSelecionado} no mês de ${mesSelecionado}?`)) return;
+    await supabase.from('full_lancamentos').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
+    carregarHistoricoGravado();
+  };
+
+  // Referência para listagem
+  const dataSource = dadosProcessados.length > 0 ? dadosProcessados : lancamentosGravados;
+
+  const filtrados = dataSource.filter(item => {
     const mText = !pesquisaBusca || item.sku.toLowerCase().includes(pesquisaBusca.toLowerCase()) || item.produto.toLowerCase().includes(pesquisaBusca.toLowerCase());
-    const mStatus = filtroStatus === "TODOS" || item.statusEstoque === filtroStatus || item.statusEnvio.includes(filtroStatus);
+    const mStatus = filtroStatus === "TODOS" || item.status_estoque === filtroStatus || item.status_envio.includes(filtroStatus);
     return mText && mStatus;
   });
 
   const kpis = {
-    receita: dadosProcessados.reduce((a, b) => a + b.receitaBruta, 0),
-    lucro: dadosProcessados.reduce((a, b) => a + b.lucroRs, 0),
-    rupturas: dadosProcessados.filter(i => i.statusEstoque === "Ruptura Iminente").length,
-    aging: dadosProcessados.filter(i => i.statusEstoque === "Risco de Aging" || i.statusEstoque === "Estoque Parado").length,
-    enviarHoje: dadosProcessados.reduce((a, b) => a + b.qtdEnviar, 0)
+    receita: dataSource.reduce((a, b) => a + Number(b.receita_bruta || 0), 0),
+    lucro: dataSource.reduce((a, b) => a + Number(b.lucro_liquido || 0), 0),
+    rupturas: dataSource.filter(i => i.status_estoque === "Ruptura Iminente").length,
+    aging: dataSource.filter(i => i.status_estoque === "Risco de Aging" || i.status_estoque === "Estoque Parado").length,
+    enviarHoje: dataSource.reduce((a, b) => a + Number(b.sugestao_envio || 0), 0)
   };
+
+  // Top Produtos por Margem e Receita
+  const topProdutos = [...dataSource].sort((a, b) => b.receita_bruta - a.receita_bruta).slice(0, 5);
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -489,6 +560,9 @@ export default function FullPage() {
           <button onClick={() => setSubAba("vendas")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "vendas" ? "bg-purple-600 text-white shadow-purple-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
             ⚡ 2. Motor de Reposição (Vendas)
           </button>
+          <button onClick={() => setSubAba("relatorio")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "relatorio" ? "bg-indigo-600 text-white shadow-indigo-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
+            📊 3. Relatório e Top Produtos Mensal
+          </button>
         </div>
 
         {/* ======================= ABA 1: UPLOAD DE ESTOQUE ======================= */}
@@ -507,7 +581,7 @@ export default function FullPage() {
                 </div>
                 <div>
                   <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label>
-                  <input type="number" value={linhaEstoque} onChange={e => setLinhaEstoque(e.target.value)} placeholder="2" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                  <input type="number" value={linhaEstoque} onChange={e => setLinhaEstoque(e.target.value)} placeholder="13" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
                 </div>
                 <div>
                   <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Coluna SKU</label>
@@ -525,7 +599,7 @@ export default function FullPage() {
                 </button>
                 {previewEstoque.length > 0 && (
                   <button onClick={salvarEstoqueNoBanco} disabled={salvando} className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-amber-900/40">
-                    {salvando ? "A Salvar..." : "2. Guardar Estoque no Sistema"}
+                    {salvando ? "A Salvar..." : "2. Guardar Estoque no Banco"}
                   </button>
                 )}
               </div>
@@ -535,13 +609,13 @@ export default function FullPage() {
               <div className="overflow-x-auto max-h-[400px] border border-slate-800 rounded-xl">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 uppercase text-[10px]">
-                    <tr><th className="p-3">SKU</th><th className="p-3 text-right">Estoque Lido</th></tr>
+                    <tr><th className="p-3">SKU Consolidado</th><th className="p-3 text-right">Estoque Lido Total</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                     {previewEstoque.slice(0, 50).map((item, idx) => (
                       <tr key={idx}><td className="p-3 font-mono font-bold text-white">{item.sku}</td><td className="p-3 text-right font-bold text-emerald-400">{item.quantidade} un.</td></tr>
                     ))}
-                    {previewEstoque.length > 50 && <tr><td colSpan={2} className="p-4 text-center text-slate-500 italic">... exibindo os primeiros 50 de {previewEstoque.length} itens.</td></tr>}
+                    {previewEstoque.length > 50 && <tr><td colSpan={2} className="p-4 text-center text-slate-500 italic">... exibindo os primeiros 50 de {previewEstoque.length} SKUs consolidados.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -553,7 +627,13 @@ export default function FullPage() {
         {subAba === "vendas" && (
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <h2 className="text-lg font-bold text-purple-400 flex items-center gap-2 mb-4"><span>⚡ Cruzamento e Motor de Reposição</span></h2>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold text-purple-400 flex items-center gap-2"><span>⚡ Cruzamento e Motor de Reposição</span></h2>
+                <div className="bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-lg">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Período Selecionado: </span>
+                  <span className="text-xs font-mono font-bold text-purple-400">{mesSelecionado}</span>
+                </div>
+              </div>
               
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div className="md:col-span-2">
@@ -591,108 +671,163 @@ export default function FullPage() {
                 </div>
               </div>
 
-              <div className="flex justify-end">
-                <button onClick={executarMotorReposiçao} disabled={matrizVendas.length === 0 || loading} className={`py-3 px-8 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg ${matrizVendas.length === 0 ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500 text-white cursor-pointer shadow-purple-900/40'}`}>
-                  {loading ? "A Cruzar Dados..." : "⚡ Processar Relatório Completo"}
+              <div className="flex justify-end gap-3">
+                <button onClick={executarMotorReposiçao} disabled={matrizVendas.length === 0 || loading} className={`py-3 px-6 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg ${matrizVendas.length === 0 ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 text-white cursor-pointer shadow-purple-900/40'}`}>
+                  {loading ? "A Cruzar..." : "1. Processar Relatório em Tela"}
                 </button>
+                
+                {dadosProcessados.length > 0 && (
+                  <button onClick={salvarDadosNoBanco} disabled={salvando} className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-purple-900/40">
+                    {salvando ? "A Gravar..." : "2. Gravar Análise no Banco"}
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* KPIs E TABELA DE RESULTADOS */}
+            {/* PREVIEW EM TELA (NÃO SALVO AINDA) */}
             {dadosProcessados.length > 0 && (
-              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                  <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-lg">
-                    <span className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Faturamento Full</span>
-                    <span className="text-xl font-black text-white">{formatarMoeda(kpis.receita)}</span>
-                  </div>
-                  <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-lg">
-                    <span className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Lucro Líquido Real</span>
-                    <span className="text-xl font-black text-emerald-400">{formatarMoeda(kpis.lucro)}</span>
-                  </div>
-                  <div className="bg-slate-900/90 border border-rose-900/40 p-5 rounded-2xl shadow-lg">
-                    <span className="block text-[10px] font-bold text-rose-400 uppercase mb-2">Ruptura Iminente</span>
-                    <span className="text-xl font-black text-rose-400">{kpis.rupturas} SKUs</span>
-                  </div>
-                  <div className="bg-slate-900/90 border border-amber-900/40 p-5 rounded-2xl shadow-lg">
-                    <span className="block text-[10px] font-bold text-amber-400 uppercase mb-2">Risco de Aging</span>
-                    <span className="text-xl font-black text-amber-400">{kpis.aging} SKUs</span>
-                  </div>
-                  <div className="bg-purple-900/30 border border-purple-800 p-5 rounded-2xl shadow-lg">
-                    <span className="block text-[10px] font-bold text-purple-400 uppercase mb-2">Sugestão Envio Hoje</span>
-                    <span className="text-xl font-black text-purple-300">{kpis.enviarHoje} un.</span>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-                  <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-                    <h3 className="text-lg font-bold text-white">Painel Estratégico de Reposição ({canalSelecionado} - {mesSelecionado})</h3>
-                    <div className="flex gap-2">
-                      <input type="text" placeholder="Buscar SKU/Produto" value={pesquisaBusca} onChange={e => setPesquisaBusca(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-48" />
-                      <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
-                        <option value="TODOS">Todos os Status</option>
-                        <option value="Enviar">Apenas c/ Sugestão de Envio</option>
-                        <option value="Ruptura Iminente">Ruptura Iminente</option>
-                        <option value="Risco de Aging">Risco de Aging</option>
-                        <option value="Falta no Central">Sem Saldo na Sede</option>
-                      </select>
-                    </div>
-                  </div>
-                  
-                  <div className="overflow-x-auto max-h-[600px]">
-                    <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                      <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                        <tr>
-                          <th className="p-3 text-center">#</th>
-                          <th className="p-3">SKU</th>
-                          <th className="p-3 min-w-[200px]">Produto</th>
-                          <th className="p-3 text-right">Vendas</th>
-                          <th className="p-3 text-right">Receita (R$)</th>
-                          <th className="p-3 text-right text-emerald-300" title="Saldo guardado no passo 1">Estoque CD</th>
-                          <th className="p-3 text-right text-indigo-300" title="Saldo físico no Tiny ERP">Central (Sede)</th>
-                          <th className="p-3 text-center">Cobertura</th>
-                          <th className="p-3 text-right">Margem %</th>
-                          <th className="p-3 text-center border-l border-slate-800">Status CD</th>
-                          <th className="p-3 text-center">Ação Reposição</th>
-                          <th className="p-3 text-center font-black text-purple-400">📦 Enviar Qtd</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60">
-                        {filtrados.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-slate-800/40">
-                            <td className="p-3 text-center font-mono text-slate-500">{idx + 1}</td>
-                            <td className="p-3 font-mono font-bold text-white">{item.sku}</td>
-                            <td className="p-3 text-slate-300 truncate max-w-[220px]" title={item.produto}>{item.produto}</td>
-                            <td className="p-3 text-right font-bold text-slate-200">{item.qtdVendida}</td>
-                            <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.receitaBruta)}</td>
-                            <td className="p-3 text-right font-mono font-bold text-emerald-400">{item.estoqueCD}</td>
-                            <td className="p-3 text-right font-mono font-bold text-indigo-400">{item.estoqueCentral}</td>
-                            <td className="p-3 text-center">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.coberturaAtual < 10 ? 'bg-rose-950/60 text-rose-400 border border-rose-900/40' : item.coberturaAtual > 60 ? 'bg-amber-950/60 text-amber-400 border border-amber-900/40' : 'text-slate-400'}`}>
-                                {item.coberturaAtual > 900 ? '+90' : item.coberturaAtual.toFixed(0)} dias
-                              </span>
-                            </td>
-                            <td className={`p-3 text-right font-mono font-bold ${item.margemPct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucroRs)}`}>
-                              {item.margemPct.toFixed(1)}%
-                            </td>
-                            <td className="p-3 text-center border-l border-slate-800/50">
-                              {item.statusEstoque === "Ruptura Iminente" ? <span className="text-rose-400 font-bold text-[10px]">🔥 Ruptura</span> : item.statusEstoque === "Risco de Aging" ? <span className="text-amber-400 font-bold text-[10px]">⚠️ Aging Alto</span> : item.statusEstoque === "Estoque Parado" ? <span className="text-amber-400 font-bold text-[10px]">⏳ Parado</span> : <span className="text-emerald-400 text-[10px]">✔️ Saudável</span>}
-                            </td>
-                            <td className="p-3 text-center">
-                              {item.statusEnvio.includes("Parcial") ? <span className="bg-amber-900/30 text-amber-400 border border-amber-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.statusEnvio}</span> : item.statusEnvio.includes("Falta") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.statusEnvio}</span> : item.statusEnvio.includes("Não") ? <span className="text-slate-500 text-[10px] uppercase font-bold">{item.statusEnvio}</span> : <span className="bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.statusEnvio}</span>}
-                            </td>
-                            <td className="p-3 text-center font-mono font-black text-lg text-purple-400">
-                              {item.qtdEnviar > 0 ? `+${item.qtdEnviar}` : '-'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden p-6 text-center animate-in zoom-in duration-300">
+                 <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
+                 <p className="text-sm text-slate-400 mb-4">O motor calculou a rentabilidade e sugestão de envio para <strong>{dadosProcessados.length} SKUs</strong>.</p>
+                 <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" acima para armazenar os dados e ir para a visualização completa.</p>
               </div>
             )}
           </div>
+        )}
+
+        {/* ======================= ABA 3: RELATÓRIO E RANKING ======================= */}
+        {subAba === "relatorio" && (
+           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+             
+             {/* RANKING TOP 5 PRODUTOS */}
+             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6">
+                <h3 className="text-lg font-bold text-amber-400 mb-4 flex items-center gap-2">🏆 Top 5 Produtos (Receita e Margem)</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                      <tr>
+                        <th className="p-3">Posição</th>
+                        <th className="p-3">Produto</th>
+                        <th className="p-3 text-right">Vendas</th>
+                        <th className="p-3 text-right text-emerald-400">Receita Total</th>
+                        <th className="p-3 text-right text-indigo-400">Margem Bruta %</th>
+                        <th className="p-3 text-right text-purple-400">Margem Líquida %</th>
+                        <th className="p-3 text-right text-emerald-400">Lucro Líquido (R$)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                      {topProdutos.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-slate-800/40">
+                          <td className="p-3 font-black text-amber-400">#{idx + 1}</td>
+                          <td className="p-3 text-slate-200 font-bold truncate max-w-[250px]">{item.produto}</td>
+                          <td className="p-3 text-right font-bold text-slate-300">{item.qtd_vendida}</td>
+                          <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.receita_bruta)}</td>
+                          <td className="p-3 text-right font-mono font-bold text-indigo-400">{(item.margem_bruta_pct || 0).toFixed(1)}%</td>
+                          <td className="p-3 text-right font-mono font-bold text-purple-400">{(item.margem_pct || 0).toFixed(1)}%</td>
+                          <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.lucro_liquido)}</td>
+                        </tr>
+                      ))}
+                      {topProdutos.length === 0 && <tr><td colSpan={7} className="p-4 text-center text-slate-500">Nenhum dado salvo para este mês.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+             </div>
+
+             {/* KPIs GERAIS */}
+             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-lg">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Faturamento Full</span>
+                <span className="text-xl font-black text-white">{formatarMoeda(kpis.receita)}</span>
+              </div>
+              <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-lg">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Lucro Líquido Real</span>
+                <span className="text-xl font-black text-emerald-400">{formatarMoeda(kpis.lucro)}</span>
+              </div>
+              <div className="bg-slate-900/90 border border-rose-900/40 p-5 rounded-2xl shadow-lg">
+                <span className="block text-[10px] font-bold text-rose-400 uppercase mb-2">Ruptura Iminente</span>
+                <span className="text-xl font-black text-rose-400">{kpis.rupturas} SKUs</span>
+              </div>
+              <div className="bg-slate-900/90 border border-amber-900/40 p-5 rounded-2xl shadow-lg">
+                <span className="block text-[10px] font-bold text-amber-400 uppercase mb-2">Risco de Aging</span>
+                <span className="text-xl font-black text-amber-400">{kpis.aging} SKUs</span>
+              </div>
+              <div className="bg-purple-900/30 border border-purple-800 p-5 rounded-2xl shadow-lg">
+                <span className="block text-[10px] font-bold text-purple-400 uppercase mb-2">Sugestão Envio Hoje</span>
+                <span className="text-xl font-black text-purple-300">{kpis.enviarHoje} un.</span>
+              </div>
+            </div>
+
+            {/* TABELA COMPLETA */}
+            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+              <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                <h3 className="text-lg font-bold text-white">Painel Estratégico de Reposição ({canalSelecionado} - {mesSelecionado})</h3>
+                <div className="flex gap-2">
+                  <input type="text" placeholder="Buscar SKU/Produto" value={pesquisaBusca} onChange={e => setPesquisaBusca(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-48" />
+                  <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
+                    <option value="TODOS">Todos os Status</option>
+                    <option value="Enviar">Apenas c/ Sugestão de Envio</option>
+                    <option value="Ruptura Iminente">Ruptura Iminente</option>
+                    <option value="Risco de Aging">Risco de Aging</option>
+                    <option value="Falta no Central">Sem Saldo na Sede</option>
+                  </select>
+                  <button onClick={limparCanalInteiro} className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm ml-2">
+                    🗑️ Limpar Mês
+                  </button>
+                </div>
+              </div>
+              
+              <div className="overflow-x-auto max-h-[600px]">
+                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                    <tr>
+                      <th className="p-3 text-center">#</th>
+                      <th className="p-3">SKU</th>
+                      <th className="p-3 min-w-[200px]">Produto</th>
+                      <th className="p-3 text-right">Vendas</th>
+                      <th className="p-3 text-right">Receita (R$)</th>
+                      <th className="p-3 text-right text-emerald-300" title="Saldo guardado no passo 1">Estoque CD</th>
+                      <th className="p-3 text-right text-indigo-300" title="Saldo físico no Tiny ERP">Central (Sede)</th>
+                      <th className="p-3 text-center">Cobertura</th>
+                      <th className="p-3 text-right">Margem LÍQ.</th>
+                      <th className="p-3 text-center border-l border-slate-800">Status CD</th>
+                      <th className="p-3 text-center">Ação Reposição</th>
+                      <th className="p-3 text-center font-black text-purple-400">📦 Enviar Qtd</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {filtrados.map((item, idx) => (
+                      <tr key={item.id || idx} className="hover:bg-slate-800/40">
+                        <td className="p-3 text-center font-mono text-slate-500">{idx + 1}</td>
+                        <td className="p-3 font-mono font-bold text-white">{item.sku}</td>
+                        <td className="p-3 text-slate-300 truncate max-w-[220px]" title={item.produto}>{item.produto}</td>
+                        <td className="p-3 text-right font-bold text-slate-200">{item.qtd_vendida}</td>
+                        <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.receita_bruta)}</td>
+                        <td className="p-3 text-right font-mono font-bold text-emerald-400">{item.estoque_cd}</td>
+                        <td className="p-3 text-right font-mono font-bold text-indigo-400">{item.estoque_central}</td>
+                        <td className="p-3 text-center">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.cobertura_dias < 10 ? 'bg-rose-950/60 text-rose-400 border border-rose-900/40' : item.cobertura_dias > 60 ? 'bg-amber-950/60 text-amber-400 border border-amber-900/40' : 'text-slate-400'}`}>
+                            {item.cobertura_dias > 900 ? '+90' : item.cobertura_dias.toFixed(0)} dias
+                          </span>
+                        </td>
+                        <td className={`p-3 text-right font-mono font-bold ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
+                          {Number(item.margem_pct).toFixed(1)}%
+                        </td>
+                        <td className="p-3 text-center border-l border-slate-800/50">
+                          {item.status_estoque === "Ruptura Iminente" ? <span className="text-rose-400 font-bold text-[10px]">🔥 Ruptura</span> : item.status_estoque === "Risco de Aging" ? <span className="text-amber-400 font-bold text-[10px]">⚠️ Aging Alto</span> : item.status_estoque === "Estoque Parado" ? <span className="text-amber-400 font-bold text-[10px]">⏳ Parado</span> : <span className="text-emerald-400 text-[10px]">✔️ Saudável</span>}
+                        </td>
+                        <td className="p-3 text-center">
+                          {item.status_envio.includes("Parcial") ? <span className="bg-amber-900/30 text-amber-400 border border-amber-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Falta") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Não") ? <span className="text-slate-500 text-[10px] uppercase font-bold">{item.status_envio}</span> : <span className="bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span>}
+                        </td>
+                        <td className="p-3 text-center font-mono font-black text-lg text-purple-400">
+                          {item.sugestao_envio > 0 ? `+${item.sugestao_envio}` : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+           </div>
         )}
 
       </div>
