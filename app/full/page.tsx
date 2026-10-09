@@ -122,12 +122,17 @@ export default function LogisticaPage() {
   const [colQtdVendas, setColQtdVendas] = useState("H");
   const [colReceitaVendas, setColReceitaVendas] = useState("I");
   
+  // Parâmetros Globais de Cálculo
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
   const [metaDiasCobertura, setMetaDiasCobertura] = useState("45");
   const [custoEmbalagem, setCustoEmbalagem] = useState("0.70");
+
+  // Parâmetros de Diagnóstico (Logística Padrão)
+  const [margemMinimaPromissora, setMargemMinimaPromissora] = useState("12");
+  const [vendasMinimasPromissoras, setVendasMinimasPromissoras] = useState("3");
+  const [tetoMaxDevolucao, setTetoMaxDevolucao] = useState("10");
   
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
-  
   const [pesquisaBusca, setPesquisaBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
 
@@ -157,8 +162,6 @@ export default function LogisticaPage() {
     }
 
     let step = 1000;
-    
-    // Custos
     let from = 0; let keep = true;
     const mapaC = new Map();
     while (keep) {
@@ -171,7 +174,6 @@ export default function LogisticaPage() {
     }
     setCustosMap(mapaC);
 
-    // Regras ML
     from = 0; keep = true;
     const mapaMl = new Map();
     while (keep) {
@@ -184,11 +186,9 @@ export default function LogisticaPage() {
     }
     setRegrasMlMap(mapaMl);
 
-    // Tarifação
     const { data: tarData } = await supabase.from('config_regras_tarifacao').select('*').order('id');
     if (tarData) setRegrasTarifacao(tarData);
 
-    // Estoque Tiny
     from = 0; keep = true;
     const mapaTiny = new Map();
     while (keep) {
@@ -228,6 +228,9 @@ export default function LogisticaPage() {
       if (p.imposto) setAliquotaImposto(p.imposto);
       if (p.metaDias) setMetaDiasCobertura(p.metaDias);
       if (p.embalagem) setCustoEmbalagem(p.embalagem);
+      if (p.margemMin) setMargemMinimaPromissora(p.margemMin);
+      if (p.vendasMin) setVendasMinimasPromissoras(p.vendasMin);
+      if (p.tetoDev) setTetoMaxDevolucao(p.tetoDev);
     }
   };
 
@@ -235,7 +238,8 @@ export default function LogisticaPage() {
     const keyPrefix = modoLogistica === "full" ? "full_" : "padrao_";
     localStorage.setItem(`${keyPrefix}vendas_${canalSelecionado.toLowerCase()}`, JSON.stringify({
       linha: linhaVendas, colSku: colSkuVendas, colQtd: colQtdVendas, colReceita: colReceitaVendas, 
-      imposto: aliquotaImposto, metaDias: metaDiasCobertura, embalagem: custoEmbalagem
+      imposto: aliquotaImposto, metaDias: metaDiasCobertura, embalagem: custoEmbalagem,
+      margemMin: margemMinimaPromissora, vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao
     }));
   };
 
@@ -422,6 +426,11 @@ export default function LogisticaPage() {
     const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
     const embalagemUnit = Number(custoEmbalagem.replace(",", ".")) || 0;
 
+    // Metas configuradas na interface pelo usuário
+    const metaMargemPromissora = Number(margemMinimaPromissora.replace(",", ".")) || 12;
+    const metaVendasMin = Number(vendasMinimasPromissoras) || 3;
+    const limiteDevolucao = Number(tetoMaxDevolucao.replace(",", ".")) || 10;
+
     const { data: dadosDevolucaoRaw } = await supabase.from("devolucoes").select("sku, data_retorno, canal");
     const mapaDevContagem = new Map<string, number>();
     if (dadosDevolucaoRaw) {
@@ -463,12 +472,19 @@ export default function LogisticaPage() {
       const totalDevolucoes = mapaDevContagem.get(skuKey) || 0;
       const taxaDevolucao = vendasTotais > 0 ? (totalDevolucoes / vendasTotais) * 100 : 0;
 
+      // Diagnóstico dinâmico usando as regras inseridas nos inputs
       let diagnostico = "";
-      if (margemPct <= 0) diagnostico = "❌ Prejuízo (Sem Futuro)";
-      else if (taxaDevolucao >= 10 && totalDevolucoes > 0) diagnostico = "⛔ Alta Devolução (Sem Futuro)";
-      else if (margemPct >= 12 && taxaDevolucao <= 5 && item.qtdVendida >= 3) diagnostico = "🌟 Promissor (Escalar)";
-      else if (margemPct < 10) diagnostico = "⚠️ Margem Baixa (Atenção)";
-      else diagnostico = "✅ Regular (Manter)";
+      if (margemPct <= 0) {
+        diagnostico = "❌ Prejuízo (Sem Futuro)";
+      } else if (taxaDevolucao >= limiteDevolucao && totalDevolucoes > 0) {
+        diagnostico = "⛔ Alta Devolução (Sem Futuro)";
+      } else if (margemPct >= metaMargemPromissora && item.qtdVendida >= metaVendasMin && taxaDevolucao < limiteDevolucao) {
+        diagnostico = "🌟 Promissor (Escalar)";
+      } else if (margemPct < 10) {
+        diagnostico = "⚠️ Margem Baixa (Atenção)";
+      } else {
+        diagnostico = "✅ Regular (Manter)";
+      }
 
       return {
         canal: canalSelecionado, mes_referencia: mesSelecionado, sku: item.sku, produto: produtoNome,
@@ -621,7 +637,7 @@ export default function LogisticaPage() {
             </button>
           )}
           <button onClick={() => setSubAba("vendas")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "vendas" ? (modoLogistica === "full" ? "bg-purple-600 text-white" : "bg-indigo-600 text-white") : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
-            ⚡ {modoLogistica === "full" ? "2. Motor de Reposição" : "1. Motor de Análise"}
+            ⚡ {modoLogistica === "full" ? "2. Motor de Reposição" : "1. Motor de Diagnóstico"}
           </button>
           <button onClick={() => setSubAba("relatorio")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "relatorio" ? "bg-emerald-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
             📊 {modoLogistica === "full" ? "3. Ranking e Relatório" : "2. Veredicto e Relatório"}
@@ -673,10 +689,13 @@ export default function LogisticaPage() {
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <div className="flex justify-between items-center mb-4">
-                <h2 className={`text-lg font-bold flex items-center gap-2 ${modoLogistica === "full" ? "text-purple-400" : "text-indigo-400"}`}><span>⚡ Cruzamento e Motor ({modoLogistica === "full" ? "Reposição" : "Diagnóstico"})</span></h2>
+                <h2 className={`text-lg font-bold flex items-center gap-2 ${modoLogistica === "full" ? "text-purple-400" : "text-indigo-400"}`}>
+                  <span>⚡ Cruzamento e Motor ({modoLogistica === "full" ? "Reposição" : "Diagnóstico"})</span>
+                </h2>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              {/* FILTROS SUPERIORES DE ENTRADA */}
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Ficheiro de Vendas Brutas (Excel/CSV):</label>
                   <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUploadVendas} className={`w-full bg-slate-950 border border-slate-700 file:border-0 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer ${modoLogistica === "full" ? "file:bg-purple-600" : "file:bg-indigo-600"}`} />
@@ -685,19 +704,35 @@ export default function LogisticaPage() {
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Imposto (%):</label>
                   <input type="number" value={aliquotaImposto} onChange={e => setAliquotaImposto(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-emerald-400 outline-none" />
                 </div>
+
                 {modoLogistica === "full" ? (
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Meta Cobertura Full (Dias):</label>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Meta Cobertura (Dias):</label>
                     <input type="number" value={metaDiasCobertura} onChange={e => setMetaDiasCobertura(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-indigo-400 outline-none" />
                   </div>
                 ) : (
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Custo Embalagem (R$):</label>
-                    <input type="number" step="0.01" value={custoEmbalagem} onChange={e => setCustoEmbalagem(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-rose-400 outline-none" />
-                  </div>
+                  <>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Custo Embalagem (R$):</label>
+                      <input type="number" step="0.01" value={custoEmbalagem} onChange={e => setCustoEmbalagem(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-rose-400 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Margem Promissora (%):</label>
+                      <input type="number" value={margemMinimaPromissora} onChange={e => setMargemMinimaPromissora(e.target.value)} placeholder="12" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-emerald-400 font-bold outline-none" title="Piso de margem para ser considerado Promissor" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Vendas Mínimas (un):</label>
+                      <input type="number" value={vendasMinimasPromissoras} onChange={e => setVendasMinimasPromissoras(e.target.value)} placeholder="3" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-indigo-400 font-bold outline-none" title="Mínimo de vendas para validar o produto" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Teto Devolução (%):</label>
+                      <input type="number" value={tetoMaxDevolucao} onChange={e => setTetoMaxDevolucao(e.target.value)} placeholder="10" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-rose-400 font-bold outline-none" title="Taxa máxima permitida antes de ser considerado Sem Futuro" />
+                    </div>
+                  </>
                 )}
               </div>
 
+              {/* MAPEAMENTO DE COLUNAS */}
               <div className={`p-5 rounded-xl border mb-6 ${modoLogistica === "full" ? "bg-purple-950/10 border-purple-900/20" : "bg-indigo-950/10 border-indigo-900/20"}`}>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label><input type="number" value={linhaVendas} onChange={e => setLinhaVendas(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" /></div>
@@ -723,7 +758,7 @@ export default function LogisticaPage() {
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 text-center animate-in zoom-in duration-300">
                  <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
                  <p className="text-sm text-slate-400 mb-4">O motor analisou <strong>{dadosProcessados.length} SKUs</strong>.</p>
-                 <p className="text-xs text-slate-500">Clique em "Gravar Análise" para armazenar os dados e ir para o Relatório Oficial.</p>
+                 <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" para armazenar os dados e ir para o Relatório Oficial.</p>
               </div>
             )}
           </div>
