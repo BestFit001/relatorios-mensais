@@ -46,6 +46,15 @@ function normalizarSku(valor: any) {
   return s.toLowerCase();
 }
 
+function colLetraParaIndice(colStr: string): number {
+  const s = colStr.trim().toUpperCase().replace(/[^A-Z]/g, "");
+  let idx = 0;
+  for (let i = 0; i < s.length; i++) {
+    idx = idx * 26 + (s.charCodeAt(i) - 64);
+  }
+  return idx - 1;
+}
+
 function parseNumero(valor: any): number {
   if (valor === null || valor === undefined || valor === "") return 0;
   if (typeof valor === "number") return valor;
@@ -79,18 +88,14 @@ export default function FullPage() {
   const [tinyMap, setTinyMap] = useState<Map<string, number>>(new Map());
   const [lancamentosGravados, setLancamentosGravados] = useState<any[]>([]);
 
-  // ----------------------------------------------------
   // ESTADOS - ABA ESTOQUE
-  // ----------------------------------------------------
   const [matrizEstoque, setMatrizEstoque] = useState<any[]>([]);
   const [linhaEstoque, setLinhaEstoque] = useState("13");
   const [colSkuEstoque, setColSkuEstoque] = useState("D");
   const [colQtdEstoque, setColQtdEstoque] = useState("X");
   const [previewEstoque, setPreviewEstoque] = useState<any[]>([]);
 
-  // ----------------------------------------------------
   // ESTADOS - ABA VENDAS (MOTOR)
-  // ----------------------------------------------------
   const [matrizVendas, setMatrizVendas] = useState<any[]>([]);
   const [linhaVendas, setLinhaVendas] = useState("7");
   const [colSkuVendas, setColSkuVendas] = useState("W");
@@ -128,6 +133,7 @@ export default function FullPage() {
     }
 
     let step = 1000;
+    
     // Custos
     let from = 0; let keep = true;
     const mapaC = new Map();
@@ -227,7 +233,6 @@ export default function FullPage() {
     reader.onload = (evt: any) => {
       try {
         const wb = XLSX.read(evt.target.result, { type: "binary" });
-        // Utiliza header "A" para mapear os índices explicitamente pela letra e resolver problemas de colunas vazias
         const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
         setMatrizEstoque(matrix);
         setPreviewEstoque([]);
@@ -256,7 +261,6 @@ export default function FullPage() {
 
       const qtd = parseNumero(row[colQtd]);
       
-      // Agrupa quantidades do mesmo SKU para evitar o erro de ON CONFLICT do Supabase
       if (mapaAgrupado.has(skuNorm)) {
         mapaAgrupado.set(skuNorm, mapaAgrupado.get(skuNorm)! + qtd);
       } else {
@@ -362,7 +366,6 @@ export default function FullPage() {
     setLoading(true);
     salvarConfiguracoes("vendas");
 
-    // 1. Busca Estoque do CD Salvo
     const { data: estData } = await supabase
       .from('estoque_cd_mensal')
       .select('sku, estoque')
@@ -382,7 +385,6 @@ export default function FullPage() {
 
     const mapaAgrupado = new Map<string, any>();
 
-    // 2. Extrai e agrupa vendas da planilha
     for (let r = startRow; r < matrizVendas.length; r++) {
       const row = matrizVendas[r];
       if (!row) continue;
@@ -403,7 +405,6 @@ export default function FullPage() {
       }
     }
 
-    // 3. Cruzamento e Cálculo Lógico
     const resultados = Array.from(mapaAgrupado.values()).map(item => {
       const skuKey = item.skuKey;
       const custoData = custosMap.get(skuKey);
@@ -422,12 +423,10 @@ export default function FullPage() {
       const tarifaFreteSoma = tarifaComissaoTotal + freteTotal;
       const lucroRs = item.receitaBruta - custoProdutoTotal - impostoTotal - tarifaFreteSoma;
       
-      // Margem Bruta e Líquida
       const margemBrutaRs = item.receitaBruta - custoProdutoTotal - impostoTotal;
       const margemBrutaPct = item.receitaBruta > 0 ? (margemBrutaRs / item.receitaBruta) * 100 : 0;
       const margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
 
-      // MOTOR
       const vmd = item.qtdVendida / 30;
       const coberturaAtual = vmd > 0 ? (estoqueCD / vmd) : (estoqueCD > 0 ? 999 : 0);
       
@@ -435,7 +434,7 @@ export default function FullPage() {
       if (sugestaoEnvioBruta < 0) sugestaoEnvioBruta = 0;
 
       let statusEstoque = "";
-      if (coberturaAtual <= 10 && vmd > 0) statusEstoque = "Ruptura Iminente";
+      if (coberturaAtual < 10 && vmd > 0) statusEstoque = "Ruptura Iminente";
       else if (coberturaAtual > 60 && estoqueCD > 5) statusEstoque = "Risco de Aging";
       else if (vmd === 0 && estoqueCD > 0) statusEstoque = "Estoque Parado";
       else statusEstoque = "Saudável";
@@ -488,10 +487,8 @@ export default function FullPage() {
     if (dadosProcessados.length === 0) return;
     setSalvando(true);
     
-    // 1. Deleta os anteriores do mesmo mês para não duplicar
     await supabase.from('full_lancamentos').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
     
-    // 2. Grava. Fallback caso a coluna nova "margem_bruta_pct" ainda não exista.
     let res = await supabase.from('full_lancamentos').insert(dadosProcessados);
     
     if (res.error && res.error.message.includes("margem_bruta_pct")) {
@@ -521,19 +518,24 @@ export default function FullPage() {
     carregarHistoricoGravado();
   };
 
-  // Referências para o relatório
   const dataSource = dadosProcessados.length > 0 ? dadosProcessados : lancamentosGravados;
 
+  const filtrados = dataSource.filter((item: any) => {
+    const mText = !pesquisaBusca || String(item.sku).toLowerCase().includes(pesquisaBusca.toLowerCase()) || String(item.produto).toLowerCase().includes(pesquisaBusca.toLowerCase());
+    const mStatus = filtroStatus === "TODOS" || item.status_estoque === filtroStatus || (item.status_envio && item.status_envio.includes(filtroStatus));
+    return mText && mStatus;
+  });
+
   const kpis = {
-    receita: dataSource.reduce((a, b) => a + Number(b.receita_bruta || 0), 0),
-    lucro: dataSource.reduce((a, b) => a + Number(b.lucro_liquido || 0), 0),
-    rupturas: dataSource.filter(i => i.status_estoque === "Ruptura Iminente").length,
-    aging: dataSource.filter(i => i.status_estoque === "Risco de Aging" || i.status_estoque === "Estoque Parado").length,
-    enviarHoje: dataSource.reduce((a, b) => a + Number(b.sugestao_envio || 0), 0)
+    receita: filtrados.reduce((a: number, b: any) => a + Number(b.receita_bruta || 0), 0),
+    lucro: filtrados.reduce((a: number, b: any) => a + Number(b.lucro_liquido || 0), 0),
+    rupturas: filtrados.filter((i: any) => i.status_estoque === "Ruptura Iminente").length,
+    aging: filtrados.filter((i: any) => i.status_estoque === "Risco de Aging" || i.status_estoque === "Estoque Parado").length,
+    enviarHoje: filtrados.reduce((a: number, b: any) => a + Number(b.sugestao_envio || 0), 0)
   };
 
-  // Ranking Produtos mais vendidos
-  const rankingProdutos = [...dataSource].sort((a, b) => Number(b.qtd_vendida) - Number(a.qtd_vendida));
+  const topProdutos = [...filtrados].sort((a: any, b: any) => Number(b.receita_bruta) - Number(a.receita_bruta)).slice(0, 5);
+  const rankingProdutos = [...filtrados].sort((a: any, b: any) => Number(b.qtd_vendida) - Number(a.qtd_vendida));
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -629,7 +631,7 @@ export default function FullPage() {
                     <tr><th className="p-3">SKU Consolidado</th><th className="p-3 text-right">Estoque Lido Total</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                    {previewEstoque.slice(0, 50).map((item, idx) => (
+                    {previewEstoque.slice(0, 50).map((item: any, idx: number) => (
                       <tr key={idx}><td className="p-3 font-mono font-bold text-white">{item.sku}</td><td className="p-3 text-right font-bold text-emerald-400">{item.quantidade} un.</td></tr>
                     ))}
                     {previewEstoque.length > 50 && <tr><td colSpan={2} className="p-4 text-center text-slate-500 italic">... exibindo os primeiros 50 de {previewEstoque.length} SKUs agrupados.</td></tr>}
@@ -715,40 +717,35 @@ export default function FullPage() {
         {subAba === "relatorio" && (
            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
              
-             {/* RANKING COMPLETO PRODUTOS MAIS VENDIDOS */}
+             {/* RANKING TOP 5 PRODUTOS */}
              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-bold text-amber-400 flex items-center gap-2">🏆 Ranking Mensal de Produtos (Mais Vendidos)</h3>
-                </div>
-                
-                <div className="overflow-x-auto max-h-[400px]">
+                <h3 className="text-lg font-bold text-amber-400 mb-4 flex items-center gap-2">🏆 Top 5 Produtos (Receita e Margem)</h3>
+                <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                    <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                    <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                       <tr>
                         <th className="p-3">Posição</th>
-                        <th className="p-3">SKU</th>
-                        <th className="p-3 min-w-[200px]">Produto</th>
-                        <th className="p-3 text-center text-indigo-400">Qtd Vendida</th>
+                        <th className="p-3">Produto</th>
+                        <th className="p-3 text-right">Vendas</th>
                         <th className="p-3 text-right text-emerald-400">Receita Total</th>
-                        <th className="p-3 text-right">Margem Bruta %</th>
-                        <th className="p-3 text-right">Margem Líquida %</th>
-                        <th className="p-3 text-right">Lucro Líquido (R$)</th>
+                        <th className="p-3 text-right text-indigo-400">Margem Bruta %</th>
+                        <th className="p-3 text-right text-purple-400">Margem Líquida %</th>
+                        <th className="p-3 text-right text-emerald-400">Lucro Líquido (R$)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                      {rankingProdutos.map((item, idx) => (
+                      {topProdutos.map((item: any, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-800/40">
                           <td className="p-3 font-black text-amber-400">#{idx + 1}</td>
-                          <td className="p-3 font-mono text-white">{item.sku}</td>
-                          <td className="p-3 text-slate-200 font-bold truncate max-w-[250px]" title={item.produto}>{item.produto}</td>
-                          <td className="p-3 text-center font-bold text-indigo-300">{item.qtd_vendida} un.</td>
+                          <td className="p-3 text-slate-200 font-bold truncate max-w-[250px]">{item.produto}</td>
+                          <td className="p-3 text-right font-bold text-slate-300">{item.qtd_vendida}</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.receita_bruta)}</td>
-                          <td className="p-3 text-right font-mono font-bold text-slate-300">{(item.margem_bruta_pct || 0).toFixed(1)}%</td>
+                          <td className="p-3 text-right font-mono font-bold text-indigo-400">{(item.margem_bruta_pct || 0).toFixed(1)}%</td>
                           <td className="p-3 text-right font-mono font-bold text-purple-400">{(item.margem_pct || 0).toFixed(1)}%</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.lucro_liquido)}</td>
                         </tr>
                       ))}
-                      {rankingProdutos.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-500">Nenhum dado salvo para este canal no mês {mesSelecionado}.</td></tr>}
+                      {topProdutos.length === 0 && <tr><td colSpan={7} className="p-4 text-center text-slate-500">Nenhum dado salvo para este mês.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -778,10 +775,10 @@ export default function FullPage() {
               </div>
             </div>
 
-            {/* TABELA COMPLETA - ANÁLISE DE ENVIOS */}
+            {/* TABELA COMPLETA E RANKING TODOS */}
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
               <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-                <h3 className="text-lg font-bold text-white">Análise de Envio e Reposição</h3>
+                <h3 className="text-lg font-bold text-white">Ranking Completo e Análise de Reposição</h3>
                 <div className="flex gap-2">
                   <input type="text" placeholder="Buscar SKU/Produto" value={pesquisaBusca} onChange={e => setPesquisaBusca(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-48" />
                   <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
@@ -792,7 +789,7 @@ export default function FullPage() {
                     <option value="Falta no Central">Sem Saldo na Sede</option>
                   </select>
                   <button onClick={limparCanalInteiro} className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm ml-2">
-                    🗑️ Apagar Vendas Mês
+                    🗑️ Apagar Vendas do Mês
                   </button>
                 </div>
               </div>
@@ -801,29 +798,37 @@ export default function FullPage() {
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                     <tr>
+                      <th className="p-3 text-center">#</th>
                       <th className="p-3">SKU</th>
                       <th className="p-3 min-w-[200px]">Produto</th>
                       <th className="p-3 text-right">Vendas</th>
+                      <th className="p-3 text-right">Receita (R$)</th>
                       <th className="p-3 text-right text-emerald-300" title="Saldo guardado na Aba 1">Estoque CD</th>
                       <th className="p-3 text-right text-indigo-300" title="Saldo físico no Tiny ERP">Central (Sede)</th>
                       <th className="p-3 text-center">Cobertura</th>
+                      <th className="p-3 text-right">Margem LÍQ.</th>
                       <th className="p-3 text-center border-l border-slate-800">Status CD</th>
                       <th className="p-3 text-center">Ação Reposição</th>
                       <th className="p-3 text-center font-black text-purple-400">📦 Enviar Qtd</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                    {filtrados.map((item, idx) => (
+                    {rankingProdutos.map((item: any, idx: number) => (
                       <tr key={item.id || idx} className="hover:bg-slate-800/40">
+                        <td className="p-3 text-center font-mono text-slate-500">{idx + 1}</td>
                         <td className="p-3 font-mono font-bold text-white">{item.sku}</td>
                         <td className="p-3 text-slate-300 truncate max-w-[220px]" title={item.produto}>{item.produto}</td>
                         <td className="p-3 text-right font-bold text-slate-200">{item.qtd_vendida}</td>
+                        <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.receita_bruta)}</td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-400">{item.estoque_cd}</td>
                         <td className="p-3 text-right font-mono font-bold text-indigo-400">{item.estoque_central}</td>
                         <td className="p-3 text-center">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.cobertura_dias < 10 ? 'bg-rose-950/60 text-rose-400 border border-rose-900/40' : item.cobertura_dias > 60 ? 'bg-amber-950/60 text-amber-400 border border-amber-900/40' : 'text-slate-400'}`}>
                             {item.cobertura_dias > 900 ? '+90' : item.cobertura_dias.toFixed(0)} dias
                           </span>
+                        </td>
+                        <td className={`p-3 text-right font-mono font-bold ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
+                          {Number(item.margem_pct).toFixed(1)}%
                         </td>
                         <td className="p-3 text-center border-l border-slate-800/50">
                           {item.status_estoque === "Ruptura Iminente" ? <span className="text-rose-400 font-bold text-[10px]">🔥 Ruptura</span> : item.status_estoque === "Risco de Aging" ? <span className="text-amber-400 font-bold text-[10px]">⚠️ Aging Alto</span> : item.status_estoque === "Estoque Parado" ? <span className="text-amber-400 font-bold text-[10px]">⏳ Parado</span> : <span className="text-emerald-400 text-[10px]">✔️ Saudável</span>}
