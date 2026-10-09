@@ -92,6 +92,36 @@ const formatarMoeda = (valor: number) => {
   return "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+function verificarDataNoPeriodo(dataStr: any, periodoCompetencia: string): boolean {
+  if (periodoCompetencia === "TODOS") return true;
+  if (!dataStr) return false;
+
+  const [mesAlvo, anoAlvo] = periodoCompetencia.split("/");
+  const str = String(dataStr).trim();
+
+  // Formato YYYY-MM-DD
+  if (str.includes("-")) {
+    const partes = str.split("-");
+    if (partes.length >= 3) {
+      const a = partes[0];
+      const m = partes[1].padStart(2, "0");
+      return a === anoAlvo && m === mesAlvo.padStart(2, "0");
+    }
+  }
+
+  // Formato DD/MM/YYYY
+  if (str.includes("/")) {
+    const partes = str.split("/");
+    if (partes.length === 3) {
+      const m = partes[1].padStart(2, "0");
+      const a = partes[2];
+      return a === anoAlvo && m === mesAlvo.padStart(2, "0");
+    }
+  }
+
+  return false;
+}
+
 type SubItemLive = { sku: string; unidades: string | number; receitaAds: string | number };
 
 export default function AdsPage() {
@@ -101,8 +131,8 @@ export default function AdsPage() {
   const router = useRouter();
 
   const [canalSelecionado, setCanalSelecionado] = useState("");
-  const [mesSelecionado, setMesSelecionado] = useState("09/2026");
-  const [mesComparativo, setMesComparativo] = useState("08/2026");
+  const [mesSelecionado, setMesSelecionado] = useState("10/2026");
+  const [mesComparativo, setMesComparativo] = useState("09/2026");
   
   const [metaTacosGlobal, setMetaTacosGlobal] = useState(2); 
   const [ocultarComparacao, setOcultarComparacao] = useState(false);
@@ -130,6 +160,7 @@ export default function AdsPage() {
 
   // ==================== ESTADOS DA ABA SUGESTÕES ====================
   const [canalSugestao, setCanalSugestao] = useState("");
+  const [mesSugestao, setMesSugestao] = useState("10/2026");
   const [matrizPlanilha, setMatrizPlanilha] = useState<any[][]>([]);
   const [linhaInicial, setLinhaInicial] = useState("7");
   const [colunaSku, setColunaSku] = useState("W7");
@@ -140,16 +171,13 @@ export default function AdsPage() {
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
   const [formulaLiquidez, setFormulaLiquidez] = useState("S - (H * CUSTO) - (I * IMPOSTO) + Q");
   
-  // Dados cruzados de Devoluções e Curva ABC
-  const [mapaDevolucoes, setMapaDevolucoes] = useState<Map<string, number>>(new Map());
-  const [mapaVendasAbc, setMapaVendasAbc] = useState<Map<string, number>>(new Map());
-
   const [sugestoesCalculadas, setSugestoesCalculadas] = useState<any[]>([]);
   const [filtroSugestao, setFiltroSugestao] = useState<"vendas" | "liquidez_valor" | "liquidez_pct">("vendas");
   const [pesquisaSkuSugestao, setPesquisaSkuSugestao] = useState("");
   const [apenasPositivos, setApenasPositivos] = useState(false);
 
   const mesesCompetencia = [
+    "TODOS",
     "01/2026", "02/2026", "03/2026", "04/2026", "05/2026", "06/2026", 
     "07/2026", "08/2026", "09/2026", "10/2026", "11/2026", "12/2026"
   ];
@@ -168,10 +196,7 @@ export default function AdsPage() {
       carregarLancamentos();
       setSelecionadosIds([]); 
     }
-    if (subAba === "sugestoes" && mesSelecionado) {
-      carregarDadosCruzamento(mesSelecionado);
-    }
-  }, [canalSelecionado, mesSelecionado, subAba]);
+  }, [canalSelecionado, mesSelecionado]);
 
   useEffect(() => {
     if (subAba === "dashboard" || subAba === "budget") {
@@ -184,46 +209,6 @@ export default function AdsPage() {
       carregarConfiguracoesSugestao(canalSugestao);
     }
   }, [canalSugestao]);
-
-  // Carrega contagem de devoluções e vendas da Curva ABC no período selecionado
-  const carregarDadosCruzamento = async (competencia: string) => {
-    const [mes, ano] = competencia.split("/");
-    const prefixoData = `${ano}-${mes}`;
-
-    // 1. Devoluções do mês
-    const { data: dadosDev } = await supabase
-      .from("devolucoes")
-      .select("sku, data_retorno")
-      .like("data_retorno", `${prefixoData}%`);
-
-    const devMap = new Map<string, number>();
-    if (dadosDev) {
-      dadosDev.forEach((d: any) => {
-        const skuKey = normalizarSku(d.sku);
-        if (skuKey) {
-          devMap.set(skuKey, (devMap.get(skuKey) || 0) + 1);
-        }
-      });
-    }
-    setMapaDevolucoes(devMap);
-
-    // 2. Vendas da Curva ABC do mês
-    const { data: dadosAbc } = await supabase
-      .from("curva_abc")
-      .select("codigo, quantidade")
-      .eq("mes_referencia", competencia);
-
-    const abcMap = new Map<string, number>();
-    if (dadosAbc) {
-      dadosAbc.forEach((a: any) => {
-        const skuKey = normalizarSku(a.codigo);
-        if (skuKey) {
-          abcMap.set(skuKey, (abcMap.get(skuKey) || 0) + Number(a.quantidade || 0));
-        }
-      });
-    }
-    setMapaVendasAbc(abcMap);
-  };
 
   const carregarConfiguracoesSugestao = (canal: string) => {
     const salvo = localStorage.getItem(`sugestoes_config_${canal.toLowerCase()}`);
@@ -574,13 +559,6 @@ export default function AdsPage() {
       return;
     }
 
-    const hasOverflow = registrosBrutos.some(f => f.unidades > 9999999 || f.investimento > 99999999 || f.receitaAds > 99999999);
-    if (hasOverflow) {
-        alert("⚠️ ATENÇÃO: Um valor excessivamente alto foi detetado. Verifique se não colou um código SKU num campo numérico.");
-        setSalvando(false);
-        return;
-    }
-
     const isMercadoLivre = canalSelecionado.toLowerCase().includes("mercado livre");
 
     if (isMercadoLivre) {
@@ -684,11 +662,6 @@ export default function AdsPage() {
     const unidades = Number(dadosEdicao.unidades_vendidas || 0);
     const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
     const investimento = Number(dadosEdicao.investimento || 0);
-    
-    if (unidades > 9999999 || investimento > 99999999 || receitaAds > 99999999) {
-        alert("⚠️ ATENÇÃO: Valor excessivamente alto. Verifique se não inseriu um SKU num campo numérico.");
-        return;
-    }
 
     const skuLimpo = String(dadosEdicao.sku || "").trim();
     const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
@@ -860,9 +833,9 @@ export default function AdsPage() {
     });
   };
 
-  const calcularSugestoes = () => {
+  const calcularSugestoes = async () => {
     if (!matrizPlanilha || matrizPlanilha.length === 0) {
-      alert("Por favor, carregue uma planilha primeiro.");
+      alert("Por favor, carregue uma planilha de vendas primeiro.");
       return;
     }
 
@@ -878,6 +851,43 @@ export default function AdsPage() {
     }
 
     salvarConfiguracoesSugestao(canalSugestao);
+
+    // 1. CARREGAMENTO EM TEMPO REAL DAS DEVOLUÇÕES DO SUPABASE
+    const { data: dadosDevolucaoRaw } = await supabase
+      .from("devolucoes")
+      .select("sku, data_retorno, canal");
+
+    const mapaDevContagem = new Map<string, number>();
+    if (dadosDevolucaoRaw && dadosDevolucaoRaw.length > 0) {
+      dadosDevolucaoRaw.forEach((d: any) => {
+        // Validação da data no período selecionado
+        const bateuPeriodo = verificarDataNoPeriodo(d.data_retorno, mesSugestao);
+        if (bateuPeriodo) {
+          const skuKey = normalizarSku(d.sku);
+          if (skuKey) {
+            mapaDevContagem.set(skuKey, (mapaDevContagem.get(skuKey) || 0) + 1);
+          }
+        }
+      });
+    }
+
+    // 2. BUSCA DAS VENDAS DA CURVA ABC NO PERÍODO
+    const mapaVendasAbc = new Map<string, number>();
+    if (mesSugestao !== "TODOS") {
+      const { data: dadosAbcRaw } = await supabase
+        .from("curva_abc")
+        .select("codigo, quantidade")
+        .eq("mes_referencia", mesSugestao);
+
+      if (dadosAbcRaw) {
+        dadosAbcRaw.forEach((a: any) => {
+          const skuKey = normalizarSku(a.codigo);
+          if (skuKey) {
+            mapaVendasAbc.set(skuKey, (mapaVendasAbc.get(skuKey) || 0) + Number(a.quantidade || 0));
+          }
+        });
+      }
+    }
 
     const idxSku = colLetraParaIndice(cSku);
     const idxPdv = colLetraParaIndice(cPdv);
@@ -931,7 +941,7 @@ export default function AdsPage() {
           .replace(/\bIMPOSTO\b/gi, `(${impostoPct}/100)`)
           .replace(/(\d+(?:\.\d+)?)%/g, '($1/100)');
 
-        // Substituição das células com número de linha (ex: S7, H7, I7)
+        // Substituição das células com linha (ex: S7, H7, I7, Q7)
         formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]+)\d+\b/g, (_match, colLetters) => {
           const cIndex = colLetraParaIndice(colLetters);
           if (cIndex >= 0 && cIndex < row.length) {
@@ -940,7 +950,7 @@ export default function AdsPage() {
           return "0";
         });
 
-        // Letras isoladas (ex: S, H, I, Q)
+        // Letras soltas (ex: S, H, I, Q)
         formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]{1,2})\b/g, (match) => {
           const cIndex = colLetraParaIndice(match);
           if (cIndex >= 0 && cIndex < row.length) {
@@ -987,9 +997,9 @@ export default function AdsPage() {
       const skuKey = normalizarSku(item.sku);
       const margemPct = item.pdvTotal > 0 ? (item.liquidezValor / item.pdvTotal) * 100 : 0;
       
-      // Cruzamento: Vendas (preferência da Curva ABC se existir no mês, senão usa a do relatório do canal)
+      // Cruzamento de devoluções e taxa
       const vendasTotais = mapaVendasAbc.get(skuKey) || item.quantidade;
-      const totalDev = mapaDevolucoes.get(skuKey) || 0;
+      const totalDev = mapaDevContagem.get(skuKey) || 0;
       const taxaDevolucao = vendasTotais > 0 ? (totalDev / vendasTotais) * 100 : 0;
 
       return {
@@ -1100,7 +1110,7 @@ export default function AdsPage() {
                   onChange={(e) => setMesSelecionado(e.target.value)}
                   className="bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer min-w-[180px]"
                 >
-                  {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                  {mesesCompetencia.filter(m => m !== "TODOS").map((m, i) => <option key={i} value={m}>{m}</option>)}
                 </select>
               </div>
             </div>
@@ -1161,7 +1171,7 @@ export default function AdsPage() {
                                   placeholder="0" 
                                   className={`w-24 mx-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center outline-none ${isLive ? 'text-purple-400 font-bold opacity-80 cursor-not-allowed' : 'text-white'}`} 
                                   required={!isLive}
-                                  disabled={isLive} 
+                                  disabled={isLive}
                                 />
                               </td>
                               <td className="p-2">
@@ -1173,7 +1183,7 @@ export default function AdsPage() {
                                   placeholder="0.00" 
                                   className={`w-32 ml-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono outline-none ${isLive ? 'text-emerald-400 font-bold opacity-80 cursor-not-allowed' : 'text-white'}`} 
                                   required={!isLive}
-                                  disabled={isLive} 
+                                  disabled={isLive}
                                 />
                               </td>
                               <td className="p-2">
@@ -1399,13 +1409,13 @@ export default function AdsPage() {
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período Atual:</label>
                   <select value={mesSelecionado} onChange={(e) => setMesSelecionado(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none">
-                    {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                    {mesesCompetencia.filter(m => m !== "TODOS").map((m, i) => <option key={i} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período Comparativo:</label>
                   <select value={mesComparativo} onChange={(e) => setMesComparativo(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none">
-                    {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                    {mesesCompetencia.filter(m => m !== "TODOS").map((m, i) => <option key={i} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <button 
@@ -1521,13 +1531,13 @@ export default function AdsPage() {
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mês de Referência (Gasto):</label>
                   <select value={mesSelecionado} onChange={(e) => setMesSelecionado(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none">
-                    {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                    {mesesCompetencia.filter(m => m !== "TODOS").map((m, i) => <option key={i} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Base do TACOS (Anterior):</label>
                   <select value={mesComparativo} onChange={(e) => setMesComparativo(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none">
-                    {mesesCompetencia.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                    {mesesCompetencia.filter(m => m !== "TODOS").map((m, i) => <option key={i} value={m}>{m}</option>)}
                   </select>
                 </div>
               </div>
@@ -1595,19 +1605,19 @@ export default function AdsPage() {
                     <span>💡 Análise de Vendas e Sugestões para Ads</span>
                   </h2>
                   <p className="text-xs text-slate-400 mt-1">
-                    Cruzamento de vendas, margem líquida e taxa de devoluções no período para definir os melhores produtos para investir em Ads.
+                    Cruzamento dinâmico de vendas, margem líquida e índice de devoluções para determinar os produtos ideais para Ads.
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase">Período Selecionado:</span>
-                  <span className="px-2.5 py-1 rounded bg-purple-950 border border-purple-800 text-purple-300 text-xs font-bold font-mono">
-                    {mesSelecionado}
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">Ficheiro Atual:</span>
+                  <span className="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300 text-[11px] font-mono">
+                    {matrizPlanilha.length} linhas carregadas
                   </span>
                 </div>
               </div>
 
-              {/* SELEÇÃO DE CANAL E UPLOAD */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              {/* SELEÇÃO DE CANAL, PERÍODO E UPLOAD */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">1. Canal de Venda:</label>
                   <select
@@ -1621,8 +1631,21 @@ export default function AdsPage() {
                   </select>
                 </div>
 
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">2. Período Devoluções/Vendas:</label>
+                  <select
+                    value={mesSugestao}
+                    onChange={(e) => setMesSugestao(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-purple-400 outline-none cursor-pointer"
+                  >
+                    {mesesCompetencia.map((m, i) => (
+                      <option key={i} value={m}>{m === "TODOS" ? "Todo o Histórico (Geral)" : m}</option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="md:col-span-2">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">2. Ficheiro de Vendas (.xlsx, .xls, .csv):</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">3. Ficheiro de Vendas (.xlsx, .xls, .csv):</label>
                   <input
                     type="file"
                     accept=".xlsx,.xls,.csv"
@@ -1768,7 +1791,9 @@ export default function AdsPage() {
                 <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <h3 className="text-lg font-bold text-white">Ranking de Sugestões de Ads ({canalSugestao})</h3>
-                    <p className="text-xs text-slate-400 mt-1">Produtos com cruzamento de vendas, margem líquida e índice de devoluções ({mesSelecionado}).</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Produtos cruzados com vendas, margem líquida e índice de devoluções ({mesSugestao === "TODOS" ? "Todo o Histórico" : mesSugestao}).
+                    </p>
                   </div>
 
                   {/* FILTROS E ORDENAÇÃO */}
