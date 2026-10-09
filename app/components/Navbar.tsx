@@ -8,13 +8,14 @@ export default function Navbar() {
   const router = useRouter();
   const [paginasPermitidas, setPaginasPermitidas] = useState<string[]>([]);
 
-  // Todas as rotas do sistema
+  // Todas as rotas do sistema atualizadas
   const abas = [
     { nome: "Curva ABC", href: "/" },
     { nome: "Cadastros", href: "/mapeamento" },
     { nome: "Adsense", href: "/ads" },
     { nome: "Devoluções", href: "/devolucoes" },
-    { nome: "Agenda", href: "/agenda" }, // ABA DE AGENDA ADICIONADA
+    { nome: "Agenda", href: "/agenda" }, 
+    { nome: "Full / FBA", href: "/full" }, // <- NOVA ABA AQUI
     { nome: "Regras", href: "/regras" },
     { nome: "Uploads", href: "/upload" },
     { nome: "Admin", href: "/admin" },
@@ -56,7 +57,7 @@ export default function Navbar() {
             href={aba.href}
             className={`px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all ${
               ativo
-                ? "bg-indigo-600 text-white shadow-sm"
+                ? "bg-purple-600 text-white shadow-sm shadow-purple-900/40"
                 : "text-slate-400 hover:text-white"
             }`}
           >
