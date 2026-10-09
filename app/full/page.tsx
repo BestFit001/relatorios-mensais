@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 
+// Matriz de Frete Padrão (utilizada no ML e adaptável para FBA)
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
   { atePeso: 0.5, faixas: { "78.99": 8.25, "99.99": 13.85, "119.99": 16.15, "149.99": 18.15, "199.99": 20.45, "200": 23.25 } },
@@ -22,6 +23,7 @@ function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura:
   if (pdv < 79.00) return 0.00;
   const pesoVolumetrico = (altura * largura * comprimento) / 6000;
   const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
+
   let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
   if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
 
@@ -32,6 +34,7 @@ function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura:
   else if (pdv < 150) valorFrete = linhaFrete.faixas["149.99"];
   else if (pdv < 200) valorFrete = linhaFrete.faixas["199.99"];
   else valorFrete = linhaFrete.faixas["200"];
+
   return valorFrete || 0;
 }
 
@@ -41,15 +44,6 @@ function normalizarSku(valor: any) {
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
   s = s.replace(/^["']|["']$/g, "").trim();
   return s.toLowerCase();
-}
-
-function colLetraParaIndice(colStr: string): number {
-  const s = colStr.trim().toUpperCase().replace(/[^A-Z]/g, "");
-  let idx = 0;
-  for (let i = 0; i < s.length; i++) {
-    idx = idx * 26 + (s.charCodeAt(i) - 64);
-  }
-  return idx - 1;
 }
 
 function parseNumero(valor: any): number {
@@ -88,7 +82,7 @@ export default function FullPage() {
   // ----------------------------------------------------
   // ESTADOS - ABA ESTOQUE
   // ----------------------------------------------------
-  const [matrizEstoque, setMatrizEstoque] = useState<any[][]>([]);
+  const [matrizEstoque, setMatrizEstoque] = useState<any[]>([]);
   const [linhaEstoque, setLinhaEstoque] = useState("13");
   const [colSkuEstoque, setColSkuEstoque] = useState("D");
   const [colQtdEstoque, setColQtdEstoque] = useState("X");
@@ -97,7 +91,7 @@ export default function FullPage() {
   // ----------------------------------------------------
   // ESTADOS - ABA VENDAS (MOTOR)
   // ----------------------------------------------------
-  const [matrizVendas, setMatrizVendas] = useState<any[][]>([]);
+  const [matrizVendas, setMatrizVendas] = useState<any[]>([]);
   const [linhaVendas, setLinhaVendas] = useState("7");
   const [colSkuVendas, setColSkuVendas] = useState("W");
   const [colQtdVendas, setColQtdVendas] = useState("H");
@@ -233,7 +227,8 @@ export default function FullPage() {
     reader.onload = (evt: any) => {
       try {
         const wb = XLSX.read(evt.target.result, { type: "binary" });
-        const matrix: any[][] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "" });
+        // Utiliza header "A" para mapear os índices explicitamente pela letra e resolver problemas de colunas vazias
+        const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
         setMatrizEstoque(matrix);
         setPreviewEstoque([]);
       } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
@@ -245,21 +240,21 @@ export default function FullPage() {
     if (matrizEstoque.length === 0) return alert("Suba a planilha de Estoque primeiro.");
     salvarConfiguracoes("estoque");
 
-    const idxSku = colLetraParaIndice(colSkuEstoque);
-    const idxQtd = colLetraParaIndice(colQtdEstoque);
+    const colSku = colSkuEstoque.trim().toUpperCase();
+    const colQtd = colQtdEstoque.trim().toUpperCase();
     const startRow = Math.max(0, parseInt(linhaEstoque, 10) - 1 || 0);
 
     const mapaAgrupado = new Map<string, number>();
 
     for (let r = startRow; r < matrizEstoque.length; r++) {
       const row = matrizEstoque[r];
-      if (!row || row.length === 0) continue;
+      if (!row) continue;
       
-      const skuOriginal = String(row[idxSku] || "").trim();
+      const skuOriginal = String(row[colSku] || "").trim();
       const skuNorm = normalizarSku(skuOriginal);
       if (!skuNorm || skuNorm.toLowerCase() === "sku") continue;
 
-      const qtd = parseNumero(row[idxQtd]);
+      const qtd = parseNumero(row[colQtd]);
       
       // Agrupa quantidades do mesmo SKU para evitar o erro de ON CONFLICT do Supabase
       if (mapaAgrupado.has(skuNorm)) {
@@ -299,6 +294,19 @@ export default function FullPage() {
     setSalvando(false);
   };
 
+  const limparEstoqueSalvo = async () => {
+    if (!confirm(`ATENÇÃO: Deseja apagar todo o Estoque do CD guardado em ${canalSelecionado} para o mês ${mesSelecionado}?`)) return;
+    setSalvando(true);
+    const { error } = await supabase.from('estoque_cd_mensal').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
+    if (error) alert("Erro ao limpar estoque: " + error.message);
+    else {
+      alert("🗑️ Estoque limpo com sucesso!");
+      setPreviewEstoque([]);
+      setMatrizEstoque([]);
+    }
+    setSalvando(false);
+  };
+
   // ----------------------------------------------------
   // FUNÇÕES - ABA VENDAS (MOTOR)
   // ----------------------------------------------------
@@ -309,7 +317,7 @@ export default function FullPage() {
     reader.onload = (evt: any) => {
       try {
         const wb = XLSX.read(evt.target.result, { type: "binary" });
-        const matrix: any[][] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "" });
+        const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
         setMatrizVendas(matrix);
         setDadosProcessados([]);
       } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
@@ -364,9 +372,9 @@ export default function FullPage() {
     const mapaEstoqueCD = new Map();
     if (estData) estData.forEach(e => mapaEstoqueCD.set(e.sku, Number(e.estoque)));
 
-    const idxSku = colLetraParaIndice(colSkuVendas);
-    const idxQtd = colLetraParaIndice(colQtdVendas);
-    const idxReceita = colLetraParaIndice(colReceitaVendas);
+    const colSku = colSkuVendas.trim().toUpperCase();
+    const colQtd = colQtdVendas.trim().toUpperCase();
+    const colReceita = colReceitaVendas.trim().toUpperCase();
     const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
     
     const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
@@ -379,12 +387,12 @@ export default function FullPage() {
       const row = matrizVendas[r];
       if (!row) continue;
 
-      const skuOriginal = String(row[idxSku] || "").trim();
+      const skuOriginal = String(row[colSku] || "").trim();
       const skuKey = normalizarSku(skuOriginal);
       if (!skuKey || skuKey === "sku" || skuKey === "total") continue;
 
-      const receitaBruta = parseNumero(row[idxReceita]);
-      const qtdVendida = parseNumero(row[idxQtd]);
+      const receitaBruta = parseNumero(row[colReceita]);
+      const qtdVendida = parseNumero(row[colQtd]);
 
       if (mapaAgrupado.has(skuKey)) {
         const item = mapaAgrupado.get(skuKey);
@@ -427,7 +435,7 @@ export default function FullPage() {
       if (sugestaoEnvioBruta < 0) sugestaoEnvioBruta = 0;
 
       let statusEstoque = "";
-      if (coberturaAtual < 10 && vmd > 0) statusEstoque = "Ruptura Iminente";
+      if (coberturaAtual <= 10 && vmd > 0) statusEstoque = "Ruptura Iminente";
       else if (coberturaAtual > 60 && estoqueCD > 5) statusEstoque = "Risco de Aging";
       else if (vmd === 0 && estoqueCD > 0) statusEstoque = "Estoque Parado";
       else statusEstoque = "Saudável";
@@ -480,37 +488,41 @@ export default function FullPage() {
     if (dadosProcessados.length === 0) return;
     setSalvando(true);
     
-    // Deleta os anteriores do mesmo mês para não duplicar se rodar de novo
+    // 1. Deleta os anteriores do mesmo mês para não duplicar
     await supabase.from('full_lancamentos').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
     
-    const { error } = await supabase.from('full_lancamentos').insert(dadosProcessados);
+    // 2. Grava. Fallback caso a coluna nova "margem_bruta_pct" ainda não exista.
+    let res = await supabase.from('full_lancamentos').insert(dadosProcessados);
     
-    if (error) {
-      alert("Erro ao gravar resultados no banco: " + error.message);
+    if (res.error && res.error.message.includes("margem_bruta_pct")) {
+      const fallbackPayload = dadosProcessados.map(item => {
+        const copy = { ...item };
+        delete copy.margem_bruta_pct;
+        return copy;
+      });
+      res = await supabase.from('full_lancamentos').insert(fallbackPayload);
+    }
+
+    if (res.error) {
+      alert("Erro ao gravar resultados no banco: " + res.error.message);
     } else {
       alert("✅ Relatório de Vendas e Reposição gravado com sucesso no banco de dados!");
       setMatrizVendas([]);
       setDadosProcessados([]);
       carregarHistoricoGravado();
-      setSubAba("relatorio"); // Vai para a aba do histórico
+      setSubAba("relatorio");
     }
     setSalvando(false);
   };
 
   const limparCanalInteiro = async () => {
-    if (!confirm(`ATENÇÃO: Deseja apagar o histórico salvo de ${canalSelecionado} no mês de ${mesSelecionado}?`)) return;
+    if (!confirm(`ATENÇÃO: Deseja apagar todo o Relatório Analítico (Vendas) salvo de ${canalSelecionado} no mês de ${mesSelecionado}?`)) return;
     await supabase.from('full_lancamentos').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
     carregarHistoricoGravado();
   };
 
-  // Referência para listagem
+  // Referências para o relatório
   const dataSource = dadosProcessados.length > 0 ? dadosProcessados : lancamentosGravados;
-
-  const filtrados = dataSource.filter(item => {
-    const mText = !pesquisaBusca || item.sku.toLowerCase().includes(pesquisaBusca.toLowerCase()) || item.produto.toLowerCase().includes(pesquisaBusca.toLowerCase());
-    const mStatus = filtroStatus === "TODOS" || item.status_estoque === filtroStatus || item.status_envio.includes(filtroStatus);
-    return mText && mStatus;
-  });
 
   const kpis = {
     receita: dataSource.reduce((a, b) => a + Number(b.receita_bruta || 0), 0),
@@ -520,8 +532,8 @@ export default function FullPage() {
     enviarHoje: dataSource.reduce((a, b) => a + Number(b.sugestao_envio || 0), 0)
   };
 
-  // Top Produtos por Margem e Receita
-  const topProdutos = [...dataSource].sort((a, b) => b.receita_bruta - a.receita_bruta).slice(0, 5);
+  // Ranking Produtos mais vendidos
+  const rankingProdutos = [...dataSource].sort((a, b) => Number(b.qtd_vendida) - Number(a.qtd_vendida));
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -561,16 +573,21 @@ export default function FullPage() {
             ⚡ 2. Motor de Reposição (Vendas)
           </button>
           <button onClick={() => setSubAba("relatorio")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "relatorio" ? "bg-indigo-600 text-white shadow-indigo-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
-            📊 3. Relatório e Top Produtos Mensal
+            📊 3. Ranking e Relatório Mensal
           </button>
         </div>
 
         {/* ======================= ABA 1: UPLOAD DE ESTOQUE ======================= */}
         {subAba === "estoque" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6 animate-in fade-in zoom-in duration-300">
-            <div>
-              <h2 className="text-lg font-bold text-amber-400 flex items-center gap-2"><span>📦 Registar Fotografia de Estoque do CD</span></h2>
-              <p className="text-xs text-slate-400 mt-1">Carregue a planilha de inventário fornecida pelo marketplace para registar as posições neste mês.</p>
+            <div className="flex justify-between items-center mb-2">
+              <div>
+                <h2 className="text-lg font-bold text-amber-400 flex items-center gap-2"><span>📦 Registar Fotografia de Estoque do CD</span></h2>
+                <p className="text-xs text-slate-400 mt-1">Carregue a planilha de inventário do marketplace. Ela será salva para o mês <strong>{mesSelecionado}</strong>.</p>
+              </div>
+              <button onClick={limparEstoqueSalvo} disabled={salvando} className="bg-rose-950/80 hover:bg-rose-900 text-rose-400 border border-rose-800/50 font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all">
+                🗑️ Limpar Estoque do Mês
+              </button>
             </div>
 
             <div className="bg-amber-950/20 p-5 rounded-xl border border-amber-900/30">
@@ -615,7 +632,7 @@ export default function FullPage() {
                     {previewEstoque.slice(0, 50).map((item, idx) => (
                       <tr key={idx}><td className="p-3 font-mono font-bold text-white">{item.sku}</td><td className="p-3 text-right font-bold text-emerald-400">{item.quantidade} un.</td></tr>
                     ))}
-                    {previewEstoque.length > 50 && <tr><td colSpan={2} className="p-4 text-center text-slate-500 italic">... exibindo os primeiros 50 de {previewEstoque.length} SKUs consolidados.</td></tr>}
+                    {previewEstoque.length > 50 && <tr><td colSpan={2} className="p-4 text-center text-slate-500 italic">... exibindo os primeiros 50 de {previewEstoque.length} SKUs agrupados.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -684,50 +701,54 @@ export default function FullPage() {
               </div>
             </div>
 
-            {/* PREVIEW EM TELA (NÃO SALVO AINDA) */}
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden p-6 text-center animate-in zoom-in duration-300">
                  <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
                  <p className="text-sm text-slate-400 mb-4">O motor calculou a rentabilidade e sugestão de envio para <strong>{dadosProcessados.length} SKUs</strong>.</p>
-                 <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" acima para armazenar os dados e ir para a visualização completa.</p>
+                 <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" acima para armazenar os dados e ir para o ranking e visualização completa.</p>
               </div>
             )}
           </div>
         )}
 
-        {/* ======================= ABA 3: RELATÓRIO E RANKING ======================= */}
+        {/* ======================= ABA 3: RANKING E RELATÓRIO ======================= */}
         {subAba === "relatorio" && (
            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
              
-             {/* RANKING TOP 5 PRODUTOS */}
+             {/* RANKING COMPLETO PRODUTOS MAIS VENDIDOS */}
              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6">
-                <h3 className="text-lg font-bold text-amber-400 mb-4 flex items-center gap-2">🏆 Top 5 Produtos (Receita e Margem)</h3>
-                <div className="overflow-x-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-bold text-amber-400 flex items-center gap-2">🏆 Ranking Mensal de Produtos (Mais Vendidos)</h3>
+                </div>
+                
+                <div className="overflow-x-auto max-h-[400px]">
                   <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                    <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                    <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                       <tr>
                         <th className="p-3">Posição</th>
-                        <th className="p-3">Produto</th>
-                        <th className="p-3 text-right">Vendas</th>
+                        <th className="p-3">SKU</th>
+                        <th className="p-3 min-w-[200px]">Produto</th>
+                        <th className="p-3 text-center text-indigo-400">Qtd Vendida</th>
                         <th className="p-3 text-right text-emerald-400">Receita Total</th>
-                        <th className="p-3 text-right text-indigo-400">Margem Bruta %</th>
-                        <th className="p-3 text-right text-purple-400">Margem Líquida %</th>
-                        <th className="p-3 text-right text-emerald-400">Lucro Líquido (R$)</th>
+                        <th className="p-3 text-right">Margem Bruta %</th>
+                        <th className="p-3 text-right">Margem Líquida %</th>
+                        <th className="p-3 text-right">Lucro Líquido (R$)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                      {topProdutos.map((item, idx) => (
+                      {rankingProdutos.map((item, idx) => (
                         <tr key={idx} className="hover:bg-slate-800/40">
                           <td className="p-3 font-black text-amber-400">#{idx + 1}</td>
-                          <td className="p-3 text-slate-200 font-bold truncate max-w-[250px]">{item.produto}</td>
-                          <td className="p-3 text-right font-bold text-slate-300">{item.qtd_vendida}</td>
+                          <td className="p-3 font-mono text-white">{item.sku}</td>
+                          <td className="p-3 text-slate-200 font-bold truncate max-w-[250px]" title={item.produto}>{item.produto}</td>
+                          <td className="p-3 text-center font-bold text-indigo-300">{item.qtd_vendida} un.</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.receita_bruta)}</td>
-                          <td className="p-3 text-right font-mono font-bold text-indigo-400">{(item.margem_bruta_pct || 0).toFixed(1)}%</td>
+                          <td className="p-3 text-right font-mono font-bold text-slate-300">{(item.margem_bruta_pct || 0).toFixed(1)}%</td>
                           <td className="p-3 text-right font-mono font-bold text-purple-400">{(item.margem_pct || 0).toFixed(1)}%</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.lucro_liquido)}</td>
                         </tr>
                       ))}
-                      {topProdutos.length === 0 && <tr><td colSpan={7} className="p-4 text-center text-slate-500">Nenhum dado salvo para este mês.</td></tr>}
+                      {rankingProdutos.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-500">Nenhum dado salvo para este canal no mês {mesSelecionado}.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -757,10 +778,10 @@ export default function FullPage() {
               </div>
             </div>
 
-            {/* TABELA COMPLETA */}
+            {/* TABELA COMPLETA - ANÁLISE DE ENVIOS */}
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
               <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-                <h3 className="text-lg font-bold text-white">Painel Estratégico de Reposição ({canalSelecionado} - {mesSelecionado})</h3>
+                <h3 className="text-lg font-bold text-white">Análise de Envio e Reposição</h3>
                 <div className="flex gap-2">
                   <input type="text" placeholder="Buscar SKU/Produto" value={pesquisaBusca} onChange={e => setPesquisaBusca(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-48" />
                   <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
@@ -771,7 +792,7 @@ export default function FullPage() {
                     <option value="Falta no Central">Sem Saldo na Sede</option>
                   </select>
                   <button onClick={limparCanalInteiro} className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm ml-2">
-                    🗑️ Limpar Mês
+                    🗑️ Apagar Vendas Mês
                   </button>
                 </div>
               </div>
@@ -780,15 +801,12 @@ export default function FullPage() {
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                     <tr>
-                      <th className="p-3 text-center">#</th>
                       <th className="p-3">SKU</th>
                       <th className="p-3 min-w-[200px]">Produto</th>
                       <th className="p-3 text-right">Vendas</th>
-                      <th className="p-3 text-right">Receita (R$)</th>
-                      <th className="p-3 text-right text-emerald-300" title="Saldo guardado no passo 1">Estoque CD</th>
+                      <th className="p-3 text-right text-emerald-300" title="Saldo guardado na Aba 1">Estoque CD</th>
                       <th className="p-3 text-right text-indigo-300" title="Saldo físico no Tiny ERP">Central (Sede)</th>
                       <th className="p-3 text-center">Cobertura</th>
-                      <th className="p-3 text-right">Margem LÍQ.</th>
                       <th className="p-3 text-center border-l border-slate-800">Status CD</th>
                       <th className="p-3 text-center">Ação Reposição</th>
                       <th className="p-3 text-center font-black text-purple-400">📦 Enviar Qtd</th>
@@ -797,20 +815,15 @@ export default function FullPage() {
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                     {filtrados.map((item, idx) => (
                       <tr key={item.id || idx} className="hover:bg-slate-800/40">
-                        <td className="p-3 text-center font-mono text-slate-500">{idx + 1}</td>
                         <td className="p-3 font-mono font-bold text-white">{item.sku}</td>
                         <td className="p-3 text-slate-300 truncate max-w-[220px]" title={item.produto}>{item.produto}</td>
                         <td className="p-3 text-right font-bold text-slate-200">{item.qtd_vendida}</td>
-                        <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.receita_bruta)}</td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-400">{item.estoque_cd}</td>
                         <td className="p-3 text-right font-mono font-bold text-indigo-400">{item.estoque_central}</td>
                         <td className="p-3 text-center">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.cobertura_dias < 10 ? 'bg-rose-950/60 text-rose-400 border border-rose-900/40' : item.cobertura_dias > 60 ? 'bg-amber-950/60 text-amber-400 border border-amber-900/40' : 'text-slate-400'}`}>
                             {item.cobertura_dias > 900 ? '+90' : item.cobertura_dias.toFixed(0)} dias
                           </span>
-                        </td>
-                        <td className={`p-3 text-right font-mono font-bold ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
-                          {Number(item.margem_pct).toFixed(1)}%
                         </td>
                         <td className="p-3 text-center border-l border-slate-800/50">
                           {item.status_estoque === "Ruptura Iminente" ? <span className="text-rose-400 font-bold text-[10px]">🔥 Ruptura</span> : item.status_estoque === "Risco de Aging" ? <span className="text-amber-400 font-bold text-[10px]">⚠️ Aging Alto</span> : item.status_estoque === "Estoque Parado" ? <span className="text-amber-400 font-bold text-[10px]">⏳ Parado</span> : <span className="text-emerald-400 text-[10px]">✔️ Saudável</span>}
