@@ -117,7 +117,6 @@ export default function AdsPage() {
 
   const [idEditando, setIdEditando] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
-
   const [selecionadosIds, setSelecionadosIds] = useState<number[]>([]);
 
   const [linhas, setLinhas] = useState([
@@ -137,9 +136,14 @@ export default function AdsPage() {
   const [colunaPdv, setColunaPdv] = useState("I7");
   const [colunaRepasse, setColunaRepasse] = useState("S7");
   const [colunaQtd, setColunaQtd] = useState("H7");
-  const [colunaRebate, setColunaRebate] = useState("");
+  const [colunaRebate, setColunaRebate] = useState("Q7");
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
-  const [formulaLiquidez, setFormulaLiquidez] = useState("S - (H * CUSTO) - (I * IMPOSTO)");
+  const [formulaLiquidez, setFormulaLiquidez] = useState("S - (H * CUSTO) - (I * IMPOSTO) + Q");
+  
+  // Dados cruzados de Devoluções e Curva ABC
+  const [mapaDevolucoes, setMapaDevolucoes] = useState<Map<string, number>>(new Map());
+  const [mapaVendasAbc, setMapaVendasAbc] = useState<Map<string, number>>(new Map());
+
   const [sugestoesCalculadas, setSugestoesCalculadas] = useState<any[]>([]);
   const [filtroSugestao, setFiltroSugestao] = useState<"vendas" | "liquidez_valor" | "liquidez_pct">("vendas");
   const [pesquisaSkuSugestao, setPesquisaSkuSugestao] = useState("");
@@ -164,7 +168,10 @@ export default function AdsPage() {
       carregarLancamentos();
       setSelecionadosIds([]); 
     }
-  }, [canalSelecionado, mesSelecionado]);
+    if (subAba === "sugestoes" && mesSelecionado) {
+      carregarDadosCruzamento(mesSelecionado);
+    }
+  }, [canalSelecionado, mesSelecionado, subAba]);
 
   useEffect(() => {
     if (subAba === "dashboard" || subAba === "budget") {
@@ -177,6 +184,46 @@ export default function AdsPage() {
       carregarConfiguracoesSugestao(canalSugestao);
     }
   }, [canalSugestao]);
+
+  // Carrega contagem de devoluções e vendas da Curva ABC no período selecionado
+  const carregarDadosCruzamento = async (competencia: string) => {
+    const [mes, ano] = competencia.split("/");
+    const prefixoData = `${ano}-${mes}`;
+
+    // 1. Devoluções do mês
+    const { data: dadosDev } = await supabase
+      .from("devolucoes")
+      .select("sku, data_retorno")
+      .like("data_retorno", `${prefixoData}%`);
+
+    const devMap = new Map<string, number>();
+    if (dadosDev) {
+      dadosDev.forEach((d: any) => {
+        const skuKey = normalizarSku(d.sku);
+        if (skuKey) {
+          devMap.set(skuKey, (devMap.get(skuKey) || 0) + 1);
+        }
+      });
+    }
+    setMapaDevolucoes(devMap);
+
+    // 2. Vendas da Curva ABC do mês
+    const { data: dadosAbc } = await supabase
+      .from("curva_abc")
+      .select("codigo, quantidade")
+      .eq("mes_referencia", competencia);
+
+    const abcMap = new Map<string, number>();
+    if (dadosAbc) {
+      dadosAbc.forEach((a: any) => {
+        const skuKey = normalizarSku(a.codigo);
+        if (skuKey) {
+          abcMap.set(skuKey, (abcMap.get(skuKey) || 0) + Number(a.quantidade || 0));
+        }
+      });
+    }
+    setMapaVendasAbc(abcMap);
+  };
 
   const carregarConfiguracoesSugestao = (canal: string) => {
     const salvo = localStorage.getItem(`sugestoes_config_${canal.toLowerCase()}`);
@@ -884,7 +931,7 @@ export default function AdsPage() {
           .replace(/\bIMPOSTO\b/gi, `(${impostoPct}/100)`)
           .replace(/(\d+(?:\.\d+)?)%/g, '($1/100)');
 
-        // Substituição das células por coluna linha a linha
+        // Substituição das células com número de linha (ex: S7, H7, I7)
         formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]+)\d+\b/g, (_match, colLetters) => {
           const cIndex = colLetraParaIndice(colLetters);
           if (cIndex >= 0 && cIndex < row.length) {
@@ -893,7 +940,7 @@ export default function AdsPage() {
           return "0";
         });
 
-        // Letras avulsas
+        // Letras isoladas (ex: S, H, I, Q)
         formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]{1,2})\b/g, (match) => {
           const cIndex = colLetraParaIndice(match);
           if (cIndex >= 0 && cIndex < row.length) {
@@ -937,17 +984,25 @@ export default function AdsPage() {
     }
 
     const lista = Array.from(mapaAgrupado.values()).map(item => {
+      const skuKey = normalizarSku(item.sku);
       const margemPct = item.pdvTotal > 0 ? (item.liquidezValor / item.pdvTotal) * 100 : 0;
+      
+      // Cruzamento: Vendas (preferência da Curva ABC se existir no mês, senão usa a do relatório do canal)
+      const vendasTotais = mapaVendasAbc.get(skuKey) || item.quantidade;
+      const totalDev = mapaDevolucoes.get(skuKey) || 0;
+      const taxaDevolucao = vendasTotais > 0 ? (totalDev / vendasTotais) * 100 : 0;
+
       return {
         ...item,
-        liquidezMargemPct: margemPct
+        liquidezMargemPct: margemPct,
+        devolucoesQtd: totalDev,
+        taxaDevolucao: taxaDevolucao
       };
     });
 
     setSugestoesCalculadas(lista);
   };
 
-  // Ordenação com rigor semântico entre Liquidez R$ e Margem %
   const sugestoesExibidas = [...sugestoesCalculadas]
     .filter(item => {
       const matchBusca = !pesquisaSkuSugestao || 
@@ -958,8 +1013,8 @@ export default function AdsPage() {
     })
     .sort((a, b) => {
       if (filtroSugestao === "vendas") return b.quantidade - a.quantidade;
-      if (filtroSugestao === "liquidez_valor") return b.liquidezValor - a.liquidezValor; // Dinheiro real em caixa
-      if (filtroSugestao === "liquidez_pct") return b.liquidezMargemPct - a.liquidezMargemPct; // Eficiência percentual
+      if (filtroSugestao === "liquidez_valor") return b.liquidezValor - a.liquidezValor;
+      if (filtroSugestao === "liquidez_pct") return b.liquidezMargemPct - a.liquidezMargemPct;
       return 0;
     });
 
@@ -1106,7 +1161,7 @@ export default function AdsPage() {
                                   placeholder="0" 
                                   className={`w-24 mx-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center outline-none ${isLive ? 'text-purple-400 font-bold opacity-80 cursor-not-allowed' : 'text-white'}`} 
                                   required={!isLive}
-                                  disabled={isLive}
+                                  disabled={isLive} 
                                 />
                               </td>
                               <td className="p-2">
@@ -1118,7 +1173,7 @@ export default function AdsPage() {
                                   placeholder="0.00" 
                                   className={`w-32 ml-auto block bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-right font-mono outline-none ${isLive ? 'text-emerald-400 font-bold opacity-80 cursor-not-allowed' : 'text-white'}`} 
                                   required={!isLive}
-                                  disabled={isLive}
+                                  disabled={isLive} 
                                 />
                               </td>
                               <td className="p-2">
@@ -1540,13 +1595,13 @@ export default function AdsPage() {
                     <span>💡 Análise de Vendas e Sugestões para Ads</span>
                   </h2>
                   <p className="text-xs text-slate-400 mt-1">
-                    Insira as coordenadas das colunas (ex: <strong>W7</strong>, <strong>I7</strong>) para ler os dados da planilha e calcular a liquidez de cada SKU.
+                    Cruzamento de vendas, margem líquida e taxa de devoluções no período para definir os melhores produtos para investir em Ads.
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase">Memória Volátil:</span>
-                  <span className="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300 text-[11px] font-mono">
-                    {matrizPlanilha.length} linhas carregadas
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">Período Selecionado:</span>
+                  <span className="px-2.5 py-1 rounded bg-purple-950 border border-purple-800 text-purple-300 text-xs font-bold font-mono">
+                    {mesSelecionado}
                   </span>
                 </div>
               </div>
@@ -1554,7 +1609,7 @@ export default function AdsPage() {
               {/* SELEÇÃO DE CANAL E UPLOAD */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">1. Selecione o Canal:</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">1. Canal de Venda:</label>
                   <select
                     value={canalSugestao}
                     onChange={(e) => setCanalSugestao(e.target.value)}
@@ -1651,7 +1706,7 @@ export default function AdsPage() {
                       type="text"
                       value={colunaRebate}
                       onChange={(e) => handleMapeamentoChange("rebate", e.target.value)}
-                      placeholder="Opcional"
+                      placeholder="Q7 ou Q"
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none focus:border-purple-500"
                     />
                   </div>
@@ -1676,7 +1731,7 @@ export default function AdsPage() {
 
                 <div className="md:col-span-3">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                    Fórmula de Liquidez (Ex: S - (H * CUSTO) - (I * IMPOSTO)):
+                    Fórmula de Liquidez (Ex: S - (H * CUSTO) - (I * IMPOSTO) + Q):
                   </label>
                   <input
                     type="text"
@@ -1685,7 +1740,7 @@ export default function AdsPage() {
                       setFormulaLiquidez(e.target.value);
                       salvarConfiguracoesSugestao(canalSugestao, { formulaLiquidez: e.target.value });
                     }}
-                    placeholder="S - (H * CUSTO) - (I * IMPOSTO)"
+                    placeholder="S - (H * CUSTO) - (I * IMPOSTO) + Q"
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-purple-300 outline-none"
                   />
                 </div>
@@ -1713,7 +1768,7 @@ export default function AdsPage() {
                 <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <h3 className="text-lg font-bold text-white">Ranking de Sugestões de Ads ({canalSugestao})</h3>
-                    <p className="text-xs text-slate-400 mt-1">Produtos calculados linha a linha a partir da linha {linhaInicial} com a fórmula definida.</p>
+                    <p className="text-xs text-slate-400 mt-1">Produtos com cruzamento de vendas, margem líquida e índice de devoluções ({mesSelecionado}).</p>
                   </div>
 
                   {/* FILTROS E ORDENAÇÃO */}
@@ -1774,7 +1829,8 @@ export default function AdsPage() {
                         <th className="p-3 text-center">#</th>
                         <th className="p-3">SKU</th>
                         <th className="p-3 min-w-[220px]">Produto</th>
-                        <th className="p-3 text-center">Qtd Vendida</th>
+                        <th className="p-3 text-center">Vendas</th>
+                        <th className="p-3 text-center">Taxa Devolução</th>
                         <th className="p-3 text-right">PDV Total</th>
                         <th className="p-3 text-right">Repasse Total</th>
                         <th className="p-3 text-right">Custo Unitário</th>
@@ -1790,7 +1846,10 @@ export default function AdsPage() {
                       {sugestoesExibidas.map((item, idx) => {
                         const margem = item.liquidezMargemPct;
                         const liquidezR = item.liquidezValor;
+                        const taxaDev = item.taxaDevolucao;
+                        const qtdDev = item.devolucoesQtd;
                         const permiteRisco = liquidezR >= 40.0;
+                        const altaDevolucao = taxaDev >= 10.0 && qtdDev > 0;
 
                         return (
                           <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
@@ -1798,6 +1857,24 @@ export default function AdsPage() {
                             <td className="p-3 font-mono font-bold text-white">{item.sku}</td>
                             <td className="p-3 text-slate-300 max-w-[240px] truncate" title={item.produto}>{item.produto}</td>
                             <td className="p-3 text-center font-bold text-indigo-400">{item.quantidade}</td>
+                            
+                            {/* COLUNA DE DEVOLUÇÃO CRUZADA */}
+                            <td className="p-3 text-center">
+                              {qtdDev === 0 ? (
+                                <span className="bg-emerald-950/60 text-emerald-400 border border-emerald-900/40 px-2 py-0.5 rounded text-[10px] font-bold">
+                                  🟢 Sem Devoluções (0%)
+                                </span>
+                              ) : (
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                  taxaDev >= 10 
+                                    ? 'bg-rose-950/80 text-rose-300 border-rose-800' 
+                                    : 'bg-amber-950/60 text-amber-300 border-amber-900/40'
+                                }`}>
+                                  {qtdDev} dev. ({taxaDev.toFixed(1)}%)
+                                </span>
+                              )}
+                            </td>
+
                             <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.pdvTotal)}</td>
                             <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.repasseTotal)}</td>
                             <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.custoUnitario)}</td>
@@ -1810,9 +1887,14 @@ export default function AdsPage() {
                             <td className={`p-3 text-right font-mono font-bold ${margem >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
                               {margem.toFixed(1)}%
                             </td>
+
                             <td className="p-3 text-center">
                               <div className="flex flex-col items-center gap-1">
-                                {liquidezR <= 0 ? (
+                                {altaDevolucao ? (
+                                  <span className="bg-rose-950 text-rose-300 border border-rose-700 px-2.5 py-0.5 rounded text-[10px] font-black tracking-wide">
+                                    ⛔ Alto Risco (Devolução)
+                                  </span>
+                                ) : liquidezR <= 0 ? (
                                   <span className="bg-rose-950/80 text-rose-300 border border-rose-700/60 px-2.5 py-0.5 rounded text-[10px] font-bold">
                                     ❌ Prejuízo / Não Usar
                                   </span>
@@ -1834,7 +1916,7 @@ export default function AdsPage() {
                                   </span>
                                 )}
 
-                                {permiteRisco && (
+                                {permiteRisco && !altaDevolucao && (
                                   <span className="bg-cyan-950/80 text-cyan-300 border border-cyan-700/60 px-2 py-0.5 rounded text-[9px] font-bold">
                                     🛡️ Liquidez permite risco
                                   </span>
