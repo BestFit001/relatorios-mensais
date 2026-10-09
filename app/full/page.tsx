@@ -124,7 +124,7 @@ export default function LogisticaPage() {
   
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
   const [metaDiasCobertura, setMetaDiasCobertura] = useState("45");
-  const [custoEmbalagem, setCustoEmbalagem] = useState("0.70"); // Apenas Padrão
+  const [custoEmbalagem, setCustoEmbalagem] = useState("0.70");
   
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
   
@@ -141,14 +141,14 @@ export default function LogisticaPage() {
     if (canalSelecionado && mesSelecionado) {
       carregarConfiguracoes(canalSelecionado);
       carregarHistoricoGravado();
-      setDadosProcessados([]); // Limpa resultados não salvos se mudar filtro
+      setDadosProcessados([]);
     }
   }, [canalSelecionado, mesSelecionado, modoLogistica]);
 
   const carregarDadosBase = async () => {
     const { data: canaisData } = await supabase.from('config_regras_canais').select('*').order('id');
     if (canaisData) {
-      const lista = canaisData.filter(c => c.ativo_ads !== false).map(c => c.canal);
+      const lista = canaisData.filter((c: any) => c.ativo_ads !== false).map((c: any) => c.canal);
       setCanais(lista);
       if (lista.length > 0) {
         setCanalSelecionado(lista[0]);
@@ -164,7 +164,7 @@ export default function LogisticaPage() {
     while (keep) {
       const { data } = await supabase.from('tabela_custos_skus').select('*').range(from, from + step - 1);
       if (data && data.length > 0) {
-        data.forEach(c => mapaC.set(normalizarSku(c.sku), c));
+        data.forEach((c: any) => mapaC.set(normalizarSku(c.sku), c));
         from += step;
         if (data.length < step) keep = false;
       } else keep = false;
@@ -177,7 +177,7 @@ export default function LogisticaPage() {
     while (keep) {
       const { data } = await supabase.from('ml_anuncios_regras').select('*').range(from, from + step - 1);
       if (data && data.length > 0) {
-        data.forEach(m => mapaMl.set(normalizarSku(m.sku), m)); 
+        data.forEach((m: any) => mapaMl.set(normalizarSku(m.sku), m)); 
         from += step;
         if (data.length < step) keep = false;
       } else keep = false;
@@ -194,7 +194,7 @@ export default function LogisticaPage() {
     while (keep) {
       const { data } = await supabase.from('cadastros_base_tiny').select('sku, estoque').range(from, from + step - 1);
       if (data && data.length > 0) {
-        data.forEach(t => mapaTiny.set(normalizarSku(t.sku), Number(t.estoque || 0)));
+        data.forEach((t: any) => mapaTiny.set(normalizarSku(t.sku), Number(t.estoque || 0)));
         from += step;
         if (data.length < step) keep = false;
       } else keep = false;
@@ -252,7 +252,7 @@ export default function LogisticaPage() {
       let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
       freteUnitario = calcularFreteML(precoUnit, pesoReal, altura, largura, comprimento);
     } else {
-      const regrasDoCanal = regrasTarifacao.filter(r => r.canal.toLowerCase() === canal.toLowerCase());
+      const regrasDoCanal = regrasTarifacao.filter((r: any) => r.canal.toLowerCase() === canal.toLowerCase());
       if (regrasDoCanal.length > 0) {
         let regraAplicavel = regrasDoCanal[0];
         for (const r of regrasDoCanal) {
@@ -271,18 +271,91 @@ export default function LogisticaPage() {
     return { freteTotal: freteUnitario * unidades, tarifaComissaoTotal: (receita * (comissaoPct / 100)) + (tarifaFixa * unidades) };
   };
 
-  // ----------------------------------------------------
-  // MOTOR 1: LÓGICA FULL / FBA
-  // ----------------------------------------------------
-  const processarMotorFull = async (mapaAgrupado: Map<string, any>, colSku: string, colQtd: string, colReceita: string, startRow: number) => {
+  const handleUploadVendas = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt: any) => {
+      try {
+        const wb = XLSX.read(evt.target.result, { type: "binary" });
+        const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
+        setMatrizVendas(matrix);
+        setDadosProcessados([]);
+      } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const handleUploadEstoque = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt: any) => {
+      try {
+        const wb = XLSX.read(evt.target.result, { type: "binary" });
+        const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
+        setMatrizEstoque(matrix);
+        setPreviewEstoque([]);
+      } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const processarPreviewEstoque = () => {
+    if (matrizEstoque.length === 0) return alert("Suba a planilha de Estoque primeiro.");
+    localStorage.setItem(`full_estoque_${canalSelecionado.toLowerCase()}`, JSON.stringify({ linha: linhaEstoque, colSku: colSkuEstoque, colQtd: colQtdEstoque }));
+
+    const colSku = colSkuEstoque.trim().toUpperCase();
+    const colQtd = colQtdEstoque.trim().toUpperCase();
+    const startRow = Math.max(0, parseInt(linhaEstoque, 10) - 1 || 0);
+    const mapaAgrupado = new Map<string, number>();
+
+    for (let r = startRow; r < matrizEstoque.length; r++) {
+      const row = matrizEstoque[r];
+      if (!row) continue;
+      const skuNorm = normalizarSku(row[colSku]);
+      if (!skuNorm || skuNorm.toLowerCase() === "sku") continue;
+      const qtd = parseNumero(row[colQtd]);
+      
+      if (mapaAgrupado.has(skuNorm)) mapaAgrupado.set(skuNorm, mapaAgrupado.get(skuNorm)! + qtd);
+      else mapaAgrupado.set(skuNorm, qtd);
+    }
+
+    const extraidos = Array.from(mapaAgrupado.entries()).map(([skuNorm, qtd]) => ({ sku: skuNorm, skuNorm, quantidade: qtd }));
+    setPreviewEstoque(extraidos);
+  };
+
+  const salvarEstoqueNoBanco = async () => {
+    if (previewEstoque.length === 0) return;
+    setSalvando(true);
+    const payload = previewEstoque.map((item: any) => ({ canal: canalSelecionado, mes_referencia: mesSelecionado, sku: item.skuNorm, estoque: item.quantidade }));
+    const { error } = await supabase.from('estoque_cd_mensal').upsert(payload, { onConflict: 'canal, mes_referencia, sku' });
+    if (error) alert("Erro ao salvar estoque no banco: " + error.message);
+    else {
+      alert(`✅ Estoque do CD atualizado com sucesso! Foram guardados ${payload.length} SKUs consolidados.`);
+      setPreviewEstoque([]); setMatrizEstoque([]); setSubAba("vendas"); 
+    }
+    setSalvando(false);
+  };
+
+  const limparEstoqueSalvo = async () => {
+    if (!confirm(`ATENÇÃO: Deseja apagar todo o Estoque do CD guardado em ${canalSelecionado} para o mês ${mesSelecionado}?`)) return;
+    setSalvando(true);
+    const { error } = await supabase.from('estoque_cd_mensal').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
+    if (error) alert("Erro ao limpar estoque: " + error.message);
+    else { alert("🗑️ Estoque limpo com sucesso!"); setPreviewEstoque([]); setMatrizEstoque([]); }
+    setSalvando(false);
+  };
+
+  const processarMotorFull = async (mapaAgrupado: Map<string, any>) => {
     const { data: estData } = await supabase.from('estoque_cd_mensal').select('sku, estoque').eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
     const mapaEstoqueCD = new Map();
-    if (estData) estData.forEach(e => mapaEstoqueCD.set(e.sku, Number(e.estoque)));
+    if (estData) estData.forEach((e: any) => mapaEstoqueCD.set(e.sku, Number(e.estoque)));
 
     const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
     const metaDias = Number(metaDiasCobertura) || 45;
 
-    const resultados = Array.from(mapaAgrupado.values()).map(item => {
+    const resultados = Array.from(mapaAgrupado.values()).map((item: any) => {
       const skuKey = item.skuKey;
       const custoData = custosMap.get(skuKey);
       const custoUnitario = Number(custoData?.custo_unitario || 0);
@@ -342,17 +415,13 @@ export default function LogisticaPage() {
       };
     });
 
-    setDadosProcessados(resultados.sort((a, b) => b.receita_bruta - a.receita_bruta));
+    setDadosProcessados(resultados.sort((a: any, b: any) => b.receita_bruta - a.receita_bruta));
   };
 
-  // ----------------------------------------------------
-  // MOTOR 2: LÓGICA LOGÍSTICA PRÓPRIA (PADRÃO)
-  // ----------------------------------------------------
   const processarMotorPadrao = async (mapaAgrupado: Map<string, any>) => {
     const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
     const embalagemUnit = Number(custoEmbalagem.replace(",", ".")) || 0;
 
-    // Puxa devoluções e Curva ABC para cruzamento
     const { data: dadosDevolucaoRaw } = await supabase.from("devolucoes").select("sku, data_retorno, canal");
     const mapaDevContagem = new Map<string, number>();
     if (dadosDevolucaoRaw) {
@@ -373,7 +442,7 @@ export default function LogisticaPage() {
       });
     }
 
-    const resultados = Array.from(mapaAgrupado.values()).map(item => {
+    const resultados = Array.from(mapaAgrupado.values()).map((item: any) => {
       const skuKey = item.skuKey;
       const custoData = custosMap.get(skuKey);
       const custoUnitario = Number(custoData?.custo_unitario || 0);
@@ -410,10 +479,9 @@ export default function LogisticaPage() {
       };
     });
 
-    setDadosProcessados(resultados.sort((a, b) => b.receita_bruta - a.receita_bruta));
+    setDadosProcessados(resultados.sort((a: any, b: any) => b.receita_bruta - a.receita_bruta));
   };
 
-  // HANDLER ÚNICO DE EXECUÇÃO
   const executarMotorGeral = async () => {
     if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
     setLoading(true);
@@ -445,7 +513,7 @@ export default function LogisticaPage() {
       }
     }
 
-    if (modoLogistica === "full") await processarMotorFull(mapaAgrupado, colSku, colQtd, colReceita, startRow);
+    if (modoLogistica === "full") await processarMotorFull(mapaAgrupado);
     else await processarMotorPadrao(mapaAgrupado);
     
     setLoading(false);
@@ -461,7 +529,7 @@ export default function LogisticaPage() {
     let res = await supabase.from(tabela).insert(dadosProcessados);
     
     if (res.error && res.error.message.includes("margem_bruta_pct")) {
-      const fallbackPayload = dadosProcessados.map(item => {
+      const fallbackPayload = dadosProcessados.map((item: any) => {
         const copy = { ...item }; delete copy.margem_bruta_pct; return copy;
       });
       res = await supabase.from(tabela).insert(fallbackPayload);
@@ -484,68 +552,6 @@ export default function LogisticaPage() {
     const tabela = modoLogistica === "full" ? "full_lancamentos" : "vendas_padrao_lancamentos";
     await supabase.from(tabela).delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
     carregarHistoricoGravado();
-  };
-
-  // ---- UPLOAD ESTOQUE CD ----
-  const handleUploadEstoque = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt: any) => {
-      try {
-        const wb = XLSX.read(evt.target.result, { type: "binary" });
-        const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
-        setMatrizEstoque(matrix);
-        setPreviewEstoque([]);
-      } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
-    };
-    reader.readAsBinaryString(file);
-  };
-
-  const processarPreviewEstoque = () => {
-    if (matrizEstoque.length === 0) return alert("Suba a planilha de Estoque primeiro.");
-    localStorage.setItem(`full_estoque_${canalSelecionado.toLowerCase()}`, JSON.stringify({ linha: linhaEstoque, colSku: colSkuEstoque, colQtd: colQtdEstoque }));
-
-    const colSku = colSkuEstoque.trim().toUpperCase();
-    const colQtd = colQtdEstoque.trim().toUpperCase();
-    const startRow = Math.max(0, parseInt(linhaEstoque, 10) - 1 || 0);
-    const mapaAgrupado = new Map<string, number>();
-
-    for (let r = startRow; r < matrizEstoque.length; r++) {
-      const row = matrizEstoque[r];
-      if (!row) continue;
-      const skuNorm = normalizarSku(row[colSku]);
-      if (!skuNorm || skuNorm.toLowerCase() === "sku") continue;
-      const qtd = parseNumero(row[colQtd]);
-      
-      if (mapaAgrupado.has(skuNorm)) mapaAgrupado.set(skuNorm, mapaAgrupado.get(skuNorm)! + qtd);
-      else mapaAgrupado.set(skuNorm, qtd);
-    }
-
-    const extraidos = Array.from(mapaAgrupado.entries()).map(([skuNorm, qtd]) => ({ sku: skuNorm, skuNorm, quantidade: qtd }));
-    setPreviewEstoque(extraidos);
-  };
-
-  const salvarEstoqueNoBanco = async () => {
-    if (previewEstoque.length === 0) return;
-    setSalvando(true);
-    const payload = previewEstoque.map(item => ({ canal: canalSelecionado, mes_referencia: mesSelecionado, sku: item.skuNorm, estoque: item.quantidade }));
-    const { error } = await supabase.from('estoque_cd_mensal').upsert(payload, { onConflict: 'canal, mes_referencia, sku' });
-    if (error) alert("Erro ao salvar estoque no banco: " + error.message);
-    else {
-      alert(`✅ Estoque do CD atualizado com sucesso! Foram guardados ${payload.length} SKUs consolidados.`);
-      setPreviewEstoque([]); setMatrizEstoque([]); setSubAba("vendas"); 
-    }
-    setSalvando(false);
-  };
-
-  const limparEstoqueSalvo = async () => {
-    if (!confirm(`ATENÇÃO: Deseja apagar todo o Estoque do CD guardado em ${canalSelecionado} para o mês ${mesSelecionado}?`)) return;
-    setSalvando(true);
-    const { error } = await supabase.from('estoque_cd_mensal').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
-    if (error) alert("Erro ao limpar estoque: " + error.message);
-    else { alert("🗑️ Estoque limpo com sucesso!"); setPreviewEstoque([]); setMatrizEstoque([]); }
-    setSalvando(false);
   };
 
   const dataSource = dadosProcessados.length > 0 ? dadosProcessados : lancamentosGravados;
@@ -731,11 +737,11 @@ export default function LogisticaPage() {
              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-lg">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Faturamento Apurado</span>
-                <span className="text-xl font-black text-white">{formatarMoeda(dataSource.reduce((a, b) => a + Number(b.receita_bruta || 0), 0))}</span>
+                <span className="text-xl font-black text-white">{formatarMoeda(dataSource.reduce((a: number, b: any) => a + Number(b.receita_bruta || 0), 0))}</span>
               </div>
               <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-lg">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Lucro Líquido Real</span>
-                <span className="text-xl font-black text-emerald-400">{formatarMoeda(dataSource.reduce((a, b) => a + Number(b.lucro_liquido || 0), 0))}</span>
+                <span className="text-xl font-black text-emerald-400">{formatarMoeda(dataSource.reduce((a: number, b: any) => a + Number(b.lucro_liquido || 0), 0))}</span>
               </div>
               
               {modoLogistica === "full" ? (
@@ -750,7 +756,7 @@ export default function LogisticaPage() {
                   </div>
                   <div className="bg-purple-900/30 border border-purple-800 p-5 rounded-2xl shadow-lg">
                     <span className="block text-[10px] font-bold text-purple-400 uppercase mb-2">Sugestão Envio Hoje</span>
-                    <span className="text-xl font-black text-purple-300">{dataSource.reduce((a, b) => a + Number(b.sugestao_envio || 0), 0)} un.</span>
+                    <span className="text-xl font-black text-purple-300">{dataSource.reduce((a: number, b: any) => a + Number(b.sugestao_envio || 0), 0)} un.</span>
                   </div>
                 </>
               ) : (
