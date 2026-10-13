@@ -74,12 +74,12 @@ export default function LogisticaPage() {
   // Estados - Vendas (Mapeamento)
   const [matrizVendas, setMatrizVendas] = useState<any[]>([]);
   const [linhaVendas, setLinhaVendas] = useState("7");
-  const [colCarrinhoVendas, setColCarrinhoVendas] = useState("D"); // Identificador de Pacote
-  const [colSkuVendas, setColSkuVendas] = useState("X");           // SKU
-  const [colQtdVendas, setColQtdVendas] = useState("H");           // Quantidade
-  const [colPdvVendas, setColPdvVendas] = useState("AC");          // PDV Fracionado por item
-  const [colLiquidoVendas, setColLiquidoVendas] = useState("T");   // Líquido Real recebido do ML
-  const [colReceitaPacote, setColReceitaPacote] = useState("I");   // Receita bruta total do pacote
+  const [colCarrinhoVendas, setColCarrinhoVendas] = useState("D"); 
+  const [colSkuVendas, setColSkuVendas] = useState("X");           
+  const [colQtdVendas, setColQtdVendas] = useState("H");           
+  const [colPdvVendas, setColPdvVendas] = useState("AC");          
+  const [colLiquidoVendas, setColLiquidoVendas] = useState("T");   
+  const [colReceitaPacote, setColReceitaPacote] = useState("I");   
 
   // Deduções
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
@@ -389,7 +389,6 @@ export default function LogisticaPage() {
         let pdvUnit = parseNumero(row[colPdv]);
         let receitaBruta = pdvUnit * qtdVendida;
 
-        // Fallback caso a coluna AC esteja vazia em alguma linha
         if (receitaBruta === 0 && colRecPacote) {
           receitaBruta = parseNumero(row[colRecPacote]);
         }
@@ -487,6 +486,7 @@ export default function LogisticaPage() {
     setLoading(false);
   };
 
+  // SALVAR NO BANCO COM SEPARAÇÃO ESTRITA DE TABELAS
   const salvarDadosNoBanco = async () => {
     if (dadosProcessados.length === 0) return;
     setSalvando(true);
@@ -494,10 +494,56 @@ export default function LogisticaPage() {
     
     await supabase.from(tabela).delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
     
-    let res = await supabase.from(tabela).insert(dadosProcessados);
+    let payloadFormatado: any[] = [];
+
+    if (modoLogistica === "padrao") {
+      // APENAS AS COLUNAS VÁLIDAS DE vendas_padrao_lancamentos (SEM armazenagem)
+      payloadFormatado = dadosProcessados.map((item: any) => ({
+        canal: item.canal,
+        mes_referencia: item.mes_referencia,
+        sku: item.sku,
+        produto: item.produto,
+        qtd_vendida: item.qtd_vendida,
+        receita_bruta: item.receita_bruta,
+        custo_produto: item.custo_produto,
+        imposto: item.imposto,
+        tarifa_frete: item.tarifa_frete,
+        embalagem: item.embalagem || 0,
+        lucro_liquido: item.lucro_liquido,
+        margem_pct: item.margem_pct,
+        taxa_devolucao: item.taxa_devolucao || 0,
+        qtd_devolucoes: item.qtd_devolucoes || 0,
+        diagnostico: item.diagnostico || ""
+      }));
+    } else {
+      // APENAS AS COLUNAS VÁLIDAS DE full_lancamentos
+      payloadFormatado = dadosProcessados.map((item: any) => ({
+        canal: item.canal,
+        mes_referencia: item.mes_referencia,
+        sku: item.sku,
+        produto: item.produto,
+        qtd_vendida: item.qtd_vendida,
+        receita_bruta: item.receita_bruta,
+        estoque_cd: item.estoque_cd || 0,
+        armazenagem: item.armazenagem || 0,
+        estoque_central: item.estoque_central || 0,
+        custo_produto: item.custo_produto,
+        imposto: item.imposto,
+        tarifa_frete: item.tarifa_frete,
+        lucro_liquido: item.lucro_liquido,
+        margem_pct: item.margem_pct,
+        vmd: item.vmd || 0,
+        cobertura_dias: item.cobertura_dias || 0,
+        sugestao_envio: item.sugestao_envio || 0,
+        status_estoque: item.status_estoque || "",
+        status_envio: item.status_envio || ""
+      }));
+    }
+
+    let res = await supabase.from(tabela).insert(payloadFormatado);
     
     if (res.error && res.error.message.includes("margem_bruta_pct")) {
-      const fallbackPayload = dadosProcessados.map((item: any) => {
+      const fallbackPayload = payloadFormatado.map((item: any) => {
         const copy = { ...item }; delete copy.margem_bruta_pct; return copy;
       });
       res = await supabase.from(tabela).insert(fallbackPayload);
@@ -506,7 +552,7 @@ export default function LogisticaPage() {
     if (res.error) {
       alert("Erro ao gravar resultados no banco: " + res.error.message);
     } else {
-      alert(`✅ Análise de Logística gravada com sucesso!`);
+      alert(`✅ Análise gravada com sucesso!`);
       setMatrizVendas([]);
       setDadosProcessados([]);
       carregarHistoricoGravado();
@@ -843,7 +889,7 @@ export default function LogisticaPage() {
                         <th className="p-3 text-right text-indigo-300">Vendas (Qtd)</th>
                         <th className="p-3 text-right">Receita (R$)</th>
                         <th className="p-3 text-right text-rose-300" title="Custo com caixa, fita, etc.">Custo Embalagem</th>
-                        <th className="p-3 text-right font-black text-emerald-400">Margem LÍQ.</th>
+                        <th className="p-3 text-right">Margem LÍQ.</th>
                         <th className="p-3 text-center text-amber-300">Qtd Devolvida</th>
                         <th className="p-3 text-center">Taxa Devolução</th>
                         <th className="p-3 text-center border-l border-slate-800 bg-slate-900">Veredicto (Diagnóstico)</th>
