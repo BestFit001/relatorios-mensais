@@ -5,14 +5,19 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 
-function colLetraParaIndice(colStr: string): number {
-  const s = colStr.trim().toUpperCase().replace(/[^A-Z]/g, "");
-  let idx = 0;
-  for (let i = 0; i < s.length; i++) {
-    idx = idx * 26 + (s.charCodeAt(i) - 64);
-  }
-  return idx - 1;
-}
+const canaisPadraoBase = [
+  "Mercado Livre 1",
+  "Mercado Livre 2",
+  "Mercado Livre 3",
+  "Shopee",
+  "Amazon",
+  "Magalu",
+  "Netshoes",
+  "Centauro",
+  "Shein",
+  "TikTok",
+  "Site"
+];
 
 const formatarMoeda = (valor: number) =>
   "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -22,8 +27,9 @@ export default function PlpPage() {
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
-  // Canais disponíveis
-  const [canais, setCanais] = useState<string[]>(["Mercado Livre 1", "Mercado Livre 2", "Shopee", "Amazon", "Site"]);
+  // Lista unificada com TODOS os canais
+  const [canais, setCanais] = useState<string[]>(canaisPadraoBase);
+  const [novoCanalNome, setNovoCanalNome] = useState("");
 
   // Sub-aba ativa
   const [abaAtiva, setAbaAtiva] = useState<"manual" | "planilha" | "config">("manual");
@@ -33,15 +39,14 @@ export default function PlpPage() {
 
   // Formulário 1: Inserção Manual
   const [manualDataEnvio, setManualDataEnvio] = useState(new Date().toISOString().split("T")[0]);
-  const [manualCanal, setManualCanal] = useState("");
+  const [manualCanal, setManualCanal] = useState(canaisPadraoBase[0]);
   const [manualModalidade, setManualModalidade] = useState<"FLEX" | "COLETA">("FLEX");
   const [manualPedidosTexto, setManualPedidosTexto] = useState("");
 
   // Formulário 2: Inserção via Planilha
-  const [filePlanilha, setFilePlanilha] = useState<File | null>(null);
   const [matrizPlanilha, setMatrizPlanilha] = useState<any[]>([]);
   const [planilhaDataEnvio, setPlanilhaDataEnvio] = useState(new Date().toISOString().split("T")[0]);
-  const [planilhaCanal, setPlanilhaCanal] = useState("");
+  const [planilhaCanal, setPlanilhaCanal] = useState(canaisPadraoBase[0]);
   const [planilhaModalidade, setPlanilhaModalidade] = useState<"FLEX" | "COLETA">("FLEX");
   const [colunaPedido, setColunaPedido] = useState("A");
   const [linhaInicial, setLinhaInicial] = useState("2");
@@ -68,32 +73,63 @@ export default function PlpPage() {
     buscarPedidos();
   }, [filtroDataInicio, filtroDataFim, filtroCanal, filtroModalidade]);
 
-  // Carregar lista de canais e taxas Flex gravadas
+  // Carrega e consolida absolutamente TODOS os canais
   const carregarCanaisETaxas = async () => {
-    const { data: canaisData } = await supabase.from("config_regras_canais").select("*").order("id");
-    let listaCanais = ["Mercado Livre 1", "Mercado Livre 2", "Shopee", "Amazon", "Site"];
-    if (canaisData && canaisData.length > 0) {
-      listaCanais = canaisData.filter((c: any) => c.ativo_ads !== false).map((c: any) => c.canal);
-      setCanais(listaCanais);
-    }
+    const mapaUnico = new Map<string, string>();
+    
+    // 1. Canais padrão da operação
+    canaisPadraoBase.forEach(c => mapaUnico.set(c.trim().toLowerCase(), c.trim()));
 
-    if (listaCanais.length > 0) {
-      setManualCanal(listaCanais[0]);
-      setPlanilhaCanal(listaCanais[0]);
-    }
-
-    // Carregar taxas do LocalStorage ou criar defaults de R$ 12,99
-    const salvo = localStorage.getItem("plp_taxas_flex_por_canal");
-    if (salvo) {
-      setTaxasFlexCanal(JSON.parse(salvo));
-    } else {
-      const defaults: Record<string, number> = {};
-      listaCanais.forEach((c) => {
-        defaults[c] = 12.99;
+    // 2. Todos os canais de config_regras_canais (sem nenhum filtro de ads)
+    const { data: canaisData } = await supabase.from("config_regras_canais").select("canal");
+    if (canaisData) {
+      canaisData.forEach((c: any) => {
+        if (c.canal && String(c.canal).trim()) {
+          mapaUnico.set(String(c.canal).trim().toLowerCase(), String(c.canal).trim());
+        }
       });
-      setTaxasFlexCanal(defaults);
-      localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(defaults));
     }
+
+    // 3. Canais de tarifação
+    const { data: tarifacaoData } = await supabase.from("config_regras_tarifacao").select("canal");
+    if (tarifacaoData) {
+      tarifacaoData.forEach((t: any) => {
+        if (t.canal && String(t.canal).trim()) {
+          mapaUnico.set(String(t.canal).trim().toLowerCase(), String(t.canal).trim());
+        }
+      });
+    }
+
+    // 4. Canais que já tenham pedidos gravados em PLP
+    const { data: plpData } = await supabase.from("plp_pedidos").select("canal");
+    if (plpData) {
+      plpData.forEach((p: any) => {
+        if (p.canal && String(p.canal).trim()) {
+          mapaUnico.set(String(p.canal).trim().toLowerCase(), String(p.canal).trim());
+        }
+      });
+    }
+
+    const listaCompleta = Array.from(mapaUnico.values()).sort((a, b) => a.localeCompare(b));
+    setCanais(listaCompleta);
+
+    if (listaCompleta.length > 0) {
+      setManualCanal(listaCompleta[0]);
+      setPlanilhaCanal(listaCompleta[0]);
+    }
+
+    // Carrega ou inicializa taxas de frete Flex para todos os canais
+    const salvo = localStorage.getItem("plp_taxas_flex_por_canal");
+    const taxasAtuais: Record<string, number> = salvo ? JSON.parse(salvo) : {};
+
+    listaCompleta.forEach((c) => {
+      if (taxasAtuais[c] === undefined) {
+        taxasAtuais[c] = 12.99;
+      }
+    });
+
+    setTaxasFlexCanal(taxasAtuais);
+    localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(taxasAtuais));
   };
 
   const atualizarTaxaFlex = (canal: string, valor: number) => {
@@ -102,7 +138,22 @@ export default function PlpPage() {
     localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(novo));
   };
 
-  // Buscar pedidos do banco com base no filtro
+  const handleAdicionarCanal = () => {
+    const nomeLimpo = novoCanalNome.trim();
+    if (!nomeLimpo) return;
+
+    if (!canais.some(c => c.toLowerCase() === nomeLimpo.toLowerCase())) {
+      const novaLista = [...canais, nomeLimpo].sort((a, b) => a.localeCompare(b));
+      setCanais(novaLista);
+      atualizarTaxaFlex(nomeLimpo, 12.99);
+      setNovoCanalNome("");
+      alert(`✅ Canal "${nomeLimpo}" adicionado com sucesso!`);
+    } else {
+      alert("Este canal já está na lista.");
+    }
+  };
+
+  // Buscar pedidos do banco
   const buscarPedidos = async () => {
     setLoading(true);
     let query = supabase
@@ -128,13 +179,12 @@ export default function PlpPage() {
     setLoading(false);
   };
 
-  // 1. Gravação Manual
+  // Inserção Manual
   const handleGravarManual = async () => {
     if (!manualPedidosTexto.trim()) {
       return alert("Digite ao menos um número de pedido.");
     }
 
-    // Separa os pedidos por linha, vírgula, ponto e vírgula ou espaço
     const linhas = manualPedidosTexto
       .split(/[\n,;]+/)
       .map((p) => p.trim())
@@ -143,7 +193,7 @@ export default function PlpPage() {
     if (linhas.length === 0) return alert("Nenhum pedido válido informado.");
 
     setSalvando(true);
-    const taxaFlexUnit = manualModalidade === "FLEX" ? Number(taxasFlexCanal[manualCanal] || 12.99) : 0;
+    const taxaFlexUnit = manualModalidade === "FLEX" ? Number(taxasFlexCanal[manualCanal] ?? 12.99) : 0;
 
     const payload = linhas.map((ped) => ({
       data_envio: manualDataEnvio,
@@ -157,18 +207,17 @@ export default function PlpPage() {
     if (error) {
       alert("Erro ao gravar pedidos: " + error.message);
     } else {
-      alert(`✅ ${payload.length} pedido(s) gravado(s) com sucesso!`);
+      alert(`✅ ${payload.length} pedido(s) gravado(s) com sucesso para o canal ${manualCanal}!`);
       setManualPedidosTexto("");
       buscarPedidos();
     }
     setSalvando(false);
   };
 
-  // 2. Leitura de Planilha
+  // Inserção via Planilha
   const handleUploadPlanilha = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setFilePlanilha(file);
     const reader = new FileReader();
     reader.onload = (evt: any) => {
       try {
@@ -184,7 +233,7 @@ export default function PlpPage() {
   };
 
   const handlePreviewPlanilha = () => {
-    if (matrizPlanilha.length === 0) return alert("Suba um arquivo Excel/CSV primeiro.");
+    if (matrizPlanilha.length === 0) return alert("Suba um ficheiro Excel/CSV primeiro.");
     const col = colunaPedido.trim().toUpperCase();
     const start = Math.max(0, parseInt(linhaInicial, 10) - 1 || 0);
 
@@ -209,7 +258,7 @@ export default function PlpPage() {
     if (previewPlanilha.length === 0) return alert("Clique em Pré-visualizar antes de gravar.");
     setSalvando(true);
 
-    const taxaFlexUnit = planilhaModalidade === "FLEX" ? Number(taxasFlexCanal[planilhaCanal] || 12.99) : 0;
+    const taxaFlexUnit = planilhaModalidade === "FLEX" ? Number(taxasFlexCanal[planilhaCanal] ?? 12.99) : 0;
 
     const payload = previewPlanilha.map((ped) => ({
       data_envio: planilhaDataEnvio,
@@ -223,24 +272,21 @@ export default function PlpPage() {
     if (error) {
       alert("Erro ao gravar pedidos da planilha: " + error.message);
     } else {
-      alert(`✅ ${payload.length} pedido(s) importado(s) com sucesso da planilha!`);
+      alert(`✅ ${payload.length} pedido(s) importado(s) com sucesso para ${planilhaCanal}!`);
       setPreviewPlanilha([]);
       setMatrizPlanilha([]);
-      setFilePlanilha(null);
       buscarPedidos();
     }
     setSalvando(false);
   };
 
-  // Excluir pedido individual
   const handleExcluirPedido = async (id: number) => {
-    if (!confirm("Deseja realmente remover este pedido?")) return;
+    if (!confirm("Deseja remover este pedido?")) return;
     const { error } = await supabase.from("plp_pedidos").delete().eq("id", id);
     if (error) alert("Erro ao excluir: " + error.message);
     else buscarPedidos();
   };
 
-  // Limpar pedidos do período filtrado
   const handleLimparPeriodo = async () => {
     if (
       !confirm(
@@ -262,24 +308,22 @@ export default function PlpPage() {
     setLoading(false);
   };
 
-  // 4. Download em Excel estruturado
+  // Exportação com Frete estritamente na Coluna D
   const handleBaixarExcel = () => {
     if (pedidosFiltrados.length === 0) {
       return alert("Nenhum pedido encontrado no período filtrado para exportar.");
     }
 
-    // Monta o arquivo respeitando exatamente a ordem solicitada: Coluna D com o valor do frete
     const dadosExportacao = pedidosFiltrados.map((item) => ({
       "Data de Envio": item.data_envio,
       "Número do Pedido": item.numero_pedido,
       Canal: item.canal,
-      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0, // Coluna D!
+      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0, // COLUNA D
       Modalidade: item.modalidade,
     }));
 
     const ws = XLSX.utils.json_to_sheet(dadosExportacao);
 
-    // Ajusta a largura das colunas
     ws["!cols"] = [
       { wch: 14 }, // A: Data
       { wch: 24 }, // B: Pedido
@@ -295,7 +339,6 @@ export default function PlpPage() {
     XLSX.writeFile(wb, nomeArquivo);
   };
 
-  // Indicadores dos filtros atuais
   const kpis = {
     total: pedidosFiltrados.length,
     flex: pedidosFiltrados.filter((p) => p.modalidade === "FLEX").length,
@@ -343,7 +386,7 @@ export default function PlpPage() {
               abaAtiva === "config" ? "bg-amber-600 text-white shadow-amber-900/40" : "bg-slate-900 text-slate-400 border border-slate-800"
             }`}
           >
-            ⚙️ 3. Taxas de Frete Flex
+            ⚙️ 3. Taxas de Frete Flex ({canais.length} Canais)
           </button>
         </div>
 
@@ -364,7 +407,9 @@ export default function PlpPage() {
                 />
               </div>
               <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Canal de Venda:</label>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  Canal de Venda ({canais.length} disponíveis):
+                </label>
                 <select
                   value={manualCanal}
                   onChange={(e) => setManualCanal(e.target.value)}
@@ -408,7 +453,7 @@ export default function PlpPage() {
               <div className="text-xs text-slate-400">
                 Valor do frete que será aplicado:{" "}
                 <strong className={manualModalidade === "FLEX" ? "text-amber-400" : "text-slate-400"}>
-                  {manualModalidade === "FLEX" ? formatarMoeda(taxasFlexCanal[manualCanal] || 12.99) : "R$ 0,00"}
+                  {manualModalidade === "FLEX" ? formatarMoeda(taxasFlexCanal[manualCanal] ?? 12.99) : "R$ 0,00"}
                 </strong>
               </div>
               <button
@@ -544,14 +589,36 @@ export default function PlpPage() {
 
         {/* ================= ABA 3: CONFIGURAÇÃO DE FRETE FLEX ================= */}
         {abaAtiva === "config" && (
-          <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-4 animate-in fade-in duration-300">
-            <h2 className="text-base font-bold text-amber-400 flex items-center gap-2">
-              <span>⚙️ Configuração de Valor de Frete Flex por Canal</span>
-            </h2>
-            <p className="text-xs text-slate-400">
-              Defina o valor do frete que será atribuído na <strong>Coluna D</strong> para pedidos na modalidade <strong>FLEX</strong>.
-              Pedidos em <strong>COLETA</strong> sempre sairão como <strong>R$ 0,00</strong>.
-            </p>
+          <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-5 animate-in fade-in duration-300">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div>
+                <h2 className="text-base font-bold text-amber-400 flex items-center gap-2">
+                  <span>⚙️ Configuração de Valor de Frete Flex por Canal</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Defina o valor do frete atribuído na <strong>Coluna D</strong> para envios <strong>FLEX</strong>. Pedidos em <strong>COLETA</strong> saem automaticamente como <strong>R$ 0,00</strong>.
+                </p>
+              </div>
+
+              {/* Adicionar Canal Personalizado */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Nome de novo canal..."
+                  value={novoCanalNome}
+                  onChange={(e) => setNovoCanalNome(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none w-48"
+                />
+                <button
+                  type="button"
+                  onClick={handleAdicionarCanal}
+                  className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm"
+                >
+                  + Adicionar Canal
+                </button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
               {canais.map((c, i) => (
                 <div key={i} className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center justify-between">
@@ -619,7 +686,9 @@ export default function PlpPage() {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Filtrar Canal:</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                Filtrar Canal ({canais.length}):
+              </label>
               <select
                 value={filtroCanal}
                 onChange={(e) => setFiltroCanal(e.target.value)}
