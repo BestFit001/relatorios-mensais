@@ -103,25 +103,26 @@ export default function LogisticaPage() {
   const [colQtdEstoque, setColQtdEstoque] = useState("X");
   const [previewEstoque, setPreviewEstoque] = useState<any[]>([]);
 
-  // Estados - Vendas (Mapeamento)
+  // Estados - Mapeamento de Vendas
   const [matrizVendas, setMatrizVendas] = useState<any[]>([]);
   const [linhaVendas, setLinhaVendas] = useState("7");
-  const [colCarrinhoVendas, setColCarrinhoVendas] = useState("D"); // Caixinha do Carrinho / Pacote
+  const [colCarrinhoVendas, setColCarrinhoVendas] = useState("D"); // Identificador de Pacote
   const [colSkuVendas, setColSkuVendas] = useState("W");
   const [colQtdVendas, setColQtdVendas] = useState("H");
   const [colReceitaVendas, setColReceitaVendas] = useState("I");
-  
-  // Parâmetros de Custos Operacionais
+  const [colLiquidoVendas, setColLiquidoVendas] = useState("ZZZ"); // Coluna de Líquido Real (opcional)
+
+  // Custos e Deduções
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
-  const [comissaoPadrao, setComissaoPadrao] = useState("19"); // 19% para ML Premium
+  const [comissaoPadrao, setComissaoPadrao] = useState("19"); // ML Premium
   const [metaDiasCobertura, setMetaDiasCobertura] = useState("45");
   const [custoEmbalagem, setCustoEmbalagem] = useState("0.70");
 
-  // Parâmetros de Diagnóstico
+  // Diagnóstico
   const [margemMinimaPromissora, setMargemMinimaPromissora] = useState("12");
   const [vendasMinimasPromissoras, setVendasMinimasPromissoras] = useState("3");
   const [tetoMaxDevolucao, setTetoMaxDevolucao] = useState("10");
-  
+
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
   const [pesquisaBusca, setPesquisaBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
@@ -216,6 +217,7 @@ export default function LogisticaPage() {
       if (p.colSku) setColSkuVendas(p.colSku);
       if (p.colQtd) setColQtdVendas(p.colQtd);
       if (p.colReceita) setColReceitaVendas(p.colReceita);
+      if (p.colLiquido) setColLiquidoVendas(p.colLiquido);
       if (p.imposto) setAliquotaImposto(p.imposto);
       if (p.comissao) setComissaoPadrao(p.comissao);
       if (p.metaDias) setMetaDiasCobertura(p.metaDias);
@@ -230,8 +232,9 @@ export default function LogisticaPage() {
     const keyPrefix = modoLogistica === "full" ? "full_" : "padrao_";
     localStorage.setItem(`${keyPrefix}vendas_${canalSelecionado.toLowerCase()}`, JSON.stringify({
       linha: linhaVendas, colCarrinho: colCarrinhoVendas, colSku: colSkuVendas, colQtd: colQtdVendas, 
-      colReceita: colReceitaVendas, imposto: aliquotaImposto, comissao: comissaoPadrao, metaDias: metaDiasCobertura, 
-      embalagem: custoEmbalagem, margemMin: margemMinimaPromissora, vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao
+      colReceita: colReceitaVendas, colLiquido: colLiquidoVendas, imposto: aliquotaImposto, comissao: comissaoPadrao, 
+      metaDias: metaDiasCobertura, embalagem: custoEmbalagem, margemMin: margemMinimaPromissora, 
+      vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao
     }));
   };
 
@@ -246,7 +249,7 @@ export default function LogisticaPage() {
       comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : (Number(comissaoPadrao) || 19);
 
       if (precoUnit < 79.00) {
-        tarifaFixa = 6.50; // Tarifa fixa obrigatória do Mercado Livre para produtos < R$ 79
+        tarifaFixa = 6.50; // Tarifa fixa obrigatória por unidade abaixo de R$ 79
         freteUnitario = 0;
       } else {
         tarifaFixa = 0;
@@ -376,8 +379,16 @@ export default function LogisticaPage() {
       const impostoTotal = item.receitaBruta * (impostoPct / 100);
       const custoProdutoTotal = custoUnitario * item.qtdVendida;
 
-      const tarifaFreteSoma = tarifaComissaoTotal + freteTotal;
-      const lucroRs = item.receitaBruta - custoProdutoTotal - impostoTotal - tarifaFreteSoma;
+      // Se informou a coluna de líquido real, utiliza-a; senão calcula com as taxas
+      let lucroRs = 0;
+      let tarifaFreteSoma = tarifaComissaoTotal + freteTotal;
+
+      if (item.temLiquidoReal) {
+        tarifaFreteSoma = item.receitaBruta - item.liquidoReal;
+        lucroRs = item.liquidoReal - custoProdutoTotal - impostoTotal;
+      } else {
+        lucroRs = item.receitaBruta - custoProdutoTotal - impostoTotal - tarifaFreteSoma;
+      }
       
       const margemBrutaRs = item.receitaBruta - custoProdutoTotal - impostoTotal;
       const margemBrutaPct = item.receitaBruta > 0 ? (margemBrutaRs / item.receitaBruta) * 100 : 0;
@@ -466,8 +477,16 @@ export default function LogisticaPage() {
       const custoProdutoTotal = custoUnitario * item.qtdVendida;
       const embalagemTotal = embalagemUnit * item.qtdVendida;
 
-      const tarifaFreteSoma = tarifaComissaoTotal + freteTotal;
-      const lucroRs = item.receitaBruta - custoProdutoTotal - impostoTotal - tarifaFreteSoma - embalagemTotal;
+      let lucroRs = 0;
+      let tarifaFreteSoma = tarifaComissaoTotal + freteTotal;
+
+      if (item.temLiquidoReal) {
+        tarifaFreteSoma = item.receitaBruta - item.liquidoReal;
+        lucroRs = item.liquidoReal - custoProdutoTotal - impostoTotal - embalagemTotal;
+      } else {
+        lucroRs = item.receitaBruta - custoProdutoTotal - impostoTotal - tarifaFreteSoma - embalagemTotal;
+      }
+
       const margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
 
       const vendasTotais = Math.max(mapaVendasAbc.get(skuKey) || 0, item.qtdVendida);
@@ -499,16 +518,21 @@ export default function LogisticaPage() {
     setDadosProcessados(resultados.sort((a: any, b: any) => b.receita_bruta - a.receita_bruta));
   };
 
-  // LOOP COM DETECÇÃO E RATEIO DE CARRINHO / PACOTE
+  // LOOP DE LEITURA COM REGRA ESTRITA DE "PACOTE"
   const executarMotorGeral = async () => {
     if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
     setLoading(true);
     salvarConfiguracoes();
 
     const colPacote = colCarrinhoVendas.trim().toUpperCase();
+    const temColunaPacote = colPacote !== "" && colPacote !== "ZZZ";
+
     const colSku = colSkuVendas.trim().toUpperCase();
     const colQtd = colQtdVendas.trim().toUpperCase();
     const colReceita = colReceitaVendas.trim().toUpperCase();
+    const colLiquido = colLiquidoVendas.trim().toUpperCase();
+    const temColunaLiquido = colLiquido !== "" && colLiquido !== "ZZZ";
+
     const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
     const mapaAgrupado = new Map<string, any>();
 
@@ -517,15 +541,16 @@ export default function LogisticaPage() {
       const row = matrizVendas[r];
       if (!row) { r++; continue; }
 
-      // 1. Verifica se a linha atual é um Carrinho / Pacote de Produtos
-      const textoPacote = String(row[colPacote] || "").trim();
-      const matchPacote = textoPacote.match(/(?:pacote|carrinho)\s*(?:de)?\s*(\d+)/i);
+      // 1. Verifica estritamente se há a palavra "Pacote" na coluna de identificação
+      const textoPacote = temColunaPacote ? String(row[colPacote] || "").trim() : "";
+      const matchPacote = temColunaPacote ? textoPacote.match(/pacote(?:\s+de|\s+com)?\s*(\d+)/i) : null;
 
       if (matchPacote) {
         const qtdItensPacote = parseInt(matchPacote[1], 10);
         const receitaPacote = parseNumero(row[colReceita]);
+        const liquidoPacote = temColunaLiquido ? parseNumero(row[colLiquido]) : 0;
 
-        // Captura os SKUs e quantidades das N linhas subsequentes
+        // Pega os N itens nas linhas subsequentes
         const itensDoPacote: any[] = [];
         for (let k = 1; k <= qtdItensPacote; k++) {
           if (r + k < matrizVendas.length) {
@@ -541,47 +566,56 @@ export default function LogisticaPage() {
 
         const totalUnidadesPacote = itensDoPacote.reduce((acc, it) => acc + it.qtd, 0) || 1;
 
-        // Rateia o faturamento do pacote entre os SKUs
+        // Rateia faturamento e líquido do pacote entre os SKUs
         for (const itemCh of itensDoPacote) {
           const fatiaReceita = (receitaPacote / totalUnidadesPacote) * itemCh.qtd;
+          const fatiaLiquido = (liquidoPacote / totalUnidadesPacote) * itemCh.qtd;
 
           if (mapaAgrupado.has(itemCh.skuKey)) {
-            const itemExistente = mapaAgrupado.get(itemCh.skuKey);
-            itemExistente.receitaBruta += fatiaReceita;
-            itemExistente.qtdVendida += itemCh.qtd;
+            const exist = mapaAgrupado.get(itemCh.skuKey);
+            exist.receitaBruta += fatiaReceita;
+            exist.liquidoReal += fatiaLiquido;
+            exist.qtdVendida += itemCh.qtd;
           } else {
             mapaAgrupado.set(itemCh.skuKey, {
               sku: itemCh.skuOrig,
               skuKey: itemCh.skuKey,
               receitaBruta: fatiaReceita,
+              liquidoReal: fatiaLiquido,
+              temLiquidoReal: temColunaLiquido,
               qtdVendida: itemCh.qtd
             });
           }
         }
 
-        // Pula as linhas filhas para evitar duplicações zeradas
+        // Pula a linha do pacote e as N linhas filhas
         r += (qtdItensPacote + 1);
       } else {
-        // 2. Venda individual padrão
+        // 2. Venda individual comum
         const skuOriginal = String(row[colSku] || "").trim();
         const skuKey = normalizarSku(skuOriginal);
+
         if (!skuKey || skuKey === "sku" || skuKey === "total") {
           r++;
           continue;
         }
 
         const receitaBruta = parseNumero(row[colReceita]);
+        const liquidoReal = temColunaLiquido ? parseNumero(row[colLiquido]) : 0;
         const qtdVendida = Math.max(1, parseNumero(row[colQtd]) || 1);
 
         if (mapaAgrupado.has(skuKey)) {
-          const itemExistente = mapaAgrupado.get(skuKey);
-          itemExistente.receitaBruta += receitaBruta;
-          itemExistente.qtdVendida += qtdVendida;
+          const exist = mapaAgrupado.get(skuKey);
+          exist.receitaBruta += receitaBruta;
+          exist.liquidoReal += liquidoReal;
+          exist.qtdVendida += qtdVendida;
         } else {
           mapaAgrupado.set(skuKey, {
             sku: skuOriginal,
             skuKey: skuKey,
             receitaBruta: receitaBruta,
+            liquidoReal: liquidoReal,
+            temLiquidoReal: temColunaLiquido,
             qtdVendida: qtdVendida
           });
         }
@@ -799,15 +833,15 @@ export default function LogisticaPage() {
                 )}
               </div>
 
-              {/* MAPEAMENTO DE COLUNAS COM DETECÇÃO DE CARRINHO */}
+              {/* MAPEAMENTO DE TODAS AS COLUNAS */}
               <div className={`p-5 rounded-xl border mb-6 ${modoLogistica === "full" ? "bg-purple-950/10 border-purple-900/20" : "bg-indigo-950/10 border-indigo-900/20"}`}>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                   <div>
                     <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label>
                     <input type="number" value={linhaVendas} onChange={e => setLinhaVendas(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-bold text-amber-400 uppercase mb-1" title="Coluna que possui textos como 'Pacote de 3 produtos'">Col. Carrinho / Pacote</label>
+                    <label className="block text-[9px] font-bold text-amber-400 uppercase mb-1" title="Coluna que possui textos como 'Pacote de 3 produtos'. Preencha ZZZ se não houver.">Col. Pacote / Carrinho</label>
                     <input type="text" value={colCarrinhoVendas} onChange={e => setColCarrinhoVendas(e.target.value.toUpperCase())} placeholder="D" className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
                   </div>
                   <div>
@@ -821,6 +855,10 @@ export default function LogisticaPage() {
                   <div>
                     <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Col. Receita Bruta</label>
                     <input type="text" value={colReceitaVendas} onChange={e => setColReceitaVendas(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-emerald-400 uppercase mb-1" title="Opcional. Coluna com o valor líquido pago pelo marketplace (ex: Col L). Use ZZZ para calcular por fórmula.">Col. Líquido Real (Opcional)</label>
+                    <input type="text" value={colLiquidoVendas} onChange={e => setColLiquidoVendas(e.target.value.toUpperCase())} placeholder="ZZZ" className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-center text-emerald-300 font-bold outline-none" />
                   </div>
                 </div>
               </div>
@@ -840,7 +878,7 @@ export default function LogisticaPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 text-center animate-in zoom-in duration-300">
                  <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
-                 <p className="text-sm text-slate-400 mb-4">O motor identificou os carrinhos e consolidou <strong>{dadosProcessados.length} SKUs</strong>.</p>
+                 <p className="text-sm text-slate-400 mb-4">O motor identificou os pacotes e consolidou <strong>{dadosProcessados.length} SKUs</strong>.</p>
                  <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" para armazenar os dados e ir para o Relatório Oficial.</p>
               </div>
             )}
