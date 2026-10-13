@@ -13,8 +13,8 @@ export default function Navbar() {
     { nome: "Cadastros", href: "/mapeamento" },
     { nome: "Adsense", href: "/ads" },
     { nome: "Devoluções", href: "/devolucoes" },
-    { nome: "Logística", href: "/full" },
-    { nome: "PLPs", href: "/plp" }, // <-- NOVA ABA AQUI
+    { nome: "FULL / FBA", href: "/full" },
+    { nome: "PLPs", href: "/plp" },
     { nome: "Agenda", href: "/agenda" }, 
     { nome: "Regras", href: "/regras" },
     { nome: "Uploads", href: "/upload" },
