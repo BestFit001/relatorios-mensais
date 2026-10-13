@@ -5,6 +5,36 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 
+const matrizFretes = [
+  { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
+  { atePeso: 0.5, faixas: { "78.99": 8.25, "99.99": 13.85, "119.99": 16.15, "149.99": 18.15, "199.99": 20.45, "200": 23.25 } },
+  { atePeso: 1.0, faixas: { "78.99": 8.45, "99.99": 14.45, "119.99": 16.85, "149.99": 19.05, "199.99": 21.35, "200": 24.45 } },
+  { atePeso: 1.5, faixas: { "78.99": 8.65, "99.99": 14.75, "119.99": 17.15, "149.99": 19.45, "199.99": 21.75, "200": 25.45 } },
+  { atePeso: 2.0, faixas: { "78.99": 8.75, "99.99": 15.05, "119.99": 17.65, "149.99": 19.85, "199.99": 22.25, "200": 25.55 } },
+  { atePeso: 3.0, faixas: { "78.99": 9.15, "99.99": 16.45, "119.99": 19.15, "149.99": 21.65, "199.99": 24.35, "200": 27.05 } },
+  { atePeso: 4.0, faixas: { "78.99": 9.75, "99.99": 17.85, "119.99": 20.75, "149.99": 23.35, "199.99": 26.35, "200": 29.25 } },
+  { atePeso: 5.0, faixas: { "78.99": 10.25, "99.99": 19.75, "119.99": 22.85, "149.99": 26.05, "199.99": 29.25, "200": 32.45 } },
+  { atePeso: 6.0, faixas: { "78.99": 10.35, "99.99": 25.95, "119.99": 29.15, "149.99": 33.35, "199.99": 36.45, "200": 40.85 } },
+  { atePeso: 7.0, faixas: { "78.99": 10.45, "99.99": 27.55, "119.99": 31.65, "149.99": 36.75, "199.99": 40.85, "200": 45.25 } },
+];
+
+function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura: number, comprimento: number): number {
+  if (pdv < 79.00) return 0.00;
+  const pesoVolumetrico = (altura * largura * comprimento) / 6000;
+  const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
+  let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
+  if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
+
+  let valorFrete = 0;
+  if (pdv < 79) valorFrete = linhaFrete.faixas["78.99"];
+  else if (pdv < 100) valorFrete = linhaFrete.faixas["99.99"];
+  else if (pdv < 120) valorFrete = linhaFrete.faixas["119.99"];
+  else if (pdv < 150) valorFrete = linhaFrete.faixas["149.99"];
+  else if (pdv < 200) valorFrete = linhaFrete.faixas["199.99"];
+  else valorFrete = linhaFrete.faixas["200"];
+  return valorFrete || 0;
+}
+
 function normalizarSku(valor: any) {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim();
@@ -61,6 +91,8 @@ export default function LogisticaPage() {
   const [mesSelecionado, setMesSelecionado] = useState("10/2026");
 
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
+  const [regrasMlSkuMap, setRegrasMlSkuMap] = useState<Map<string, any>>(new Map());
+  const [regrasMlMlbMap, setRegrasMlMlbMap] = useState<Map<string, any>>(new Map());
   const [tinyMap, setTinyMap] = useState<Map<string, number>>(new Map());
   const [lancamentosGravados, setLancamentosGravados] = useState<any[]>([]);
 
@@ -71,20 +103,22 @@ export default function LogisticaPage() {
   const [colQtdEstoque, setColQtdEstoque] = useState("X");
   const [previewEstoque, setPreviewEstoque] = useState<any[]>([]);
 
-  // Estados - Vendas (Mapeamento)
+  // Estados - Mapeamento de Vendas
   const [matrizVendas, setMatrizVendas] = useState<any[]>([]);
   const [linhaVendas, setLinhaVendas] = useState("7");
-  const [colPedidoVendas, setColPedidoVendas] = useState("A");     // Coluna A (N.º Venda)
+  const [colPedidoVendas, setColPedidoVendas] = useState("A");     // N.º Venda
   const [colCarrinhoVendas, setColCarrinhoVendas] = useState("D"); // Status / Pacote
   const [colSkuVendas, setColSkuVendas] = useState("X");           // SKU
+  const [colMlbVendas, setColMlbVendas] = useState("Y");           // MLB do Anúncio
   const [colQtdVendas, setColQtdVendas] = useState("H");           // Quantidade
-  const [colPdvVendas, setColPdvVendas] = useState("AC");          // PDV Item
+  const [colPdvVendas, setColPdvVendas] = useState("AC");          // Preço unitário do anúncio
   const [colLiquidoVendas, setColLiquidoVendas] = useState("T");   // Líquido ML
   const [colReceitaPacote, setColReceitaPacote] = useState("I");   // Receita Bruta Total
   const [colEntregaVendas, setColEntregaVendas] = useState("AS");  // Forma de Entrega (Flex)
 
   // Deduções e Taxas
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
+  const [comissaoPadrao, setComissaoPadrao] = useState("19");     // Comissão padrão caso não ache o MLB
   const [custoEmbalagem, setCustoEmbalagem] = useState("0.70");
   const [taxaFlex, setTaxaFlex] = useState("12.99");               // Débito do Flex
   const [metaDiasCobertura, setMetaDiasCobertura] = useState("45");
@@ -136,6 +170,25 @@ export default function LogisticaPage() {
     }
     setCustosMap(mapaC);
 
+    // Carrega a base com as regras de MLB (comissão, peso, dimensões)
+    from = 0; keep = true;
+    const mapaMlSku = new Map();
+    const mapaMlMlb = new Map();
+    while (keep) {
+      const { data } = await supabase.from('ml_anuncios_regras').select('*').range(from, from + step - 1);
+      if (data && data.length > 0) {
+        data.forEach((m: any) => {
+          if (m.sku) mapaMlSku.set(normalizarSku(m.sku), m);
+          if (m.mlb) mapaMlMlb.set(String(m.mlb).trim().toUpperCase(), m);
+          if (m.anuncio) mapaMlMlb.set(String(m.anuncio).trim().toUpperCase(), m);
+        });
+        from += step;
+        if (data.length < step) keep = false;
+      } else keep = false;
+    }
+    setRegrasMlSkuMap(mapaMlSku);
+    setRegrasMlMlbMap(mapaMlMlb);
+
     from = 0; keep = true;
     const mapaTiny = new Map();
     while (keep) {
@@ -172,12 +225,14 @@ export default function LogisticaPage() {
       if (p.colPedido) setColPedidoVendas(p.colPedido);
       if (p.colCarrinho) setColCarrinhoVendas(p.colCarrinho);
       if (p.colSku) setColSkuVendas(p.colSku);
+      if (p.colMlb) setColMlbVendas(p.colMlb);
       if (p.colQtd) setColQtdVendas(p.colQtd);
       if (p.colPdv) setColPdvVendas(p.colPdv);
       if (p.colLiquido) setColLiquidoVendas(p.colLiquido);
       if (p.colPacoteRec) setColReceitaPacote(p.colPacoteRec);
       if (p.colEntrega) setColEntregaVendas(p.colEntrega);
       if (p.taxaFlex) setTaxaFlex(p.taxaFlex);
+      if (p.comissao) setComissaoPadrao(p.comissao);
       if (p.imposto) setAliquotaImposto(p.imposto);
       if (p.metaDias) setMetaDiasCobertura(p.metaDias);
       if (p.embalagem) setCustoEmbalagem(p.embalagem);
@@ -191,10 +246,11 @@ export default function LogisticaPage() {
     const keyPrefix = modoLogistica === "full" ? "full_" : "padrao_";
     localStorage.setItem(`${keyPrefix}vendas_${canalSelecionado.toLowerCase()}`, JSON.stringify({
       linha: linhaVendas, colPedido: colPedidoVendas, colCarrinho: colCarrinhoVendas, 
-      colSku: colSkuVendas, colQtd: colQtdVendas, colPdv: colPdvVendas, colLiquido: colLiquidoVendas, 
-      colPacoteRec: colReceitaPacote, colEntrega: colEntregaVendas, taxaFlex: taxaFlex,
-      imposto: aliquotaImposto, metaDias: metaDiasCobertura, embalagem: custoEmbalagem, 
-      margemMin: margemMinimaPromissora, vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao
+      colSku: colSkuVendas, colMlb: colMlbVendas, colQtd: colQtdVendas, colPdv: colPdvVendas, 
+      colLiquido: colLiquidoVendas, colPacoteRec: colReceitaPacote, colEntrega: colEntregaVendas, 
+      taxaFlex: taxaFlex, comissao: comissaoPadrao, imposto: aliquotaImposto, metaDias: metaDiasCobertura, 
+      embalagem: custoEmbalagem, margemMin: margemMinimaPromissora, vendasMin: vendasMinimasPromissoras, 
+      tetoDev: tetoMaxDevolucao
     }));
   };
 
@@ -274,7 +330,7 @@ export default function LogisticaPage() {
     setSalvando(false);
   };
 
-  // MOTOR DE CÁLCULO E DIAGNÓSTICO
+  // MOTOR COM CONSULTA AO MLB NO CARRINHO
   const executarMotorGeral = async () => {
     if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
     setLoading(true);
@@ -285,6 +341,7 @@ export default function LogisticaPage() {
     const temColunaPacote = colPacote !== "" && colPacote !== "ZZZ";
 
     const colSku = colSkuVendas.trim().toUpperCase();
+    const colMlb = colMlbVendas.trim().toUpperCase();
     const colQtd = colQtdVendas.trim().toUpperCase();
     const colPdv = colPdvVendas.trim().toUpperCase();
     const colLiquido = colLiquidoVendas.trim().toUpperCase();
@@ -303,7 +360,7 @@ export default function LogisticaPage() {
 
     const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
 
-    // 1. Mapeia ordens com solicitação de alteração (captura receita/líquido original em caso de troca)
+    // 1. Mapeia ordens de alteração (para capturar valor financeiro em caso de troca)
     const pedidosAlteracaoMap = new Map<string, { receita: number; liquido: number; isFlex: boolean }>();
 
     for (let r = startRow; r < matrizVendas.length; r++) {
@@ -326,7 +383,7 @@ export default function LogisticaPage() {
       }
     }
 
-    // 2. Base de Devoluções e Curva ABC (Puxadas exclusivamente das abas oficiais do Supabase)
+    // 2. Base de Devoluções e Curva ABC
     const { data: dadosDevolucaoRaw } = await supabase.from("devolucoes").select("sku, data_retorno, canal");
     const mapaDevContagem = new Map<string, number>();
     if (dadosDevolucaoRaw) {
@@ -376,7 +433,7 @@ export default function LogisticaPage() {
       const formaEntregaTexto = temColunaEntrega ? String(row[colEntrega] || "") : "";
       const isFlex = formaEntregaTexto.toLowerCase().includes("flex");
 
-      // VERIFICAÇÃO ESTRITA: Se for devolução ou cancelamento, DESCONSIDERA COMO VENDIDO (Pula a linha)
+      // VERIFICAÇÃO ESTRITA: Se for devolução ou cancelamento, DESCONSIDERA COMO VENDIDO
       const cancelamentoValor = parseNumero(row["S"]);
       const isCanceladaOuDevolvida = 
         !isTroca && (
@@ -389,12 +446,11 @@ export default function LogisticaPage() {
         );
 
       if (isCanceladaOuDevolvida) {
-        // Pula totalmente. As devoluções reais vêm pela aba Devoluções do Supabase
         r++;
         continue;
       }
 
-      // CASO 1: TROCA DE PRODUTO (Custo e venda computados 1x)
+      // CASO 1: TROCA DE PRODUTO (Custo e faturamento computados 1x)
       if (isTroca) {
         const skuOrig = String(row[colSku] || "").trim();
         const skuKey = normalizarSku(skuOrig);
@@ -407,7 +463,6 @@ export default function LogisticaPage() {
 
             const infoOrig = pedidosAlteracaoMap.get(idPedido);
             
-            // Só computa se houver pedido de alteração correspondente neste mês
             if (infoOrig) {
               let receitaTroca = parseNumero(row[colPdv]);
               if (receitaTroca === 0) receitaTroca = infoOrig.receita;
@@ -438,55 +493,56 @@ export default function LogisticaPage() {
         continue;
       }
 
-      // CASO 2: PACOTE / CARRINHO
+      // CASO 2: PRODUTO EM CARRINHO (CONSULTA MLB E DESCONTA FRETE POR DIMENSÕES + COMISSÃO)
       if (matchPacote) {
         const qtdItensPacote = parseInt(matchPacote[1], 10);
-        let liquidoTotalPacote = parseNumero(row[colLiquido]);
-        let receitaTotalPacote = parseNumero(row[colRecPacote]);
-
-        if (isFlex) {
-          liquidoTotalPacote -= taxaFlexUnit;
-        }
-
-        const itensFilhos: any[] = [];
-        let somaPdvFilhos = 0;
 
         for (let k = 1; k <= qtdItensPacote; k++) {
           if (r + k < matrizVendas.length) {
             const chRow = matrizVendas[r + k];
             const chSkuOrig = String(chRow[colSku] || "").trim();
             const chSkuKey = normalizarSku(chSkuOrig);
+            const chMlbCod = String(chRow[colMlb] || "").trim().toUpperCase();
             const chQtd = Math.max(1, parseNumero(chRow[colQtd]) || 1);
             const chPdvUnit = parseNumero(chRow[colPdv]);
-            const chPdvTotal = chPdvUnit * chQtd;
+            const chReceitaTotalItem = chPdvUnit * chQtd;
 
             if (chSkuKey) {
-              itensFilhos.push({ skuOrig: chSkuOrig, skuKey: chSkuKey, qtd: chQtd, pdvTotal: chPdvTotal });
-              somaPdvFilhos += chPdvTotal;
+              // 1. Busca a regra do produto por MLB ou por SKU
+              const mlRegra = regrasMlMlbMap.get(chMlbCod) || regrasMlSkuMap.get(chSkuKey);
+
+              // 2. Comissão do MLB
+              const comissaoPct = mlRegra && Number(mlRegra.comissao) > 0 ? Number(mlRegra.comissao) : (Number(comissaoPadrao) || 19);
+              const tarifaFixaItem = chPdvUnit < 79.00 ? (6.50 * chQtd) : 0;
+              const comissaoTotalItem = (chReceitaTotalItem * (comissaoPct / 100)) + tarifaFixaItem;
+
+              // 3. Frete baseado nas dimensões e peso cadastrados no sistema
+              const pesoReal = mlRegra && Number(mlRegra.peso_real) > 0 ? Number(mlRegra.peso_real) : (Number(mlRegra?.peso) || 2.0);
+              const altura = mlRegra && Number(mlRegra.altura) > 0 ? Number(mlRegra.altura) : 10;
+              const largura = mlRegra && Number(mlRegra.largura) > 0 ? Number(mlRegra.largura) : 10;
+              const comprimento = mlRegra && Number(mlRegra.comprimento) > 0 ? Number(mlRegra.comprimento) : 10;
+
+              const freteUnitario = calcularFreteML(chPdvUnit, pesoReal, altura, largura, comprimento);
+              const freteTotalItem = freteUnitario * chQtd;
+
+              // Líquido real do item = PDV - Comissão - Frete por Dimensões
+              const liquidoCalculadoItem = chReceitaTotalItem - comissaoTotalItem - freteTotalItem;
+
+              if (mapaAgrupado.has(chSkuKey)) {
+                const exist = mapaAgrupado.get(chSkuKey);
+                exist.receitaBruta += chReceitaTotalItem;
+                exist.liquidoML += liquidoCalculadoItem;
+                exist.qtdVendida += chQtd;
+              } else {
+                mapaAgrupado.set(chSkuKey, {
+                  sku: chSkuOrig,
+                  skuKey: chSkuKey,
+                  receitaBruta: chReceitaTotalItem,
+                  liquidoML: liquidoCalculadoItem,
+                  qtdVendida: chQtd
+                });
+              }
             }
-          }
-        }
-
-        if (receitaTotalPacote === 0) receitaTotalPacote = somaPdvFilhos;
-        const baseDivisao = receitaTotalPacote || 1;
-
-        for (const f of itensFilhos) {
-          const fatiaProporcao = f.pdvTotal / baseDivisao;
-          const fatiaLiquidoML = liquidoTotalPacote * fatiaProporcao;
-
-          if (mapaAgrupado.has(f.skuKey)) {
-            const exist = mapaAgrupado.get(f.skuKey);
-            exist.receitaBruta += f.pdvTotal;
-            exist.liquidoML += fatiaLiquidoML;
-            exist.qtdVendida += f.qtd;
-          } else {
-            mapaAgrupado.set(f.skuKey, {
-              sku: f.skuOrig,
-              skuKey: f.skuKey,
-              receitaBruta: f.pdvTotal,
-              liquidoML: fatiaLiquidoML,
-              qtdVendida: f.qtd
-            });
           }
         }
 
@@ -533,7 +589,7 @@ export default function LogisticaPage() {
       }
     }
 
-    // Consolidação Financeira
+    // Consolidação Financeira Final
     const resultados = Array.from(mapaAgrupado.values()).map((item: any) => {
       const skuKey = item.skuKey;
       const custoData = custosMap.get(skuKey);
@@ -543,7 +599,7 @@ export default function LogisticaPage() {
       const estoqueCD = mapaEstoqueCD.get(skuKey) || 0;
       const estoqueCentral = tinyMap.get(skuKey) || 0;
 
-      // Devoluções puxadas estritamente da aba Devoluções do Supabase
+      // Devoluções estritamente vindas da aba Devoluções do Supabase
       const devolucoesTotais = mapaDevContagem.get(skuKey) || 0;
       const vendasTotais = Math.max(mapaVendasAbc.get(skuKey) || 0, item.qtdVendida);
       const taxaDevolucao = vendasTotais > 0 ? (devolucoesTotais / vendasTotais) * 100 : 0;
@@ -556,6 +612,7 @@ export default function LogisticaPage() {
         const impostoTotal = item.receitaBruta * (impostoPct / 100);
         const embalagemTotal = modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0;
 
+        // FÓRMULA FINAL: LÍQUIDO DO PRODUTO - CUSTO - IMPOSTO - EMBALAGEM
         lucroRs = item.liquidoML - custoProdutoTotal - impostoTotal - embalagemTotal;
         margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
       }
@@ -810,7 +867,7 @@ export default function LogisticaPage() {
               </div>
               
               {/* FILTROS SUPERIORES DE CUSTOS E VALIDAÇÃO */}
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Ficheiro de Vendas Brutas (Excel/CSV):</label>
                   <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUploadVendas} className={`w-full bg-slate-950 border border-slate-700 file:border-0 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer ${modoLogistica === "full" ? "file:bg-purple-600" : "file:bg-indigo-600"}`} />
@@ -818,6 +875,10 @@ export default function LogisticaPage() {
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Imposto (%):</label>
                   <input type="number" value={aliquotaImposto} onChange={e => setAliquotaImposto(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-emerald-400 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Comissão Padrão (%):</label>
+                  <input type="number" value={comissaoPadrao} onChange={e => setComissaoPadrao(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-amber-400 font-bold outline-none" title="Comissão caso o MLB não tenha regra específica" />
                 </div>
 
                 {modoLogistica === "full" ? (
@@ -832,8 +893,8 @@ export default function LogisticaPage() {
                       <input type="number" step="0.01" value={custoEmbalagem} onChange={e => setCustoEmbalagem(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-rose-400 outline-none" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Margem Promissora (%):</label>
-                      <input type="number" value={margemMinimaPromissora} onChange={e => setMargemMinimaPromissora(e.target.value)} placeholder="12" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-emerald-400 font-bold outline-none" />
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2" title="Custo debitado do líquido em envios Flex">Taxa Flex (R$):</label>
+                      <input type="number" step="0.01" value={taxaFlex} onChange={e => setTaxaFlex(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-amber-400 font-bold outline-none" />
                     </div>
                   </>
                 )}
@@ -841,7 +902,7 @@ export default function LogisticaPage() {
 
               {/* MAPEAMENTO DE COLUNAS */}
               <div className={`p-5 rounded-xl border mb-6 ${modoLogistica === "full" ? "bg-purple-950/10 border-purple-900/20" : "bg-indigo-950/10 border-indigo-900/20"}`}>
-                <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-9 gap-3">
                   <div>
                     <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label>
                     <input type="number" value={linhaVendas} onChange={e => setLinhaVendas(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
@@ -857,6 +918,10 @@ export default function LogisticaPage() {
                   <div>
                     <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Col. SKU</label>
                     <input type="text" value={colSkuVendas} onChange={e => setColSkuVendas(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-purple-400 uppercase mb-1" title="Coluna Y do ML com o código MLB">Col. MLB Anúncio</label>
+                    <input type="text" value={colMlbVendas} onChange={e => setColMlbVendas(e.target.value.toUpperCase())} placeholder="Y" className="w-full bg-slate-900 border border-purple-600/50 rounded-lg p-2 text-xs font-mono text-center text-purple-300 font-bold outline-none" />
                   </div>
                   <div>
                     <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Col. Qtd</label>
@@ -892,7 +957,7 @@ export default function LogisticaPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 text-center animate-in zoom-in duration-300">
                  <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
-                 <p className="text-sm text-slate-400 mb-4">O motor identificou pacotes, trocas e taxas Flex, desconsiderando cancelamentos/devoluções de vendas e consolidando <strong>{dadosProcessados.length} SKUs</strong>.</p>
+                 <p className="text-sm text-slate-400 mb-4">O motor identificou pacotes com frete por dimensões do MLB, trocas e taxas Flex, desconsiderando cancelamentos/devoluções de vendas e consolidando <strong>{dadosProcessados.length} SKUs</strong>.</p>
                  <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" para armazenar os dados e ir para o Relatório Oficial.</p>
               </div>
             )}
@@ -937,7 +1002,7 @@ export default function LogisticaPage() {
                   </div>
                   <div className="bg-rose-950/20 border border-rose-900/40 p-5 rounded-2xl shadow-lg">
                     <span className="block text-[10px] font-bold text-rose-400 uppercase mb-2">⛔ Sem Futuro (Cortar)</span>
-                    <span className="text-xl font-black text-rose-400">{dataSource.filter((i:any) => i.diagnostico?.includes("Sem Futuro") || i.diagnostico?.includes("Devolvido")).length} Produtos</span>
+                    <span className="text-xl font-black text-rose-400">{dataSource.filter((i:any) => i.diagnostico?.includes("Sem Futuro")).length} Produtos</span>
                   </div>
                   <div className="bg-amber-950/20 border border-amber-900/40 p-5 rounded-2xl shadow-lg">
                     <span className="block text-[10px] font-bold text-amber-400 uppercase mb-2">⚠️ Ponto de Atenção</span>
