@@ -267,7 +267,7 @@ export default function LogisticaPage() {
     setSalvando(false);
   };
 
-  // MOTOR DE CÁLCULO E DIAGNÓSTICO
+  // MOTOR COM TRATATIVA DE CANCELAMENTO / DEVOLUÇÃO
   const executarMotorGeral = async () => {
     if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
     setLoading(true);
@@ -290,7 +290,7 @@ export default function LogisticaPage() {
     const metaVendasMin = Number(vendasMinimasPromissoras) || 3;
     const limiteDevolucao = Number(tetoMaxDevolucao.replace(",", ".")) || 10;
 
-    // Puxa devoluções e Curva ABC para cruzamento
+    // 1. Puxa devoluções cadastradas no Supabase
     const { data: dadosDevolucaoRaw } = await supabase.from("devolucoes").select("sku, data_retorno, canal");
     const mapaDevContagem = new Map<string, number>();
     if (dadosDevolucaoRaw) {
@@ -323,9 +323,18 @@ export default function LogisticaPage() {
       const row = matrizVendas[r];
       if (!row) { r++; continue; }
 
-      // 1. Identificação de Pacote / Carrinho
+      // Status da linha
       const textoPacote = temColunaPacote ? String(row[colPacote] || "").trim() : "";
       const matchPacote = temColunaPacote ? textoPacote.match(/^pacote\s*(?:de)?\s*(\d+)/i) : null;
+
+      // Identifica se a linha foi cancelada / reembolsada na planilha
+      const statusTexto = textoPacote.toLowerCase();
+      const cancelamentoValor = parseNumero(row["S"]); // Coluna S do ML
+      const isCanceladaOuReembolsada = 
+        statusTexto.includes("cancelad") || 
+        statusTexto.includes("devolu") || 
+        statusTexto.includes("reembolso") || 
+        cancelamentoValor < 0;
 
       if (matchPacote) {
         const qtdItensPacote = parseInt(matchPacote[1], 10);
@@ -360,23 +369,30 @@ export default function LogisticaPage() {
 
           if (mapaAgrupado.has(f.skuKey)) {
             const exist = mapaAgrupado.get(f.skuKey);
-            exist.receitaBruta += f.pdvTotal;
-            exist.liquidoML += fatiaLiquidoML;
-            exist.qtdVendida += f.qtd;
+            if (!isCanceladaOuReembolsada) {
+              exist.receitaBruta += f.pdvTotal;
+              exist.liquidoML += fatiaLiquidoML;
+              exist.qtdVendida += f.qtd;
+            } else {
+              exist.qtdDevolucoesPlanilha += f.qtd;
+              if (fatiaLiquidoML < 0) exist.prejuizoFreteReverso += Math.abs(fatiaLiquidoML);
+            }
           } else {
             mapaAgrupado.set(f.skuKey, {
               sku: f.skuOrig,
               skuKey: f.skuKey,
-              receitaBruta: f.pdvTotal,
-              liquidoML: fatiaLiquidoML,
-              qtdVendida: f.qtd
+              receitaBruta: !isCanceladaOuReembolsada ? f.pdvTotal : 0,
+              liquidoML: !isCanceladaOuReembolsada ? fatiaLiquidoML : 0,
+              qtdVendida: !isCanceladaOuReembolsada ? f.qtd : 0,
+              qtdDevolucoesPlanilha: isCanceladaOuReembolsada ? f.qtd : 0,
+              prejuizoFreteReverso: (isCanceladaOuReembolsada && fatiaLiquidoML < 0) ? Math.abs(fatiaLiquidoML) : 0
             });
           }
         }
 
         r += (qtdItensPacote + 1);
       } else {
-        // 2. Venda Avulsa Padrão
+        // Venda Individual
         const skuOriginal = String(row[colSku] || "").trim();
         const skuKey = normalizarSku(skuOriginal);
 
@@ -385,35 +401,43 @@ export default function LogisticaPage() {
           continue;
         }
 
-        const qtdVendida = Math.max(1, parseNumero(row[colQtd]) || 1);
+        const qtdLinha = Math.max(1, parseNumero(row[colQtd]) || 1);
         let pdvUnit = parseNumero(row[colPdv]);
-        let receitaBruta = pdvUnit * qtdVendida;
+        let receitaBrutaLinha = pdvUnit * qtdLinha;
 
-        if (receitaBruta === 0 && colRecPacote) {
-          receitaBruta = parseNumero(row[colRecPacote]);
+        if (receitaBrutaLinha === 0 && colRecPacote) {
+          receitaBrutaLinha = parseNumero(row[colRecPacote]);
         }
 
-        const liquidoML = parseNumero(row[colLiquido]);
+        const liquidoMLLinha = parseNumero(row[colLiquido]);
 
         if (mapaAgrupado.has(skuKey)) {
           const exist = mapaAgrupado.get(skuKey);
-          exist.receitaBruta += receitaBruta;
-          exist.liquidoML += liquidoML;
-          exist.qtdVendida += qtdVendida;
+          if (!isCanceladaOuReembolsada) {
+            exist.receitaBruta += receitaBrutaLinha;
+            exist.liquidoML += liquidoMLLinha;
+            exist.qtdVendida += qtdLinha;
+          } else {
+            // Soma na contagem de devoluções
+            exist.qtdDevolucoesPlanilha += qtdLinha;
+            if (liquidoMLLinha < 0) exist.prejuizoFreteReverso += Math.abs(liquidoMLLinha);
+          }
         } else {
           mapaAgrupado.set(skuKey, {
             sku: skuOriginal,
             skuKey: skuKey,
-            receitaBruta: receitaBruta,
-            liquidoML: liquidoML,
-            qtdVendida: qtdVendida
+            receitaBruta: !isCanceladaOuReembolsada ? receitaBrutaLinha : 0,
+            liquidoML: !isCanceladaOuReembolsada ? liquidoMLLinha : 0,
+            qtdVendida: !isCanceladaOuReembolsada ? qtdLinha : 0,
+            qtdDevolucoesPlanilha: isCanceladaOuReembolsada ? qtdLinha : 0,
+            prejuizoFreteReverso: (isCanceladaOuReembolsada && liquidoMLLinha < 0) ? Math.abs(liquidoMLLinha) : 0
           });
         }
         r++;
       }
     }
 
-    // 3. Aplicação da fórmula financeira
+    // Consolidação financeira precisa
     const resultados = Array.from(mapaAgrupado.values()).map((item: any) => {
       const skuKey = item.skuKey;
       const custoData = custosMap.get(skuKey);
@@ -423,13 +447,28 @@ export default function LogisticaPage() {
       const estoqueCD = mapaEstoqueCD.get(skuKey) || 0;
       const estoqueCentral = tinyMap.get(skuKey) || 0;
 
-      const custoProdutoTotal = custoUnitario * item.qtdVendida;
-      const impostoTotal = item.receitaBruta * (impostoPct / 100);
-      const embalagemTotal = modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0;
+      // Total de devoluções soma a base do Supabase com as devoluções identificadas na planilha
+      const devolucoesTotais = (mapaDevContagem.get(skuKey) || 0) + (item.qtdDevolucoesPlanilha || 0);
+      const vendasTotais = Math.max(mapaVendasAbc.get(skuKey) || 0, item.qtdVendida + (item.qtdDevolucoesPlanilha || 0));
+      const taxaDevolucao = vendasTotais > 0 ? (devolucoesTotais / vendasTotais) * 100 : 0;
 
-      // FÓRMULA OFICIAL: LÍQUIDO DO CANAL - CUSTO - IMPOSTO - EMBALAGEM
-      const lucroRs = item.liquidoML - custoProdutoTotal - impostoTotal - embalagemTotal;
-      const margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
+      let lucroRs = 0;
+      let margemPct = 0;
+
+      if (item.qtdVendida > 0) {
+        const custoProdutoTotal = custoUnitario * item.qtdVendida;
+        const impostoTotal = item.receitaBruta * (impostoPct / 100);
+        const embalagemTotal = modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0;
+
+        // Abate o prejuízo de frete reverso de cancelamentos anteriores
+        lucroRs = item.liquidoML - custoProdutoTotal - impostoTotal - embalagemTotal - (item.prejuizoFreteReverso || 0);
+        margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
+      } else {
+        // Se todas as unidades foram devolvidas, a receita líquida é 0 e o prejuízo é apenas o frete retido
+        lucroRs = - (item.prejuizoFreteReverso || 0);
+        margemPct = 0;
+      }
+
       const tarifaFreteSoma = item.receitaBruta - item.liquidoML;
 
       // Indicadores Logísticos
@@ -459,26 +498,31 @@ export default function LogisticaPage() {
         statusEnvio = "⏸️ Não Enviar";
       }
 
-      // Diagnóstico Padrão
-      const vendasTotais = Math.max(mapaVendasAbc.get(skuKey) || 0, item.qtdVendida);
-      const totalDevolucoes = mapaDevContagem.get(skuKey) || 0;
-      const taxaDevolucao = vendasTotais > 0 ? (totalDevolucoes / vendasTotais) * 100 : 0;
-
+      // Diagnóstico Real
       let diagnostico = "";
-      if (margemPct <= 0) diagnostico = "❌ Prejuízo (Sem Futuro)";
-      else if (taxaDevolucao >= limiteDevolucao && totalDevolucoes > 0) diagnostico = "⛔ Alta Devolução (Sem Futuro)";
-      else if (margemPct >= metaMargemPromissora && item.qtdVendida >= metaVendasMin && taxaDevolucao < limiteDevolucao) diagnostico = "🌟 Promissor (Escalar)";
-      else if (margemPct < 10) diagnostico = "⚠️ Margem Baixa (Atenção)";
-      else diagnostico = "✅ Regular (Manter)";
+      if (item.qtdVendida === 0 && devolucoesTotais > 0) {
+        diagnostico = "⛔ 100% Devolvido";
+      } else if (margemPct <= 0) {
+        diagnostico = "❌ Prejuízo (Sem Futuro)";
+      } else if (taxaDevolucao >= limiteDevolucao && devolucoesTotais > 0) {
+        diagnostico = "⛔ Alta Devolução (Sem Futuro)";
+      } else if (margemPct >= metaMargemPromissora && item.qtdVendida >= metaVendasMin && taxaDevolucao < limiteDevolucao) {
+        diagnostico = "🌟 Promissor (Escalar)";
+      } else if (margemPct < 10) {
+        diagnostico = "⚠️ Margem Baixa (Atenção)";
+      } else {
+        diagnostico = "✅ Regular (Manter)";
+      }
 
       return {
         canal: canalSelecionado, mes_referencia: mesSelecionado, sku: item.sku, produto: produtoNome,
         qtd_vendida: item.qtdVendida, receita_bruta: item.receitaBruta, estoque_cd: estoqueCD, armazenagem: 0,
-        estoque_central: estoqueCentral, custo_produto: custoProdutoTotal, imposto: impostoTotal,
-        tarifa_frete: tarifaFreteSoma, embalagem: embalagemTotal, lucro_liquido: lucroRs, margem_pct: margemPct,
+        estoque_central: estoqueCentral, custo_produto: custoUnitario * item.qtdVendida, imposto: item.receitaBruta * (impostoPct / 100),
+        tarifa_frete: tarifaFreteSoma, embalagem: modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0, 
+        lucro_liquido: lucroRs, margem_pct: margemPct,
         vmd: Number(vmd.toFixed(2)), cobertura_dias: Number(coberturaAtual.toFixed(1)), sugestao_envio: qtdEnviar,
         status_estoque: statusEstoque, status_envio: statusEnvio, taxa_devolucao: taxaDevolucao,
-        qtd_devolucoes: totalDevolucoes, diagnostico: diagnostico
+        qtd_devolucoes: devolucoesTotais, diagnostico: diagnostico
       };
     });
 
@@ -486,7 +530,7 @@ export default function LogisticaPage() {
     setLoading(false);
   };
 
-  // SALVAR NO BANCO COM SEPARAÇÃO ESTRITA DE TABELAS
+  // GRAVAÇÃO NO BANCO COM HIGIENIZAÇÃO DE CAMPOS
   const salvarDadosNoBanco = async () => {
     if (dadosProcessados.length === 0) return;
     setSalvando(true);
@@ -497,7 +541,7 @@ export default function LogisticaPage() {
     let payloadFormatado: any[] = [];
 
     if (modoLogistica === "padrao") {
-      // APENAS AS COLUNAS VÁLIDAS DE vendas_padrao_lancamentos (SEM armazenagem)
+      // APENAS AS COLUNAS REAIS DE vendas_padrao_lancamentos (SEM armazenagem, vmd, estoque_cd)
       payloadFormatado = dadosProcessados.map((item: any) => ({
         canal: item.canal,
         mes_referencia: item.mes_referencia,
@@ -516,7 +560,6 @@ export default function LogisticaPage() {
         diagnostico: item.diagnostico || ""
       }));
     } else {
-      // APENAS AS COLUNAS VÁLIDAS DE full_lancamentos
       payloadFormatado = dadosProcessados.map((item: any) => ({
         canal: item.canal,
         mes_referencia: item.mes_referencia,
@@ -542,13 +585,6 @@ export default function LogisticaPage() {
 
     let res = await supabase.from(tabela).insert(payloadFormatado);
     
-    if (res.error && res.error.message.includes("margem_bruta_pct")) {
-      const fallbackPayload = payloadFormatado.map((item: any) => {
-        const copy = { ...item }; delete copy.margem_bruta_pct; return copy;
-      });
-      res = await supabase.from(tabela).insert(fallbackPayload);
-    }
-
     if (res.error) {
       alert("Erro ao gravar resultados no banco: " + res.error.message);
     } else {
@@ -777,7 +813,7 @@ export default function LogisticaPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 text-center animate-in zoom-in duration-300">
                  <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
-                 <p className="text-sm text-slate-400 mb-4">O motor identificou os pacotes e consolidou <strong>{dadosProcessados.length} SKUs</strong> com base no líquido real.</p>
+                 <p className="text-sm text-slate-400 mb-4">O motor identificou os pacotes, tratou as devoluções e consolidou <strong>{dadosProcessados.length} SKUs</strong>.</p>
                  <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" para armazenar os dados e ir para o Relatório Oficial.</p>
               </div>
             )}
@@ -822,7 +858,7 @@ export default function LogisticaPage() {
                   </div>
                   <div className="bg-rose-950/20 border border-rose-900/40 p-5 rounded-2xl shadow-lg">
                     <span className="block text-[10px] font-bold text-rose-400 uppercase mb-2">⛔ Sem Futuro (Cortar)</span>
-                    <span className="text-xl font-black text-rose-400">{dataSource.filter((i:any) => i.diagnostico?.includes("Sem Futuro")).length} Produtos</span>
+                    <span className="text-xl font-black text-rose-400">{dataSource.filter((i:any) => i.diagnostico?.includes("Sem Futuro") || i.diagnostico?.includes("Devolvido")).length} Produtos</span>
                   </div>
                   <div className="bg-amber-950/20 border border-amber-900/40 p-5 rounded-2xl shadow-lg">
                     <span className="block text-[10px] font-bold text-amber-400 uppercase mb-2">⚠️ Ponto de Atenção</span>
@@ -889,7 +925,7 @@ export default function LogisticaPage() {
                         <th className="p-3 text-right text-indigo-300">Vendas (Qtd)</th>
                         <th className="p-3 text-right">Receita (R$)</th>
                         <th className="p-3 text-right text-rose-300" title="Custo com caixa, fita, etc.">Custo Embalagem</th>
-                        <th className="p-3 text-right">Margem LÍQ.</th>
+                        <th className="p-3 text-right font-black text-emerald-400">Margem LÍQ.</th>
                         <th className="p-3 text-center text-amber-300">Qtd Devolvida</th>
                         <th className="p-3 text-center">Taxa Devolução</th>
                         <th className="p-3 text-center border-l border-slate-800 bg-slate-900">Veredicto (Diagnóstico)</th>
@@ -900,7 +936,7 @@ export default function LogisticaPage() {
                     {filtrados.map((item: any, idx: number) => {
                       let rowStyle = "";
                       if (modoLogistica === "padrao") {
-                        if (item.diagnostico?.includes("Sem Futuro")) rowStyle = "bg-rose-950/10";
+                        if (item.diagnostico?.includes("Sem Futuro") || item.diagnostico?.includes("Devolvido")) rowStyle = "bg-rose-950/10";
                         else if (item.diagnostico?.includes("Promissor")) rowStyle = "bg-emerald-950/10";
                       }
 
@@ -948,7 +984,7 @@ export default function LogisticaPage() {
                               </td>
                               <td className="p-3 text-center border-l border-slate-800/50 bg-slate-950/20">
                                 <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
-                                  item.diagnostico?.includes("Sem Futuro") ? 'bg-rose-900/30 text-rose-400 border border-rose-800/50' : 
+                                  item.diagnostico?.includes("Sem Futuro") || item.diagnostico?.includes("Devolvido") ? 'bg-rose-900/30 text-rose-400 border border-rose-800/50' : 
                                   item.diagnostico?.includes("Promissor") ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800/50' : 
                                   item.diagnostico?.includes("Atenção") ? 'bg-amber-900/30 text-amber-400 border border-amber-800/50' : 
                                   'text-slate-400 border border-slate-700'
