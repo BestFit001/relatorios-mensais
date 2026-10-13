@@ -64,14 +64,14 @@ export default function LogisticaPage() {
   const [tinyMap, setTinyMap] = useState<Map<string, number>>(new Map());
   const [lancamentosGravados, setLancamentosGravados] = useState<any[]>([]);
 
-  // Estados - Estoque (Full)
+  // Estados - Estoque (Apenas Full)
   const [matrizEstoque, setMatrizEstoque] = useState<any[]>([]);
   const [linhaEstoque, setLinhaEstoque] = useState("13");
   const [colSkuEstoque, setColSkuEstoque] = useState("D");
   const [colQtdEstoque, setColQtdEstoque] = useState("X");
   const [previewEstoque, setPreviewEstoque] = useState<any[]>([]);
 
-  // Estados - Vendas (Mapeamento)
+  // Estados - Mapeamento de Vendas
   const [matrizVendas, setMatrizVendas] = useState<any[]>([]);
   const [linhaVendas, setLinhaVendas] = useState("7");
   const [colPedidoVendas, setColPedidoVendas] = useState("A");     // Coluna A (N.º Venda)
@@ -81,10 +81,12 @@ export default function LogisticaPage() {
   const [colPdvVendas, setColPdvVendas] = useState("AC");          // PDV Item
   const [colLiquidoVendas, setColLiquidoVendas] = useState("T");   // Líquido ML
   const [colReceitaPacote, setColReceitaPacote] = useState("I");   // Receita Bruta Total
+  const [colEntregaVendas, setColEntregaVendas] = useState("AS");  // Forma de Entrega (Flex)
 
-  // Deduções
+  // Deduções e Taxas
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
   const [custoEmbalagem, setCustoEmbalagem] = useState("0.70");
+  const [taxaFlex, setTaxaFlex] = useState("12.99");               // Débito do Flex
   const [metaDiasCobertura, setMetaDiasCobertura] = useState("45");
 
   // Diagnóstico
@@ -174,6 +176,8 @@ export default function LogisticaPage() {
       if (p.colPdv) setColPdvVendas(p.colPdv);
       if (p.colLiquido) setColLiquidoVendas(p.colLiquido);
       if (p.colPacoteRec) setColReceitaPacote(p.colPacoteRec);
+      if (p.colEntrega) setColEntregaVendas(p.colEntrega);
+      if (p.taxaFlex) setTaxaFlex(p.taxaFlex);
       if (p.imposto) setAliquotaImposto(p.imposto);
       if (p.metaDias) setMetaDiasCobertura(p.metaDias);
       if (p.embalagem) setCustoEmbalagem(p.embalagem);
@@ -188,9 +192,9 @@ export default function LogisticaPage() {
     localStorage.setItem(`${keyPrefix}vendas_${canalSelecionado.toLowerCase()}`, JSON.stringify({
       linha: linhaVendas, colPedido: colPedidoVendas, colCarrinho: colCarrinhoVendas, 
       colSku: colSkuVendas, colQtd: colQtdVendas, colPdv: colPdvVendas, colLiquido: colLiquidoVendas, 
-      colPacoteRec: colReceitaPacote, imposto: aliquotaImposto, metaDias: metaDiasCobertura, 
-      embalagem: custoEmbalagem, margemMin: margemMinimaPromissora, vendasMin: vendasMinimasPromissoras, 
-      tetoDev: tetoMaxDevolucao
+      colPacoteRec: colReceitaPacote, colEntrega: colEntregaVendas, taxaFlex: taxaFlex,
+      imposto: aliquotaImposto, metaDias: metaDiasCobertura, embalagem: custoEmbalagem, 
+      margemMin: margemMinimaPromissora, vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao
     }));
   };
 
@@ -270,7 +274,7 @@ export default function LogisticaPage() {
     setSalvando(false);
   };
 
-  // MOTOR COM INTELIGÊNCIA DE TROCA E RATEIO DE PACOTES
+  // MOTOR DE CÁLCULO COM FLEX E TROCAS CORRIGIDAS
   const executarMotorGeral = async () => {
     if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
     setLoading(true);
@@ -285,18 +289,22 @@ export default function LogisticaPage() {
     const colPdv = colPdvVendas.trim().toUpperCase();
     const colLiquido = colLiquidoVendas.trim().toUpperCase();
     const colRecPacote = colReceitaPacote.trim().toUpperCase();
+    const colEntrega = colEntregaVendas.trim().toUpperCase();
+    const temColunaEntrega = colEntrega !== "" && colEntrega !== "ZZZ";
 
     const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
     const embalagemUnit = Number(custoEmbalagem.replace(",", ".")) || 0;
+    const taxaFlexUnit = Number(taxaFlex.replace(",", ".")) || 12.99;
     const metaDias = Number(metaDiasCobertura) || 45;
 
     const metaMargemPromissora = Number(margemMinimaPromissora.replace(",", ".")) || 12;
     const metaVendasMin = Number(vendasMinimasPromissoras) || 3;
     const limiteDevolucao = Number(tetoMaxDevolucao.replace(",", ".")) || 10;
 
-    // 1. Mapeia trocas e pedidos com alteração de antemão
-    const pedidosAlteracaoMap = new Map<string, { receita: number; liquido: number }>();
     const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
+
+    // 1. Mapeia ordens que tiveram solicitação de alteração (captura o dinheiro da venda original)
+    const pedidosAlteracaoMap = new Map<string, { receita: number; liquido: number; isFlex: boolean }>();
 
     for (let r = startRow; r < matrizVendas.length; r++) {
       const row = matrizVendas[r];
@@ -306,12 +314,19 @@ export default function LogisticaPage() {
 
       if (idPed && status.includes("solicitação de alteração")) {
         const rec = parseNumero(row[colRecPacote]);
-        const liq = parseNumero(row[colLiquido]);
-        pedidosAlteracaoMap.set(idPed, { receita: rec, liquido: liq });
+        let liq = parseNumero(row[colLiquido]);
+        const forma = temColunaEntrega ? String(row[colEntrega] || "") : "";
+        const isFlex = forma.toLowerCase().includes("flex");
+
+        if (isFlex) {
+          liq = liq - taxaFlexUnit; // Debita R$ 12,99 no Flex
+        }
+
+        pedidosAlteracaoMap.set(idPed, { receita: rec, liquido: liq, isFlex });
       }
     }
 
-    // 2. Devoluções e Curva ABC
+    // 2. Base de Devoluções e Curva ABC
     const { data: dadosDevolucaoRaw } = await supabase.from("devolucoes").select("sku, data_retorno, canal");
     const mapaDevContagem = new Map<string, number>();
     if (dadosDevolucaoRaw) {
@@ -337,7 +352,7 @@ export default function LogisticaPage() {
     if (estData) estData.forEach((e: any) => mapaEstoqueCD.set(e.sku, Number(e.estoque)));
 
     const mapaAgrupado = new Map<string, any>();
-    const trocasJaProcessadasPorPedido = new Set<string>();
+    const trocasJaProcessadas = new Set<string>();
 
     let r = startRow;
     while (r < matrizVendas.length) {
@@ -348,19 +363,20 @@ export default function LogisticaPage() {
       const textoStatus = temColunaPacote ? String(row[colPacote] || "").trim() : "";
       const statusLower = textoStatus.toLowerCase();
 
-      // Ignora a linha mãe da alteração porque ela não tem SKU (o dinheiro dela é puxado pela linha da troca abaixo)
+      // Pula a linha de alteração original (o valor foi associado à troca)
       if (statusLower.includes("solicitação de alteração")) {
         r++;
         continue;
       }
 
-      // Identifica se é uma linha de Troca
       const isTroca = statusLower.includes("troca");
-
-      // Identifica se é um Pacote / Carrinho
       const matchPacote = temColunaPacote ? textoStatus.match(/^pacote\s*(?:de)?\s*(\d+)/i) : null;
 
-      // Identifica se foi cancelada/devolvida
+      // Forma de entrega Flex
+      const formaEntregaTexto = temColunaEntrega ? String(row[colEntrega] || "") : "";
+      const isFlex = formaEntregaTexto.toLowerCase().includes("flex");
+
+      // Cancelamentos e Reembolsos
       const cancelamentoValor = parseNumero(row["S"]);
       const isCanceladaOuDevolvida = 
         !isTroca && (
@@ -370,29 +386,35 @@ export default function LogisticaPage() {
           cancelamentoValor < 0
         );
 
+      // CASO 1: TROCA DE PRODUTO
       if (isTroca) {
         const skuOrig = String(row[colSku] || "").trim();
         const skuKey = normalizarSku(skuOrig);
 
         if (skuKey) {
-          // Se já computamos a troca desse pedido, não debita novamente (custo debitado apenas 1x)
           const chaveTroca = `${idPedido}_${skuKey}`;
-          if (!trocasJaProcessadasPorPedido.has(chaveTroca)) {
-            trocasJaProcessadasPorPedido.add(chaveTroca);
 
-            // Busca o dinheiro da venda original no mapa
-            const infoOriginal = pedidosAlteracaoMap.get(idPedido);
+          // Se a troca deste pedido já foi processada, não soma novamente
+          if (!trocasJaProcessadas.has(chaveTroca)) {
+            trocasJaProcessadas.add(chaveTroca);
+
+            const infoOrig = pedidosAlteracaoMap.get(idPedido);
             let receitaTroca = parseNumero(row[colPdv]);
-            if (receitaTroca === 0 && infoOriginal) receitaTroca = infoOriginal.receita;
+            if (receitaTroca === 0 && infoOrig) receitaTroca = infoOrig.receita;
 
             let liquidoTroca = parseNumero(row[colLiquido]);
-            if (liquidoTroca === 0 && infoOriginal) liquidoTroca = infoOriginal.liquido;
+            if (liquidoTroca === 0 && infoOrig) liquidoTroca = infoOrig.liquido;
+
+            // Se for Flex e não veio da linha mãe já descontada
+            if (isFlex && !infoOrig?.isFlex) {
+              liquidoTroca -= taxaFlexUnit;
+            }
 
             if (mapaAgrupado.has(skuKey)) {
               const exist = mapaAgrupado.get(skuKey);
               exist.receitaBruta += receitaTroca;
               exist.liquidoML += liquidoTroca;
-              exist.qtdVendida += 1; // 1 unidade líquida
+              exist.qtdVendida += 1; // Apenas 1 unidade líquida
             } else {
               mapaAgrupado.set(skuKey, {
                 sku: skuOrig,
@@ -410,10 +432,15 @@ export default function LogisticaPage() {
         continue;
       }
 
+      // CASO 2: PACOTE / CARRINHO
       if (matchPacote) {
         const qtdItensPacote = parseInt(matchPacote[1], 10);
-        const liquidoTotalPacote = parseNumero(row[colLiquido]);
+        let liquidoTotalPacote = parseNumero(row[colLiquido]);
         let receitaTotalPacote = parseNumero(row[colRecPacote]);
+
+        if (isFlex) {
+          liquidoTotalPacote -= taxaFlexUnit; // Debita R$ 12,99 no envio Flex do pacote
+        }
 
         const itensFilhos: any[] = [];
         let somaPdvFilhos = 0;
@@ -466,7 +493,7 @@ export default function LogisticaPage() {
 
         r += (qtdItensPacote + 1);
       } else {
-        // Venda Avulsa
+        // CASO 3: VENDA AVULSA PADRÃO
         const skuOriginal = String(row[colSku] || "").trim();
         const skuKey = normalizarSku(skuOriginal);
 
@@ -483,7 +510,12 @@ export default function LogisticaPage() {
           receitaBrutaLinha = parseNumero(row[colRecPacote]);
         }
 
-        const liquidoMLLinha = parseNumero(row[colLiquido]);
+        let liquidoMLLinha = parseNumero(row[colLiquido]);
+
+        // Se for Flex, desconta R$ 12,99
+        if (isFlex) {
+          liquidoMLLinha -= taxaFlexUnit;
+        }
 
         if (mapaAgrupado.has(skuKey)) {
           const exist = mapaAgrupado.get(skuKey);
@@ -510,7 +542,7 @@ export default function LogisticaPage() {
       }
     }
 
-    // Consolidação com custo debitado apenas 1x
+    // Consolidação Financeira
     const resultados = Array.from(mapaAgrupado.values()).map((item: any) => {
       const skuKey = item.skuKey;
       const custoData = custosMap.get(skuKey);
@@ -528,7 +560,6 @@ export default function LogisticaPage() {
       let margemPct = 0;
 
       if (item.qtdVendida > 0) {
-        // CUSTO DEBITADO EXATAMENTE 1X POR UNIDADE LÍQUIDA VENDIDA
         const custoProdutoTotal = custoUnitario * item.qtdVendida;
         const impostoTotal = item.receitaBruta * (impostoPct / 100);
         const embalagemTotal = modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0;
@@ -792,7 +823,7 @@ export default function LogisticaPage() {
               </div>
               
               {/* FILTROS SUPERIORES DE CUSTOS E VALIDAÇÃO */}
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Ficheiro de Vendas Brutas (Excel/CSV):</label>
                   <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUploadVendas} className={`w-full bg-slate-950 border border-slate-700 file:border-0 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer ${modoLogistica === "full" ? "file:bg-purple-600" : "file:bg-indigo-600"}`} />
@@ -814,6 +845,10 @@ export default function LogisticaPage() {
                       <input type="number" step="0.01" value={custoEmbalagem} onChange={e => setCustoEmbalagem(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-rose-400 outline-none" />
                     </div>
                     <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2" title="Custo descontado do líquido em envios Flex">Taxa Flex (R$):</label>
+                      <input type="number" step="0.01" value={taxaFlex} onChange={e => setTaxaFlex(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-amber-400 font-bold outline-none" />
+                    </div>
+                    <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Margem Promissora (%):</label>
                       <input type="number" value={margemMinimaPromissora} onChange={e => setMargemMinimaPromissora(e.target.value)} placeholder="12" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-emerald-400 font-bold outline-none" />
                     </div>
@@ -823,17 +858,17 @@ export default function LogisticaPage() {
 
               {/* MAPEAMENTO DE COLUNAS */}
               <div className={`p-5 rounded-xl border mb-6 ${modoLogistica === "full" ? "bg-purple-950/10 border-purple-900/20" : "bg-indigo-950/10 border-indigo-900/20"}`}>
-                <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
                   <div>
                     <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label>
                     <input type="number" value={linhaVendas} onChange={e => setLinhaVendas(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-bold text-indigo-400 uppercase mb-1" title="Coluna A do ML com o N.º de Venda / Pedido">Col. N.º Venda (Col A)</label>
+                    <label className="block text-[9px] font-bold text-indigo-400 uppercase mb-1" title="Coluna A do ML com o N.º de Venda">Col. N.º Venda</label>
                     <input type="text" value={colPedidoVendas} onChange={e => setColPedidoVendas(e.target.value.toUpperCase())} placeholder="A" className="w-full bg-slate-900 border border-indigo-600/50 rounded-lg p-2 text-xs font-mono text-center text-indigo-300 font-bold outline-none" />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-bold text-amber-400 uppercase mb-1" title="Coluna D do ML com o texto do Pacote ou Status">Col. Status / Pacote</label>
+                    <label className="block text-[9px] font-bold text-amber-400 uppercase mb-1" title="Coluna D do ML com 'Pacote de X produtos' ou Status">Col. Status/Pacote</label>
                     <input type="text" value={colCarrinhoVendas} onChange={e => setColCarrinhoVendas(e.target.value.toUpperCase())} placeholder="D" className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
                   </div>
                   <div>
@@ -845,12 +880,16 @@ export default function LogisticaPage() {
                     <input type="text" value={colQtdVendas} onChange={e => setColQtdVendas(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-bold text-cyan-400 uppercase mb-1" title="Coluna AC do ML com o preço unitário do item">Col. PDV Item (Col AC)</label>
+                    <label className="block text-[9px] font-bold text-cyan-400 uppercase mb-1" title="Coluna AC do ML com o preço unitário do item">Col. PDV (Col AC)</label>
                     <input type="text" value={colPdvVendas} onChange={e => setColPdvVendas(e.target.value.toUpperCase())} placeholder="AC" className="w-full bg-slate-900 border border-cyan-600/50 rounded-lg p-2 text-xs font-mono text-center text-cyan-300 font-bold outline-none" />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-bold text-emerald-400 uppercase mb-1" title="Coluna T do ML com o valor líquido creditado">Col. Líquido ML (Col T)</label>
+                    <label className="block text-[9px] font-bold text-emerald-400 uppercase mb-1" title="Coluna T do ML com o valor líquido recebido">Col. Líquido (Col T)</label>
                     <input type="text" value={colLiquidoVendas} onChange={e => setColLiquidoVendas(e.target.value.toUpperCase())} placeholder="T" className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-center text-emerald-300 font-bold outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-amber-300 uppercase mb-1" title="Coluna AS do ML com 'Mercado Envios Flex'. Use ZZZ se não houver.">Col. Entrega (Flex)</label>
+                    <input type="text" value={colEntregaVendas} onChange={e => setColEntregaVendas(e.target.value.toUpperCase())} placeholder="AS" className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
                   </div>
                 </div>
               </div>
@@ -870,7 +909,7 @@ export default function LogisticaPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 text-center animate-in zoom-in duration-300">
                  <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
-                 <p className="text-sm text-slate-400 mb-4">O motor identificou pacotes e trocas, consolidando <strong>{dadosProcessados.length} SKUs</strong>.</p>
+                 <p className="text-sm text-slate-400 mb-4">O motor identificou pacotes, trocas e taxas Flex, consolidando <strong>{dadosProcessados.length} SKUs</strong>.</p>
                  <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" para armazenar os dados e ir para o Relatório Oficial.</p>
               </div>
             )}
