@@ -24,13 +24,25 @@ export default function Navbar() {
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
     if (usuarioLogado) {
-      const usuario = JSON.parse(usuarioLogado);
-      const permitidas = usuario.paginas_permitidas || [];
-      setPaginasPermitidas(permitidas);
+      try {
+        const usuario = JSON.parse(usuarioLogado);
+        
+        // Se for admin, garante acesso automático a todas as abas (inclusive a nova PLPs)
+        let permitidas: string[] = [];
+        if (usuario.perfil === "admin") {
+          permitidas = abas.map(a => a.href);
+        } else {
+          permitidas = usuario.paginas_permitidas || [];
+        }
 
-      if (permitidas.length > 0 && !permitidas.includes(pathname)) {
-        alert("🔒 Acesso Negado: Não tem permissão para aceder a esta página.");
-        router.push(permitidas[0] || "/");
+        setPaginasPermitidas(permitidas);
+
+        if (permitidas.length > 0 && !permitidas.includes(pathname)) {
+          alert("🔒 Acesso Negado: Não tem permissão para aceder a esta página.");
+          router.push(permitidas[0] || "/");
+        }
+      } catch (e) {
+        router.push("/login");
       }
     } else {
       router.push("/login");
