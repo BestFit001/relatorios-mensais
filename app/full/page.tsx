@@ -5,36 +5,6 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 
-const matrizFretes = [
-  { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
-  { atePeso: 0.5, faixas: { "78.99": 8.25, "99.99": 13.85, "119.99": 16.15, "149.99": 18.15, "199.99": 20.45, "200": 23.25 } },
-  { atePeso: 1.0, faixas: { "78.99": 8.45, "99.99": 14.45, "119.99": 16.85, "149.99": 19.05, "199.99": 21.35, "200": 24.45 } },
-  { atePeso: 1.5, faixas: { "78.99": 8.65, "99.99": 14.75, "119.99": 17.15, "149.99": 19.45, "199.99": 21.75, "200": 25.45 } },
-  { atePeso: 2.0, faixas: { "78.99": 8.75, "99.99": 15.05, "119.99": 17.65, "149.99": 19.85, "199.99": 22.25, "200": 25.55 } },
-  { atePeso: 3.0, faixas: { "78.99": 9.15, "99.99": 16.45, "119.99": 19.15, "149.99": 21.65, "199.99": 24.35, "200": 27.05 } },
-  { atePeso: 4.0, faixas: { "78.99": 9.75, "99.99": 17.85, "119.99": 20.75, "149.99": 23.35, "199.99": 26.35, "200": 29.25 } },
-  { atePeso: 5.0, faixas: { "78.99": 10.25, "99.99": 19.75, "119.99": 22.85, "149.99": 26.05, "199.99": 29.25, "200": 32.45 } },
-  { atePeso: 6.0, faixas: { "78.99": 10.35, "99.99": 25.95, "119.99": 29.15, "149.99": 33.35, "199.99": 36.45, "200": 40.85 } },
-  { atePeso: 7.0, faixas: { "78.99": 10.45, "99.99": 27.55, "119.99": 31.65, "149.99": 36.75, "199.99": 40.85, "200": 45.25 } },
-];
-
-function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura: number, comprimento: number): number {
-  if (pdv < 79.00) return 0.00;
-  const pesoVolumetrico = (altura * largura * comprimento) / 6000;
-  const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
-  let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
-  if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
-
-  let valorFrete = 0;
-  if (pdv < 79) valorFrete = linhaFrete.faixas["78.99"];
-  else if (pdv < 100) valorFrete = linhaFrete.faixas["99.99"];
-  else if (pdv < 120) valorFrete = linhaFrete.faixas["119.99"];
-  else if (pdv < 150) valorFrete = linhaFrete.faixas["149.99"];
-  else if (pdv < 200) valorFrete = linhaFrete.faixas["199.99"];
-  else valorFrete = linhaFrete.faixas["200"];
-  return valorFrete || 0;
-}
-
 function normalizarSku(valor: any) {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim();
@@ -82,7 +52,7 @@ export default function LogisticaPage() {
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
-  const [modoLogistica, setModoLogistica] = useState<"full" | "padrao">("full");
+  const [modoLogistica, setModoLogistica] = useState<"full" | "padrao">("padrao");
   const [subAba, setSubAba] = useState<"estoque" | "vendas" | "relatorio">("vendas");
 
   const [canais, setCanais] = useState<string[]>([]);
@@ -91,32 +61,30 @@ export default function LogisticaPage() {
   const [mesSelecionado, setMesSelecionado] = useState("10/2026");
 
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
-  const [regrasMlMap, setRegrasMlMap] = useState<Map<string, any>>(new Map());
-  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
   const [tinyMap, setTinyMap] = useState<Map<string, number>>(new Map());
   const [lancamentosGravados, setLancamentosGravados] = useState<any[]>([]);
 
-  // Estados - Estoque
+  // Estados - Estoque (Apenas Full)
   const [matrizEstoque, setMatrizEstoque] = useState<any[]>([]);
   const [linhaEstoque, setLinhaEstoque] = useState("13");
   const [colSkuEstoque, setColSkuEstoque] = useState("D");
   const [colQtdEstoque, setColQtdEstoque] = useState("X");
   const [previewEstoque, setPreviewEstoque] = useState<any[]>([]);
 
-  // Estados - Mapeamento de Vendas
+  // Estados - Vendas (Mapeamento)
   const [matrizVendas, setMatrizVendas] = useState<any[]>([]);
   const [linhaVendas, setLinhaVendas] = useState("7");
   const [colCarrinhoVendas, setColCarrinhoVendas] = useState("D"); // Identificador de Pacote
-  const [colSkuVendas, setColSkuVendas] = useState("W");
-  const [colQtdVendas, setColQtdVendas] = useState("H");
-  const [colReceitaVendas, setColReceitaVendas] = useState("I");
-  const [colLiquidoVendas, setColLiquidoVendas] = useState("ZZZ"); // Coluna de Líquido Real (opcional)
+  const [colSkuVendas, setColSkuVendas] = useState("X");           // SKU
+  const [colQtdVendas, setColQtdVendas] = useState("H");           // Quantidade
+  const [colPdvVendas, setColPdvVendas] = useState("AC");          // PDV Fracionado por item
+  const [colLiquidoVendas, setColLiquidoVendas] = useState("T");   // Líquido Real recebido do ML
+  const [colReceitaPacote, setColReceitaPacote] = useState("I");   // Receita bruta total do pacote
 
-  // Custos e Deduções
+  // Deduções
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
-  const [comissaoPadrao, setComissaoPadrao] = useState("19"); // ML Premium
-  const [metaDiasCobertura, setMetaDiasCobertura] = useState("45");
   const [custoEmbalagem, setCustoEmbalagem] = useState("0.70");
+  const [metaDiasCobertura, setMetaDiasCobertura] = useState("45");
 
   // Diagnóstico
   const [margemMinimaPromissora, setMargemMinimaPromissora] = useState("12");
@@ -166,21 +134,6 @@ export default function LogisticaPage() {
     setCustosMap(mapaC);
 
     from = 0; keep = true;
-    const mapaMl = new Map();
-    while (keep) {
-      const { data } = await supabase.from('ml_anuncios_regras').select('*').range(from, from + step - 1);
-      if (data && data.length > 0) {
-        data.forEach((m: any) => mapaMl.set(normalizarSku(m.sku), m)); 
-        from += step;
-        if (data.length < step) keep = false;
-      } else keep = false;
-    }
-    setRegrasMlMap(mapaMl);
-
-    const { data: tarData } = await supabase.from('config_regras_tarifacao').select('*').order('id');
-    if (tarData) setRegrasTarifacao(tarData);
-
-    from = 0; keep = true;
     const mapaTiny = new Map();
     while (keep) {
       const { data } = await supabase.from('cadastros_base_tiny').select('sku, estoque').range(from, from + step - 1);
@@ -216,10 +169,10 @@ export default function LogisticaPage() {
       if (p.colCarrinho) setColCarrinhoVendas(p.colCarrinho);
       if (p.colSku) setColSkuVendas(p.colSku);
       if (p.colQtd) setColQtdVendas(p.colQtd);
-      if (p.colReceita) setColReceitaVendas(p.colReceita);
+      if (p.colPdv) setColPdvVendas(p.colPdv);
       if (p.colLiquido) setColLiquidoVendas(p.colLiquido);
+      if (p.colPacoteRec) setColReceitaPacote(p.colPacoteRec);
       if (p.imposto) setAliquotaImposto(p.imposto);
-      if (p.comissao) setComissaoPadrao(p.comissao);
       if (p.metaDias) setMetaDiasCobertura(p.metaDias);
       if (p.embalagem) setCustoEmbalagem(p.embalagem);
       if (p.margemMin) setMargemMinimaPromissora(p.margemMin);
@@ -232,51 +185,10 @@ export default function LogisticaPage() {
     const keyPrefix = modoLogistica === "full" ? "full_" : "padrao_";
     localStorage.setItem(`${keyPrefix}vendas_${canalSelecionado.toLowerCase()}`, JSON.stringify({
       linha: linhaVendas, colCarrinho: colCarrinhoVendas, colSku: colSkuVendas, colQtd: colQtdVendas, 
-      colReceita: colReceitaVendas, colLiquido: colLiquidoVendas, imposto: aliquotaImposto, comissao: comissaoPadrao, 
-      metaDias: metaDiasCobertura, embalagem: custoEmbalagem, margemMin: margemMinimaPromissora, 
-      vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao
+      colPdv: colPdvVendas, colLiquido: colLiquidoVendas, colPacoteRec: colReceitaPacote,
+      imposto: aliquotaImposto, metaDias: metaDiasCobertura, embalagem: custoEmbalagem, 
+      margemMin: margemMinimaPromissora, vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao
     }));
-  };
-
-  const calcularCustoCanal = (canal: string, precoUnit: number, receita: number, unidades: number, skuKey: string) => {
-    let comissaoPct = Number(comissaoPadrao) || 19;
-    let tarifaFixa = 0;
-    let freteUnitario = 0;
-    const isMercadoLivre = canal.toLowerCase().includes("mercado livre");
-
-    if (isMercadoLivre) {
-      const mlRegra = regrasMlMap.get(skuKey);
-      comissaoPct = mlRegra ? Number(mlRegra.comissao || 0) : (Number(comissaoPadrao) || 19);
-
-      if (precoUnit < 79.00) {
-        tarifaFixa = 6.50; // Tarifa fixa obrigatória por unidade abaixo de R$ 79
-        freteUnitario = 0;
-      } else {
-        tarifaFixa = 0;
-        let pesoReal = mlRegra ? Number(mlRegra.peso_real || 0) : 2.0;
-        let altura = mlRegra ? Number(mlRegra.altura || 0) : 10;
-        let largura = mlRegra ? Number(mlRegra.largura || 0) : 10;
-        let comprimento = mlRegra ? Number(mlRegra.comprimento || 0) : 10;
-        freteUnitario = calcularFreteML(precoUnit, pesoReal, altura, largura, comprimento);
-      }
-    } else {
-      const regrasDoCanal = regrasTarifacao.filter((r: any) => r.canal.toLowerCase() === canal.toLowerCase());
-      if (regrasDoCanal.length > 0) {
-        let regraAplicavel = regrasDoCanal[0];
-        for (const r of regrasDoCanal) {
-          const numeros = r.faixa_preco.match(/\d+[\.,]?\d*/g);
-          if (numeros && numeros.length >= 2) {
-            const min = parseFloat(numeros[0].replace(',', '.'));
-            const max = parseFloat(numeros[1].replace(',', '.'));
-            if (precoUnit >= min && precoUnit <= max) { regraAplicavel = r; break; }
-          }
-        }
-        comissaoPct = Number(regraAplicavel.comissao || 0);
-        tarifaFixa = Number(regraAplicavel.tarifa_fixa || 0);
-        freteUnitario = Number(regraAplicavel.frete || 0);
-      }
-    }
-    return { freteTotal: freteUnitario * unidades, tarifaComissaoTotal: (receita * (comissaoPct / 100)) + (tarifaFixa * unidades) };
   };
 
   const handleUploadVendas = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -355,95 +267,30 @@ export default function LogisticaPage() {
     setSalvando(false);
   };
 
-  // MOTOR FULL
-  const processarMotorFull = async (mapaAgrupado: Map<string, any>) => {
-    const { data: estData } = await supabase.from('estoque_cd_mensal').select('sku, estoque').eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
-    const mapaEstoqueCD = new Map();
-    if (estData) estData.forEach((e: any) => mapaEstoqueCD.set(e.sku, Number(e.estoque)));
+  // MOTOR DE CÁLCULO E DIAGNÓSTICO
+  const executarMotorGeral = async () => {
+    if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
+    setLoading(true);
+    salvarConfiguracoes();
 
-    const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
-    const metaDias = Number(metaDiasCobertura) || 45;
+    const colPacote = colCarrinhoVendas.trim().toUpperCase();
+    const temColunaPacote = colPacote !== "" && colPacote !== "ZZZ";
 
-    const resultados = Array.from(mapaAgrupado.values()).map((item: any) => {
-      const skuKey = item.skuKey;
-      const custoData = custosMap.get(skuKey);
-      const custoUnitario = Number(custoData?.custo_unitario || 0);
-      const produtoNome = custoData?.produto || "Produto Desconhecido";
-      
-      const estoqueCD = mapaEstoqueCD.get(skuKey) || 0;
-      const estoqueCentral = tinyMap.get(skuKey) || 0;
+    const colSku = colSkuVendas.trim().toUpperCase();
+    const colQtd = colQtdVendas.trim().toUpperCase();
+    const colPdv = colPdvVendas.trim().toUpperCase();
+    const colLiquido = colLiquidoVendas.trim().toUpperCase();
+    const colRecPacote = colReceitaPacote.trim().toUpperCase();
 
-      const precoUnitEstimado = item.qtdVendida > 0 ? (item.receitaBruta / item.qtdVendida) : 0;
-      const { freteTotal, tarifaComissaoTotal } = calcularCustoCanal(canalSelecionado, precoUnitEstimado, item.receitaBruta, item.qtdVendida, skuKey);
-
-      const impostoTotal = item.receitaBruta * (impostoPct / 100);
-      const custoProdutoTotal = custoUnitario * item.qtdVendida;
-
-      // Se informou a coluna de líquido real, utiliza-a; senão calcula com as taxas
-      let lucroRs = 0;
-      let tarifaFreteSoma = tarifaComissaoTotal + freteTotal;
-
-      if (item.temLiquidoReal) {
-        tarifaFreteSoma = item.receitaBruta - item.liquidoReal;
-        lucroRs = item.liquidoReal - custoProdutoTotal - impostoTotal;
-      } else {
-        lucroRs = item.receitaBruta - custoProdutoTotal - impostoTotal - tarifaFreteSoma;
-      }
-      
-      const margemBrutaRs = item.receitaBruta - custoProdutoTotal - impostoTotal;
-      const margemBrutaPct = item.receitaBruta > 0 ? (margemBrutaRs / item.receitaBruta) * 100 : 0;
-      const margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
-
-      const vmd = item.qtdVendida / 30;
-      const coberturaAtual = vmd > 0 ? (estoqueCD / vmd) : (estoqueCD > 0 ? 999 : 0);
-      
-      let sugestaoEnvioBruta = Math.ceil((vmd * metaDias) - estoqueCD);
-      if (sugestaoEnvioBruta < 0) sugestaoEnvioBruta = 0;
-
-      let statusEstoque = "";
-      if (coberturaAtual < 10 && vmd > 0) statusEstoque = "Ruptura Iminente";
-      else if (coberturaAtual > 60 && estoqueCD > 5) statusEstoque = "Risco de Aging";
-      else if (vmd === 0 && estoqueCD > 0) statusEstoque = "Estoque Parado";
-      else statusEstoque = "Saudável";
-
-      let statusEnvio = "";
-      let qtdEnviar = sugestaoEnvioBruta;
-      
-      if (sugestaoEnvioBruta > 0) {
-        if (estoqueCentral >= sugestaoEnvioBruta) statusEnvio = "✅ Enviar Agora";
-        else if (estoqueCentral > 0 && estoqueCentral < sugestaoEnvioBruta) {
-          statusEnvio = "⚠️ Enviar Parcial";
-          qtdEnviar = estoqueCentral; 
-        } else {
-          statusEnvio = "❌ Falta no Central";
-          qtdEnviar = 0;
-        }
-      } else {
-        statusEnvio = "⏸️ Não Enviar";
-      }
-
-      return {
-        canal: canalSelecionado, mes_referencia: mesSelecionado, sku: item.sku, produto: produtoNome,
-        qtd_vendida: item.qtdVendida, receita_bruta: item.receitaBruta, estoque_cd: estoqueCD, armazenagem: 0,
-        estoque_central: estoqueCentral, custo_produto: custoProdutoTotal, imposto: impostoTotal,
-        tarifa_frete: tarifaFreteSoma, lucro_liquido: lucroRs, margem_pct: margemPct, margem_bruta_pct: margemBrutaPct,
-        vmd: Number(vmd.toFixed(2)), cobertura_dias: Number(coberturaAtual.toFixed(1)), sugestao_envio: qtdEnviar,
-        status_estoque: statusEstoque, status_envio: statusEnvio
-      };
-    });
-
-    setDadosProcessados(resultados.sort((a: any, b: any) => b.receita_bruta - a.receita_bruta));
-  };
-
-  // MOTOR PADRÃO (LOGÍSTICA PRÓPRIA COM DIAGNÓSTICO)
-  const processarMotorPadrao = async (mapaAgrupado: Map<string, any>) => {
     const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
     const embalagemUnit = Number(custoEmbalagem.replace(",", ".")) || 0;
+    const metaDias = Number(metaDiasCobertura) || 45;
 
     const metaMargemPromissora = Number(margemMinimaPromissora.replace(",", ".")) || 12;
     const metaVendasMin = Number(vendasMinimasPromissoras) || 3;
     const limiteDevolucao = Number(tetoMaxDevolucao.replace(",", ".")) || 10;
 
+    // Puxa devoluções e Curva ABC para cruzamento
     const { data: dadosDevolucaoRaw } = await supabase.from("devolucoes").select("sku, data_retorno, canal");
     const mapaDevContagem = new Map<string, number>();
     if (dadosDevolucaoRaw) {
@@ -464,74 +311,9 @@ export default function LogisticaPage() {
       });
     }
 
-    const resultados = Array.from(mapaAgrupado.values()).map((item: any) => {
-      const skuKey = item.skuKey;
-      const custoData = custosMap.get(skuKey);
-      const custoUnitario = Number(custoData?.custo_unitario || 0);
-      const produtoNome = custoData?.produto || "Produto Desconhecido";
-      
-      const precoUnitEstimado = item.qtdVendida > 0 ? (item.receitaBruta / item.qtdVendida) : 0;
-      const { freteTotal, tarifaComissaoTotal } = calcularCustoCanal(canalSelecionado, precoUnitEstimado, item.receitaBruta, item.qtdVendida, skuKey);
-
-      const impostoTotal = item.receitaBruta * (impostoPct / 100);
-      const custoProdutoTotal = custoUnitario * item.qtdVendida;
-      const embalagemTotal = embalagemUnit * item.qtdVendida;
-
-      let lucroRs = 0;
-      let tarifaFreteSoma = tarifaComissaoTotal + freteTotal;
-
-      if (item.temLiquidoReal) {
-        tarifaFreteSoma = item.receitaBruta - item.liquidoReal;
-        lucroRs = item.liquidoReal - custoProdutoTotal - impostoTotal - embalagemTotal;
-      } else {
-        lucroRs = item.receitaBruta - custoProdutoTotal - impostoTotal - tarifaFreteSoma - embalagemTotal;
-      }
-
-      const margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
-
-      const vendasTotais = Math.max(mapaVendasAbc.get(skuKey) || 0, item.qtdVendida);
-      const totalDevolucoes = mapaDevContagem.get(skuKey) || 0;
-      const taxaDevolucao = vendasTotais > 0 ? (totalDevolucoes / vendasTotais) * 100 : 0;
-
-      let diagnostico = "";
-      if (margemPct <= 0) {
-        diagnostico = "❌ Prejuízo (Sem Futuro)";
-      } else if (taxaDevolucao >= limiteDevolucao && totalDevolucoes > 0) {
-        diagnostico = "⛔ Alta Devolução (Sem Futuro)";
-      } else if (margemPct >= metaMargemPromissora && item.qtdVendida >= metaVendasMin && taxaDevolucao < limiteDevolucao) {
-        diagnostico = "🌟 Promissor (Escalar)";
-      } else if (margemPct < 10) {
-        diagnostico = "⚠️ Margem Baixa (Atenção)";
-      } else {
-        diagnostico = "✅ Regular (Manter)";
-      }
-
-      return {
-        canal: canalSelecionado, mes_referencia: mesSelecionado, sku: item.sku, produto: produtoNome,
-        qtd_vendida: item.qtdVendida, receita_bruta: item.receitaBruta, custo_produto: custoProdutoTotal,
-        imposto: impostoTotal, tarifa_frete: tarifaFreteSoma, embalagem: embalagemTotal,
-        lucro_liquido: lucroRs, margem_pct: margemPct, taxa_devolucao: taxaDevolucao,
-        qtd_devolucoes: totalDevolucoes, diagnostico: diagnostico
-      };
-    });
-
-    setDadosProcessados(resultados.sort((a: any, b: any) => b.receita_bruta - a.receita_bruta));
-  };
-
-  // LOOP DE LEITURA COM REGRA ESTRITA DE "PACOTE"
-  const executarMotorGeral = async () => {
-    if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
-    setLoading(true);
-    salvarConfiguracoes();
-
-    const colPacote = colCarrinhoVendas.trim().toUpperCase();
-    const temColunaPacote = colPacote !== "" && colPacote !== "ZZZ";
-
-    const colSku = colSkuVendas.trim().toUpperCase();
-    const colQtd = colQtdVendas.trim().toUpperCase();
-    const colReceita = colReceitaVendas.trim().toUpperCase();
-    const colLiquido = colLiquidoVendas.trim().toUpperCase();
-    const temColunaLiquido = colLiquido !== "" && colLiquido !== "ZZZ";
+    const { data: estData } = await supabase.from('estoque_cd_mensal').select('sku, estoque').eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
+    const mapaEstoqueCD = new Map();
+    if (estData) estData.forEach((e: any) => mapaEstoqueCD.set(e.sku, Number(e.estoque)));
 
     const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
     const mapaAgrupado = new Map<string, any>();
@@ -541,57 +323,60 @@ export default function LogisticaPage() {
       const row = matrizVendas[r];
       if (!row) { r++; continue; }
 
-      // 1. Verifica estritamente se há a palavra "Pacote" na coluna de identificação
+      // 1. Identificação de Pacote / Carrinho
       const textoPacote = temColunaPacote ? String(row[colPacote] || "").trim() : "";
-      const matchPacote = temColunaPacote ? textoPacote.match(/pacote(?:\s+de|\s+com)?\s*(\d+)/i) : null;
+      const matchPacote = temColunaPacote ? textoPacote.match(/^pacote\s*(?:de)?\s*(\d+)/i) : null;
 
       if (matchPacote) {
         const qtdItensPacote = parseInt(matchPacote[1], 10);
-        const receitaPacote = parseNumero(row[colReceita]);
-        const liquidoPacote = temColunaLiquido ? parseNumero(row[colLiquido]) : 0;
+        const liquidoTotalPacote = parseNumero(row[colLiquido]);
+        let receitaTotalPacote = parseNumero(row[colRecPacote]);
 
-        // Pega os N itens nas linhas subsequentes
-        const itensDoPacote: any[] = [];
+        const itensFilhos: any[] = [];
+        let somaPdvFilhos = 0;
+
         for (let k = 1; k <= qtdItensPacote; k++) {
           if (r + k < matrizVendas.length) {
             const chRow = matrizVendas[r + k];
             const chSkuOrig = String(chRow[colSku] || "").trim();
             const chSkuKey = normalizarSku(chSkuOrig);
             const chQtd = Math.max(1, parseNumero(chRow[colQtd]) || 1);
+            const chPdvUnit = parseNumero(chRow[colPdv]);
+            const chPdvTotal = chPdvUnit * chQtd;
+
             if (chSkuKey) {
-              itensDoPacote.push({ skuOrig: chSkuOrig, skuKey: chSkuKey, qtd: chQtd });
+              itensFilhos.push({ skuOrig: chSkuOrig, skuKey: chSkuKey, qtd: chQtd, pdvTotal: chPdvTotal });
+              somaPdvFilhos += chPdvTotal;
             }
           }
         }
 
-        const totalUnidadesPacote = itensDoPacote.reduce((acc, it) => acc + it.qtd, 0) || 1;
+        if (receitaTotalPacote === 0) receitaTotalPacote = somaPdvFilhos;
+        const baseDivisao = receitaTotalPacote || 1;
 
-        // Rateia faturamento e líquido do pacote entre os SKUs
-        for (const itemCh of itensDoPacote) {
-          const fatiaReceita = (receitaPacote / totalUnidadesPacote) * itemCh.qtd;
-          const fatiaLiquido = (liquidoPacote / totalUnidadesPacote) * itemCh.qtd;
+        for (const f of itensFilhos) {
+          const fatiaProporcao = f.pdvTotal / baseDivisao;
+          const fatiaLiquidoML = liquidoTotalPacote * fatiaProporcao;
 
-          if (mapaAgrupado.has(itemCh.skuKey)) {
-            const exist = mapaAgrupado.get(itemCh.skuKey);
-            exist.receitaBruta += fatiaReceita;
-            exist.liquidoReal += fatiaLiquido;
-            exist.qtdVendida += itemCh.qtd;
+          if (mapaAgrupado.has(f.skuKey)) {
+            const exist = mapaAgrupado.get(f.skuKey);
+            exist.receitaBruta += f.pdvTotal;
+            exist.liquidoML += fatiaLiquidoML;
+            exist.qtdVendida += f.qtd;
           } else {
-            mapaAgrupado.set(itemCh.skuKey, {
-              sku: itemCh.skuOrig,
-              skuKey: itemCh.skuKey,
-              receitaBruta: fatiaReceita,
-              liquidoReal: fatiaLiquido,
-              temLiquidoReal: temColunaLiquido,
-              qtdVendida: itemCh.qtd
+            mapaAgrupado.set(f.skuKey, {
+              sku: f.skuOrig,
+              skuKey: f.skuKey,
+              receitaBruta: f.pdvTotal,
+              liquidoML: fatiaLiquidoML,
+              qtdVendida: f.qtd
             });
           }
         }
 
-        // Pula a linha do pacote e as N linhas filhas
         r += (qtdItensPacote + 1);
       } else {
-        // 2. Venda individual comum
+        // 2. Venda Avulsa Padrão
         const skuOriginal = String(row[colSku] || "").trim();
         const skuKey = normalizarSku(skuOriginal);
 
@@ -600,22 +385,28 @@ export default function LogisticaPage() {
           continue;
         }
 
-        const receitaBruta = parseNumero(row[colReceita]);
-        const liquidoReal = temColunaLiquido ? parseNumero(row[colLiquido]) : 0;
         const qtdVendida = Math.max(1, parseNumero(row[colQtd]) || 1);
+        let pdvUnit = parseNumero(row[colPdv]);
+        let receitaBruta = pdvUnit * qtdVendida;
+
+        // Fallback caso a coluna AC esteja vazia em alguma linha
+        if (receitaBruta === 0 && colRecPacote) {
+          receitaBruta = parseNumero(row[colRecPacote]);
+        }
+
+        const liquidoML = parseNumero(row[colLiquido]);
 
         if (mapaAgrupado.has(skuKey)) {
           const exist = mapaAgrupado.get(skuKey);
           exist.receitaBruta += receitaBruta;
-          exist.liquidoReal += liquidoReal;
+          exist.liquidoML += liquidoML;
           exist.qtdVendida += qtdVendida;
         } else {
           mapaAgrupado.set(skuKey, {
             sku: skuOriginal,
             skuKey: skuKey,
             receitaBruta: receitaBruta,
-            liquidoReal: liquidoReal,
-            temLiquidoReal: temColunaLiquido,
+            liquidoML: liquidoML,
             qtdVendida: qtdVendida
           });
         }
@@ -623,9 +414,76 @@ export default function LogisticaPage() {
       }
     }
 
-    if (modoLogistica === "full") await processarMotorFull(mapaAgrupado);
-    else await processarMotorPadrao(mapaAgrupado);
-    
+    // 3. Aplicação da fórmula financeira
+    const resultados = Array.from(mapaAgrupado.values()).map((item: any) => {
+      const skuKey = item.skuKey;
+      const custoData = custosMap.get(skuKey);
+      const custoUnitario = Number(custoData?.custo_unitario || 0);
+      const produtoNome = custoData?.produto || "Produto Desconhecido";
+      
+      const estoqueCD = mapaEstoqueCD.get(skuKey) || 0;
+      const estoqueCentral = tinyMap.get(skuKey) || 0;
+
+      const custoProdutoTotal = custoUnitario * item.qtdVendida;
+      const impostoTotal = item.receitaBruta * (impostoPct / 100);
+      const embalagemTotal = modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0;
+
+      // FÓRMULA OFICIAL: LÍQUIDO DO CANAL - CUSTO - IMPOSTO - EMBALAGEM
+      const lucroRs = item.liquidoML - custoProdutoTotal - impostoTotal - embalagemTotal;
+      const margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
+      const tarifaFreteSoma = item.receitaBruta - item.liquidoML;
+
+      // Indicadores Logísticos
+      const vmd = item.qtdVendida / 30;
+      const coberturaAtual = vmd > 0 ? (estoqueCD / vmd) : (estoqueCD > 0 ? 999 : 0);
+      let sugestaoEnvioBruta = Math.ceil((vmd * metaDias) - estoqueCD);
+      if (sugestaoEnvioBruta < 0) sugestaoEnvioBruta = 0;
+
+      let statusEstoque = "";
+      if (coberturaAtual <= 10 && vmd > 0) statusEstoque = "Ruptura Iminente";
+      else if (coberturaAtual > 60 && estoqueCD > 5) statusEstoque = "Risco de Aging";
+      else if (vmd === 0 && estoqueCD > 0) statusEstoque = "Estoque Parado";
+      else statusEstoque = "Saudável";
+
+      let statusEnvio = "";
+      let qtdEnviar = sugestaoEnvioBruta;
+      if (sugestaoEnvioBruta > 0) {
+        if (estoqueCentral >= sugestaoEnvioBruta) statusEnvio = "✅ Enviar Agora";
+        else if (estoqueCentral > 0 && estoqueCentral < sugestaoEnvioBruta) {
+          statusEnvio = "⚠️ Enviar Parcial";
+          qtdEnviar = estoqueCentral; 
+        } else {
+          statusEnvio = "❌ Falta no Central";
+          qtdEnviar = 0;
+        }
+      } else {
+        statusEnvio = "⏸️ Não Enviar";
+      }
+
+      // Diagnóstico Padrão
+      const vendasTotais = Math.max(mapaVendasAbc.get(skuKey) || 0, item.qtdVendida);
+      const totalDevolucoes = mapaDevContagem.get(skuKey) || 0;
+      const taxaDevolucao = vendasTotais > 0 ? (totalDevolucoes / vendasTotais) * 100 : 0;
+
+      let diagnostico = "";
+      if (margemPct <= 0) diagnostico = "❌ Prejuízo (Sem Futuro)";
+      else if (taxaDevolucao >= limiteDevolucao && totalDevolucoes > 0) diagnostico = "⛔ Alta Devolução (Sem Futuro)";
+      else if (margemPct >= metaMargemPromissora && item.qtdVendida >= metaVendasMin && taxaDevolucao < limiteDevolucao) diagnostico = "🌟 Promissor (Escalar)";
+      else if (margemPct < 10) diagnostico = "⚠️ Margem Baixa (Atenção)";
+      else diagnostico = "✅ Regular (Manter)";
+
+      return {
+        canal: canalSelecionado, mes_referencia: mesSelecionado, sku: item.sku, produto: produtoNome,
+        qtd_vendida: item.qtdVendida, receita_bruta: item.receitaBruta, estoque_cd: estoqueCD, armazenagem: 0,
+        estoque_central: estoqueCentral, custo_produto: custoProdutoTotal, imposto: impostoTotal,
+        tarifa_frete: tarifaFreteSoma, embalagem: embalagemTotal, lucro_liquido: lucroRs, margem_pct: margemPct,
+        vmd: Number(vmd.toFixed(2)), cobertura_dias: Number(coberturaAtual.toFixed(1)), sugestao_envio: qtdEnviar,
+        status_estoque: statusEstoque, status_envio: statusEnvio, taxa_devolucao: taxaDevolucao,
+        qtd_devolucoes: totalDevolucoes, diagnostico: diagnostico
+      };
+    });
+
+    setDadosProcessados(resultados.sort((a: any, b: any) => b.receita_bruta - a.receita_bruta));
     setLoading(false);
   };
 
@@ -648,7 +506,7 @@ export default function LogisticaPage() {
     if (res.error) {
       alert("Erro ao gravar resultados no banco: " + res.error.message);
     } else {
-      alert(`✅ Análise de Logística ${modoLogistica === "full" ? "Full/FBA" : "Própria"} gravada com sucesso!`);
+      alert(`✅ Análise de Logística gravada com sucesso!`);
       setMatrizVendas([]);
       setDadosProcessados([]);
       carregarHistoricoGravado();
@@ -666,16 +524,11 @@ export default function LogisticaPage() {
 
   const dataSource = dadosProcessados.length > 0 ? dadosProcessados : lancamentosGravados;
   
-  const filtradosFull = dataSource.filter((item: any) => {
+  const filtrados = dataSource.filter((item: any) => {
     const mText = !pesquisaBusca || String(item.sku).toLowerCase().includes(pesquisaBusca.toLowerCase()) || String(item.produto).toLowerCase().includes(pesquisaBusca.toLowerCase());
-    const mStatus = filtroStatus === "TODOS" || item.status_estoque === filtroStatus || (item.status_envio && item.status_envio.includes(filtroStatus));
+    const mStatus = filtroStatus === "TODOS" || 
+      (modoLogistica === "full" ? (item.status_estoque === filtroStatus || (item.status_envio && item.status_envio.includes(filtroStatus))) : (item.diagnostico && item.diagnostico.includes(filtroStatus)));
     return mText && mStatus;
-  });
-
-  const filtradosPadrao = dataSource.filter((item: any) => {
-    const mText = !pesquisaBusca || String(item.sku).toLowerCase().includes(pesquisaBusca.toLowerCase()) || String(item.produto).toLowerCase().includes(pesquisaBusca.toLowerCase());
-    const mDiag = filtroStatus === "TODOS" || (item.diagnostico && item.diagnostico.includes(filtroStatus));
-    return mText && mDiag;
   });
 
   return (
@@ -798,10 +651,6 @@ export default function LogisticaPage() {
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Imposto (%):</label>
                   <input type="number" value={aliquotaImposto} onChange={e => setAliquotaImposto(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-emerald-400 outline-none" />
                 </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Comissão Canal (%):</label>
-                  <input type="number" value={comissaoPadrao} onChange={e => setComissaoPadrao(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-amber-400 font-bold outline-none" title="Ex: 19% para Premium, 14% para Clássico" />
-                </div>
 
                 {modoLogistica === "full" ? (
                   <div>
@@ -833,15 +682,15 @@ export default function LogisticaPage() {
                 )}
               </div>
 
-              {/* MAPEAMENTO DE TODAS AS COLUNAS */}
+              {/* MAPEAMENTO DE COLUNAS */}
               <div className={`p-5 rounded-xl border mb-6 ${modoLogistica === "full" ? "bg-purple-950/10 border-purple-900/20" : "bg-indigo-950/10 border-indigo-900/20"}`}>
-                <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
                   <div>
                     <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label>
                     <input type="number" value={linhaVendas} onChange={e => setLinhaVendas(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-bold text-amber-400 uppercase mb-1" title="Coluna que possui textos como 'Pacote de 3 produtos'. Preencha ZZZ se não houver.">Col. Pacote / Carrinho</label>
+                    <label className="block text-[9px] font-bold text-amber-400 uppercase mb-1" title="Coluna que possui textos como 'Pacote de 3 produtos'. Use ZZZ se não houver.">Col. Pacote / Carrinho</label>
                     <input type="text" value={colCarrinhoVendas} onChange={e => setColCarrinhoVendas(e.target.value.toUpperCase())} placeholder="D" className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
                   </div>
                   <div>
@@ -853,12 +702,16 @@ export default function LogisticaPage() {
                     <input type="text" value={colQtdVendas} onChange={e => setColQtdVendas(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Col. Receita Bruta</label>
-                    <input type="text" value={colReceitaVendas} onChange={e => setColReceitaVendas(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                    <label className="block text-[9px] font-bold text-cyan-400 uppercase mb-1" title="Coluna AC do ML que traz o preço unitário do item no anúncio">Col. PDV Item (Col AC)</label>
+                    <input type="text" value={colPdvVendas} onChange={e => setColPdvVendas(e.target.value.toUpperCase())} placeholder="AC" className="w-full bg-slate-900 border border-cyan-600/50 rounded-lg p-2 text-xs font-mono text-center text-cyan-300 font-bold outline-none" />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-bold text-emerald-400 uppercase mb-1" title="Opcional. Coluna com o valor líquido pago pelo marketplace (ex: Col L). Use ZZZ para calcular por fórmula.">Col. Líquido Real (Opcional)</label>
-                    <input type="text" value={colLiquidoVendas} onChange={e => setColLiquidoVendas(e.target.value.toUpperCase())} placeholder="ZZZ" className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-center text-emerald-300 font-bold outline-none" />
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1" title="Coluna I do ML que traz a receita da linha ou do pacote">Col. Receita Total (Col I)</label>
+                    <input type="text" value={colReceitaPacote} onChange={e => setColReceitaPacote(e.target.value.toUpperCase())} placeholder="I" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-emerald-400 uppercase mb-1" title="Coluna T do ML com o Líquido Real liberado após taxas/fretes">Col. Líquido ML (Col T)</label>
+                    <input type="text" value={colLiquidoVendas} onChange={e => setColLiquidoVendas(e.target.value.toUpperCase())} placeholder="T" className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-center text-emerald-300 font-bold outline-none" />
                   </div>
                 </div>
               </div>
@@ -878,7 +731,7 @@ export default function LogisticaPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 text-center animate-in zoom-in duration-300">
                  <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
-                 <p className="text-sm text-slate-400 mb-4">O motor identificou os pacotes e consolidou <strong>{dadosProcessados.length} SKUs</strong>.</p>
+                 <p className="text-sm text-slate-400 mb-4">O motor identificou os pacotes e consolidou <strong>{dadosProcessados.length} SKUs</strong> com base no líquido real.</p>
                  <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" para armazenar os dados e ir para o Relatório Oficial.</p>
               </div>
             )}
@@ -990,7 +843,7 @@ export default function LogisticaPage() {
                         <th className="p-3 text-right text-indigo-300">Vendas (Qtd)</th>
                         <th className="p-3 text-right">Receita (R$)</th>
                         <th className="p-3 text-right text-rose-300" title="Custo com caixa, fita, etc.">Custo Embalagem</th>
-                        <th className="p-3 text-right">Margem LÍQ.</th>
+                        <th className="p-3 text-right font-black text-emerald-400">Margem LÍQ.</th>
                         <th className="p-3 text-center text-amber-300">Qtd Devolvida</th>
                         <th className="p-3 text-center">Taxa Devolução</th>
                         <th className="p-3 text-center border-l border-slate-800 bg-slate-900">Veredicto (Diagnóstico)</th>
@@ -998,76 +851,70 @@ export default function LogisticaPage() {
                     )}
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                    {modoLogistica === "full" ? (
-                      filtradosFull.map((item: any, idx: number) => (
-                        <tr key={item.id || idx} className="hover:bg-slate-800/40">
+                    {filtrados.map((item: any, idx: number) => {
+                      let rowStyle = "";
+                      if (modoLogistica === "padrao") {
+                        if (item.diagnostico?.includes("Sem Futuro")) rowStyle = "bg-rose-950/10";
+                        else if (item.diagnostico?.includes("Promissor")) rowStyle = "bg-emerald-950/10";
+                      }
+
+                      return (
+                        <tr key={item.id || idx} className={`hover:bg-slate-800/40 transition-colors ${rowStyle}`}>
                           <td className="p-3 text-center font-mono text-slate-500">{idx + 1}</td>
                           <td className="p-3 font-mono font-bold text-white">{item.sku}</td>
                           <td className="p-3 text-slate-300 truncate max-w-[220px]" title={item.produto}>{item.produto}</td>
-                          <td className="p-3 text-right font-bold text-slate-200">{item.qtd_vendida}</td>
+                          <td className="p-3 text-right font-bold text-slate-200">{item.qtd_vendida} un.</td>
                           <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.receita_bruta)}</td>
-                          <td className="p-3 text-right font-mono font-bold text-emerald-400">{item.estoque_cd}</td>
-                          <td className="p-3 text-right font-mono font-bold text-indigo-400">{item.estoque_central}</td>
-                          <td className="p-3 text-center">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.cobertura_dias < 10 ? 'bg-rose-950/60 text-rose-400 border border-rose-900/40' : item.cobertura_dias > 60 ? 'bg-amber-950/60 text-amber-400 border border-amber-900/40' : 'text-slate-400'}`}>
-                              {item.cobertura_dias > 900 ? '+90' : item.cobertura_dias.toFixed(0)} dias
-                            </span>
-                          </td>
-                          <td className={`p-3 text-right font-mono font-bold ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
-                            {Number(item.margem_pct).toFixed(1)}%
-                          </td>
-                          <td className="p-3 text-center border-l border-slate-800/50">
-                            {item.status_estoque === "Ruptura Iminente" ? <span className="text-rose-400 font-bold text-[10px]">🔥 Ruptura</span> : item.status_estoque === "Risco de Aging" ? <span className="text-amber-400 font-bold text-[10px]">⚠️ Aging Alto</span> : item.status_estoque === "Estoque Parado" ? <span className="text-amber-400 font-bold text-[10px]">⏳ Parado</span> : <span className="text-emerald-400 text-[10px]">✔️ Saudável</span>}
-                          </td>
-                          <td className="p-3 text-center">
-                            {item.status_envio.includes("Parcial") ? <span className="bg-amber-900/30 text-amber-400 border border-amber-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Falta") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Não") ? <span className="text-slate-500 text-[10px] uppercase font-bold">{item.status_envio}</span> : <span className="bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span>}
-                          </td>
-                          <td className="p-3 text-center font-mono font-black text-lg text-purple-400">
-                            {item.sugestao_envio > 0 ? `+${item.sugestao_envio}` : '-'}
-                          </td>
+                          
+                          {modoLogistica === "full" ? (
+                            <>
+                              <td className="p-3 text-right font-mono font-bold text-emerald-400">{item.estoque_cd}</td>
+                              <td className="p-3 text-right font-mono font-bold text-indigo-400">{item.estoque_central}</td>
+                              <td className="p-3 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.cobertura_dias < 10 ? 'bg-rose-950/60 text-rose-400 border border-rose-900/40' : item.cobertura_dias > 60 ? 'bg-amber-950/60 text-amber-400 border border-amber-900/40' : 'text-slate-400'}`}>
+                                  {item.cobertura_dias > 900 ? '+90' : item.cobertura_dias.toFixed(0)} dias
+                                </span>
+                              </td>
+                              <td className={`p-3 text-right font-mono font-bold ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
+                                {Number(item.margem_pct).toFixed(1)}%
+                              </td>
+                              <td className="p-3 text-center border-l border-slate-800/50">
+                                {item.status_estoque === "Ruptura Iminente" ? <span className="text-rose-400 font-bold text-[10px]">🔥 Ruptura</span> : item.status_estoque === "Risco de Aging" ? <span className="text-amber-400 font-bold text-[10px]">⚠️ Aging Alto</span> : item.status_estoque === "Estoque Parado" ? <span className="text-amber-400 font-bold text-[10px]">⏳ Parado</span> : <span className="text-emerald-400 text-[10px]">✔️ Saudável</span>}
+                              </td>
+                              <td className="p-3 text-center">
+                                {item.status_envio.includes("Parcial") ? <span className="bg-amber-900/30 text-amber-400 border border-amber-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Falta") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Não") ? <span className="text-slate-500 text-[10px] uppercase font-bold">{item.status_envio}</span> : <span className="bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span>}
+                              </td>
+                              <td className="p-3 text-center font-mono font-black text-lg text-purple-400">
+                                {item.sugestao_envio > 0 ? `+${item.sugestao_envio}` : '-'}
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="p-3 text-right font-mono text-rose-300/70">{formatarMoeda(item.embalagem)}</td>
+                              <td className={`p-3 text-right font-mono font-black ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
+                                {Number(item.margem_pct).toFixed(1)}%
+                              </td>
+                              <td className="p-3 text-center font-bold text-amber-300">{item.qtd_devolucoes}</td>
+                              <td className="p-3 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.taxa_devolucao >= 10 ? 'bg-rose-950/60 text-rose-400 border border-rose-900/40' : item.taxa_devolucao > 5 ? 'bg-amber-950/60 text-amber-400 border border-amber-900/40' : 'text-emerald-400'}`}>
+                                  {Number(item.taxa_devolucao).toFixed(1)}%
+                                </span>
+                              </td>
+                              <td className="p-3 text-center border-l border-slate-800/50 bg-slate-950/20">
+                                <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
+                                  item.diagnostico?.includes("Sem Futuro") ? 'bg-rose-900/30 text-rose-400 border border-rose-800/50' : 
+                                  item.diagnostico?.includes("Promissor") ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800/50' : 
+                                  item.diagnostico?.includes("Atenção") ? 'bg-amber-900/30 text-amber-400 border border-amber-800/50' : 
+                                  'text-slate-400 border border-slate-700'
+                                }`}>
+                                  {item.diagnostico}
+                                </span>
+                              </td>
+                            </>
+                          )}
                         </tr>
-                      ))
-                    ) : (
-                      filtradosPadrao.map((item: any, idx: number) => {
-                        let rowStyle = "";
-                        if (item.diagnostico?.includes("Sem Futuro")) rowStyle = "bg-rose-950/10";
-                        else if (item.diagnostico?.includes("Promissor")) rowStyle = "bg-emerald-950/10";
-                        
-                        return (
-                          <tr key={item.id || idx} className={`hover:bg-slate-800/40 transition-colors ${rowStyle}`}>
-                            <td className="p-3 text-center font-mono text-slate-500">{idx + 1}</td>
-                            <td className="p-3 font-mono font-bold text-white">{item.sku}</td>
-                            <td className="p-3 text-slate-300 truncate max-w-[220px]" title={item.produto}>{item.produto}</td>
-                            <td className="p-3 text-right font-bold text-indigo-300">{item.qtd_vendida} un.</td>
-                            <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.receita_bruta)}</td>
-                            <td className="p-3 text-right font-mono text-rose-300/70">{formatarMoeda(item.embalagem)}</td>
-                            
-                            <td className={`p-3 text-right font-mono font-bold ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
-                              {Number(item.margem_pct).toFixed(1)}%
-                            </td>
-  
-                            <td className="p-3 text-center font-bold text-amber-300">{item.qtd_devolucoes}</td>
-                            
-                            <td className="p-3 text-center">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.taxa_devolucao >= 10 ? 'bg-rose-950/60 text-rose-400 border border-rose-900/40' : item.taxa_devolucao > 5 ? 'bg-amber-950/60 text-amber-400 border border-amber-900/40' : 'text-emerald-400'}`}>
-                                {Number(item.taxa_devolucao).toFixed(1)}%
-                              </span>
-                            </td>
-  
-                            <td className="p-3 text-center border-l border-slate-800/50 bg-slate-950/20">
-                              <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
-                                item.diagnostico?.includes("Sem Futuro") ? 'bg-rose-900/30 text-rose-400 border border-rose-800/50' : 
-                                item.diagnostico?.includes("Promissor") ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800/50' : 
-                                item.diagnostico?.includes("Atenção") ? 'bg-amber-900/30 text-amber-400 border border-amber-800/50' : 
-                                'text-slate-400 border border-slate-700'
-                              }`}>
-                                {item.diagnostico}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
