@@ -64,18 +64,18 @@ export default function LogisticaPage() {
   const [tinyMap, setTinyMap] = useState<Map<string, number>>(new Map());
   const [lancamentosGravados, setLancamentosGravados] = useState<any[]>([]);
 
-  // Estados - Estoque (Apenas Full)
+  // Estados - Estoque (Full)
   const [matrizEstoque, setMatrizEstoque] = useState<any[]>([]);
   const [linhaEstoque, setLinhaEstoque] = useState("13");
   const [colSkuEstoque, setColSkuEstoque] = useState("D");
   const [colQtdEstoque, setColQtdEstoque] = useState("X");
   const [previewEstoque, setPreviewEstoque] = useState<any[]>([]);
 
-  // Estados - Mapeamento de Vendas
+  // Estados - Vendas (Mapeamento)
   const [matrizVendas, setMatrizVendas] = useState<any[]>([]);
   const [linhaVendas, setLinhaVendas] = useState("7");
   const [colPedidoVendas, setColPedidoVendas] = useState("A");     // Coluna A (N.º Venda)
-  const [colCarrinhoVendas, setColCarrinhoVendas] = useState("D"); // Identificador Pacote / Status
+  const [colCarrinhoVendas, setColCarrinhoVendas] = useState("D"); // Status / Pacote
   const [colSkuVendas, setColSkuVendas] = useState("X");           // SKU
   const [colQtdVendas, setColQtdVendas] = useState("H");           // Quantidade
   const [colPdvVendas, setColPdvVendas] = useState("AC");          // PDV Item
@@ -274,7 +274,7 @@ export default function LogisticaPage() {
     setSalvando(false);
   };
 
-  // MOTOR DE CÁLCULO COM FLEX E TROCAS CORRIGIDAS
+  // MOTOR DE CÁLCULO E DIAGNÓSTICO
   const executarMotorGeral = async () => {
     if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
     setLoading(true);
@@ -303,7 +303,7 @@ export default function LogisticaPage() {
 
     const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
 
-    // 1. Mapeia ordens que tiveram solicitação de alteração (captura o dinheiro da venda original)
+    // 1. Mapeia ordens com solicitação de alteração (captura receita/líquido original em caso de troca)
     const pedidosAlteracaoMap = new Map<string, { receita: number; liquido: number; isFlex: boolean }>();
 
     for (let r = startRow; r < matrizVendas.length; r++) {
@@ -319,14 +319,14 @@ export default function LogisticaPage() {
         const isFlex = forma.toLowerCase().includes("flex");
 
         if (isFlex) {
-          liq = liq - taxaFlexUnit; // Debita R$ 12,99 no Flex
+          liq -= taxaFlexUnit;
         }
 
         pedidosAlteracaoMap.set(idPed, { receita: rec, liquido: liq, isFlex });
       }
     }
 
-    // 2. Base de Devoluções e Curva ABC
+    // 2. Base de Devoluções e Curva ABC (Puxadas exclusivamente das abas oficiais do Supabase)
     const { data: dadosDevolucaoRaw } = await supabase.from("devolucoes").select("sku, data_retorno, canal");
     const mapaDevContagem = new Map<string, number>();
     if (dadosDevolucaoRaw) {
@@ -363,7 +363,7 @@ export default function LogisticaPage() {
       const textoStatus = temColunaPacote ? String(row[colPacote] || "").trim() : "";
       const statusLower = textoStatus.toLowerCase();
 
-      // Pula a linha de alteração original (o valor foi associado à troca)
+      // Pula linha-mãe de alteração original (o valor foi associado à troca)
       if (statusLower.includes("solicitação de alteração")) {
         r++;
         continue;
@@ -376,17 +376,25 @@ export default function LogisticaPage() {
       const formaEntregaTexto = temColunaEntrega ? String(row[colEntrega] || "") : "";
       const isFlex = formaEntregaTexto.toLowerCase().includes("flex");
 
-      // Cancelamentos e Reembolsos
+      // VERIFICAÇÃO ESTRITA: Se for devolução ou cancelamento, DESCONSIDERA COMO VENDIDO (Pula a linha)
       const cancelamentoValor = parseNumero(row["S"]);
       const isCanceladaOuDevolvida = 
         !isTroca && (
           statusLower.includes("cancelad") || 
           statusLower.includes("devolu") || 
           statusLower.includes("reembolso") || 
+          statusLower.includes("mediação") || 
+          statusLower.includes("reclam") || 
           cancelamentoValor < 0
         );
 
-      // CASO 1: TROCA DE PRODUTO
+      if (isCanceladaOuDevolvida) {
+        // Pula totalmente. As devoluções reais vêm pela aba Devoluções do Supabase
+        r++;
+        continue;
+      }
+
+      // CASO 1: TROCA DE PRODUTO (Custo e venda computados 1x)
       if (isTroca) {
         const skuOrig = String(row[colSku] || "").trim();
         const skuKey = normalizarSku(skuOrig);
@@ -394,37 +402,35 @@ export default function LogisticaPage() {
         if (skuKey) {
           const chaveTroca = `${idPedido}_${skuKey}`;
 
-          // Se a troca deste pedido já foi processada, não soma novamente
           if (!trocasJaProcessadas.has(chaveTroca)) {
             trocasJaProcessadas.add(chaveTroca);
 
             const infoOrig = pedidosAlteracaoMap.get(idPedido);
-            let receitaTroca = parseNumero(row[colPdv]);
-            if (receitaTroca === 0 && infoOrig) receitaTroca = infoOrig.receita;
+            
+            // Só computa se houver pedido de alteração correspondente neste mês
+            if (infoOrig) {
+              let receitaTroca = parseNumero(row[colPdv]);
+              if (receitaTroca === 0) receitaTroca = infoOrig.receita;
 
-            let liquidoTroca = parseNumero(row[colLiquido]);
-            if (liquidoTroca === 0 && infoOrig) liquidoTroca = infoOrig.liquido;
+              let liquidoTroca = infoOrig.liquido;
+              if (isFlex && !infoOrig.isFlex) {
+                liquidoTroca -= taxaFlexUnit;
+              }
 
-            // Se for Flex e não veio da linha mãe já descontada
-            if (isFlex && !infoOrig?.isFlex) {
-              liquidoTroca -= taxaFlexUnit;
-            }
-
-            if (mapaAgrupado.has(skuKey)) {
-              const exist = mapaAgrupado.get(skuKey);
-              exist.receitaBruta += receitaTroca;
-              exist.liquidoML += liquidoTroca;
-              exist.qtdVendida += 1; // Apenas 1 unidade líquida
-            } else {
-              mapaAgrupado.set(skuKey, {
-                sku: skuOrig,
-                skuKey: skuKey,
-                receitaBruta: receitaTroca,
-                liquidoML: liquidoTroca,
-                qtdVendida: 1,
-                qtdDevolucoesPlanilha: 0,
-                prejuizoFreteReverso: 0
-              });
+              if (mapaAgrupado.has(skuKey)) {
+                const exist = mapaAgrupado.get(skuKey);
+                exist.receitaBruta += receitaTroca;
+                exist.liquidoML += liquidoTroca;
+                exist.qtdVendida += 1;
+              } else {
+                mapaAgrupado.set(skuKey, {
+                  sku: skuOrig,
+                  skuKey: skuKey,
+                  receitaBruta: receitaTroca,
+                  liquidoML: liquidoTroca,
+                  qtdVendida: 1
+                });
+              }
             }
           }
         }
@@ -439,7 +445,7 @@ export default function LogisticaPage() {
         let receitaTotalPacote = parseNumero(row[colRecPacote]);
 
         if (isFlex) {
-          liquidoTotalPacote -= taxaFlexUnit; // Debita R$ 12,99 no envio Flex do pacote
+          liquidoTotalPacote -= taxaFlexUnit;
         }
 
         const itensFilhos: any[] = [];
@@ -470,23 +476,16 @@ export default function LogisticaPage() {
 
           if (mapaAgrupado.has(f.skuKey)) {
             const exist = mapaAgrupado.get(f.skuKey);
-            if (!isCanceladaOuDevolvida) {
-              exist.receitaBruta += f.pdvTotal;
-              exist.liquidoML += fatiaLiquidoML;
-              exist.qtdVendida += f.qtd;
-            } else {
-              exist.qtdDevolucoesPlanilha += f.qtd;
-              if (fatiaLiquidoML < 0) exist.prejuizoFreteReverso += Math.abs(fatiaLiquidoML);
-            }
+            exist.receitaBruta += f.pdvTotal;
+            exist.liquidoML += fatiaLiquidoML;
+            exist.qtdVendida += f.qtd;
           } else {
             mapaAgrupado.set(f.skuKey, {
               sku: f.skuOrig,
               skuKey: f.skuKey,
-              receitaBruta: !isCanceladaOuDevolvida ? f.pdvTotal : 0,
-              liquidoML: !isCanceladaOuDevolvida ? fatiaLiquidoML : 0,
-              qtdVendida: !isCanceladaOuDevolvida ? f.qtd : 0,
-              qtdDevolucoesPlanilha: isCanceladaOuDevolvida ? f.qtd : 0,
-              prejuizoFreteReverso: (isCanceladaOuDevolvida && fatiaLiquidoML < 0) ? Math.abs(fatiaLiquidoML) : 0
+              receitaBruta: f.pdvTotal,
+              liquidoML: fatiaLiquidoML,
+              qtdVendida: f.qtd
             });
           }
         }
@@ -512,30 +511,22 @@ export default function LogisticaPage() {
 
         let liquidoMLLinha = parseNumero(row[colLiquido]);
 
-        // Se for Flex, desconta R$ 12,99
         if (isFlex) {
           liquidoMLLinha -= taxaFlexUnit;
         }
 
         if (mapaAgrupado.has(skuKey)) {
           const exist = mapaAgrupado.get(skuKey);
-          if (!isCanceladaOuDevolvida) {
-            exist.receitaBruta += receitaBrutaLinha;
-            exist.liquidoML += liquidoMLLinha;
-            exist.qtdVendida += qtdLinha;
-          } else {
-            exist.qtdDevolucoesPlanilha += qtdLinha;
-            if (liquidoMLLinha < 0) exist.prejuizoFreteReverso += Math.abs(liquidoMLLinha);
-          }
+          exist.receitaBruta += receitaBrutaLinha;
+          exist.liquidoML += liquidoMLLinha;
+          exist.qtdVendida += qtdLinha;
         } else {
           mapaAgrupado.set(skuKey, {
             sku: skuOriginal,
             skuKey: skuKey,
-            receitaBruta: !isCanceladaOuDevolvida ? receitaBrutaLinha : 0,
-            liquidoML: !isCanceladaOuDevolvida ? liquidoMLLinha : 0,
-            qtdVendida: !isCanceladaOuDevolvida ? qtdLinha : 0,
-            qtdDevolucoesPlanilha: isCanceladaOuDevolvida ? qtdLinha : 0,
-            prejuizoFreteReverso: (isCanceladaOuDevolvida && liquidoMLLinha < 0) ? Math.abs(liquidoMLLinha) : 0
+            receitaBruta: receitaBrutaLinha,
+            liquidoML: liquidoMLLinha,
+            qtdVendida: qtdLinha
           });
         }
         r++;
@@ -552,8 +543,9 @@ export default function LogisticaPage() {
       const estoqueCD = mapaEstoqueCD.get(skuKey) || 0;
       const estoqueCentral = tinyMap.get(skuKey) || 0;
 
-      const devolucoesTotais = (mapaDevContagem.get(skuKey) || 0) + (item.qtdDevolucoesPlanilha || 0);
-      const vendasTotais = Math.max(mapaVendasAbc.get(skuKey) || 0, item.qtdVendida + (item.qtdDevolucoesPlanilha || 0));
+      // Devoluções puxadas estritamente da aba Devoluções do Supabase
+      const devolucoesTotais = mapaDevContagem.get(skuKey) || 0;
+      const vendasTotais = Math.max(mapaVendasAbc.get(skuKey) || 0, item.qtdVendida);
       const taxaDevolucao = vendasTotais > 0 ? (devolucoesTotais / vendasTotais) * 100 : 0;
 
       let lucroRs = 0;
@@ -564,11 +556,8 @@ export default function LogisticaPage() {
         const impostoTotal = item.receitaBruta * (impostoPct / 100);
         const embalagemTotal = modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0;
 
-        lucroRs = item.liquidoML - custoProdutoTotal - impostoTotal - embalagemTotal - (item.prejuizoFreteReverso || 0);
+        lucroRs = item.liquidoML - custoProdutoTotal - impostoTotal - embalagemTotal;
         margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
-      } else {
-        lucroRs = - (item.prejuizoFreteReverso || 0);
-        margemPct = 0;
       }
 
       const tarifaFreteSoma = item.receitaBruta - item.liquidoML;
@@ -601,9 +590,7 @@ export default function LogisticaPage() {
       }
 
       let diagnostico = "";
-      if (item.qtdVendida === 0 && devolucoesTotais > 0) {
-        diagnostico = "⛔ 100% Devolvido";
-      } else if (margemPct <= 0) {
+      if (margemPct <= 0) {
         diagnostico = "❌ Prejuízo (Sem Futuro)";
       } else if (taxaDevolucao >= limiteDevolucao && devolucoesTotais > 0) {
         diagnostico = "⛔ Alta Devolução (Sem Futuro)";
@@ -823,7 +810,7 @@ export default function LogisticaPage() {
               </div>
               
               {/* FILTROS SUPERIORES DE CUSTOS E VALIDAÇÃO */}
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Ficheiro de Vendas Brutas (Excel/CSV):</label>
                   <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUploadVendas} className={`w-full bg-slate-950 border border-slate-700 file:border-0 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer ${modoLogistica === "full" ? "file:bg-purple-600" : "file:bg-indigo-600"}`} />
@@ -843,10 +830,6 @@ export default function LogisticaPage() {
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Custo Embalagem (R$):</label>
                       <input type="number" step="0.01" value={custoEmbalagem} onChange={e => setCustoEmbalagem(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-rose-400 outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2" title="Custo descontado do líquido em envios Flex">Taxa Flex (R$):</label>
-                      <input type="number" step="0.01" value={taxaFlex} onChange={e => setTaxaFlex(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-amber-400 font-bold outline-none" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Margem Promissora (%):</label>
@@ -909,7 +892,7 @@ export default function LogisticaPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 text-center animate-in zoom-in duration-300">
                  <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
-                 <p className="text-sm text-slate-400 mb-4">O motor identificou pacotes, trocas e taxas Flex, consolidando <strong>{dadosProcessados.length} SKUs</strong>.</p>
+                 <p className="text-sm text-slate-400 mb-4">O motor identificou pacotes, trocas e taxas Flex, desconsiderando cancelamentos/devoluções de vendas e consolidando <strong>{dadosProcessados.length} SKUs</strong>.</p>
                  <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" para armazenar os dados e ir para o Relatório Oficial.</p>
               </div>
             )}
@@ -1032,7 +1015,7 @@ export default function LogisticaPage() {
                     {filtrados.map((item: any, idx: number) => {
                       let rowStyle = "";
                       if (modoLogistica === "padrao") {
-                        if (item.diagnostico?.includes("Sem Futuro") || item.diagnostico?.includes("Devolvido")) rowStyle = "bg-rose-950/10";
+                        if (item.diagnostico?.includes("Sem Futuro")) rowStyle = "bg-rose-950/10";
                         else if (item.diagnostico?.includes("Promissor")) rowStyle = "bg-emerald-950/10";
                       }
 
@@ -1080,7 +1063,7 @@ export default function LogisticaPage() {
                               </td>
                               <td className="p-3 text-center border-l border-slate-800/50 bg-slate-950/20">
                                 <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
-                                  item.diagnostico?.includes("Sem Futuro") || item.diagnostico?.includes("Devolvido") ? 'bg-rose-900/30 text-rose-400 border border-rose-800/50' : 
+                                  item.diagnostico?.includes("Sem Futuro") ? 'bg-rose-900/30 text-rose-400 border border-rose-800/50' : 
                                   item.diagnostico?.includes("Promissor") ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800/50' : 
                                   item.diagnostico?.includes("Atenção") ? 'bg-amber-900/30 text-amber-400 border border-amber-800/50' : 
                                   'text-slate-400 border border-slate-700'
