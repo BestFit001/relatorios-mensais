@@ -1,341 +1,555 @@
 "use client";
-import { useState, useEffect } from "react";
-import Link from "next/link";
+import React, { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
+import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
-// Lista com todas as rotas do sistema
+interface Usuario {
+  id: number;
+  nome: string;
+  email: string;
+  senha?: string;
+  cargo?: string;
+  ativo?: boolean;
+  paginas_permitidas: string[];
+  created_at?: string;
+}
+
 const rotasDisponiveis = [
   { id: "/", nome: "Dashboard (Curva ABC)" },
   { id: "/mapeamento", nome: "Cadastros" },
   { id: "/ads", nome: "Adsense" },
   { id: "/devolucoes", nome: "Devoluções" },
-  { id: "/full", nome: "Full / FBA" }, // <--- ABA ADICIONADA AQUI
-  { id: "/agenda", nome: "Agenda (Restrito)" }, 
+  { id: "/full", nome: "Logística Integrada" },
+  { id: "/plp", nome: "PLPs (Flex e Coleta)" },
+  { id: "/agenda", nome: "Agenda" },
   { id: "/regras", nome: "Regras" },
   { id: "/upload", nome: "Uploads" },
   { id: "/admin", nome: "Admin" }
 ];
 
 export default function AdminPage() {
-  const [email, setEmail] = useState("");
-  const [senha, setSenha] = useState("");
-  const [perfil, setPerfil] = useState("compras");
-  const [paginasSelecionadas, setPaginasSelecionadas] = useState<string[]>(["/"]);
-  
-  const [usuarios, setUsuarios] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [salvando, setSalvando] = useState(false);
 
-  const [editandoId, setEditandoId] = useState<string | null>(null);
-  const [novoPerfil, setNovoPerfil] = useState("");
-  const [editandoPaginas, setEditandoPaginas] = useState<string[]>([]);
+  // Modal / Formulário de Edição e Criação
+  const [modalAberto, setModalAberto] = useState(false);
+  const [usuarioEditando, setUsuarioEditando] = useState<Usuario | null>(null);
 
-  // Estados para o tamanho da Base de Dados
-  const [tamanhoDb, setTamanhoDb] = useState({ mb: 0, percentual: 0 });
-  const limiteDbMb = 500; // Limite do plano gratuito do Supabase (500MB). Altere para 8192 se for plano Pro (8GB).
-
-  const carregarUsuariosEStatus = async () => {
-    // Carrega Usuários
-    const { data: usersData, error } = await supabase.from('usuarios_permissoes').select('*');
-    if (usersData) setUsuarios(usersData);
-    if (error) console.error("Erro ao carregar utilizadores:", error.message);
-
-    // Carrega Tamanho do Banco (chama a função RPC)
-    const { data: dbSizeData, error: dbError } = await supabase.rpc('obter_tamanho_db');
-    if (dbSizeData !== null && !dbError) {
-      const mb = Number(dbSizeData);
-      const percentual = (mb / limiteDbMb) * 100;
-      setTamanhoDb({ mb, percentual });
-    }
-  };
+  // Estados dos campos do formulário
+  const [formNome, setFormNome] = useState("");
+  const [formEmail, setFormEmail] = useState("");
+  const [formSenha, setFormSenha] = useState("");
+  const [formCargo, setFormCargo] = useState("");
+  const [formAtivo, setFormAtivo] = useState(true);
+  const [formPaginas, setFormPaginas] = useState<string[]>([]);
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [termoBusca, setTermoBusca] = useState("");
 
   useEffect(() => {
-    carregarUsuariosEStatus();
-  }, []);
-
-  const handlePerfilChange = (valor: string) => {
-    setPerfil(valor);
-    if (valor === "admin") {
-      setPaginasSelecionadas(rotasDisponiveis.map(r => r.id));
-    } else {
-      setPaginasSelecionadas(["/"]);
+    const usuarioLogadoStr = localStorage.getItem("usuario_logado");
+    if (!usuarioLogadoStr) {
+      router.push("/login");
+      return;
     }
-  };
 
-  const togglePagina = (id: string) => {
-    setPaginasSelecionadas(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
-  };
+    try {
+      const usuarioLogado = JSON.parse(usuarioLogadoStr);
+      const permitidas = usuarioLogado.paginas_permitidas || [];
+      if (permitidas.length > 0 && !permitidas.includes("/admin")) {
+        alert("🔒 Acesso Restrito: A sua conta não tem permissão de acesso à aba de Administração.");
+        router.push(permitidas[0] || "/");
+        return;
+      }
+    } catch {
+      router.push("/login");
+      return;
+    }
 
-  const toggleEditandoPagina = (id: string) => {
-    setEditandoPaginas(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
-  };
+    carregarUsuarios();
+  }, [router]);
 
-  const cadastrarUsuario = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (paginasSelecionadas.length === 0) return alert("Selecione pelo menos uma página de acesso.");
-    
+  const carregarUsuarios = async () => {
     setLoading(true);
-    const idUnico = crypto.randomUUID();
+    const { data, error } = await supabase
+      .from("usuarios")
+      .select("*")
+      .order("id", { ascending: true });
 
-    const { error: dbError } = await supabase.from('usuarios_permissoes').insert({
-      id: idUnico,
-      email: email.trim().toLowerCase(),
-      perfil: perfil,
-      senha: senha, // Mantido apenas como referência no MVP, não recomendável num ambiente de prod
-      paginas_permitidas: paginasSelecionadas
-    });
-
-    if (dbError) {
-      alert("Erro ao cadastrar utilizador: " + dbError.message);
+    if (error) {
+      console.error("Erro ao carregar utilizadores:", error);
+      alert("Erro ao carregar utilizadores: " + error.message);
     } else {
-      alert("✅ Utilizador cadastrado com sucesso!");
-      setEmail("");
-      setSenha("");
-      setPaginasSelecionadas(["/"]);
-      setPerfil("compras");
-      carregarUsuariosEStatus();
+      setUsuarios(data || []);
     }
     setLoading(false);
   };
 
-  const excluirUsuario = async (id: string, emailUser: string) => {
-    if (!confirm(`Tem certeza que deseja excluir o utilizador ${emailUser}?`)) return;
+  const abrirModalNovo = () => {
+    setUsuarioEditando(null);
+    setFormNome("");
+    setFormEmail("");
+    setFormSenha("");
+    setFormCargo("Analista");
+    setFormAtivo(true);
+    setFormPaginas(["/", "/mapeamento", "/ads", "/devolucoes", "/full", "/plp"]);
+    setMostrarSenha(false);
+    setModalAberto(true);
+  };
 
-    const { error } = await supabase.from('usuarios_permissoes').delete().eq('id', id);
-    if (error) alert("Erro ao excluir: " + error.message);
-    else {
-      alert("🗑️ Utilizador removido com sucesso!");
-      carregarUsuariosEStatus();
+  const abrirModalEditar = (u: Usuario) => {
+    setUsuarioEditando(u);
+    setFormNome(u.nome || "");
+    setFormEmail(u.email || "");
+    setFormSenha(""); // Mantém em branco caso não queira trocar
+    setFormCargo(u.cargo || "");
+    setFormAtivo(u.ativo !== false);
+    setFormPaginas(Array.isArray(u.paginas_permitidas) ? u.paginas_permitidas : []);
+    setMostrarSenha(false);
+    setModalAberto(true);
+  };
+
+  const fecharModal = () => {
+    setModalAberto(false);
+    setUsuarioEditando(null);
+  };
+
+  const togglePermissao = (rotaId: string) => {
+    if (formPaginas.includes(rotaId)) {
+      setFormPaginas(formPaginas.filter((r) => r !== rotaId));
+    } else {
+      setFormPaginas([...formPaginas, rotaId]);
     }
   };
 
-  const iniciarEdicao = (u: any) => {
-    setEditandoId(u.id);
-    setNovoPerfil(u.perfil || "compras");
-    setEditandoPaginas(u.paginas_permitidas || []);
+  const selecionarTodasPermissoes = () => {
+    setFormPaginas(rotasDisponiveis.map((r) => r.id));
   };
 
-  const salvarEdicao = async (id: string) => {
-    if (editandoPaginas.length === 0) return alert("O utilizador precisa de acesso a pelo menos uma página.");
+  const desmarcarTodasPermissoes = () => {
+    setFormPaginas([]);
+  };
 
-    const { error } = await supabase
-      .from('usuarios_permissoes')
-      .update({ perfil: novoPerfil, paginas_permitidas: editandoPaginas })
-      .eq('id', id);
+  const handleSalvar = async (e: React.FormEvent) => {
+    e.preventDefault();
 
-    if (error) alert("Erro ao atualizar: " + error.message);
-    else {
-      alert("✅ Permissões atualizadas com sucesso!");
-      
-      const logado = JSON.parse(localStorage.getItem("usuario_logado") || "{}");
-      if (logado.id === id) {
-        logado.paginas_permitidas = editandoPaginas;
-        logado.perfil = novoPerfil;
-        localStorage.setItem("usuario_logado", JSON.stringify(logado));
+    if (!formNome.trim() || !formEmail.trim()) {
+      return alert("Preencha o Nome e o E-mail.");
+    }
+
+    if (!usuarioEditando && !formSenha.trim()) {
+      return alert("Defina uma senha para o novo utilizador.");
+    }
+
+    setSalvando(true);
+
+    const payload: any = {
+      nome: formNome.trim(),
+      email: formEmail.trim().toLowerCase(),
+      cargo: formCargo.trim(),
+      ativo: formAtivo,
+      paginas_permitidas: formPaginas,
+    };
+
+    if (formSenha.trim()) {
+      payload.senha = formSenha.trim();
+    }
+
+    if (usuarioEditando) {
+      const { error } = await supabase
+        .from("usuarios")
+        .update(payload)
+        .eq("id", usuarioEditando.id);
+
+      if (error) {
+        alert("Erro ao atualizar utilizador: " + error.message);
+      } else {
+        alert("✅ Utilizador atualizado com sucesso!");
+
+        // Se o utilizador logado atualizou o seu próprio perfil, sincroniza o localStorage imediatamente
+        const logadoStr = localStorage.getItem("usuario_logado");
+        if (logadoStr) {
+          try {
+            const logado = JSON.parse(logadoStr);
+            if (logado.id === usuarioEditando.id || logado.email === usuarioEditando.email) {
+              localStorage.setItem(
+                "usuario_logado",
+                JSON.stringify({ ...logado, ...payload })
+              );
+            }
+          } catch (err) {
+            console.error(err);
+          }
+        }
+
+        fecharModal();
+        carregarUsuarios();
       }
+    } else {
+      const { error } = await supabase.from("usuarios").insert([payload]);
 
-      setEditandoId(null);
-      carregarUsuariosEStatus();
+      if (error) {
+        alert("Erro ao cadastrar utilizador: " + error.message);
+      } else {
+        alert("✅ Novo utilizador cadastrado com sucesso!");
+        fecharModal();
+        carregarUsuarios();
+      }
+    }
+    setSalvando(false);
+  };
+
+  const handleExcluir = async (u: Usuario) => {
+    const logadoStr = localStorage.getItem("usuario_logado");
+    if (logadoStr) {
+      try {
+        const logado = JSON.parse(logadoStr);
+        if (logado.id === u.id || logado.email === u.email) {
+          return alert("⚠️ Ação não permitida: Não pode excluir a sua própria conta atualmente conectada.");
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    if (!confirm(`Deseja realmente excluir permanentemente o utilizador "${u.nome}" (${u.email})?`)) {
+      return;
+    }
+
+    const { error } = await supabase.from("usuarios").delete().eq("id", u.id);
+    if (error) {
+      alert("Erro ao excluir utilizador: " + error.message);
+    } else {
+      alert("🗑️ Utilizador excluído com sucesso!");
+      carregarUsuarios();
     }
   };
 
-  const formatarPaginasPermitidas = (paginasArray: string[]) => {
-    if (!paginasArray || !Array.isArray(paginasArray)) return "-";
-    const nomes = paginasArray.map(path => {
-      const rotaEncontrada = rotasDisponiveis.find(r => r.id === path);
-      return rotaEncontrada ? rotaEncontrada.nome : path;
-    });
-    return nomes.join(", ");
-  };
+  const usuariosFiltrados = usuarios.filter((u) => {
+    const t = termoBusca.toLowerCase();
+    return (
+      (u.nome && u.nome.toLowerCase().includes(t)) ||
+      (u.email && u.email.toLowerCase().includes(t)) ||
+      (u.cargo && u.cargo.toLowerCase().includes(t))
+    );
+  });
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
-      <div className="max-w-6xl mx-auto">
-        
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div className="max-w-[98%] mx-auto relative space-y-6">
+        {/* Cabeçalho */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Painel Administrativo</h1>
-            <p className="text-sm font-medium text-slate-400">Gestão de Utilizadores e Monitorização do Sistema</p>
+            <h1 className="text-2xl font-black text-white tracking-tight">Administração & Utilizadores</h1>
+            <p className="text-sm font-medium text-slate-400">
+              Gestão de acessos, permissões por aba e segurança da plataforma
+            </p>
           </div>
           <Navbar />
         </div>
 
-        {/* PAINEL DE USO DE MEMÓRIA (SUPABASE) */}
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div>
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              ☁️ Capacidade da Base de Dados
-            </h2>
-            <p className="text-xs text-slate-400 mt-1">Limite alocado para o projeto Supabase: <strong className="text-slate-300">{limiteDbMb} MB</strong></p>
+        {/* Barra de Ações & Filtro */}
+        <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex-1 max-w-md">
+            <input
+              type="text"
+              placeholder="Buscar por nome, e-mail ou cargo..."
+              value={termoBusca}
+              onChange={(e) => setTermoBusca(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none focus:border-purple-500 transition-all"
+            />
           </div>
-          <div className="flex-1 w-full md:max-w-md bg-slate-950 p-4 rounded-xl border border-slate-800">
-            <div className="flex justify-between text-xs font-bold mb-2">
-              <span className={`${tamanhoDb.percentual > 80 ? 'text-rose-400' : 'text-indigo-400'}`}>
-                {tamanhoDb.mb.toFixed(2)} MB Utilizados
-              </span>
-              <span className="text-slate-300">{tamanhoDb.percentual.toFixed(2)}%</span>
-            </div>
-            <div className="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden border border-slate-800">
-              <div 
-                className={`h-full rounded-full transition-all duration-1000 ${tamanhoDb.percentual > 85 ? 'bg-rose-500' : tamanhoDb.percentual > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`} 
-                style={{ width: `${Math.min(tamanhoDb.percentual, 100)}%` }}
-              ></div>
-            </div>
-          </div>
+          <button
+            onClick={abrirModalNovo}
+            className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-purple-900/40 transition-all flex items-center justify-center gap-2"
+          >
+            <span>➕ Novo Utilizador</span>
+          </button>
         </div>
 
-        <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
-          <h2 className="text-lg font-bold mb-4 text-white">Cadastrar Novo Utilizador</h2>
-          <form onSubmit={cadastrarUsuario} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <input 
-              type="email" 
-              placeholder="felipe.camargo@usebestfit.com.br" 
-              value={email} 
-              onChange={(e) => setEmail(e.target.value)} 
-              required
-              className="border border-slate-700 rounded-xl p-3 bg-slate-950 text-white text-xs outline-none focus:border-indigo-500"
-            />
-            <input 
-              type="password" 
-              placeholder="Palavra-passe (referência)" 
-              value={senha} 
-              onChange={(e) => setSenha(e.target.value)} 
-              required
-              className="border border-slate-700 rounded-xl p-3 bg-slate-950 text-white text-xs outline-none focus:border-indigo-500"
-            />
-            <select 
-              value={perfil} 
-              onChange={(e) => handlePerfilChange(e.target.value)}
-              className="border border-slate-700 rounded-xl p-3 bg-slate-950 text-white text-xs outline-none cursor-pointer focus:border-indigo-500"
-            >
-              <option value="compras">Comprador(a) / Operacional</option>
-              <option value="admin">Administrador (Total Acesso)</option>
-            </select>
+        {/* Tabela de Utilizadores */}
+        <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+          <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+              Contas Cadastradas ({usuariosFiltrados.length})
+            </h3>
+            <span className="text-xs text-slate-400">Total no banco: {usuarios.length}</span>
+          </div>
 
-            <div className="md:col-span-3 bg-slate-950 p-5 rounded-xl border border-slate-800">
-              <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-3">Marque as Abas Permitidas para este utilizador:</label>
-              <div className="flex flex-wrap gap-4">
-                {rotasDisponiveis.map(rota => (
-                  <label key={rota.id} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-200 bg-slate-900 px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors">
-                    <input 
-                      type="checkbox" 
-                      checked={paginasSelecionadas.includes(rota.id)} 
-                      onChange={() => togglePagina(rota.id)} 
-                      className="accent-indigo-600 w-4 h-4 cursor-pointer" 
-                    />
-                    {rota.nome}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="md:col-span-3 flex justify-end mt-2">
-              <button 
-                type="submit" 
-                disabled={loading}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md"
-              >
-                {loading ? "A cadastrar..." : "+ Criar Utilizador"}
-              </button>
-            </div>
-          </form>
-        </div>
-
-        <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-          <h2 className="text-lg font-bold mb-4 text-white">Utilizadores Registados e Permissões</h2>
-          
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[11px]">
+            <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+              <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                 <tr>
-                  <th className="p-4">E-mail</th>
-                  <th className="p-4 w-32">Perfil</th>
-                  <th className="p-4">Abas Permitidas</th>
-                  <th className="p-4 text-center w-36">Ações</th>
+                  <th className="p-4 text-center">#</th>
+                  <th className="p-4">Nome</th>
+                  <th className="p-4">E-mail (Login)</th>
+                  <th className="p-4">Cargo / Função</th>
+                  <th className="p-4 text-center">Status</th>
+                  <th className="p-4">Páginas Permitidas</th>
+                  <th className="p-4 text-center">Ações</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {usuarios.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="p-6 text-center text-slate-500 italic">Nenhum utilizador registado.</td>
-                  </tr>
-                ) : (
-                  usuarios.map((u) => {
-                    const isEditing = editandoId === u.id;
+              <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                {usuariosFiltrados.map((u, idx) => {
+                  const permitidas = Array.isArray(u.paginas_permitidas) ? u.paginas_permitidas : [];
+                  const temTodas = permitidas.length >= rotasDisponiveis.length;
 
-                    return (
-                      <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-4 font-semibold text-slate-200">{u.email}</td>
-                        
-                        <td className="p-4 font-bold">
-                          {isEditing ? (
-                            <select 
-                              value={novoPerfil} 
-                              onChange={(e) => setNovoPerfil(e.target.value)}
-                              className="border border-slate-600 rounded-lg p-1.5 bg-slate-950 text-white text-xs outline-none focus:border-indigo-500 w-full"
-                            >
-                              <option value="compras">Operacional</option>
-                              <option value="admin">Admin</option>
-                            </select>
-                          ) : (
-                            <span className={`px-2.5 py-1 rounded-lg text-[10px] uppercase ${u.perfil === 'admin' ? 'bg-indigo-950/60 text-indigo-400 border border-indigo-900/50' : 'bg-slate-800 text-slate-300'}`}>
-                              {u.perfil}
+                  return (
+                    <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
+                      <td className="p-4 text-center font-mono text-slate-500">{idx + 1}</td>
+                      <td className="p-4 font-bold text-white">{u.nome}</td>
+                      <td className="p-4 font-mono text-purple-300">{u.email}</td>
+                      <td className="p-4 text-slate-300">
+                        <span className="bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-md text-[11px] font-semibold">
+                          {u.cargo || "Não definido"}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span
+                          className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
+                            u.ativo !== false
+                              ? "bg-emerald-950/60 text-emerald-400 border-emerald-900/50"
+                              : "bg-rose-950/60 text-rose-400 border-rose-900/50"
+                          }`}
+                        >
+                          {u.ativo !== false ? "Ativo" : "Inativo"}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex flex-wrap gap-1 max-w-md">
+                          {temTodas ? (
+                            <span className="bg-purple-950/80 text-purple-300 border border-purple-800 px-2 py-0.5 rounded text-[10px] font-black">
+                              ⭐ ACESSO TOTAL ({permitidas.length} abas)
                             </span>
-                          )}
-                        </td>
-
-                        <td className="p-4 text-slate-300">
-                          {isEditing ? (
-                            <div className="flex flex-wrap gap-2">
-                              {rotasDisponiveis.map(rota => (
-                                <label key={rota.id} className="flex items-center gap-1.5 cursor-pointer text-[10px] font-semibold bg-slate-950 px-2 py-1 rounded border border-slate-700">
-                                  <input 
-                                    type="checkbox" 
-                                    checked={editandoPaginas.includes(rota.id)} 
-                                    onChange={() => toggleEditandoPagina(rota.id)} 
-                                    className="accent-indigo-600" 
-                                  />
-                                  {rota.nome}
-                                </label>
-                              ))}
-                            </div>
+                          ) : permitidas.length === 0 ? (
+                            <span className="text-slate-500 italic text-[11px]">Nenhuma permissão</span>
                           ) : (
-                            <div className="leading-relaxed">
-                              {formatarPaginasPermitidas(u.paginas_permitidas)}
-                            </div>
+                            permitidas.map((rotaId) => {
+                              const rotaObj = rotasDisponiveis.find((r) => r.id === rotaId);
+                              return (
+                                <span
+                                  key={rotaId}
+                                  className="bg-slate-900 text-slate-300 border border-slate-800 px-2 py-0.5 rounded text-[10px] font-mono"
+                                >
+                                  {rotaObj ? rotaObj.nome : rotaId}
+                                </span>
+                              );
+                            })
                           )}
-                        </td>
+                        </div>
+                      </td>
+                      <td className="p-4 text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => abrirModalEditar(u)}
+                            className="bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 font-bold py-1.5 px-3 rounded-lg text-xs uppercase tracking-wider cursor-pointer transition-all"
+                          >
+                            ✏️ Editar
+                          </button>
+                          <button
+                            onClick={() => handleExcluir(u)}
+                            className="bg-rose-950/60 hover:bg-rose-900 text-rose-400 border border-rose-900/40 font-bold py-1.5 px-3 rounded-lg text-xs uppercase tracking-wider cursor-pointer transition-all"
+                            title="Excluir utilizador"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
 
-                        <td className="p-4 text-center">
-                          {isEditing ? (
-                            <div className="flex flex-col gap-1.5 items-center justify-center">
-                              <button onClick={() => salvarEdicao(u.id)} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase cursor-pointer transition-all shadow-sm">
-                                Salvar
-                              </button>
-                              <button onClick={() => setEditandoId(null)} className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase cursor-pointer transition-all">
-                                Cancelar
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-center gap-2">
-                              <button onClick={() => iniciarEdicao(u)} title="Editar Permissões" className="bg-slate-800 hover:bg-indigo-950/60 text-slate-300 hover:text-indigo-400 border border-slate-700 hover:border-indigo-900/50 p-2 rounded-lg cursor-pointer transition-all">
-                                ✏️
-                              </button>
-                              <button onClick={() => excluirUsuario(u.id, u.email)} title="Excluir Utilizador" className="bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-900/50 p-2 rounded-lg cursor-pointer transition-all">
-                                🗑️
-                              </button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })
+                {usuariosFiltrados.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-slate-500">
+                      Nenhum utilizador encontrado para a busca.
+                    </td>
+                  </tr>
+                )}
+
+                {loading && (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-slate-400">
+                      A carregar lista de utilizadores...
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
           </div>
         </div>
 
+        {/* ================= MODAL DE CRIAÇÃO / EDIÇÃO ================= */}
+        {modalAberto && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 md:p-8 shadow-2xl space-y-6">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>{usuarioEditando ? "✏️ Editar Utilizador" : "➕ Novo Utilizador"}</span>
+                </h3>
+                <button
+                  onClick={fecharModal}
+                  className="text-slate-400 hover:text-white p-1 text-base cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleSalvar} className="space-y-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                      Nome Completo:
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formNome}
+                      onChange={(e) => setFormNome(e.target.value)}
+                      placeholder="Ex: Henrique Teixeira"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none focus:border-purple-500 transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                      E-mail (Login):
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={formEmail}
+                      onChange={(e) => setFormEmail(e.target.value)}
+                      placeholder="usuario@bestfit.com.br"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none focus:border-purple-500 transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        {usuarioEditando ? "Nova Senha (opcional):" : "Senha de Acesso:"}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setMostrarSenha(!mostrarSenha)}
+                        className="text-[10px] text-purple-400 hover:underline cursor-pointer"
+                      >
+                        {mostrarSenha ? "Ocultar" : "Mostrar"}
+                      </button>
+                    </div>
+                    <input
+                      type={mostrarSenha ? "text" : "password"}
+                      value={formSenha}
+                      onChange={(e) => setFormSenha(e.target.value)}
+                      placeholder={usuarioEditando ? "Deixe em branco para manter a atual" : "Digite a senha"}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none focus:border-purple-500 transition-all font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                      Cargo / Função:
+                    </label>
+                    <input
+                      type="text"
+                      value={formCargo}
+                      onChange={(e) => setFormCargo(e.target.value)}
+                      placeholder="Ex: Gestor de E-commerce"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none focus:border-purple-500 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+                  <input
+                    type="checkbox"
+                    id="checkbox-ativo"
+                    checked={formAtivo}
+                    onChange={(e) => setFormAtivo(e.target.checked)}
+                    className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                  />
+                  <label htmlFor="checkbox-ativo" className="text-xs font-bold text-white cursor-pointer select-none">
+                    Utilizador Ativo (pode fazer login no sistema)
+                  </label>
+                </div>
+
+                {/* Seção de Permissões */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <label className="block text-[10px] font-bold text-purple-400 uppercase tracking-wider">
+                      Abas Permitidas para este Utilizador:
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={selecionarTodasPermissoes}
+                        className="text-[10px] font-bold text-emerald-400 hover:underline cursor-pointer"
+                      >
+                        ✓ Marcar Todas
+                      </button>
+                      <span className="text-slate-600">|</span>
+                      <button
+                        type="button"
+                        onClick={desmarcarTodasPermissoes}
+                        className="text-[10px] font-bold text-rose-400 hover:underline cursor-pointer"
+                      >
+                        ✕ Desmarcar Todas
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-950 p-4 rounded-xl border border-slate-800 max-h-56 overflow-y-auto">
+                    {rotasDisponiveis.map((rota) => {
+                      const marcada = formPaginas.includes(rota.id);
+                      return (
+                        <label
+                          key={rota.id}
+                          className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all cursor-pointer select-none ${
+                            marcada
+                              ? "bg-purple-950/30 border-purple-800 text-white"
+                              : "bg-slate-900/40 border-slate-800/80 text-slate-400 hover:border-slate-700"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={marcada}
+                            onChange={() => togglePermissao(rota.id)}
+                            className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                          />
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold">{rota.nome}</span>
+                            <span className="text-[10px] font-mono text-slate-500">{rota.id}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Botões de Ação */}
+                <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={fecharModal}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={salvando}
+                    className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-8 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-purple-900/40 transition-all"
+                  >
+                    {salvando ? "A Salvar..." : usuarioEditando ? "Atualizar Utilizador" : "Cadastrar Utilizador"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
