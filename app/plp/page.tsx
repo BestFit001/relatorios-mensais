@@ -143,8 +143,8 @@ export default function PlpPage() {
   const [filtroDataFim, setFiltroDataFim] = useState(new Date().toISOString().split("T")[0]);
   const [filtroAnalista, setFiltroAnalista] = useState("TODOS");
   const [filtroCanal, setFiltroCanal] = useState("TODOS");
-  const [filtroModalidade, setFiltroModalidade] = useState("FLEX_CORREIOS");
-  const [termoPesquisaPedido, setTermoPesquisaPedido] = useState(""); // NOVO: Pesquisa por número de pedido
+  const [filtroModalidade, setFiltroModalidade] = useState("TODOS"); // Padrão: "TODOS" (Todas as modalidades)
+  const [termoPesquisaPedido, setTermoPesquisaPedido] = useState("");
   const [pedidos, setPedidos] = useState<any[]>([]);
 
   useEffect(() => {
@@ -280,7 +280,7 @@ export default function PlpPage() {
       if (error) {
         alert("Erro ao salvar no banco Supabase: " + error.message);
       } else {
-        alert("✅ Configurações salvas universalmente! Todos os usuários agora verão estes mesmos responsáveis.");
+        alert("✅ Configurações salvas universalmente!");
         localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(taxasFlexCanal));
         localStorage.setItem("plp_analistas_por_canal", JSON.stringify(analistasPorCanal));
         setModalConfigAberto(false);
@@ -362,19 +362,26 @@ export default function PlpPage() {
       query = query.ilike("canal", filtroCanal);
     }
 
-    if (filtroModalidade === "FLEX_CORREIOS") {
-      query = query.in("modalidade", ["FLEX", "CORREIOS"]);
-    } else if (filtroModalidade !== "TODOS") {
-      query = query.eq("modalidade", filtroModalidade);
+    // Tratamento das novas opções de modalidade
+    if (filtroModalidade === "FLEX") {
+      query = query.eq("modalidade", "FLEX");
+    } else if (filtroModalidade === "AGENCIA") {
+      query = query.eq("modalidade", "AGENCIA");
+    } else if (filtroModalidade === "CORREIOS") {
+      query = query.eq("modalidade", "CORREIOS");
+    } else if (filtroModalidade === "AGENCIA_CORREIOS") {
+      query = query.in("modalidade", ["AGENCIA", "CORREIOS"]);
     }
+    // Se for "TODOS", não restringe modalidade na query (traz tudo)
 
     const { data } = await query;
     let dadosFiltrados = data || [];
 
+    // Filtro por analista (Respeitando a regra do FLEX)
     if (filtroAnalista !== "TODOS") {
       dadosFiltrados = dadosFiltrados.filter((p: any) => {
-        if (p.modalidade === "FLEX") {
-          return true;
+        if (p.modalidade === "FLEX" && filtroModalidade === "TODOS") {
+          return true; // Quando está em "Todas as Modalidades", o FLEX aparece junto com os demais canais do analista
         }
         const analistaDoCanal = obterAnalistaDoCanal(p.canal, analistasPorCanal);
         return analistaDoCanal === filtroAnalista || analistaDoCanal.includes(filtroAnalista);
@@ -385,6 +392,7 @@ export default function PlpPage() {
     setLoading(false);
   };
 
+  // SINCRONIZA AUTOMATICAMENTE O NOME DO ANALISTA NO CABEÇALHO
   useEffect(() => {
     if (filtroModalidade === "FLEX") {
       const analistasFlexPresentes = Array.from(
@@ -414,20 +422,6 @@ export default function PlpPage() {
     }
 
     if (filtroAnalista !== "TODOS") {
-      if (filtroModalidade === "FLEX_CORREIOS") {
-        const temFlexDeOutro = pedidos.some(
-          (p) => p.modalidade === "FLEX" && !obterAnalistaDoCanal(p.canal, analistasPorCanal).includes(filtroAnalista)
-        );
-        if (temFlexDeOutro) {
-          const analistasPresentes = Array.from(
-            new Set(pedidos.map((p) => obterAnalistaDoCanal(p.canal, analistasPorCanal)))
-          ).filter((n) => n && n !== "Expedição").sort();
-          if (analistasPresentes.length >= 2) {
-            setAnalistaDocumento(analistasPresentes.join(" & "));
-            return;
-          }
-        }
-      }
       setAnalistaDocumento(filtroAnalista);
       return;
     }
@@ -495,7 +489,7 @@ export default function PlpPage() {
     }
 
     setSalvando(true);
-    const valorFreteUnit = modalidade === "FLEX" ? obterTaxaFlexDoCanal(canalSelecionado, taxasFlexCanal) : 0;
+    const valorFreteUnit = modalidade === "FLEX" ? Number(taxasFlexCanal[canalSelecionado] ?? 12.99) : 0;
 
     const payload = listaPedidos.map((ped) => ({
       data_envio: dataEnvio,
@@ -558,30 +552,33 @@ export default function PlpPage() {
     window.print();
   };
 
-  // Filtragem adicional em memória pelo número do pedido pesquisado
-  const pedidosFiltradosPesquisa = termoPesquisaPedido.trim()
-    ? pedidos.filter((p) => String(p.numero_pedido).toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase()))
-    : pedidos;
-
-  // AGRUPA OS PEDIDOS EM COLUNAS POR CANAL
+  // AGRUPA OS PEDIDOS EM COLUNAS:
+  // Se for "Apenas Flex" ou se estiver em "Todas as Modalidades", os pedidos FLEX ganham uma coluna dedicada com o título "FLEX"
   const gerarColunasPorCanal = (listaPedidos: any[], maxLinhasPorColuna = 26) => {
     const mapa = new Map<string, string[]>();
-    for (const p of listaPedidos) {
-      const cOriginal = String(p.canal || "Geral").trim();
-      const cCanonico = canais.find((cn) => cn.trim().toLowerCase() === cOriginal.toLowerCase()) || cOriginal;
 
-      if (!mapa.has(cCanonico)) mapa.set(cCanonico, []);
-      mapa.get(cCanonico)!.push(p.numero_pedido);
+    for (const p of listaPedidos) {
+      let grupoKey = String(p.canal || "Geral").trim();
+
+      // REGRA: Se a modalidade for FLEX e estivermos exibindo junto no manifesto geral, agrupa sob a coluna "FLEX"
+      if (p.modalidade === "FLEX" && filtroModalidade === "TODOS") {
+        grupoKey = "FLEX";
+      } else {
+        grupoKey = canais.find((cn) => cn.trim().toLowerCase() === grupoKey.toLowerCase()) || grupoKey;
+      }
+
+      if (!mapa.has(grupoKey)) mapa.set(grupoKey, []);
+      mapa.get(grupoKey)!.push(p.numero_pedido);
     }
 
     const colunas: { canal: string; totalCanal: number; pedidos: { idx: number; numero: string }[] }[] = [];
 
-    mapa.forEach((peds, canalNome) => {
+    mapa.forEach((peds, grupoNome) => {
       const total = peds.length;
       for (let i = 0; i < total; i += maxLinhasPorColuna) {
         const pedSlice = peds.slice(i, i + maxLinhasPorColuna);
         colunas.push({
-          canal: i === 0 ? canalNome : `${canalNome} (cont.)`,
+          canal: i === 0 ? grupoNome : `${grupoNome} (cont.)`,
           totalCanal: total,
           pedidos: pedSlice.map((num, j) => ({ idx: i + j + 1, numero: num }))
         });
@@ -590,6 +587,10 @@ export default function PlpPage() {
 
     return colunas;
   };
+
+  const pedidosFiltradosPesquisa = termoPesquisaPedido.trim()
+    ? pedidos.filter((p) => String(p.numero_pedido).toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase()))
+    : pedidos;
 
   const colunasPorCanal = gerarColunasPorCanal(pedidosFiltradosPesquisa, 26);
 
@@ -604,10 +605,11 @@ export default function PlpPage() {
   };
 
   const formatarMetodoEnvioTexto = () => {
-    if (filtroModalidade === "FLEX_CORREIOS") return "Flex + Correios";
-    if (filtroModalidade === "FLEX") return "Mercado Envios Flex";
-    if (filtroModalidade === "AGENCIA") return "Agência";
-    if (filtroModalidade === "CORREIOS") return "Correios";
+    if (filtroModalidade === "TODOS") return "Todas as Modalidades (Flex + Agência + Correios)";
+    if (filtroModalidade === "FLEX") return "Apenas Pedidos Flex";
+    if (filtroModalidade === "AGENCIA") return "Apenas Pedidos Agência";
+    if (filtroModalidade === "CORREIOS") return "Apenas Pedidos Correios";
+    if (filtroModalidade === "AGENCIA_CORREIOS") return "Agências e Correios";
     return "Todas as Modalidades";
   };
 
@@ -887,7 +889,7 @@ export default function PlpPage() {
                 </div>
               </div>
 
-              {/* Filtros Integrados (incluindo Pesquisa por Pedido) */}
+              {/* Filtros Integrados (Atualizado com as 5 opções de modalidade) */}
               <div className="grid grid-cols-1 md:grid-cols-7 gap-3 items-end">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">De:</label>
@@ -942,6 +944,7 @@ export default function PlpPage() {
                   </select>
                 </div>
 
+                {/* MODALIDADE (COM AS 5 OPÇÕES SOLICITADAS) */}
                 <div>
                   <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Modalidade:</label>
                   <select
@@ -949,15 +952,15 @@ export default function PlpPage() {
                     onChange={(e) => setFiltroModalidade(e.target.value)}
                     className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2 text-xs font-bold text-amber-300 outline-none cursor-pointer"
                   >
-                    <option value="FLEX_CORREIOS">⚡ FLEX + Correios (Unificados)</option>
-                    <option value="TODOS">Todas as Modalidades</option>
-                    <option value="FLEX">Apenas Flex</option>
-                    <option value="AGENCIA">Apenas Agência</option>
-                    <option value="CORREIOS">Apenas Correios</option>
+                    <option value="TODOS">Todas as modalidades</option>
+                    <option value="FLEX">Apenas pedidos Flex</option>
+                    <option value="AGENCIA">Apenas pedidos Agência</option>
+                    <option value="CORREIOS">Apenas pedidos Correios</option>
+                    <option value="AGENCIA_CORREIOS">Agências e Correios</option>
                   </select>
                 </div>
 
-                {/* NOVO: PESQUISAR NÚMERO DO PEDIDO */}
+                {/* PESQUISAR PEDIDO */}
                 <div>
                   <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">
                     🔍 Pesquisar Pedido:
@@ -1042,9 +1045,9 @@ export default function PlpPage() {
                         contemBusca ? "border-2 border-purple-600 shadow-md" : "border-black"
                       }`}
                     >
-                      {/* TÍTULO DO CANAL */}
+                      {/* TÍTULO DO CANAL (O Flex ganha destaque próprio quando em 'Todas as modalidades') */}
                       <div className={`border-b border-black font-bold text-xs p-1.5 text-center uppercase tracking-wide ${
-                        contemBusca ? "bg-purple-100 text-purple-900" : "bg-gray-100"
+                        col.canal === "FLEX" ? "bg-amber-100 text-amber-950 font-black" : contemBusca ? "bg-purple-100 text-purple-900" : "bg-gray-100"
                       }`}>
                         {col.canal} <span className="text-[10px] text-gray-600 font-normal">({col.pedidos.length})</span>
                       </div>
