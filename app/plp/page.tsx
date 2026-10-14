@@ -27,11 +27,11 @@ export default function PlpPage() {
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
-  // Navegação entre as 2 Abas principais
+  // 2 Abas: Entrada | Manifesto
   const [abaAtiva, setAbaAtiva] = useState<"entrada" | "manifesto">("manifesto");
 
-  // Usuário / Analista Logado
-  const [nomeAnalista, setNomeAnalista] = useState("Gabrielle");
+  // Analista responsável
+  const [nomeAnalista, setNomeAnalista] = useState("");
 
   // Canais e Taxas
   const [canais, setCanais] = useState<string[]>(canaisPadraoBase);
@@ -40,17 +40,14 @@ export default function PlpPage() {
   const [novoCanalNome, setNovoCanalNome] = useState("");
 
   // ==========================================
-  // ABA 1: ENTRADA (MANUAL & PLANILHA UNIFICADAS)
+  // ABA 1: ENTRADA (MANUAL & PLANILHA)
   // ==========================================
   const [modoEntrada, setModoEntrada] = useState<"manual" | "planilha">("manual");
   const [dataEnvio, setDataEnvio] = useState(new Date().toISOString().split("T")[0]);
   const [canalSelecionado, setCanalSelecionado] = useState(canaisPadraoBase[0]);
   const [modalidade, setModalidade] = useState<"FLEX" | "AGENCIA" | "CORREIOS">("FLEX");
 
-  // Entrada Manual
   const [pedidosTexto, setPedidosTexto] = useState("");
-
-  // Entrada Planilha
   const [matrizPlanilha, setMatrizPlanilha] = useState<any[]>([]);
   const [colunaPedido, setColunaPedido] = useState("A");
   const [linhaInicial, setLinhaInicial] = useState("2");
@@ -62,7 +59,7 @@ export default function PlpPage() {
   const [filtroDataInicio, setFiltroDataInicio] = useState(new Date().toISOString().split("T")[0]);
   const [filtroDataFim, setFiltroDataFim] = useState(new Date().toISOString().split("T")[0]);
   const [filtroCanal, setFiltroCanal] = useState("TODOS");
-  const [filtroModalidade, setFiltroModalidade] = useState("FLEX_CORREIOS"); // Padrão: FLEX + Correios unidos
+  const [filtroModalidade, setFiltroModalidade] = useState("FLEX_CORREIOS");
   const [pedidos, setPedidos] = useState<any[]>([]);
 
   useEffect(() => {
@@ -73,8 +70,10 @@ export default function PlpPage() {
     }
     try {
       const u = JSON.parse(usuarioLogado);
-      if (u.nome) setNomeAnalista(u.nome);
-    } catch {}
+      setNomeAnalista(u.nome || u.email || "Expedição");
+    } catch {
+      setNomeAnalista("Expedição");
+    }
 
     carregarCanaisETaxas();
     buscarPedidos();
@@ -209,7 +208,7 @@ export default function PlpPage() {
     if (error) {
       alert("Erro ao gravar pedidos: " + error.message);
     } else {
-      alert(`✅ ${payload.length} pedido(s) de [${modalidade}] registrado(s) para ${canalSelecionado}!`);
+      alert(`✅ ${payload.length} pedido(s) gravado(s) com sucesso!`);
       setPedidosTexto("");
       setMatrizPlanilha([]);
       setPreviewQtd(0);
@@ -241,7 +240,7 @@ export default function PlpPage() {
       "Data de Envio": item.data_envio,
       "Número do Pedido": item.numero_pedido,
       Canal: item.canal,
-      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0, // COLUNA D ESTRITA
+      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0,
       Modalidade: item.modalidade,
     }));
 
@@ -253,16 +252,11 @@ export default function PlpPage() {
     XLSX.writeFile(wb, `PLP_${filtroDataInicio}_ate_${filtroDataFim}.xlsx`);
   };
 
-  const handleImprimir = () => {
-    if (pedidos.length === 0) return alert("Nenhum pedido para imprimir.");
-    window.print();
-  };
-
-  // Divide a lista de pedidos em colunas paralelas para caber em 1 página landscape
+  // Divide a lista em 4 colunas verticais densas (cabe até 120 pedidos por folha A4 paisagem)
   const agruparPedidosEmColunas = (lista: any[], colunasTotais = 4) => {
     const totalItens = lista.length;
     if (totalItens === 0) return [];
-    const linhasPorColuna = Math.max(25, Math.ceil(totalItens / colunasTotais));
+    const linhasPorColuna = Math.max(26, Math.ceil(totalItens / colunasTotais));
     const grade: any[][] = [];
 
     for (let r = 0; r < linhasPorColuna; r++) {
@@ -299,71 +293,61 @@ export default function PlpPage() {
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans print:p-0 print:bg-white print:text-black">
       
-      {/* ESTILOS DE IMPRESSÃO EM PAISAGEM (A4 LANDSCAPE) IDÊNTICO AO EXCEL */}
+      {/* CSS DE IMPRESSÃO MINIMALISTA (ESTILO DANFE - ZERO GASTO DE TINTA) */}
       <style jsx global>{`
         @media print {
           @page {
             size: A4 landscape;
-            margin: 6mm 8mm;
+            margin: 8mm;
           }
           body {
-            background-color: #ffffff !important;
+            background: #ffffff !important;
             color: #000000 !important;
-            font-family: Calibri, 'Segoe UI', Arial, sans-serif !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
           }
           nav, header, button, .print-hide {
             display: none !important;
           }
-          .folha-plp-excel {
+          .folha-print-manifesto {
             width: 100% !important;
-            max-width: 100% !important;
-            border: none !important;
-            box-shadow: none !important;
-            padding: 0 !important;
-            margin: 0 !important;
+            border: 2px solid #000000 !important;
             background: #ffffff !important;
+            color: #000000 !important;
+            padding: 0 !important;
+            box-shadow: none !important;
           }
-          .excel-barra-1 {
-            background-color: #1F3864 !important;
+          .print-header-title {
+            background-color: #000000 !important;
             color: #ffffff !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
-          .excel-barra-2 {
-            background-color: #2E5FA3 !important;
-            color: #ffffff !important;
+          .print-header-sub {
+            background-color: #e5e7eb !important;
+            color: #000000 !important;
+            border-bottom: 1px solid #000000 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
-          .excel-meta-label {
-            background-color: #D6E4F7 !important;
-            color: #1F3864 !important;
+          .print-th {
+            background-color: #f3f4f6 !important;
+            color: #000000 !important;
+            border-bottom: 1px solid #000000 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
-          .excel-th {
-            background-color: #1F3864 !important;
-            color: #ffffff !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+          table {
+            border-collapse: collapse !important;
+            width: 100% !important;
           }
-          .excel-row-zebra {
-            background-color: #F2F6FC !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+          td, th {
+            border: 1px solid #d1d5db !important;
+            padding: 2px 4px !important;
+            font-size: 10px !important;
+            line-height: 1.15 !important;
           }
-          .excel-border {
-            border: 1px solid #B0C4DE !important;
-          }
-          .excel-rodape-bloco {
-            background-color: #2E5FA3 !important;
-            color: #ffffff !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-          .excel-assinatura-campo {
-            background-color: #F0F4FA !important;
-            color: #1F3864 !important;
+          .print-row-alt {
+            background-color: #f9fafb !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
@@ -372,12 +356,12 @@ export default function PlpPage() {
 
       <div className="max-w-[98%] mx-auto space-y-6">
         
-        {/* CABEÇALHO DO SISTEMA (Oculto na impressão) */}
+        {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Expedição & PLPs</h1>
             <p className="text-sm font-medium text-slate-400">
-              Conferência rápida, rateio de fretes e impressão de alta densidade
+              Controle de envios e geração de manifestos de conferência
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -391,7 +375,7 @@ export default function PlpPage() {
           </div>
         </div>
 
-        {/* NAVEGAÇÃO ENTRE AS 2 ABAS (Oculto na impressão) */}
+        {/* 2 ABAS */}
         <div className="flex gap-3 print:hidden">
           <button
             onClick={() => setAbaAtiva("entrada")}
@@ -401,7 +385,7 @@ export default function PlpPage() {
                 : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-white"
             }`}
           >
-            📥 1. Entrada de Pedidos (Manual e Planilha)
+            📥 1. Entrada de Pedidos
           </button>
           <button
             onClick={() => setAbaAtiva("manifesto")}
@@ -416,7 +400,7 @@ export default function PlpPage() {
         </div>
 
         {/* ======================================================== */}
-        {/* ABA 1: ENTRADA DE PEDIDOS (MANUAL E PLANILHA UNIFICADAS) */}
+        {/* ABA 1: ENTRADA DE PEDIDOS (MANUAL OU PLANILHA)           */}
         {/* ======================================================== */}
         {abaAtiva === "entrada" && (
           <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-5 animate-in fade-in duration-300 print:hidden">
@@ -428,7 +412,6 @@ export default function PlpPage() {
                 <p className="text-xs text-slate-400 mt-0.5">Selecione canal, modalidade e a forma de carregar os dados</p>
               </div>
 
-              {/* Seletor Rápido: Digitar ou Subir Planilha */}
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-400 uppercase">Origem:</span>
                 <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
@@ -454,7 +437,6 @@ export default function PlpPage() {
               </div>
             </div>
 
-            {/* Campos Comuns de Destino */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data de Envio:</label>
@@ -467,7 +449,7 @@ export default function PlpPage() {
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                  Canal de Venda ({canais.length}):
+                  Canal de Venda:
                 </label>
                 <select
                   value={canalSelecionado}
@@ -497,7 +479,6 @@ export default function PlpPage() {
               </div>
             </div>
 
-            {/* Aviso sobre Frete atribuído */}
             <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
               <span className="text-slate-400">
                 Valor atribuído na <strong className="text-white">Coluna D</strong> do Excel:
@@ -507,7 +488,6 @@ export default function PlpPage() {
               </strong>
             </div>
 
-            {/* Modo 1: Digitar/Colar */}
             {modoEntrada === "manual" ? (
               <div className="space-y-2">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase">
@@ -522,7 +502,6 @@ export default function PlpPage() {
                 />
               </div>
             ) : (
-              /* Modo 2: Upload Planilha */
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800 items-end">
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ficheiro (Excel/CSV):</label>
@@ -569,43 +548,43 @@ export default function PlpPage() {
         )}
 
         {/* ======================================================== */}
-        {/* ABA 2: MANIFESTO DE EXPEDIÇÃO & IMPRESSÃO EM PAISAGEM    */}
+        {/* ABA 2: MANIFESTO DE EXPEDIÇÃO & IMPRESSÃO A4             */}
         {/* ======================================================== */}
         {abaAtiva === "manifesto" && (
           <div className="space-y-6">
             
-            {/* PAINEL DE FILTROS E AÇÕES (Oculto na impressão) */}
+            {/* PAINEL DE CONTROLE EM TELA (Print Hidden) */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 print:hidden">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
                 <div>
                   <h2 className="text-base font-bold text-white">Manifesto de Expedição</h2>
-                  <p className="text-xs text-slate-400">Layout compacto otimizado para caber em 1 folha A4</p>
+                  <p className="text-xs text-slate-400">Layout compacto para caber até 120 volumes em 1 folha A4 deitada</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={handleImprimir}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-indigo-900/40 transition-all flex items-center gap-2"
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-indigo-900/40 transition-all flex items-center gap-2"
                   >
                     <span>🖨️ Imprimir Lista (A4)</span>
                   </button>
                   <button
                     onClick={handleBaixarExcel}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-emerald-900/30 transition-all flex items-center gap-2"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-emerald-900/30 transition-all flex items-center gap-2"
                   >
-                    <span>📥 Baixar Excel (Coluna D)</span>
+                    <span>📥 Baixar Excel</span>
                   </button>
                   <button
                     onClick={handleLimparPeriodo}
                     disabled={pedidos.length === 0}
-                    className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
+                    className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
                   >
                     🗑️ Limpar Filtro
                   </button>
                 </div>
               </div>
 
-              {/* Filtros em Linha */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {/* Filtros */}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">De:</label>
                   <input
@@ -638,22 +617,32 @@ export default function PlpPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Agrupamento Modalidade:</label>
+                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Modalidade:</label>
                   <select
                     value={filtroModalidade}
                     onChange={(e) => setFiltroModalidade(e.target.value)}
                     className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2 text-xs font-bold text-amber-300 outline-none cursor-pointer"
                   >
-                    <option value="FLEX_CORREIOS">⚡ FLEX + Correios (Mesma Lista)</option>
+                    <option value="FLEX_CORREIOS">⚡ FLEX + Correios (Unificados)</option>
                     <option value="TODOS">Todas as Modalidades</option>
                     <option value="FLEX">Apenas Flex</option>
                     <option value="AGENCIA">Apenas Agência</option>
                     <option value="CORREIOS">Apenas Correios</option>
                   </select>
                 </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Analista no Documento:</label>
+                  <input
+                    type="text"
+                    value={nomeAnalista}
+                    onChange={(e) => setNomeAnalista(e.target.value)}
+                    placeholder="Nome do analista..."
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-semibold text-white outline-none"
+                  />
+                </div>
               </div>
 
-              {/* KPIs Compactos */}
+              {/* KPIs de Tela */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-1">
                 <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-xl">
                   <span className="block text-[9px] font-bold text-slate-400 uppercase">Total Volumes</span>
@@ -679,83 +668,55 @@ export default function PlpPage() {
             </div>
 
             {/* ======================================================== */}
-            {/* FOLHA DE IMPRESSÃO EM PAISAGEM (LAYOUT IDÊNTICO AO EXCEL) */}
+            {/* DOCUMENTO DE IMPRESSÃO (LIMPO, ECONÔMICO, ESTILO DANFE)  */}
             {/* ======================================================== */}
-            <div className="folha-plp-excel bg-white text-slate-900 p-6 rounded-2xl shadow-2xl border border-slate-300 print:shadow-none print:border-none print:p-0">
+            <div className="folha-print-manifesto bg-white text-black p-4 rounded-xl border border-slate-300 shadow-xl">
               
-              {/* FAÍXA 1: TÍTULO SUPERIOR */}
-              <div className="excel-barra-1 bg-[#1F3864] text-white text-center font-bold text-sm tracking-wider py-1.5 uppercase rounded-t-lg print:rounded-none">
-                PLP DE ENVIOS
-              </div>
-
-              {/* FAÍXA 2: SUBTÍTULO */}
-              <div className="excel-barra-2 bg-[#2E5FA3] text-white text-center font-semibold text-xs py-1">
-                Controle de Expedição — Autorização de Envio
-              </div>
-
-              {/* LINHA DE METADADOS: DATA, ANALISTA E MÉTODO */}
-              <div className="grid grid-cols-6 text-[11px] border-b border-x border-[#B0C4DE] leading-tight">
-                <div className="excel-meta-label bg-[#D6E4F7] text-[#1F3864] font-bold p-1.5 border-r border-[#B0C4DE] col-span-1">
-                  Data de Envio:
-                </div>
-                <div className="p-1.5 border-r border-[#B0C4DE] font-mono font-bold col-span-2 text-slate-800">
-                  {filtroDataInicio === filtroDataFim ? filtroDataInicio : `${filtroDataInicio} até ${filtroDataFim}`}
-                </div>
-                <div className="excel-meta-label bg-[#D6E4F7] text-[#1F3864] font-bold p-1.5 border-r border-[#B0C4DE] col-span-1">
-                  Analista:
-                </div>
-                <div className="p-1.5 col-span-2 font-bold text-slate-800">
-                  {nomeAnalista}
-                </div>
-
-                <div className="excel-meta-label bg-[#D6E4F7] text-[#1F3864] font-bold p-1.5 border-r border-[#B0C4DE] border-t col-span-1">
-                  Método de Envio:
-                </div>
-                <div className="p-1.5 border-r border-[#B0C4DE] border-t font-bold col-span-2 text-[#1F3864]">
-                  {formatarMetodoEnvioTexto()}
-                </div>
-                <div className="excel-meta-label bg-[#D6E4F7] text-[#1F3864] font-bold p-1.5 border-r border-[#B0C4DE] border-t col-span-1">
-                  Canal Filtrado:
-                </div>
-                <div className="p-1.5 border-t col-span-2 font-bold text-slate-800">
-                  {filtroCanal}
+              {/* CABEÇALHO FORMAL */}
+              <div className="border-b-2 border-black pb-2 mb-3">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h1 className="text-base font-black uppercase tracking-wide">PLP DE ENVIOS — BEST FIT</h1>
+                    <p className="text-[10px] text-gray-700">Controle de Expedição e Autorização de Envio</p>
+                  </div>
+                  <div className="text-right text-[11px] leading-tight">
+                    <p>Data: <strong>{filtroDataInicio === filtroDataFim ? filtroDataInicio : `${filtroDataInicio} a ${filtroDataFim}`}</strong></p>
+                    <p>Método: <strong>{formatarMetodoEnvioTexto()}</strong></p>
+                    <p>Analista: <strong>{nomeAnalista || "Expedição"}</strong></p>
+                  </div>
                 </div>
               </div>
 
-              {/* TABELA DE PEDIDOS DISTRIBUÍDA EM 4 COLUNAS PARALELAS LADO A LADO */}
-              <div className="border-x border-b border-[#B0C4DE] overflow-hidden">
-                <table className="w-full text-left border-collapse text-[11px]">
+              {/* GRADE DE PEDIDOS LADO A LADO (4 COLUNAS DE ALTA DENSIDADE) */}
+              <div className="overflow-hidden">
+                <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="excel-th bg-[#1F3864] text-white font-bold text-[10px] uppercase">
-                      {/* Coluna 1 */}
-                      <th className="p-1 text-center w-8 border-r border-slate-400">N#</th>
-                      <th className="p-1 border-r border-slate-400">Número do Pedido</th>
-                      <th className="p-1 text-center border-r-2 border-slate-700 w-20">Canal / Mod.</th>
+                    <tr className="print-th bg-gray-100 font-bold text-[9px] uppercase border-b border-black">
+                      <th className="p-1 text-center w-7 border-r border-gray-300">#</th>
+                      <th className="p-1 border-r border-gray-300">Número do Pedido</th>
+                      <th className="p-1 text-center border-r-2 border-black w-14">Canal</th>
 
-                      {/* Coluna 2 */}
-                      <th className="p-1 text-center w-8 border-r border-slate-400">N#</th>
-                      <th className="p-1 border-r border-slate-400">Número do Pedido</th>
-                      <th className="p-1 text-center border-r-2 border-slate-700 w-20">Canal / Mod.</th>
+                      <th className="p-1 text-center w-7 border-r border-gray-300">#</th>
+                      <th className="p-1 border-r border-gray-300">Número do Pedido</th>
+                      <th className="p-1 text-center border-r-2 border-black w-14">Canal</th>
 
-                      {/* Coluna 3 */}
-                      <th className="p-1 text-center w-8 border-r border-slate-400">N#</th>
-                      <th className="p-1 border-r border-slate-400">Número do Pedido</th>
-                      <th className="p-1 text-center border-r-2 border-slate-700 w-20">Canal / Mod.</th>
+                      <th className="p-1 text-center w-7 border-r border-gray-300">#</th>
+                      <th className="p-1 border-r border-gray-300">Número do Pedido</th>
+                      <th className="p-1 text-center border-r-2 border-black w-14">Canal</th>
 
-                      {/* Coluna 4 */}
-                      <th className="p-1 text-center w-8 border-r border-slate-400">N#</th>
-                      <th className="p-1 border-r border-slate-400">Número do Pedido</th>
-                      <th className="p-1 text-center w-20">Canal / Mod.</th>
+                      <th className="p-1 text-center w-7 border-r border-gray-300">#</th>
+                      <th className="p-1 border-r border-gray-300">Número do Pedido</th>
+                      <th className="p-1 text-center w-14">Canal</th>
                     </tr>
                   </thead>
                   <tbody>
                     {gradeColunas.map((linha, rIdx) => {
-                      const isZebra = rIdx % 2 === 1;
+                      const isAlt = rIdx % 2 === 1;
                       return (
                         <tr
                           key={rIdx}
-                          className={`h-6 border-b border-[#D0DDF0] ${
-                            isZebra ? "excel-row-zebra bg-[#F5F8FC]" : "bg-white"
+                          className={`h-5 border-b border-gray-200 ${
+                            isAlt ? "print-row-alt bg-gray-50" : "bg-white"
                           }`}
                         >
                           {linha.map((celula, cIdx) => {
@@ -763,25 +724,23 @@ export default function PlpPage() {
                             if (!celula) {
                               return (
                                 <React.Fragment key={cIdx}>
-                                  <td className="p-0.5 text-center text-slate-300 border-r border-[#D0DDF0]">-</td>
-                                  <td className="p-0.5 border-r border-[#D0DDF0]"></td>
-                                  <td className={`p-0.5 ${!isLastCol ? "border-r-2 border-slate-400" : ""}`}></td>
+                                  <td className="p-0.5 text-center text-gray-300 border-r border-gray-200">-</td>
+                                  <td className="p-0.5 border-r border-gray-200"></td>
+                                  <td className={`p-0.5 ${!isLastCol ? "border-r-2 border-black" : ""}`}></td>
                                 </React.Fragment>
                               );
                             }
 
                             return (
                               <React.Fragment key={cIdx}>
-                                <td className="p-0.5 text-center font-mono font-bold text-slate-500 border-r border-[#D0DDF0]">
+                                <td className="p-0.5 text-center font-mono text-[9px] text-gray-500 border-r border-gray-200">
                                   {celula.numGlobal}
                                 </td>
-                                <td className="p-0.5 font-mono font-bold text-slate-900 border-r border-[#D0DDF0] truncate max-w-[140px]" title={celula.numero_pedido}>
+                                <td className="p-0.5 font-mono font-bold text-[10px] text-black border-r border-gray-200 truncate max-w-[130px]">
                                   {celula.numero_pedido}
                                 </td>
-                                <td className={`p-0.5 text-center text-[9px] ${!isLastCol ? "border-r-2 border-slate-400" : ""}`}>
-                                  <span className="font-semibold text-slate-700 truncate block">
-                                    {celula.canal.replace("Mercado Livre", "ML")}
-                                  </span>
+                                <td className={`p-0.5 text-center text-[8px] font-semibold text-gray-700 truncate ${!isLastCol ? "border-r-2 border-black" : ""}`}>
+                                  {celula.canal.replace("Mercado Livre", "ML")}
                                 </td>
                               </React.Fragment>
                             );
@@ -792,7 +751,7 @@ export default function PlpPage() {
 
                     {pedidos.length === 0 && (
                       <tr>
-                        <td colSpan={12} className="p-6 text-center text-slate-500 italic">
+                        <td colSpan={12} className="p-6 text-center text-gray-500 italic text-xs">
                           Nenhum pedido registrado no filtro selecionado.
                         </td>
                       </tr>
@@ -801,74 +760,59 @@ export default function PlpPage() {
                 </table>
               </div>
 
-              {/* TOTAL DE PEDIDOS */}
-              <div className="grid grid-cols-6 border-x border-b border-[#B0C4DE] text-[11px] font-bold">
-                <div className="excel-meta-label bg-[#D6E4F7] text-[#1F3864] p-1.5 col-span-3 text-right pr-4 uppercase">
-                  Total de Pedidos:
+              {/* TOTALIZADOR */}
+              <div className="flex justify-between items-center border-t-2 border-black p-2 mt-2 bg-gray-100 text-xs font-bold">
+                <span>TOTAL DE VOLUMES CONFERIDOS:</span>
+                <span className="font-mono text-sm">{kpis.total} pacotes</span>
+              </div>
+
+              {/* RODAPÉ DE ASSINATURA EM 3 COLUNAS */}
+              <div className="grid grid-cols-3 gap-6 pt-6 mt-4 border-t border-gray-300 text-[10px]">
+                <div className="border-t border-black pt-1">
+                  <p className="font-bold">Analista ({nomeAnalista || "Expedição"}):</p>
+                  <p className="text-gray-500">Assinatura: ___________________________</p>
                 </div>
-                <div className="excel-meta-label bg-[#D6E4F7] text-[#1F3864] p-1.5 col-span-3 font-mono text-base font-black pl-4">
-                  {kpis.total} volumes
+                <div className="border-t border-black pt-1">
+                  <p className="font-bold">Responsável pelo Estoque:</p>
+                  <p className="text-gray-500">Assinatura: ___________________________</p>
+                </div>
+                <div className="border-t border-black pt-1">
+                  <p className="font-bold">Motorista / Transportador:</p>
+                  <p className="text-gray-500">Assinatura: ___________________________</p>
                 </div>
               </div>
 
-              {/* BLOCO DE ASSINATURAS IDÊNTICO AO EXCEL (EM 3 COLUNAS) */}
-              <div className="grid grid-cols-3 border-x border-b border-[#B0C4DE] text-[11px] mt-2">
-                <div className="excel-rodape-bloco bg-[#2E5FA3] text-white text-center font-bold py-1 border-r border-[#B0C4DE]">
-                  Analista
-                </div>
-                <div className="excel-rodape-bloco bg-[#2E5FA3] text-white text-center font-bold py-1 border-r border-[#B0C4DE]">
-                  Responsável pelo Estoque
-                </div>
-                <div className="excel-rodape-bloco bg-[#2E5FA3] text-white text-center font-bold py-1">
-                  Responsável pelo Envio
-                </div>
-
-                <div className="excel-assinatura-campo bg-[#F0F4FA] p-2 border-r border-[#B0C4DE] space-y-3">
-                  <div>Nome: <strong className="text-black font-semibold">{nomeAnalista}</strong></div>
-                  <div>Assinatura: _________________________</div>
-                </div>
-                <div className="excel-assinatura-campo bg-[#F0F4FA] p-2 border-r border-[#B0C4DE] space-y-3">
-                  <div>Nome: ___________________________</div>
-                  <div>Assinatura: _________________________</div>
-                </div>
-                <div className="excel-assinatura-campo bg-[#F0F4FA] p-2 space-y-3">
-                  <div>Nome: ___________________________</div>
-                  <div>Assinatura: _________________________</div>
-                </div>
-              </div>
-
-              {/* NOTA DE CONTROLE INTERNO */}
-              <div className="text-[10px] text-slate-400 text-center pt-2">
-                Documento para controle interno — PLP de Envios
+              <div className="text-[9px] text-gray-400 text-center pt-2">
+                Documento para controle interno — PLP de Envios Best Fit
               </div>
             </div>
 
-            {/* TABELA DETALHADA COM AÇÕES (APENAS EM TELA) */}
+            {/* TABELA DE AUDITORIA INDIVIDUAL (Print Hidden) */}
             <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-3 print:hidden">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                Auditoria Individual de Pedidos ({pedidos.length})
+                Auditoria e Exclusão Individual ({pedidos.length})
               </h3>
-              <div className="overflow-x-auto max-h-[350px]">
+              <div className="overflow-x-auto max-h-[300px]">
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase text-[10px]">
                     <tr>
-                      <th className="p-2.5 text-center">#</th>
-                      <th className="p-2.5">Data</th>
-                      <th className="p-2.5">N.º do Pedido</th>
-                      <th className="p-2.5">Canal</th>
-                      <th className="p-2.5 text-center">Modalidade</th>
-                      <th className="p-2.5 text-right text-amber-300">Frete (Coluna D)</th>
-                      <th className="p-2.5 text-center">Excluir</th>
+                      <th className="p-2 text-center">#</th>
+                      <th className="p-2">Data</th>
+                      <th className="p-2">N.º do Pedido</th>
+                      <th className="p-2">Canal</th>
+                      <th className="p-2 text-center">Modalidade</th>
+                      <th className="p-2 text-right text-amber-300">Frete (Coluna D)</th>
+                      <th className="p-2 text-center">Excluir</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                     {pedidos.map((item, idx) => (
                       <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-2.5 text-center font-mono text-slate-500">{idx + 1}</td>
-                        <td className="p-2.5 font-mono text-slate-300">{item.data_envio}</td>
-                        <td className="p-2.5 font-mono font-bold text-white">{item.numero_pedido}</td>
-                        <td className="p-2.5 text-slate-300 font-semibold">{item.canal}</td>
-                        <td className="p-2.5 text-center">
+                        <td className="p-2 text-center font-mono text-slate-500">{idx + 1}</td>
+                        <td className="p-2 font-mono text-slate-300">{item.data_envio}</td>
+                        <td className="p-2 font-mono font-bold text-white">{item.numero_pedido}</td>
+                        <td className="p-2 text-slate-300 font-semibold">{item.canal}</td>
+                        <td className="p-2 text-center">
                           <span
                             className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
                               item.modalidade === "FLEX"
@@ -881,14 +825,14 @@ export default function PlpPage() {
                             {item.modalidade}
                           </span>
                         </td>
-                        <td className="p-2.5 text-right font-mono font-bold text-emerald-400">
+                        <td className="p-2 text-right font-mono font-bold text-emerald-400">
                           {item.modalidade === "FLEX" ? formatarMoeda(item.valor_frete) : "R$ 0,00"}
                         </td>
-                        <td className="p-2.5 text-center">
+                        <td className="p-2 text-center">
                           <button
                             onClick={() => handleExcluirPedido(item.id)}
                             className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer font-bold"
-                            title="Remover"
+                            title="Remover pedido"
                           >
                             ✕
                           </button>
@@ -903,9 +847,7 @@ export default function PlpPage() {
           </div>
         )}
 
-        {/* ======================================================== */}
-        {/* MODAL CONFIGURAÇÃO TAXAS FLEX (APENAS QUANDO ABERTO)    */}
-        {/* ======================================================== */}
+        {/* MODAL CONFIGURAÇÃO TAXAS FLEX */}
         {modalTaxasAberto && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200 print:hidden">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl space-y-5">
