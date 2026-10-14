@@ -31,24 +31,20 @@ const analistasPadraoBase: Record<string, string> = {
   "Shopee": "Alisson",
   "Centauro": "Felipe",
   "TikTok": "Alisson",
-  "Tiktok": "Alisson",
   "Site": "Alisson e Gabrielle",
   "Shein": "Gabrielle"
 };
 
-// HELPER: LOCALIZA O ANALISTA DO CANAL DE FORMA INSENSÍVEL A MAIÚSCULAS/MINÚSCULAS E VARIAÇÕES
 function obterAnalistaDoCanal(canalNome: string, mapaAnalistas: Record<string, string>): string {
   if (!canalNome) return "Expedição";
   const cNorm = String(canalNome).trim().toLowerCase();
 
-  // 1. Busca direta insensível a maiúsculas
   for (const [k, v] of Object.entries(mapaAnalistas)) {
     if (k.trim().toLowerCase() === cNorm) {
       return v || "Expedição";
     }
   }
 
-  // 2. Variações comuns de TikTok
   if (cNorm === "tiktok" || cNorm === "tik tok" || cNorm === "tiktok shop") {
     for (const [k, v] of Object.entries(mapaAnalistas)) {
       const kNorm = k.trim().toLowerCase();
@@ -59,7 +55,6 @@ function obterAnalistaDoCanal(canalNome: string, mapaAnalistas: Record<string, s
     return "Alisson";
   }
 
-  // 3. Variações comuns de Magalu
   if (cNorm === "magalu" || cNorm === "magazine luiza" || cNorm === "magazinedeluiza") {
     for (const [k, v] of Object.entries(mapaAnalistas)) {
       const kNorm = k.trim().toLowerCase();
@@ -70,7 +65,6 @@ function obterAnalistaDoCanal(canalNome: string, mapaAnalistas: Record<string, s
     return "Gabrielle";
   }
 
-  // 4. Variações com '0' (ex: Mercado Livre 02 -> Mercado Livre 2)
   const cNormZero = cNorm.replace(" 0", " ");
   for (const [k, v] of Object.entries(mapaAnalistas)) {
     if (k.trim().toLowerCase().replace(" 0", " ") === cNormZero) {
@@ -78,7 +72,6 @@ function obterAnalistaDoCanal(canalNome: string, mapaAnalistas: Record<string, s
     }
   }
 
-  // 5. Busca por inclusão sem espaços
   const cLimpo = cNorm.replace(/[\s\-_]/g, "");
   for (const [k, v] of Object.entries(mapaAnalistas)) {
     const kLimpo = k.trim().toLowerCase().replace(/[\s\-_]/g, "");
@@ -151,6 +144,7 @@ export default function PlpPage() {
   const [filtroAnalista, setFiltroAnalista] = useState("TODOS");
   const [filtroCanal, setFiltroCanal] = useState("TODOS");
   const [filtroModalidade, setFiltroModalidade] = useState("FLEX_CORREIOS");
+  const [termoPesquisaPedido, setTermoPesquisaPedido] = useState(""); // NOVO: Pesquisa por número de pedido
   const [pedidos, setPedidos] = useState<any[]>([]);
 
   useEffect(() => {
@@ -166,7 +160,7 @@ export default function PlpPage() {
     buscarPedidos();
   }, [filtroDataInicio, filtroDataFim, filtroCanal, filtroModalidade, filtroAnalista, analistasPorCanal]);
 
-  // LISTA DINÂMICA DE ANALISTAS NO FILTRO:
+  // Lista dinâmica de analistas
   const listaAnalistasUnicos = Array.from(
     new Set(
       Object.values(analistasPorCanal)
@@ -182,7 +176,6 @@ export default function PlpPage() {
     }
   }, [listaAnalistasUnicos, filtroAnalista]);
 
-  // Canais disponíveis no dropdown conforme o analista filtrado (com busca insensível)
   const canaisFiltradosParaSelect =
     filtroAnalista === "TODOS"
       ? canais
@@ -191,7 +184,6 @@ export default function PlpPage() {
           return resp === filtroAnalista || resp.includes(filtroAnalista);
         });
 
-  // CARREGA DO SUPABASE DE FORMA UNIVERSAL
   const carregarCanaisTaxasEAnalistas = async () => {
     try {
       const { data: configData, error: configError } = await supabase
@@ -379,11 +371,10 @@ export default function PlpPage() {
     const { data } = await query;
     let dadosFiltrados = data || [];
 
-    // FILTRO POR ANALISTA COM COMPATIBILIDADE CASE-INSENSITIVE PARA TIKTOK
     if (filtroAnalista !== "TODOS") {
       dadosFiltrados = dadosFiltrados.filter((p: any) => {
         if (p.modalidade === "FLEX") {
-          return true; // Flex sempre é unificado
+          return true;
         }
         const analistaDoCanal = obterAnalistaDoCanal(p.canal, analistasPorCanal);
         return analistaDoCanal === filtroAnalista || analistaDoCanal.includes(filtroAnalista);
@@ -394,7 +385,6 @@ export default function PlpPage() {
     setLoading(false);
   };
 
-  // SINCRONIZA AUTOMATICAMENTE O NOME DO ANALISTA NO CABEÇALHO
   useEffect(() => {
     if (filtroModalidade === "FLEX") {
       const analistasFlexPresentes = Array.from(
@@ -568,7 +558,12 @@ export default function PlpPage() {
     window.print();
   };
 
-  // AGRUPA OS PEDIDOS EM COLUNAS POR CANAL NORMALIZADO
+  // Filtragem adicional em memória pelo número do pedido pesquisado
+  const pedidosFiltradosPesquisa = termoPesquisaPedido.trim()
+    ? pedidos.filter((p) => String(p.numero_pedido).toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase()))
+    : pedidos;
+
+  // AGRUPA OS PEDIDOS EM COLUNAS POR CANAL
   const gerarColunasPorCanal = (listaPedidos: any[], maxLinhasPorColuna = 26) => {
     const mapa = new Map<string, string[]>();
     for (const p of listaPedidos) {
@@ -596,14 +591,14 @@ export default function PlpPage() {
     return colunas;
   };
 
-  const colunasPorCanal = gerarColunasPorCanal(pedidos, 26);
+  const colunasPorCanal = gerarColunasPorCanal(pedidosFiltradosPesquisa, 26);
 
   const kpis = {
-    total: pedidos.length,
-    flex: pedidos.filter((p) => p.modalidade === "FLEX").length,
-    agencia: pedidos.filter((p) => p.modalidade === "AGENCIA").length,
-    correios: pedidos.filter((p) => p.modalidade === "CORREIOS").length,
-    custoTotalFlex: pedidos
+    total: pedidosFiltradosPesquisa.length,
+    flex: pedidosFiltradosPesquisa.filter((p) => p.modalidade === "FLEX").length,
+    agencia: pedidosFiltradosPesquisa.filter((p) => p.modalidade === "AGENCIA").length,
+    correios: pedidosFiltradosPesquisa.filter((p) => p.modalidade === "CORREIOS").length,
+    custoTotalFlex: pedidosFiltradosPesquisa
       .filter((p) => p.modalidade === "FLEX")
       .reduce((acc, p) => acc + Number(p.valor_frete || 0), 0),
   };
@@ -892,8 +887,8 @@ export default function PlpPage() {
                 </div>
               </div>
 
-              {/* Filtros Integrados */}
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+              {/* Filtros Integrados (incluindo Pesquisa por Pedido) */}
+              <div className="grid grid-cols-1 md:grid-cols-7 gap-3 items-end">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">De:</label>
                   <input
@@ -913,7 +908,7 @@ export default function PlpPage() {
                   />
                 </div>
 
-                {/* FILTRAR POR ANALISTA ATIVO */}
+                {/* FILTRAR POR ANALISTA */}
                 <div>
                   <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">
                     Filtrar Analista:
@@ -930,7 +925,7 @@ export default function PlpPage() {
                   </select>
                 </div>
 
-                {/* CANAL (ADAPTADO AO ANALISTA SELECIONADO) */}
+                {/* CANAL */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal:</label>
                   <select
@@ -962,9 +957,23 @@ export default function PlpPage() {
                   </select>
                 </div>
 
+                {/* NOVO: PESQUISAR NÚMERO DO PEDIDO */}
+                <div>
+                  <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">
+                    🔍 Pesquisar Pedido:
+                  </label>
+                  <input
+                    type="text"
+                    value={termoPesquisaPedido}
+                    onChange={(e) => setTermoPesquisaPedido(e.target.value)}
+                    placeholder="N.º do pedido..."
+                    className="w-full bg-slate-950 border border-emerald-500/50 rounded-xl p-2 text-xs font-mono text-emerald-300 outline-none placeholder:text-slate-600"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                    Colaborador(es) no Papel:
+                    Analista(s) no Papel:
                   </label>
                   <input
                     type="text"
@@ -1023,36 +1032,52 @@ export default function PlpPage() {
 
               {/* LISTAS DE PEDIDOS AGRUPADAS POR CANAL LADO A LADO */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 print:grid-cols-4 gap-3">
-                {colunasPorCanal.map((col, cIdx) => (
-                  <div key={cIdx} className="border border-black rounded print:rounded-none overflow-hidden self-start">
-                    {/* TÍTULO DO CANAL */}
-                    <div className="bg-gray-100 border-b border-black font-bold text-xs p-1.5 text-center uppercase tracking-wide">
-                      {col.canal} <span className="text-[10px] text-gray-600 font-normal">({col.pedidos.length})</span>
-                    </div>
+                {colunasPorCanal.map((col, cIdx) => {
+                  const contemBusca = termoPesquisaPedido.trim() && col.pedidos.some(p => p.numero.toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase()));
 
-                    {/* LISTA SEQUENCIAL DE PEDIDOS DO CANAL */}
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-gray-50 border-b border-gray-300 text-[9px] uppercase font-bold text-gray-700">
-                          <th className="p-1 text-center w-8 border-r border-gray-300">#</th>
-                          <th className="p-1">Número do Pedido</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200 text-[10px] font-mono">
-                        {col.pedidos.map((p) => (
-                          <tr key={p.idx} className="h-5 hover:bg-gray-50">
-                            <td className="p-0.5 text-center text-gray-500 border-r border-gray-200 w-8">{p.idx}</td>
-                            <td className="p-0.5 pl-1.5 font-bold text-black">{p.numero}</td>
+                  return (
+                    <div
+                      key={cIdx}
+                      className={`border rounded print:rounded-none overflow-hidden self-start ${
+                        contemBusca ? "border-2 border-purple-600 shadow-md" : "border-black"
+                      }`}
+                    >
+                      {/* TÍTULO DO CANAL */}
+                      <div className={`border-b border-black font-bold text-xs p-1.5 text-center uppercase tracking-wide ${
+                        contemBusca ? "bg-purple-100 text-purple-900" : "bg-gray-100"
+                      }`}>
+                        {col.canal} <span className="text-[10px] text-gray-600 font-normal">({col.pedidos.length})</span>
+                      </div>
+
+                      {/* LISTA SEQUENCIAL DE PEDIDOS DO CANAL */}
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-300 text-[9px] uppercase font-bold text-gray-700">
+                            <th className="p-1 text-center w-8 border-r border-gray-300">#</th>
+                            <th className="p-1">Número do Pedido</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
+                        </thead>
+                        <tbody className="divide-y divide-gray-200 text-[10px] font-mono">
+                          {col.pedidos.map((p) => {
+                            const matchItem = termoPesquisaPedido.trim() && p.numero.toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase());
+                            return (
+                              <tr key={p.idx} className={`h-5 ${matchItem ? "bg-purple-200 text-purple-950 font-extrabold" : "hover:bg-gray-50"}`}>
+                                <td className="p-0.5 text-center text-gray-500 border-r border-gray-200 w-8">{p.idx}</td>
+                                <td className={`p-0.5 pl-1.5 font-bold ${matchItem ? "text-purple-950 underline decoration-purple-600 decoration-2" : "text-black"}`}>
+                                  {p.numero}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
 
-                {pedidos.length === 0 && (
+                {pedidosFiltradosPesquisa.length === 0 && (
                   <div className="col-span-4 p-8 text-center text-gray-500 italic text-xs border border-dashed border-gray-300 rounded">
-                    Nenhum pedido registrado no filtro selecionado.
+                    Nenhum pedido encontrado para a pesquisa ou filtros selecionados.
                   </div>
                 )}
               </div>
@@ -1084,7 +1109,7 @@ export default function PlpPage() {
             {/* TABELA DE AUDITORIA INDIVIDUAL EM TELA */}
             <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-3 print:hidden">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                Auditoria e Exclusão Individual ({pedidos.length})
+                Auditoria e Exclusão Individual ({pedidosFiltradosPesquisa.length})
               </h3>
               <div className="overflow-x-auto max-h-[300px]">
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
@@ -1100,39 +1125,42 @@ export default function PlpPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                    {pedidos.map((item, idx) => (
-                      <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-2 text-center font-mono text-slate-500">{idx + 1}</td>
-                        <td className="p-2 font-mono text-slate-300">{item.data_envio}</td>
-                        <td className="p-2 font-mono font-bold text-white">{item.numero_pedido}</td>
-                        <td className="p-2 text-slate-300 font-semibold">{item.canal}</td>
-                        <td className="p-2 text-center">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
-                              item.modalidade === "FLEX"
-                                ? "bg-amber-900/30 text-amber-400 border-amber-800/50"
-                                : item.modalidade === "AGENCIA"
-                                ? "bg-slate-800 text-slate-300 border-slate-700"
-                                : "bg-indigo-900/30 text-indigo-400 border-indigo-800/50"
-                            }`}
-                          >
-                            {item.modalidade}
-                          </span>
-                        </td>
-                        <td className="p-2 text-right font-mono font-bold text-emerald-400">
-                          {item.modalidade === "FLEX" ? formatarMoeda(item.valor_frete) : "R$ 0,00"}
-                        </td>
-                        <td className="p-2 text-center">
-                          <button
-                            onClick={() => handleExcluirPedido(item.id)}
-                            className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer font-bold"
-                            title="Remover pedido"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {pedidosFiltradosPesquisa.map((item, idx) => {
+                      const matchItem = termoPesquisaPedido.trim() && String(item.numero_pedido).toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase());
+                      return (
+                        <tr key={item.id} className={`transition-colors ${matchItem ? "bg-purple-950/60 font-bold" : "hover:bg-slate-800/40"}`}>
+                          <td className="p-2 text-center font-mono text-slate-500">{idx + 1}</td>
+                          <td className="p-2 font-mono text-slate-300">{item.data_envio}</td>
+                          <td className={`p-2 font-mono ${matchItem ? "text-purple-300 underline" : "text-white font-bold"}`}>{item.numero_pedido}</td>
+                          <td className="p-2 text-slate-300 font-semibold">{item.canal}</td>
+                          <td className="p-2 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
+                                item.modalidade === "FLEX"
+                                  ? "bg-amber-900/30 text-amber-400 border-amber-800/50"
+                                  : item.modalidade === "AGENCIA"
+                                  ? "bg-slate-800 text-slate-300 border-slate-700"
+                                  : "bg-indigo-900/30 text-indigo-400 border-indigo-800/50"
+                              }`}
+                            >
+                              {item.modalidade}
+                            </span>
+                          </td>
+                          <td className="p-2 text-right font-mono font-bold text-emerald-400">
+                            {item.modalidade === "FLEX" ? formatarMoeda(item.valor_frete) : "R$ 0,00"}
+                          </td>
+                          <td className="p-2 text-center">
+                            <button
+                              onClick={() => handleExcluirPedido(item.id)}
+                              className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer font-bold"
+                              title="Remover pedido"
+                            >
+                              ✕
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1151,7 +1179,7 @@ export default function PlpPage() {
                     <span>⚙️ Canais, Analistas Responsáveis & Taxas Flex</span>
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Ao salvar, as alterações ficam gravadas no banco Supabase e serão sincronizadas para <strong>todos os usuários</strong>.
+                    Ao salvar, as alterações ficam gravadas no banco de dados e serão aplicadas para <strong>todos os usuários</strong>.
                   </p>
                 </div>
                 <button
