@@ -27,34 +27,39 @@ export default function PlpPage() {
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
-  // Lista de canais
+  // Aba Ativa (1: Entrada de Pedidos | 2: Relatório e Impressão)
+  const [abaAtiva, setAbaAtiva] = useState<"entrada" | "impressao">("entrada");
+
+  // Lista de canais da operação
   const [canais, setCanais] = useState<string[]>(canaisPadraoBase);
   const [taxasFlexCanal, setTaxasFlexCanal] = useState<Record<string, number>>({});
   const [modalTaxasAberto, setModalTaxasAberto] = useState(false);
   const [novoCanalNome, setNovoCanalNome] = useState("");
 
-  // Modo de Entrada: Manual ou Planilha
+  // ==========================================
+  // ABA 1: ENTRADA DE PEDIDOS (MANUAL E PLANILHA)
+  // ==========================================
   const [modoEntrada, setModoEntrada] = useState<"manual" | "planilha">("manual");
-
-  // Dados comuns de entrada
   const [dataEnvio, setDataEnvio] = useState(new Date().toISOString().split("T")[0]);
   const [canalSelecionado, setCanalSelecionado] = useState(canaisPadraoBase[0]);
-  const [modalidade, setModalidade] = useState<"FLEX" | "COLETA">("FLEX");
+  const [modalidade, setModalidade] = useState<"FLEX" | "AGENCIA" | "CORREIOS">("FLEX");
 
-  // Entrada Manual
+  // Manual
   const [pedidosTexto, setPedidosTexto] = useState("");
 
-  // Entrada Planilha
+  // Planilha
   const [matrizPlanilha, setMatrizPlanilha] = useState<any[]>([]);
   const [colunaPedido, setColunaPedido] = useState("A");
   const [linhaInicial, setLinhaInicial] = useState("2");
   const [previewQtd, setPreviewQtd] = useState(0);
 
-  // Filtros de Listagem
+  // ==========================================
+  // ABA 2: RELATÓRIO E FILTROS DE IMPRESSÃO
+  // ==========================================
   const [filtroDataInicio, setFiltroDataInicio] = useState(new Date().toISOString().split("T")[0]);
   const [filtroDataFim, setFiltroDataFim] = useState(new Date().toISOString().split("T")[0]);
   const [filtroCanal, setFiltroCanal] = useState("TODOS");
-  const [filtroModalidade, setFiltroModalidade] = useState("TODOS");
+  const [filtroModalidade, setFiltroModalidade] = useState("FLEX_CORREIOS"); // Padrão: FLEX + Correios juntos!
   const [pedidos, setPedidos] = useState<any[]>([]);
 
   useEffect(() => {
@@ -119,10 +124,19 @@ export default function PlpPage() {
       .select("*")
       .gte("data_envio", filtroDataInicio)
       .lte("data_envio", filtroDataFim)
+      .order("canal", { ascending: true })
       .order("created_at", { ascending: false });
 
-    if (filtroCanal !== "TODOS") query = query.eq("canal", filtroCanal);
-    if (filtroModalidade !== "TODOS") query = query.eq("modalidade", filtroModalidade);
+    if (filtroCanal !== "TODOS") {
+      query = query.eq("canal", filtroCanal);
+    }
+
+    // Regra de Modalidades: Filtra individualmente ou une FLEX e CORREIOS
+    if (filtroModalidade === "FLEX_CORREIOS") {
+      query = query.in("modalidade", ["FLEX", "CORREIOS"]);
+    } else if (filtroModalidade !== "TODOS") {
+      query = query.eq("modalidade", filtroModalidade);
+    }
 
     const { data } = await query;
     setPedidos(data || []);
@@ -139,7 +153,6 @@ export default function PlpPage() {
         const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
         setMatrizPlanilha(matrix);
 
-        // Pré-contagem rápida
         const col = colunaPedido.trim().toUpperCase();
         const start = Math.max(0, parseInt(linhaInicial, 10) - 1 || 0);
         const count = matrix.slice(start).filter((r: any) => String(r[col] || "").trim()).length;
@@ -161,7 +174,7 @@ export default function PlpPage() {
         .filter((p) => p.length > 0);
       if (listaPedidos.length === 0) return alert("Digite ou cole ao menos um número de pedido.");
     } else {
-      if (matrizPlanilha.length === 0) return alert("Selecione um ficheiro Excel/CSV.");
+      if (matrizPlanilha.length === 0) return alert("Selecione um arquivo Excel/CSV.");
       const col = colunaPedido.trim().toUpperCase();
       const start = Math.max(0, parseInt(linhaInicial, 10) - 1 || 0);
 
@@ -175,6 +188,7 @@ export default function PlpPage() {
     }
 
     setSalvando(true);
+    // Frete só tem valor positivo se for FLEX. Agência e Correios = R$ 0,00
     const valorFreteUnit = modalidade === "FLEX" ? Number(taxasFlexCanal[canalSelecionado] ?? 12.99) : 0;
 
     const payload = listaPedidos.map((ped) => ({
@@ -189,10 +203,12 @@ export default function PlpPage() {
     if (error) {
       alert("Erro ao gravar pedidos: " + error.message);
     } else {
+      alert(`✅ ${payload.length} pedido(s) de [${modalidade}] registrado(s) para ${canalSelecionado}!`);
       setPedidosTexto("");
       setMatrizPlanilha([]);
       setPreviewQtd(0);
       buscarPedidos();
+      setAbaAtiva("impressao"); // Leva direto para conferência
     }
     setSalvando(false);
   };
@@ -204,7 +220,7 @@ export default function PlpPage() {
   };
 
   const handleLimparPeriodo = async () => {
-    if (!confirm(`Remover TODOS os ${pedidos.length} pedidos filtrados?`)) return;
+    if (!confirm(`Remover TODOS os ${pedidos.length} pedidos deste filtro?`)) return;
     const ids = pedidos.map((p) => p.id);
     if (ids.length === 0) return;
     setLoading(true);
@@ -219,7 +235,7 @@ export default function PlpPage() {
       "Data de Envio": item.data_envio,
       "Número do Pedido": item.numero_pedido,
       Canal: item.canal,
-      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0, // COLUNA D
+      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0, // COLUNA D ESTRITA
       Modalidade: item.modalidade,
     }));
 
@@ -231,23 +247,70 @@ export default function PlpPage() {
     XLSX.writeFile(wb, `PLP_${filtroDataInicio}_ate_${filtroDataFim}.xlsx`);
   };
 
+  const handleImprimir = () => {
+    if (pedidos.length === 0) return alert("Nenhum pedido para imprimir.");
+    window.print();
+  };
+
   const kpis = {
     total: pedidos.length,
     flex: pedidos.filter((p) => p.modalidade === "FLEX").length,
-    coleta: pedidos.filter((p) => p.modalidade === "COLETA").length,
+    agencia: pedidos.filter((p) => p.modalidade === "AGENCIA").length,
+    correios: pedidos.filter((p) => p.modalidade === "CORREIOS").length,
     custoTotalFlex: pedidos
       .filter((p) => p.modalidade === "FLEX")
       .reduce((acc, p) => acc + Number(p.valor_frete || 0), 0),
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
+    <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans print:p-0 print:bg-white print:text-black">
+      {/* Estilos específicos de impressão limpa A4 */}
+      <style jsx global>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 10mm;
+          }
+          body {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+          }
+          nav, header, button, .print-hide {
+            display: none !important;
+          }
+          .print-clean {
+            background: transparent !important;
+            border: 1px solid #ddd !important;
+            color: #000 !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+          }
+          table {
+            border-collapse: collapse !important;
+            width: 100% !important;
+          }
+          th, td {
+            border: 1px solid #ccc !important;
+            color: #000 !important;
+            padding: 6px 8px !important;
+            font-size: 11px !important;
+          }
+          th {
+            background-color: #f2f2f2 !important;
+            font-weight: bold !important;
+          }
+        }
+      `}</style>
+
       <div className="max-w-[98%] mx-auto space-y-6">
-        {/* Topo */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        
+        {/* CABEÇALHO DA PLATAFORMA (Oculto na impressão) */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Expedição & PLPs</h1>
-            <p className="text-sm font-medium text-slate-400">Controlo unificado de envios Flex e Coleta</p>
+            <p className="text-sm font-medium text-slate-400">
+              Controle e impressão de envios Flex, Agência e Correios
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -260,296 +323,394 @@ export default function PlpPage() {
           </div>
         </div>
 
-        {/* CARTÃO ÚNICO DE ENTRADA (COMPACTO) */}
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Origem:</span>
-              <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setModoEntrada("manual")}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
-                    modoEntrada === "manual" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  ✍️ Digitar / Colar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModoEntrada("planilha")}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
-                    modoEntrada === "planilha" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  📑 Ficheiro Planilha
-                </button>
+        {/* NAVEGAÇÃO ENTRE AS 2 ABAS (Oculto na impressão) */}
+        <div className="flex gap-3 print:hidden">
+          <button
+            onClick={() => setAbaAtiva("entrada")}
+            className={`px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              abaAtiva === "entrada"
+                ? "bg-purple-600 text-white shadow-purple-900/40"
+                : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-white"
+            }`}
+          >
+            📥 1. Entrada de Pedidos (Manual e Planilha)
+          </button>
+          <button
+            onClick={() => setAbaAtiva("impressao")}
+            className={`px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              abaAtiva === "impressao"
+                ? "bg-indigo-600 text-white shadow-indigo-900/40"
+                : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-white"
+            }`}
+          >
+            🖨️ 2. Manifesto de Expedição / Impressão
+          </button>
+        </div>
+
+        {/* ======================================================== */}
+        {/* ABA 1: ENTRADA DE PEDIDOS (MANUAL E PLANILHA UNIFICADOS) */}
+        {/* ======================================================== */}
+        {abaAtiva === "entrada" && (
+          <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-5 animate-in fade-in duration-300 print:hidden">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <span>📥 Lançamento de Pedidos</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">Selecione canal, modalidade e a forma de carregar os dados</p>
+              </div>
+
+              {/* Seletor Rápido: Digitar ou Subir Planilha */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-400 uppercase">Origem:</span>
+                <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setModoEntrada("manual")}
+                    className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                      modoEntrada === "manual" ? "bg-purple-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    ✍️ Digitar / Colar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModoEntrada("planilha")}
+                    className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                      modoEntrada === "planilha" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    📑 Planilha
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div className="text-xs text-slate-400">
-              Valor do frete a aplicar:{" "}
-              <strong className={modalidade === "FLEX" ? "text-amber-400" : "text-slate-500"}>
+            {/* Campos Comuns de Destino */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data de Envio:</label>
+                <input
+                  type="date"
+                  value={dataEnvio}
+                  onChange={(e) => setDataEnvio(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                  Canal de Venda ({canais.length}):
+                </label>
+                <select
+                  value={canalSelecionado}
+                  onChange={(e) => setCanalSelecionado(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer"
+                >
+                  {canais.map((c, i) => (
+                    <option key={i} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                  Modalidade de Envio:
+                </label>
+                <select
+                  value={modalidade}
+                  onChange={(e) => setModalidade(e.target.value as any)}
+                  className={`w-full bg-slate-950 border rounded-xl p-2.5 text-xs font-black outline-none cursor-pointer ${
+                    modalidade === "FLEX" ? "border-amber-500/80 text-amber-400" : "border-slate-700 text-white"
+                  }`}
+                >
+                  <option value="FLEX">⚡ FLEX (Com Frete)</option>
+                  <option value="AGENCIA">🏢 AGÊNCIA (R$ 0,00)</option>
+                  <option value="CORREIOS">📮 CORREIOS (R$ 0,00)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Aviso sobre Frete atribuído */}
+            <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+              <span className="text-slate-400">
+                Valor atribuído na <strong className="text-white">Coluna D</strong>:
+              </span>
+              <strong className={modalidade === "FLEX" ? "text-amber-400 text-sm font-mono" : "text-slate-500"}>
                 {modalidade === "FLEX" ? formatarMoeda(taxasFlexCanal[canalSelecionado] ?? 12.99) : "R$ 0,00"}
               </strong>
             </div>
-          </div>
 
-          {/* Dados Comuns */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data de Envio:</label>
-              <input
-                type="date"
-                value={dataEnvio}
-                onChange={(e) => setDataEnvio(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Venda:</label>
-              <select
-                value={canalSelecionado}
-                onChange={(e) => setCanalSelecionado(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer"
-              >
-                {canais.map((c, i) => (
-                  <option key={i} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Modalidade:</label>
-              <select
-                value={modalidade}
-                onChange={(e) => setModalidade(e.target.value as any)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-amber-400 outline-none cursor-pointer"
-              >
-                <option value="FLEX">⚡ Mercado Envios Flex (Debita Frete)</option>
-                <option value="COLETA">📦 Coleta / Correios (R$ 0,00)</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Campo Específico do Modo Selecionado */}
-          {modoEntrada === "manual" ? (
-            <div>
-              <textarea
-                rows={3}
-                value={pedidosTexto}
-                onChange={(e) => setPedidosTexto(e.target.value)}
-                placeholder="Cole os pedidos aqui (separados por linha ou vírgula)..."
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-white outline-none focus:border-purple-500 transition-all resize-y"
-              />
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800 items-end">
-              <div className="md:col-span-2">
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ficheiro (Excel/CSV):</label>
-                <input
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={handleUploadPlanilha}
-                  className="w-full bg-slate-900 border border-slate-700 file:border-0 file:bg-indigo-600 file:text-white file:text-xs file:font-bold file:py-1.5 file:px-3 file:rounded-lg file:mr-3 file:cursor-pointer rounded-xl p-1 text-xs text-slate-300 cursor-pointer"
+            {/* Modo 1: Digitar/Colar */}
+            {modoEntrada === "manual" ? (
+              <div className="space-y-2">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase">
+                  Cole os números de pedido (um por linha ou separados por vírgula):
+                </label>
+                <textarea
+                  rows={4}
+                  value={pedidosTexto}
+                  onChange={(e) => setPedidosTexto(e.target.value)}
+                  placeholder="2000018949435054&#10;2000018941773046&#10;2000018941467386"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-white outline-none focus:border-purple-500 transition-all resize-y"
                 />
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Coluna do Pedido:</label>
-                <input
-                  type="text"
-                  value={colunaPedido}
-                  onChange={(e) => setColunaPedido(e.target.value.toUpperCase())}
-                  placeholder="A"
-                  className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none"
-                />
+            ) : (
+              /* Modo 2: Upload Planilha */
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800 items-end">
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ficheiro (Excel/CSV):</label>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleUploadPlanilha}
+                    className="w-full bg-slate-900 border border-slate-700 file:border-0 file:bg-indigo-600 file:text-white file:text-xs file:font-bold file:py-1.5 file:px-3 file:rounded-lg file:mr-3 file:cursor-pointer rounded-xl p-1 text-xs text-slate-300 cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Coluna do Pedido:</label>
+                  <input
+                    type="text"
+                    value={colunaPedido}
+                    onChange={(e) => setColunaPedido(e.target.value.toUpperCase())}
+                    placeholder="A"
+                    className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha Inicial:</label>
+                  <input
+                    type="number"
+                    value={linhaInicial}
+                    onChange={(e) => setLinhaInicial(e.target.value)}
+                    placeholder="2"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha Inicial:</label>
-                <input
-                  type="number"
-                  value={linhaInicial}
-                  onChange={(e) => setLinhaInicial(e.target.value)}
-                  placeholder="2"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none"
-                />
-              </div>
-            </div>
-          )}
+            )}
 
-          <div className="flex justify-end pt-1">
-            <button
-              onClick={handleSalvarPedidos}
-              disabled={salvando}
-              className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-8 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-purple-900/40 transition-all"
-            >
-              {salvando ? "A Gravar..." : modoEntrada === "manual" ? "Salvar Pedido(s)" : `Importar Planilha ${previewQtd > 0 ? `(${previewQtd})` : ""}`}
-            </button>
-          </div>
-        </div>
-
-        {/* LISTAGEM PRINCIPAL DE EXPEDIÇÃO */}
-        <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-            <div>
-              <h2 className="text-base font-bold text-white">Listagem de Expedição</h2>
-              <p className="text-xs text-slate-400">Consolidado pronto para impressão e conferência</p>
-            </div>
-            <div className="flex gap-2">
+            <div className="flex justify-end pt-2">
               <button
-                onClick={handleBaixarExcel}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-emerald-900/30 transition-all"
+                onClick={handleSalvarPedidos}
+                disabled={salvando}
+                className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-8 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-purple-900/40 transition-all"
               >
-                📥 Baixar Excel (Coluna D = Frete)
-              </button>
-              <button
-                onClick={handleLimparPeriodo}
-                disabled={pedidos.length === 0}
-                className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
-              >
-                🗑️ Limpar Período
+                {salvando ? "A Gravar..." : modoEntrada === "manual" ? "Salvar Pedido(s)" : `Importar Planilha ${previewQtd > 0 ? `(${previewQtd} encontrados)` : ""}`}
               </button>
             </div>
           </div>
+        )}
 
-          {/* Filtros */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Início:</label>
-              <input
-                type="date"
-                value={filtroDataInicio}
-                onChange={(e) => setFiltroDataInicio(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white outline-none"
-              />
+        {/* ======================================================== */}
+        {/* ABA 2: MANIFESTO DE EXPEDIÇÃO & IMPRESSÃO               */}
+        {/* ======================================================== */}
+        {abaAtiva === "impressao" && (
+          <div className="space-y-6">
+            
+            {/* BARRA DE FILTROS E AÇÕES (Oculto na impressão) */}
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 print:hidden">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                <div>
+                  <h2 className="text-base font-bold text-white">Manifesto de Expedição</h2>
+                  <p className="text-xs text-slate-400">Filtre por canais ou agrupe FLEX + Correios para impressão</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleImprimir}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-indigo-900/40 transition-all flex items-center gap-2"
+                  >
+                    <span>🖨️ Imprimir Lista</span>
+                  </button>
+                  <button
+                    onClick={handleBaixarExcel}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-emerald-900/30 transition-all flex items-center gap-2"
+                  >
+                    <span>📥 Baixar Excel (Coluna D)</span>
+                  </button>
+                  <button
+                    onClick={handleLimparPeriodo}
+                    disabled={pedidos.length === 0}
+                    className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
+                  >
+                    🗑️ Limpar Filtro
+                  </button>
+                </div>
+              </div>
+
+              {/* Filtros em Linha */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">De:</label>
+                  <input
+                    type="date"
+                    value={filtroDataInicio}
+                    onChange={(e) => setFiltroDataInicio(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Até:</label>
+                  <input
+                    type="date"
+                    value={filtroDataFim}
+                    onChange={(e) => setFiltroDataFim(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal:</label>
+                  <select
+                    value={filtroCanal}
+                    onChange={(e) => setFiltroCanal(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-bold text-white outline-none cursor-pointer"
+                  >
+                    <option value="TODOS">Todos os Canais</option>
+                    {canais.map((c, i) => (
+                      <option key={i} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Agrupamento Modalidade:</label>
+                  <select
+                    value={filtroModalidade}
+                    onChange={(e) => setFiltroModalidade(e.target.value)}
+                    className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2 text-xs font-bold text-amber-300 outline-none cursor-pointer"
+                  >
+                    <option value="FLEX_CORREIOS">⚡ FLEX + Correios (Mesma Lista)</option>
+                    <option value="TODOS">Todas as 3 Modalidades</option>
+                    <option value="FLEX">Apenas Flex</option>
+                    <option value="AGENCIA">Apenas Agência</option>
+                    <option value="CORREIOS">Apenas Correios</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Cards KPIs Compactos */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2">
+                <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl">
+                  <span className="block text-[10px] font-bold text-slate-400 uppercase">Total Volumes</span>
+                  <span className="text-lg font-black text-white">{kpis.total}</span>
+                </div>
+                <div className="bg-slate-950 border border-amber-900/40 p-3 rounded-xl">
+                  <span className="block text-[10px] font-bold text-amber-400 uppercase">Flex</span>
+                  <span className="text-lg font-black text-amber-400">{kpis.flex}</span>
+                </div>
+                <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl">
+                  <span className="block text-[10px] font-bold text-slate-400 uppercase">Agência</span>
+                  <span className="text-lg font-black text-white">{kpis.agencia}</span>
+                </div>
+                <div className="bg-slate-950 border border-indigo-900/40 p-3 rounded-xl">
+                  <span className="block text-[10px] font-bold text-indigo-400 uppercase">Correios</span>
+                  <span className="text-lg font-black text-indigo-400">{kpis.correios}</span>
+                </div>
+                <div className="bg-slate-950 border border-emerald-900/40 p-3 rounded-xl">
+                  <span className="block text-[10px] font-bold text-emerald-400 uppercase">Total Frete Flex</span>
+                  <span className="text-lg font-black text-emerald-400">{formatarMoeda(kpis.custoTotalFlex)}</span>
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Fim:</label>
-              <input
-                type="date"
-                value={filtroDataFim}
-                onChange={(e) => setFiltroDataFim(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal:</label>
-              <select
-                value={filtroCanal}
-                onChange={(e) => setFiltroCanal(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-bold text-white outline-none cursor-pointer"
-              >
-                <option value="TODOS">Todos os Canais</option>
-                {canais.map((c, i) => (
-                  <option key={i} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Modalidade:</label>
-              <select
-                value={filtroModalidade}
-                onChange={(e) => setFiltroModalidade(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-bold text-white outline-none cursor-pointer"
-              >
-                <option value="TODOS">Todas</option>
-                <option value="FLEX">Apenas Flex</option>
-                <option value="COLETA">Apenas Coleta</option>
-              </select>
+
+            {/* FOLHA DO MANIFESTO (VISUAL NA TELA E LIMPA PARA IMPRESSÃO) */}
+            <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-4 print-clean">
+              
+              {/* Cabeçalho exclusivo para o papel de impressão */}
+              <div className="hidden print:block border-b-2 border-black pb-3 mb-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h1 className="text-xl font-bold uppercase tracking-wide">BEST FIT — MANIFESTO DE EXPEDIÇÃO</h1>
+                    <p className="text-xs">
+                      Período: <strong>{filtroDataInicio}</strong> até <strong>{filtroDataFim}</strong> | Canal: <strong>{filtroCanal}</strong>
+                    </p>
+                  </div>
+                  <div className="text-right text-xs">
+                    <p>Total de Volumes: <strong>{kpis.total} pacotes</strong></p>
+                    <p>Filtro: <strong>{filtroModalidade === "FLEX_CORREIOS" ? "FLEX + CORREIOS" : filtroModalidade}</strong></p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabela do Manifesto */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="p-3 text-center w-12">#</th>
+                      <th className="p-3">Data</th>
+                      <th className="p-3">N.º do Pedido</th>
+                      <th className="p-3">Canal</th>
+                      <th className="p-3 text-center">Modalidade</th>
+                      <th className="p-3 text-right text-amber-300 print:text-black">Frete Flex (Coluna D)</th>
+                      <th className="p-3 text-center print:hidden">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {pedidos.map((item, idx) => (
+                      <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3 text-center font-mono text-slate-500">{idx + 1}</td>
+                        <td className="p-3 font-mono text-slate-300">{item.data_envio}</td>
+                        <td className="p-3 font-mono font-bold text-white print:text-black text-sm">{item.numero_pedido}</td>
+                        <td className="p-3 text-slate-300 font-bold">{item.canal}</td>
+                        <td className="p-3 text-center">
+                          <span
+                            className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border print:border-none print:bg-transparent ${
+                              item.modalidade === "FLEX"
+                                ? "bg-amber-900/30 text-amber-400 border-amber-800/50 print:text-black"
+                                : item.modalidade === "AGENCIA"
+                                ? "bg-slate-800 text-slate-300 border-slate-700 print:text-black"
+                                : "bg-indigo-900/30 text-indigo-400 border-indigo-800/50 print:text-black"
+                            }`}
+                          >
+                            {item.modalidade}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold text-emerald-400 print:text-black">
+                          {item.modalidade === "FLEX" ? formatarMoeda(item.valor_frete) : "R$ 0,00"}
+                        </td>
+                        <td className="p-3 text-center print:hidden">
+                          <button
+                            onClick={() => handleExcluirPedido(item.id)}
+                            className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer font-bold"
+                            title="Remover pedido"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+
+                    {pedidos.length === 0 && !loading && (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-slate-500">
+                          Nenhum pedido encontrado para o período ou agrupamento selecionado.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Rodapé exclusivo de assinatura para impressão */}
+              <div className="hidden print:grid grid-cols-2 gap-8 pt-10 mt-8 border-t border-black text-xs">
+                <div>
+                  <p className="border-t border-black pt-1 font-bold">Assinatura Expedição (Best Fit):</p>
+                  <p className="text-[10px] text-gray-600">Data: ____/____/________</p>
+                </div>
+                <div>
+                  <p className="border-t border-black pt-1 font-bold">Assinatura Motorista / Transportador:</p>
+                  <p className="text-[10px] text-gray-600">Nome Legível: _______________________________</p>
+                </div>
+              </div>
             </div>
           </div>
+        )}
 
-          {/* KPIs */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl">
-              <span className="block text-[10px] font-bold text-slate-400 uppercase">Total Pedidos</span>
-              <span className="text-lg font-black text-white">{kpis.total}</span>
-            </div>
-            <div className="bg-slate-950 border border-amber-900/40 p-3 rounded-xl">
-              <span className="block text-[10px] font-bold text-amber-400 uppercase">Flex</span>
-              <span className="text-lg font-black text-amber-400">{kpis.flex}</span>
-            </div>
-            <div className="bg-slate-950 border border-indigo-900/40 p-3 rounded-xl">
-              <span className="block text-[10px] font-bold text-indigo-400 uppercase">Coleta</span>
-              <span className="text-lg font-black text-indigo-400">{kpis.coleta}</span>
-            </div>
-            <div className="bg-slate-950 border border-emerald-900/40 p-3 rounded-xl">
-              <span className="block text-[10px] font-bold text-emerald-400 uppercase">Total Frete Flex</span>
-              <span className="text-lg font-black text-emerald-400">{formatarMoeda(kpis.custoTotalFlex)}</span>
-            </div>
-          </div>
-
-          {/* Tabela */}
-          <div className="overflow-x-auto max-h-[500px] border border-slate-800 rounded-xl">
-            <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-              <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                <tr>
-                  <th className="p-3 text-center">#</th>
-                  <th className="p-3">Data</th>
-                  <th className="p-3">N.º do Pedido</th>
-                  <th className="p-3">Canal</th>
-                  <th className="p-3 text-center">Modalidade</th>
-                  <th className="p-3 text-right text-amber-300">Valor Frete (Coluna D)</th>
-                  <th className="p-3 text-center">Remover</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                {pedidos.map((item, idx) => (
-                  <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                    <td className="p-3 text-center font-mono text-slate-500">{idx + 1}</td>
-                    <td className="p-3 font-mono text-slate-300">{item.data_envio}</td>
-                    <td className="p-3 font-mono font-bold text-white">{item.numero_pedido}</td>
-                    <td className="p-3 text-slate-300 font-bold">{item.canal}</td>
-                    <td className="p-3 text-center">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
-                          item.modalidade === "FLEX"
-                            ? "bg-amber-900/30 text-amber-400 border-amber-800/50"
-                            : "bg-indigo-900/30 text-indigo-400 border-indigo-800/50"
-                        }`}
-                      >
-                        {item.modalidade}
-                      </span>
-                    </td>
-                    <td className="p-3 text-right font-mono font-bold text-emerald-400">
-                      {item.modalidade === "FLEX" ? formatarMoeda(item.valor_frete) : "R$ 0,00"}
-                    </td>
-                    <td className="p-3 text-center">
-                      <button
-                        onClick={() => handleExcluirPedido(item.id)}
-                        className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer font-bold"
-                        title="Remover"
-                      >
-                        ✕
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {pedidos.length === 0 && !loading && (
-                  <tr>
-                    <td colSpan={7} className="p-6 text-center text-slate-500">
-                      Nenhum pedido encontrado para o período ou filtros.
-                    </td>
-                  </tr>
-                )}
-                {loading && (
-                  <tr>
-                    <td colSpan={7} className="p-6 text-center text-slate-400">
-                      A carregar pedidos...
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* MODAL CONFIGURAÇÃO TAXAS FLEX */}
+        {/* MODAL CONFIGURAÇÃO TAXAS FLEX (Oculto na impressão) */}
         {modalTaxasAberto && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl space-y-5">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200 print:hidden">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl space-y-5">
               <div className="flex justify-between items-center border-b border-slate-800 pb-3">
                 <h3 className="text-base font-bold text-amber-400 flex items-center gap-2">
-                  <span>⚙️ Taxas de Frete Flex por Canal</span>
+                  <span>⚙️ Configurar Valor de Frete Flex por Canal</span>
                 </h3>
                 <button
                   onClick={() => setModalTaxasAberto(false)}
@@ -559,11 +720,10 @@ export default function PlpPage() {
                 </button>
               </div>
 
-              {/* Adicionar Canal */}
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Adicionar novo canal..."
+                  placeholder="Novo canal..."
                   value={novoCanalNome}
                   onChange={(e) => setNovoCanalNome(e.target.value)}
                   className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none flex-1"
@@ -573,11 +733,10 @@ export default function PlpPage() {
                   onClick={handleAdicionarCanal}
                   className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase cursor-pointer"
                 >
-                  + Adicionar
+                  + Adicionar Canal
                 </button>
               </div>
 
-              {/* Lista dos Canais */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
                 {canais.map((c, i) => (
                   <div key={i} className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
@@ -607,6 +766,7 @@ export default function PlpPage() {
             </div>
           </div>
         )}
+
       </div>
     </div>
   );
