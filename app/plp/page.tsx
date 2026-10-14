@@ -73,6 +73,7 @@ export default function PlpPage() {
   // ==========================================
   const [filtroDataInicio, setFiltroDataInicio] = useState(new Date().toISOString().split("T")[0]);
   const [filtroDataFim, setFiltroDataFim] = useState(new Date().toISOString().split("T")[0]);
+  const [filtroAnalista, setFiltroAnalista] = useState("TODOS");
   const [filtroCanal, setFiltroCanal] = useState("TODOS");
   const [filtroModalidade, setFiltroModalidade] = useState("FLEX_CORREIOS");
   const [pedidos, setPedidos] = useState<any[]>([]);
@@ -84,20 +85,22 @@ export default function PlpPage() {
       return;
     }
     carregarCanaisTaxasEAnalistas();
-    buscarPedidos();
   }, []);
 
   useEffect(() => {
     buscarPedidos();
-  }, [filtroDataInicio, filtroDataFim, filtroCanal, filtroModalidade]);
+  }, [filtroDataInicio, filtroDataFim, filtroCanal, filtroModalidade, filtroAnalista]);
 
-  // Sincroniza o analista responsável do canal selecionado
-  useEffect(() => {
-    const canalAlvo = filtroCanal !== "TODOS" ? filtroCanal : canalSelecionado;
-    if (analistasPorCanal[canalAlvo]) {
-      setAnalistaDocumento(analistasPorCanal[canalAlvo]);
-    }
-  }, [filtroCanal, canalSelecionado, analistasPorCanal]);
+  // Lista de analistas únicos cadastrados
+  const listaAnalistasUnicos = Array.from(
+    new Set(Object.values(analistasPorCanal).filter((n) => n && n.trim() !== ""))
+  ).sort((a, b) => a.localeCompare(b));
+
+  // Canais disponíveis no select com base no analista filtrado
+  const canaisFiltradosParaSelect =
+    filtroAnalista === "TODOS"
+      ? canais
+      : canais.filter((c) => analistasPorCanal[c] === filtroAnalista);
 
   const carregarCanaisTaxasEAnalistas = async () => {
     const mapaUnico = new Map<string, string>();
@@ -130,10 +133,6 @@ export default function PlpPage() {
     });
     setAnalistasPorCanal(analistas);
     localStorage.setItem("plp_analistas_por_canal", JSON.stringify(analistas));
-
-    if (analistas[canalSelecionado]) {
-      setAnalistaDocumento(analistas[canalSelecionado]);
-    }
   };
 
   const atualizarTaxaFlex = (canal: string, valor: number) => {
@@ -146,16 +145,14 @@ export default function PlpPage() {
     const novo = { ...analistasPorCanal, [canal]: nome };
     setAnalistasPorCanal(novo);
     localStorage.setItem("plp_analistas_por_canal", JSON.stringify(novo));
-    if (filtroCanal === canal || canalSelecionado === canal) {
-      setAnalistaDocumento(nome);
-    }
   };
 
-  const handleAlterarAnalistaDocumento = (nome: string) => {
-    setAnalistaDocumento(nome);
-    const canalAlvo = filtroCanal !== "TODOS" ? filtroCanal : canalSelecionado;
-    if (canalAlvo && canalAlvo !== "TODOS") {
-      atualizarAnalistaCanal(canalAlvo, nome);
+  const handleMudarFiltroAnalista = (novoAnalista: string) => {
+    setFiltroAnalista(novoAnalista);
+    if (novoAnalista !== "TODOS") {
+      if (filtroCanal !== "TODOS" && analistasPorCanal[filtroCanal] !== novoAnalista) {
+        setFiltroCanal("TODOS");
+      }
     }
   };
 
@@ -192,9 +189,89 @@ export default function PlpPage() {
     }
 
     const { data } = await query;
-    setPedidos(data || []);
+    let dadosFiltrados = data || [];
+
+    // REGRA DE FILTRO POR ANALISTA COM APROVEITAMENTO DO FLEX
+    if (filtroAnalista !== "TODOS") {
+      dadosFiltrados = dadosFiltrados.filter((p: any) => {
+        if (p.modalidade === "FLEX") {
+          return true; // Sempre mantém os pedidos Flex de todos os canais/analistas!
+        }
+        const analistaDoCanal = analistasPorCanal[p.canal] || "";
+        return analistaDoCanal === filtroAnalista;
+      });
+    }
+
+    setPedidos(dadosFiltrados);
     setLoading(false);
   };
+
+  // SINCRONIZA AUTOMATICAMENTE O NOME DO ANALISTA NO CABEÇALHO E ASSINATURA
+  useEffect(() => {
+    // 1. Regra especial para o FLEX:
+    if (filtroModalidade === "FLEX") {
+      const analistasFlexPresentes = Array.from(
+        new Set(
+          pedidos
+            .filter((p) => p.modalidade === "FLEX")
+            .map((p) => analistasPorCanal[p.canal] || "Expedição")
+        )
+      ).filter(Boolean).sort();
+
+      if (analistasFlexPresentes.length >= 2) {
+        setAnalistaDocumento(analistasFlexPresentes.join(" & "));
+      } else {
+        const todosAnalistas = new Set(Object.values(analistasPorCanal));
+        if (todosAnalistas.has("Alisson") && todosAnalistas.has("Gabrielle")) {
+          setAnalistaDocumento("Alisson & Gabrielle");
+        } else if (analistasFlexPresentes.length === 1) {
+          setAnalistaDocumento(analistasFlexPresentes[0]);
+        } else {
+          setAnalistaDocumento("Alisson & Gabrielle");
+        }
+      }
+      return;
+    }
+
+    // 2. Se filtrou por um analista específico (ex: Agência da Gabrielle):
+    if (filtroAnalista !== "TODOS") {
+      if (filtroModalidade === "FLEX_CORREIOS") {
+        const temFlexDeOutro = pedidos.some(
+          (p) => p.modalidade === "FLEX" && (analistasPorCanal[p.canal] || "") !== filtroAnalista
+        );
+        if (temFlexDeOutro) {
+          const analistasPresentes = Array.from(
+            new Set(pedidos.map((p) => analistasPorCanal[p.canal] || "Expedição"))
+          ).filter(Boolean).sort();
+          if (analistasPresentes.length >= 2) {
+            setAnalistaDocumento(analistasPresentes.join(" & "));
+            return;
+          }
+        }
+      }
+      setAnalistaDocumento(filtroAnalista);
+      return;
+    }
+
+    // 3. Se filtrou por um canal específico:
+    if (filtroCanal !== "TODOS") {
+      setAnalistaDocumento(analistasPorCanal[filtroCanal] || "Expedição");
+      return;
+    }
+
+    // 4. Se está em "TODOS os Canais" e "TODOS os Analistas":
+    const analistasPresentes = Array.from(
+      new Set(pedidos.map((p) => analistasPorCanal[p.canal] || "Expedição"))
+    ).filter(Boolean).sort();
+
+    if (analistasPresentes.length === 1) {
+      setAnalistaDocumento(analistasPresentes[0]);
+    } else if (analistasPresentes.length > 1) {
+      setAnalistaDocumento(analistasPresentes.join(" & "));
+    } else {
+      setAnalistaDocumento("Expedição");
+    }
+  }, [filtroModalidade, filtroAnalista, filtroCanal, pedidos, analistasPorCanal]);
 
   const handleUploadPlanilha = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -288,7 +365,7 @@ export default function PlpPage() {
       "Data de Envio": item.data_envio,
       "Número do Pedido": item.numero_pedido,
       Canal: item.canal,
-      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0, // COLUNA D
+      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0, // COLUNA D ESTRITA
       Modalidade: item.modalidade,
     }));
 
@@ -305,7 +382,7 @@ export default function PlpPage() {
     window.print();
   };
 
-  // AGRUPA OS PEDIDOS EM COLUNAS POR CANAL (EX: MERCADO LIVRE, TIKTOK, AMAZON)
+  // AGRUPA OS PEDIDOS EM COLUNAS POR CANAL
   const gerarColunasPorCanal = (listaPedidos: any[], maxLinhasPorColuna = 26) => {
     const mapa = new Map<string, string[]>();
     for (const p of listaPedidos) {
@@ -627,8 +704,8 @@ export default function PlpPage() {
                 </div>
               </div>
 
-              {/* Filtros */}
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+              {/* Filtros Integrados (com Filtro por Analista) */}
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">De:</label>
                   <input
@@ -647,6 +724,25 @@ export default function PlpPage() {
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white outline-none"
                   />
                 </div>
+
+                {/* NOVO: FILTRAR POR ANALISTA */}
+                <div>
+                  <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">
+                    Filtrar Analista:
+                  </label>
+                  <select
+                    value={filtroAnalista}
+                    onChange={(e) => handleMudarFiltroAnalista(e.target.value)}
+                    className="w-full bg-slate-950 border border-purple-500/50 rounded-xl p-2 text-xs font-bold text-purple-300 outline-none cursor-pointer"
+                  >
+                    <option value="TODOS">Todos os Analistas</option>
+                    {listaAnalistasUnicos.map((a, i) => (
+                      <option key={i} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* CANAL (FILTRADO PELO ANALISTA SELECIONADO) */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal:</label>
                   <select
@@ -654,12 +750,15 @@ export default function PlpPage() {
                     onChange={(e) => setFiltroCanal(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-bold text-white outline-none cursor-pointer"
                   >
-                    <option value="TODOS">Todos os Canais</option>
-                    {canais.map((c, i) => (
+                    <option value="TODOS">
+                      {filtroAnalista === "TODOS" ? "Todos os Canais" : `Todos de ${filtroAnalista}`}
+                    </option>
+                    {canaisFiltradosParaSelect.map((c, i) => (
                       <option key={i} value={c}>{c}</option>
                     ))}
                   </select>
                 </div>
+
                 <div>
                   <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Modalidade:</label>
                   <select
@@ -674,14 +773,15 @@ export default function PlpPage() {
                     <option value="CORREIOS">Apenas Correios</option>
                   </select>
                 </div>
+
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                    Colaborador(a) do Canal:
+                    Analista(s) no Documento:
                   </label>
                   <input
                     type="text"
                     value={analistaDocumento}
-                    onChange={(e) => handleAlterarAnalistaDocumento(e.target.value)}
+                    onChange={(e) => setAnalistaDocumento(e.target.value)}
                     placeholder="Nome..."
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-semibold text-white outline-none"
                   />
@@ -728,7 +828,7 @@ export default function PlpPage() {
                   <div className="text-right text-[11px] leading-tight">
                     <p>Data de Envio: <strong>{filtroDataInicio === filtroDataFim ? filtroDataInicio : `${filtroDataInicio} a ${filtroDataFim}`}</strong></p>
                     <p>Modalidade de Envio: <strong className="uppercase">{formatarMetodoEnvioTexto()}</strong></p>
-                    <p>Colaborador(a) do Canal: <strong>{analistaDocumento || "Expedição"}</strong></p>
+                    <p>Colaborador(es) do Canal: <strong>{analistaDocumento || "Expedição"}</strong></p>
                   </div>
                 </div>
               </div>
@@ -742,7 +842,7 @@ export default function PlpPage() {
                       {col.canal} <span className="text-[10px] text-gray-600 font-normal">({col.pedidos.length})</span>
                     </div>
 
-                    {/* LISTA SEQUENCIAL DE PEDIDOS DO CANAL */}
+                    {/* LISTA SEQUENCIAL DE PEDIDOS DO CANAL (PEDIDO 1, 2, 3...) */}
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-300 text-[9px] uppercase font-bold text-gray-700">
@@ -769,17 +869,17 @@ export default function PlpPage() {
                 )}
               </div>
 
-              {/* BLOCO DE TOTALIZADOR E 2 ASSINATURAS (SEM MOTORISTA) */}
+              {/* BLOCO DE TOTALIZADOR E APENAS 2 ASSINATURAS (SEM MOTORISTA) */}
               <div className="bloco-assinatura-print mt-3">
                 <div className="flex justify-between items-center border-t-2 border-black p-1.5 bg-gray-100 text-xs font-bold">
                   <span>TOTAL DE VOLUMES CONFERIDOS:</span>
                   <span className="font-mono text-sm">{kpis.total} pacotes</span>
                 </div>
 
-                {/* 2 ASSINATURAS APENAS: COLABORADOR DO CANAL E RESPONSÁVEL PELA EMBALAGEM */}
+                {/* 2 ASSINATURAS: COLABORADOR DO CANAL E RESPONSÁVEL PELA EMBALAGEM */}
                 <div className="grid grid-cols-2 gap-8 pt-4 mt-2 border-t border-gray-300 text-[11px]">
                   <div className="border-t border-black pt-1">
-                    <p className="font-bold">Colaborador(a) do Canal ({analistaDocumento || "Expedição"}):</p>
+                    <p className="font-bold">Colaborador(es) do Canal ({analistaDocumento || "Expedição"}):</p>
                     <p className="text-gray-500 mt-2">Assinatura: _________________________________________</p>
                   </div>
                   <div className="border-t border-black pt-1">
