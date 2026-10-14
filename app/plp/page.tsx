@@ -252,6 +252,11 @@ export default function PlpPage() {
     XLSX.writeFile(wb, `PLP_${filtroDataInicio}_ate_${filtroDataFim}.xlsx`);
   };
 
+  const handleImprimir = () => {
+    if (pedidos.length === 0) return alert("Nenhum pedido para imprimir.");
+    window.print();
+  };
+
   // Divide a lista em 4 colunas verticais densas (cabe até 120 pedidos por folha A4 paisagem)
   const agruparPedidosEmColunas = (lista: any[], colunasTotais = 4) => {
     const totalItens = lista.length;
@@ -399,9 +404,7 @@ export default function PlpPage() {
           </button>
         </div>
 
-        {/* ======================================================== */}
-        {/* ABA 1: ENTRADA DE PEDIDOS (MANUAL OU PLANILHA)           */}
-        {/* ======================================================== */}
+        {/* ABA 1: ENTRADA DE PEDIDOS (MANUAL OU PLANILHA) */}
         {abaAtiva === "entrada" && (
           <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-5 animate-in fade-in duration-300 print:hidden">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-4">
@@ -547,9 +550,7 @@ export default function PlpPage() {
           </div>
         )}
 
-        {/* ======================================================== */}
-        {/* ABA 2: MANIFESTO DE EXPEDIÇÃO & IMPRESSÃO A4             */}
-        {/* ======================================================== */}
+        {/* ABA 2: MANIFESTO DE EXPEDIÇÃO & IMPRESSÃO A4 */}
         {abaAtiva === "manifesto" && (
           <div className="space-y-6">
             
@@ -667,9 +668,7 @@ export default function PlpPage() {
               </div>
             </div>
 
-            {/* ======================================================== */}
-            {/* DOCUMENTO DE IMPRESSÃO (LIMPO, ECONÔMICO, ESTILO DANFE)  */}
-            {/* ======================================================== */}
+            {/* DOCUMENTO DE IMPRESSÃO (LIMPO, ECONÔMICO, ESTILO DANFE) */}
             <div className="folha-print-manifesto bg-white text-black p-4 rounded-xl border border-slate-300 shadow-xl">
               
               {/* CABEÇALHO FORMAL */}
