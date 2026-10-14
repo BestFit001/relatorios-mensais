@@ -19,6 +19,20 @@ const canaisPadraoBase = [
   "Site"
 ];
 
+const analistasPadraoBase: Record<string, string> = {
+  "Mercado Livre 1": "Alisson",
+  "Mercado Livre 2": "Alisson",
+  "Mercado Livre 3": "Alisson",
+  "Amazon": "Gabrielle",
+  "Magalu": "Gabrielle",
+  "Shopee": "Felipe",
+  "Shein": "Gabrielle",
+  "Netshoes": "Henrique",
+  "Centauro": "Henrique",
+  "TikTok": "Gabrielle",
+  "Site": "Felipe"
+};
+
 const formatarMoeda = (valor: number) =>
   "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -30,14 +44,15 @@ export default function PlpPage() {
   // 2 Abas: Entrada | Manifesto
   const [abaAtiva, setAbaAtiva] = useState<"entrada" | "manifesto">("manifesto");
 
-  // Analista responsável
-  const [nomeAnalista, setNomeAnalista] = useState("");
-
-  // Canais e Taxas
+  // Canais, Taxas e Analistas Fixos por Canal
   const [canais, setCanais] = useState<string[]>(canaisPadraoBase);
   const [taxasFlexCanal, setTaxasFlexCanal] = useState<Record<string, number>>({});
-  const [modalTaxasAberto, setModalTaxasAberto] = useState(false);
+  const [analistasPorCanal, setAnalistasPorCanal] = useState<Record<string, string>>(analistasPadraoBase);
+  const [modalConfigAberto, setModalConfigAberto] = useState(false);
   const [novoCanalNome, setNovoCanalNome] = useState("");
+
+  // Analista exibido no documento atual
+  const [analistaDocumento, setAnalistaDocumento] = useState("Gabrielle");
 
   // ==========================================
   // ABA 1: ENTRADA (MANUAL & PLANILHA)
@@ -68,14 +83,7 @@ export default function PlpPage() {
       router.push("/login");
       return;
     }
-    try {
-      const u = JSON.parse(usuarioLogado);
-      setNomeAnalista(u.nome || u.email || "Expedição");
-    } catch {
-      setNomeAnalista("Expedição");
-    }
-
-    carregarCanaisETaxas();
+    carregarCanaisTaxasEAnalistas();
     buscarPedidos();
   }, []);
 
@@ -83,7 +91,15 @@ export default function PlpPage() {
     buscarPedidos();
   }, [filtroDataInicio, filtroDataFim, filtroCanal, filtroModalidade]);
 
-  const carregarCanaisETaxas = async () => {
+  // Atualiza o analista exibido sempre que o filtro ou o canal selecionado mudar
+  useEffect(() => {
+    const canalAlvo = filtroCanal !== "TODOS" ? filtroCanal : canalSelecionado;
+    if (analistasPorCanal[canalAlvo]) {
+      setAnalistaDocumento(analistasPorCanal[canalAlvo]);
+    }
+  }, [filtroCanal, canalSelecionado, analistasPorCanal]);
+
+  const carregarCanaisTaxasEAnalistas = async () => {
     const mapaUnico = new Map<string, string>();
     canaisPadraoBase.forEach((c) => mapaUnico.set(c.trim().toLowerCase(), c.trim()));
 
@@ -97,20 +113,50 @@ export default function PlpPage() {
     const lista = Array.from(mapaUnico.values()).sort((a, b) => a.localeCompare(b));
     setCanais(lista);
 
-    const salvo = localStorage.getItem("plp_taxas_flex_por_canal");
-    const taxas: Record<string, number> = salvo ? JSON.parse(salvo) : {};
+    // Carrega taxas Flex salvas
+    const salvoTaxas = localStorage.getItem("plp_taxas_flex_por_canal");
+    const taxas: Record<string, number> = salvoTaxas ? JSON.parse(salvoTaxas) : {};
     lista.forEach((c) => {
       if (taxas[c] === undefined) taxas[c] = 12.99;
     });
-
     setTaxasFlexCanal(taxas);
     localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(taxas));
+
+    // Carrega analistas responsáveis fixos por canal
+    const salvoAnalistas = localStorage.getItem("plp_analistas_por_canal");
+    const analistas: Record<string, string> = salvoAnalistas ? JSON.parse(salvoAnalistas) : { ...analistasPadraoBase };
+    lista.forEach((c) => {
+      if (!analistas[c]) analistas[c] = analistasPadraoBase[c] || "Expedição";
+    });
+    setAnalistasPorCanal(analistas);
+    localStorage.setItem("plp_analistas_por_canal", JSON.stringify(analistas));
+
+    if (analistas[canalSelecionado]) {
+      setAnalistaDocumento(analistas[canalSelecionado]);
+    }
   };
 
-  const atualizarTaxaFlex = (c: string, v: number) => {
-    const novo = { ...taxasFlexCanal, [c]: v };
+  const atualizarTaxaFlex = (canal: string, valor: number) => {
+    const novo = { ...taxasFlexCanal, [canal]: valor };
     setTaxasFlexCanal(novo);
     localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(novo));
+  };
+
+  const atualizarAnalistaCanal = (canal: string, nome: string) => {
+    const novo = { ...analistasPorCanal, [canal]: nome };
+    setAnalistasPorCanal(novo);
+    localStorage.setItem("plp_analistas_por_canal", JSON.stringify(novo));
+    if (filtroCanal === canal || canalSelecionado === canal) {
+      setAnalistaDocumento(nome);
+    }
+  };
+
+  const handleAlterarAnalistaDocumento = (nome: string) => {
+    setAnalistaDocumento(nome);
+    const canalAlvo = filtroCanal !== "TODOS" ? filtroCanal : canalSelecionado;
+    if (canalAlvo) {
+      atualizarAnalistaCanal(canalAlvo, nome);
+    }
   };
 
   const handleAdicionarCanal = () => {
@@ -120,6 +166,7 @@ export default function PlpPage() {
       const novaLista = [...canais, n].sort((a, b) => a.localeCompare(b));
       setCanais(novaLista);
       atualizarTaxaFlex(n, 12.99);
+      atualizarAnalistaCanal(n, "Expedição");
       setNovoCanalNome("");
     }
   };
@@ -208,7 +255,7 @@ export default function PlpPage() {
     if (error) {
       alert("Erro ao gravar pedidos: " + error.message);
     } else {
-      alert(`✅ ${payload.length} pedido(s) gravado(s) com sucesso!`);
+      alert(`✅ ${payload.length} pedido(s) gravado(s) com sucesso para ${canalSelecionado}!`);
       setPedidosTexto("");
       setMatrizPlanilha([]);
       setPreviewQtd(0);
@@ -240,7 +287,7 @@ export default function PlpPage() {
       "Data de Envio": item.data_envio,
       "Número do Pedido": item.numero_pedido,
       Canal: item.canal,
-      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0,
+      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0, // Coluna D estrita
       Modalidade: item.modalidade,
     }));
 
@@ -256,26 +303,6 @@ export default function PlpPage() {
     if (pedidos.length === 0) return alert("Nenhum pedido para imprimir.");
     window.print();
   };
-
-  // DIVIDE OS PEDIDOS EXATAMENTE NAS LINHAS NECESSÁRIAS (SEM LINHAS VAZIAS FORÇADAS)
-  const agruparPedidosEmColunas = (lista: any[], colunasTotais = 4) => {
-    const totalItens = lista.length;
-    if (totalItens === 0) return [];
-    const numLinhas = Math.ceil(totalItens / colunasTotais);
-    const grade: any[][] = [];
-
-    for (let r = 0; r < numLinhas; r++) {
-      const linha: any[] = [];
-      for (let c = 0; c < colunasTotais; c++) {
-        const itemIdx = c * numLinhas + r;
-        linha.push(itemIdx < totalItens ? { ...lista[itemIdx], numGlobal: itemIdx + 1 } : null);
-      }
-      grade.push(linha);
-    }
-    return grade;
-  };
-
-  const gradeColunas = agruparPedidosEmColunas(pedidos, 4);
 
   const kpis = {
     total: pedidos.length,
@@ -298,12 +325,12 @@ export default function PlpPage() {
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans print:p-0 print:bg-white print:text-black">
       
-      {/* CSS DE IMPRESSÃO MINIMALISTA DE ALTA DENSIDADE */}
+      {/* CSS DE IMPRESSÃO MINIMALISTA (SEM CABEÇALHOS REPETIDOS NAS PÁGINAS SEGUINTES) */}
       <style jsx global>{`
         @media print {
           @page {
-            size: A4 landscape;
-            margin: 6mm 8mm;
+            size: A4 portrait;
+            margin: 8mm 10mm;
           }
           html, body {
             background: #ffffff !important;
@@ -320,7 +347,7 @@ export default function PlpPage() {
             border: 1.5px solid #000000 !important;
             background: #ffffff !important;
             color: #000000 !important;
-            padding: 4px 6px !important;
+            padding: 6px 8px !important;
             box-shadow: none !important;
           }
           /* IMPEDE QUE O CABEÇALHO DA TABELA SE REPITA NAS PÁGINAS SEGUINTES */
@@ -341,9 +368,9 @@ export default function PlpPage() {
           }
           td, th {
             border: 1px solid #d1d5db !important;
-            padding: 2px 4px !important;
-            font-size: 9.5px !important;
-            line-height: 1.15 !important;
+            padding: 3px 6px !important;
+            font-size: 10px !important;
+            line-height: 1.2 !important;
           }
           .print-th {
             background-color: #f3f4f6 !important;
@@ -353,7 +380,7 @@ export default function PlpPage() {
             print-color-adjust: exact !important;
           }
           .print-row-alt {
-            background-color: #f9fafb !important;
+            background-color: #fafafa !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
@@ -367,15 +394,15 @@ export default function PlpPage() {
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Expedição & PLPs</h1>
             <p className="text-sm font-medium text-slate-400">
-              Controle de envios e geração de manifestos de conferência
+              Controle de envios, analistas fixos e manifestos de expedição
             </p>
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setModalTaxasAberto(true)}
+              onClick={() => setModalConfigAberto(true)}
               className="bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-800 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
             >
-              ⚙️ Taxas Flex por Canal
+              ⚙️ Canais, Taxas & Analistas
             </button>
             <Navbar />
           </div>
@@ -405,7 +432,9 @@ export default function PlpPage() {
           </button>
         </div>
 
-        {/* ABA 1: ENTRADA DE PEDIDOS */}
+        {/* ======================================================== */}
+        {/* ABA 1: ENTRADA DE PEDIDOS (MANUAL OU PLANILHA)           */}
+        {/* ======================================================== */}
         {abaAtiva === "entrada" && (
           <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-5 animate-in fade-in duration-300 print:hidden">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-4">
@@ -413,7 +442,7 @@ export default function PlpPage() {
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
                   <span>📥 Lançamento de Pedidos</span>
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">Selecione canal, modalidade e a forma de carregar os dados</p>
+                <p className="text-xs text-slate-400 mt-0.5">Selecione o canal e a modalidade para registro</p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -461,7 +490,9 @@ export default function PlpPage() {
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer"
                 >
                   {canais.map((c, i) => (
-                    <option key={i} value={c}>{c}</option>
+                    <option key={i} value={c}>
+                      {c} {analistasPorCanal[c] ? `(${analistasPorCanal[c]})` : ""}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -485,7 +516,7 @@ export default function PlpPage() {
 
             <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
               <span className="text-slate-400">
-                Valor atribuído na <strong className="text-white">Coluna D</strong> do Excel:
+                Analista Fixo do Canal: <strong className="text-indigo-400">{analistasPorCanal[canalSelecionado] || "Expedição"}</strong> | Frete na Coluna D:
               </span>
               <strong className={modalidade === "FLEX" ? "text-amber-400 text-sm font-mono" : "text-slate-500"}>
                 {modalidade === "FLEX" ? formatarMoeda(taxasFlexCanal[canalSelecionado] ?? 12.99) : "R$ 0,00"}
@@ -551,23 +582,25 @@ export default function PlpPage() {
           </div>
         )}
 
-        {/* ABA 2: MANIFESTO DE EXPEDIÇÃO & IMPRESSÃO A4 */}
+        {/* ======================================================== */}
+        {/* ABA 2: MANIFESTO DE EXPEDIÇÃO & IMPRESSÃO VERTICAL       */}
+        {/* ======================================================== */}
         {abaAtiva === "manifesto" && (
           <div className="space-y-6">
             
-            {/* PAINEL DE CONTROLE EM TELA */}
+            {/* PAINEL DE FILTROS EM TELA */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 print:hidden">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
                 <div>
                   <h2 className="text-base font-bold text-white">Manifesto de Expedição</h2>
-                  <p className="text-xs text-slate-400">Layout compacto ajustado dinamicamente para não gerar folhas vazias</p>
+                  <p className="text-xs text-slate-400">Listagem sequencial direta pronta para conferência e impressão</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={handleImprimir}
                     className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-indigo-900/40 transition-all flex items-center gap-2"
                   >
-                    <span>🖨️ Imprimir Lista (A4)</span>
+                    <span>🖨️ Imprimir Lista</span>
                   </button>
                   <button
                     onClick={handleBaixarExcel}
@@ -633,11 +666,13 @@ export default function PlpPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Analista no Documento:</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+                    Analista do Canal (Salva automático):
+                  </label>
                   <input
                     type="text"
-                    value={nomeAnalista}
-                    onChange={(e) => setNomeAnalista(e.target.value)}
+                    value={analistaDocumento}
+                    onChange={(e) => handleAlterarAnalistaDocumento(e.target.value)}
                     placeholder="Nome do analista..."
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-semibold text-white outline-none"
                   />
@@ -669,7 +704,9 @@ export default function PlpPage() {
               </div>
             </div>
 
-            {/* DOCUMENTO DE IMPRESSÃO (LIMPO, ECONÔMICO, ESTILO DANFE) */}
+            {/* ======================================================== */}
+            {/* DOCUMENTO DE IMPRESSÃO (LISTAGEM VERTICAL DIRETA)        */}
+            {/* ======================================================== */}
             <div className="folha-print-manifesto bg-white text-black p-4 rounded-xl border border-slate-300 shadow-xl">
               
               {/* CABEÇALHO FORMAL */}
@@ -682,76 +719,60 @@ export default function PlpPage() {
                   <div className="text-right text-[10px] leading-tight">
                     <p>Data: <strong>{filtroDataInicio === filtroDataFim ? filtroDataInicio : `${filtroDataInicio} a ${filtroDataFim}`}</strong></p>
                     <p>Método: <strong>{formatarMetodoEnvioTexto()}</strong></p>
-                    <p>Analista: <strong>{nomeAnalista || "Expedição"}</strong></p>
+                    <p>Canal: <strong>{filtroCanal}</strong></p>
+                    <p>Analista: <strong>{analistaDocumento || "Expedição"}</strong></p>
                   </div>
                 </div>
               </div>
 
-              {/* GRADE DE PEDIDOS LADO A LADO (4 COLUNAS DE ALTA DENSIDADE) */}
+              {/* LISTAGEM VERTICAL DIRETA: PEDIDO 1 ABAIXO DE PEDIDO 2, 3, 4 */}
               <div className="overflow-hidden">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="print-th bg-gray-100 font-bold text-[9px] uppercase border-b border-black">
-                      <th className="p-1 text-center w-7 border-r border-gray-300">#</th>
-                      <th className="p-1 border-r border-gray-300">Número do Pedido</th>
-                      <th className="p-1 text-center border-r-2 border-black w-14">Canal</th>
-
-                      <th className="p-1 text-center w-7 border-r border-gray-300">#</th>
-                      <th className="p-1 border-r border-gray-300">Número do Pedido</th>
-                      <th className="p-1 text-center border-r-2 border-black w-14">Canal</th>
-
-                      <th className="p-1 text-center w-7 border-r border-gray-300">#</th>
-                      <th className="p-1 border-r border-gray-300">Número do Pedido</th>
-                      <th className="p-1 text-center border-r-2 border-black w-14">Canal</th>
-
-                      <th className="p-1 text-center w-7 border-r border-gray-300">#</th>
-                      <th className="p-1 border-r border-gray-300">Número do Pedido</th>
-                      <th className="p-1 text-center w-14">Canal</th>
+                      <th className="p-1.5 text-center w-8 border-r border-gray-300">#</th>
+                      <th className="p-1.5 border-r border-gray-300 w-44">Número do Pedido</th>
+                      <th className="p-1.5 border-r border-gray-300 w-36">Canal de Venda</th>
+                      <th className="p-1.5 text-center border-r border-gray-300 w-24">Modalidade</th>
+                      <th className="p-1.5 text-right border-r border-gray-300 w-28">Valor Frete (Coluna D)</th>
+                      <th className="p-1.5 border-r border-gray-300">Número da NF / Pedido Tiny</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {gradeColunas.map((linha, rIdx) => {
-                      const isAlt = rIdx % 2 === 1;
+                    {pedidos.map((item, idx) => {
+                      const isAlt = idx % 2 === 1;
                       return (
                         <tr
-                          key={rIdx}
-                          className={`h-5 border-b border-gray-200 ${
+                          key={item.id}
+                          className={`h-6 border-b border-gray-200 ${
                             isAlt ? "print-row-alt bg-gray-50" : "bg-white"
                           }`}
                         >
-                          {linha.map((celula, cIdx) => {
-                            const isLastCol = cIdx === 3;
-                            if (!celula) {
-                              return (
-                                <React.Fragment key={cIdx}>
-                                  <td className="p-0.5 text-center border-r border-gray-200"></td>
-                                  <td className="p-0.5 border-r border-gray-200"></td>
-                                  <td className={`p-0.5 ${!isLastCol ? "border-r-2 border-black" : ""}`}></td>
-                                </React.Fragment>
-                              );
-                            }
-
-                            return (
-                              <React.Fragment key={cIdx}>
-                                <td className="p-0.5 text-center font-mono text-[9px] text-gray-500 border-r border-gray-200">
-                                  {celula.numGlobal}
-                                </td>
-                                <td className="p-0.5 font-mono font-bold text-[10px] text-black border-r border-gray-200 truncate max-w-[130px]">
-                                  {celula.numero_pedido}
-                                </td>
-                                <td className={`p-0.5 text-center text-[8px] font-semibold text-gray-700 truncate ${!isLastCol ? "border-r-2 border-black" : ""}`}>
-                                  {celula.canal.replace("Mercado Livre", "ML")}
-                                </td>
-                              </React.Fragment>
-                            );
-                          })}
+                          <td className="p-1 text-center font-mono text-[9px] text-gray-500 border-r border-gray-200">
+                            {idx + 1}
+                          </td>
+                          <td className="p-1 font-mono font-bold text-[11px] text-black border-r border-gray-200">
+                            {item.numero_pedido}
+                          </td>
+                          <td className="p-1 text-[10px] font-semibold text-gray-800 border-r border-gray-200">
+                            {item.canal}
+                          </td>
+                          <td className="p-1 text-center text-[9px] font-bold border-r border-gray-200">
+                            <span className="uppercase">{item.modalidade}</span>
+                          </td>
+                          <td className="p-1 text-right font-mono font-bold text-[10px] border-r border-gray-200">
+                            {item.modalidade === "FLEX" ? formatarMoeda(item.valor_frete) : "R$ 0,00"}
+                          </td>
+                          <td className="p-1 border-r border-gray-200 text-gray-300">
+                            {/* Espaço em branco para anotação manual da NF ou conferência */}
+                          </td>
                         </tr>
                       );
                     })}
 
                     {pedidos.length === 0 && (
                       <tr>
-                        <td colSpan={12} className="p-6 text-center text-gray-500 italic text-xs">
+                        <td colSpan={6} className="p-6 text-center text-gray-500 italic text-xs">
                           Nenhum pedido registrado no filtro selecionado.
                         </td>
                       </tr>
@@ -760,18 +781,16 @@ export default function PlpPage() {
                 </table>
               </div>
 
-              {/* BLOCO DE TOTALIZADOR E ASSINATURA COMPACTO */}
-              <div className="bloco-assinatura-print">
-                {/* TOTALIZADOR */}
-                <div className="flex justify-between items-center border-t-2 border-black p-1.5 mt-2 bg-gray-100 text-xs font-bold">
+              {/* BLOCO DE TOTALIZADOR E ASSINATURAS */}
+              <div className="bloco-assinatura-print mt-2">
+                <div className="flex justify-between items-center border-t-2 border-black p-1.5 bg-gray-100 text-xs font-bold">
                   <span>TOTAL DE VOLUMES CONFERIDOS:</span>
                   <span className="font-mono text-sm">{kpis.total} pacotes</span>
                 </div>
 
-                {/* RODAPÉ DE ASSINATURA EM 3 COLUNAS */}
                 <div className="grid grid-cols-3 gap-6 pt-3 mt-2 border-t border-gray-300 text-[10px]">
                   <div className="border-t border-black pt-1">
-                    <p className="font-bold">Analista ({nomeAnalista || "Expedição"}):</p>
+                    <p className="font-bold">Analista ({analistaDocumento || "Expedição"}):</p>
                     <p className="text-gray-500 mt-1">Assinatura: ___________________________</p>
                   </div>
                   <div className="border-t border-black pt-1">
@@ -790,7 +809,7 @@ export default function PlpPage() {
               </div>
             </div>
 
-            {/* TABELA DE AUDITORIA INDIVIDUAL (Print Hidden) */}
+            {/* TABELA DE AUDITORIA INDIVIDUAL EM TELA */}
             <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-3 print:hidden">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
                 Auditoria e Exclusão Individual ({pedidos.length})
@@ -850,16 +869,19 @@ export default function PlpPage() {
           </div>
         )}
 
-        {/* MODAL CONFIGURAÇÃO TAXAS FLEX */}
-        {modalTaxasAberto && (
+        {/* MODAL CONFIGURAÇÃO TAXAS FLEX E ANALISTAS */}
+        {modalConfigAberto && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200 print:hidden">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl space-y-5">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl space-y-5">
               <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                <h3 className="text-base font-bold text-amber-400 flex items-center gap-2">
-                  <span>⚙️ Configurar Valor de Frete Flex por Canal</span>
-                </h3>
+                <div>
+                  <h3 className="text-base font-bold text-amber-400 flex items-center gap-2">
+                    <span>⚙️ Canais, Analistas Responsáveis & Taxas Flex</span>
+                  </h3>
+                  <p className="text-xs text-slate-400">Defina o analista fixo e a tarifa Flex para cada canal</p>
+                </div>
                 <button
-                  onClick={() => setModalTaxasAberto(false)}
+                  onClick={() => setModalConfigAberto(false)}
                   className="text-slate-400 hover:text-white text-base cursor-pointer"
                 >
                   ✕
@@ -885,17 +907,29 @@ export default function PlpPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
                 {canais.map((c, i) => (
-                  <div key={i} className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
-                    <span className="text-xs font-bold text-white">{c}</span>
-                    <div className="flex items-center gap-1.5 w-28">
-                      <span className="text-[10px] text-slate-500">R$</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={taxasFlexCanal[c] ?? 12.99}
-                        onChange={(e) => atualizarTaxaFlex(c, parseFloat(e.target.value) || 0)}
-                        className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-1.5 text-xs font-mono text-center text-amber-300 font-bold outline-none"
-                      />
+                  <div key={i} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+                    <span className="text-xs font-bold text-white block">{c}</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-[9px] text-slate-500 block">Analista Responsável:</span>
+                        <input
+                          type="text"
+                          value={analistasPorCanal[c] || ""}
+                          onChange={(e) => atualizarAnalistaCanal(c, e.target.value)}
+                          placeholder="Nome..."
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs font-semibold text-white outline-none"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[9px] text-slate-500 block">Frete Flex (R$):</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={taxasFlexCanal[c] ?? 12.99}
+                          onChange={(e) => atualizarTaxaFlex(c, parseFloat(e.target.value) || 0)}
+                          className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-1.5 text-xs font-mono text-center text-amber-300 font-bold outline-none"
+                        />
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -903,7 +937,7 @@ export default function PlpPage() {
 
               <div className="flex justify-end pt-3 border-t border-slate-800">
                 <button
-                  onClick={() => setModalTaxasAberto(false)}
+                  onClick={() => setModalConfigAberto(false)}
                   className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase cursor-pointer"
                 >
                   Concluir
