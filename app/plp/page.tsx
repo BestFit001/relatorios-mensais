@@ -257,17 +257,17 @@ export default function PlpPage() {
     window.print();
   };
 
-  // Divide a lista em 4 colunas verticais densas (cabe até 120 pedidos por folha A4 paisagem)
+  // DIVIDE OS PEDIDOS EXATAMENTE NAS LINHAS NECESSÁRIAS (SEM LINHAS VAZIAS FORÇADAS)
   const agruparPedidosEmColunas = (lista: any[], colunasTotais = 4) => {
     const totalItens = lista.length;
     if (totalItens === 0) return [];
-    const linhasPorColuna = Math.max(26, Math.ceil(totalItens / colunasTotais));
+    const numLinhas = Math.ceil(totalItens / colunasTotais);
     const grade: any[][] = [];
 
-    for (let r = 0; r < linhasPorColuna; r++) {
+    for (let r = 0; r < numLinhas; r++) {
       const linha: any[] = [];
       for (let c = 0; c < colunasTotais; c++) {
-        const itemIdx = c * linhasPorColuna + r;
+        const itemIdx = c * numLinhas + r;
         linha.push(itemIdx < totalItens ? { ...lista[itemIdx], numGlobal: itemIdx + 1 } : null);
       }
       grade.push(linha);
@@ -298,48 +298,42 @@ export default function PlpPage() {
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans print:p-0 print:bg-white print:text-black">
       
-      {/* CSS DE IMPRESSÃO MINIMALISTA (ESTILO DANFE - ZERO GASTO DE TINTA) */}
+      {/* CSS DE IMPRESSÃO MINIMALISTA DE ALTA DENSIDADE */}
       <style jsx global>{`
         @media print {
           @page {
             size: A4 landscape;
-            margin: 8mm;
+            margin: 6mm 8mm;
           }
-          body {
+          html, body {
             background: #ffffff !important;
             color: #000000 !important;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
           nav, header, button, .print-hide {
             display: none !important;
           }
           .folha-print-manifesto {
             width: 100% !important;
-            border: 2px solid #000000 !important;
+            border: 1.5px solid #000000 !important;
             background: #ffffff !important;
             color: #000000 !important;
-            padding: 0 !important;
+            padding: 4px 6px !important;
             box-shadow: none !important;
           }
-          .print-header-title {
-            background-color: #000000 !important;
-            color: #ffffff !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+          /* IMPEDE QUE O CABEÇALHO DA TABELA SE REPITA NAS PÁGINAS SEGUINTES */
+          thead {
+            display: table-row-group !important;
           }
-          .print-header-sub {
-            background-color: #e5e7eb !important;
-            color: #000000 !important;
-            border-bottom: 1px solid #000000 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+          tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
-          .print-th {
-            background-color: #f3f4f6 !important;
-            color: #000000 !important;
-            border-bottom: 1px solid #000000 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+          .bloco-assinatura-print {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           table {
             border-collapse: collapse !important;
@@ -348,8 +342,15 @@ export default function PlpPage() {
           td, th {
             border: 1px solid #d1d5db !important;
             padding: 2px 4px !important;
-            font-size: 10px !important;
+            font-size: 9.5px !important;
             line-height: 1.15 !important;
+          }
+          .print-th {
+            background-color: #f3f4f6 !important;
+            color: #000000 !important;
+            border-bottom: 1.5px solid #000000 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           .print-row-alt {
             background-color: #f9fafb !important;
@@ -361,7 +362,7 @@ export default function PlpPage() {
 
       <div className="max-w-[98%] mx-auto space-y-6">
         
-        {/* CABEÇALHO */}
+        {/* CABEÇALHO EM TELA */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Expedição & PLPs</h1>
@@ -404,7 +405,7 @@ export default function PlpPage() {
           </button>
         </div>
 
-        {/* ABA 1: ENTRADA DE PEDIDOS (MANUAL OU PLANILHA) */}
+        {/* ABA 1: ENTRADA DE PEDIDOS */}
         {abaAtiva === "entrada" && (
           <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-5 animate-in fade-in duration-300 print:hidden">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-4">
@@ -554,12 +555,12 @@ export default function PlpPage() {
         {abaAtiva === "manifesto" && (
           <div className="space-y-6">
             
-            {/* PAINEL DE CONTROLE EM TELA (Print Hidden) */}
+            {/* PAINEL DE CONTROLE EM TELA */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 print:hidden">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
                 <div>
                   <h2 className="text-base font-bold text-white">Manifesto de Expedição</h2>
-                  <p className="text-xs text-slate-400">Layout compacto para caber até 120 volumes em 1 folha A4 deitada</p>
+                  <p className="text-xs text-slate-400">Layout compacto ajustado dinamicamente para não gerar folhas vazias</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -672,13 +673,13 @@ export default function PlpPage() {
             <div className="folha-print-manifesto bg-white text-black p-4 rounded-xl border border-slate-300 shadow-xl">
               
               {/* CABEÇALHO FORMAL */}
-              <div className="border-b-2 border-black pb-2 mb-3">
+              <div className="border-b-2 border-black pb-2 mb-2">
                 <div className="flex justify-between items-center">
                   <div>
-                    <h1 className="text-base font-black uppercase tracking-wide">PLP DE ENVIOS — BEST FIT</h1>
-                    <p className="text-[10px] text-gray-700">Controle de Expedição e Autorização de Envio</p>
+                    <h1 className="text-sm font-black uppercase tracking-wide">PLP DE ENVIOS — BEST FIT</h1>
+                    <p className="text-[9px] text-gray-700">Controle de Expedição e Autorização de Envio</p>
                   </div>
-                  <div className="text-right text-[11px] leading-tight">
+                  <div className="text-right text-[10px] leading-tight">
                     <p>Data: <strong>{filtroDataInicio === filtroDataFim ? filtroDataInicio : `${filtroDataInicio} a ${filtroDataFim}`}</strong></p>
                     <p>Método: <strong>{formatarMetodoEnvioTexto()}</strong></p>
                     <p>Analista: <strong>{nomeAnalista || "Expedição"}</strong></p>
@@ -723,7 +724,7 @@ export default function PlpPage() {
                             if (!celula) {
                               return (
                                 <React.Fragment key={cIdx}>
-                                  <td className="p-0.5 text-center text-gray-300 border-r border-gray-200">-</td>
+                                  <td className="p-0.5 text-center border-r border-gray-200"></td>
                                   <td className="p-0.5 border-r border-gray-200"></td>
                                   <td className={`p-0.5 ${!isLastCol ? "border-r-2 border-black" : ""}`}></td>
                                 </React.Fragment>
@@ -759,30 +760,33 @@ export default function PlpPage() {
                 </table>
               </div>
 
-              {/* TOTALIZADOR */}
-              <div className="flex justify-between items-center border-t-2 border-black p-2 mt-2 bg-gray-100 text-xs font-bold">
-                <span>TOTAL DE VOLUMES CONFERIDOS:</span>
-                <span className="font-mono text-sm">{kpis.total} pacotes</span>
-              </div>
+              {/* BLOCO DE TOTALIZADOR E ASSINATURA COMPACTO */}
+              <div className="bloco-assinatura-print">
+                {/* TOTALIZADOR */}
+                <div className="flex justify-between items-center border-t-2 border-black p-1.5 mt-2 bg-gray-100 text-xs font-bold">
+                  <span>TOTAL DE VOLUMES CONFERIDOS:</span>
+                  <span className="font-mono text-sm">{kpis.total} pacotes</span>
+                </div>
 
-              {/* RODAPÉ DE ASSINATURA EM 3 COLUNAS */}
-              <div className="grid grid-cols-3 gap-6 pt-6 mt-4 border-t border-gray-300 text-[10px]">
-                <div className="border-t border-black pt-1">
-                  <p className="font-bold">Analista ({nomeAnalista || "Expedição"}):</p>
-                  <p className="text-gray-500">Assinatura: ___________________________</p>
+                {/* RODAPÉ DE ASSINATURA EM 3 COLUNAS */}
+                <div className="grid grid-cols-3 gap-6 pt-3 mt-2 border-t border-gray-300 text-[10px]">
+                  <div className="border-t border-black pt-1">
+                    <p className="font-bold">Analista ({nomeAnalista || "Expedição"}):</p>
+                    <p className="text-gray-500 mt-1">Assinatura: ___________________________</p>
+                  </div>
+                  <div className="border-t border-black pt-1">
+                    <p className="font-bold">Responsável pelo Estoque:</p>
+                    <p className="text-gray-500 mt-1">Assinatura: ___________________________</p>
+                  </div>
+                  <div className="border-t border-black pt-1">
+                    <p className="font-bold">Motorista / Transportador:</p>
+                    <p className="text-gray-500 mt-1">Assinatura: ___________________________</p>
+                  </div>
                 </div>
-                <div className="border-t border-black pt-1">
-                  <p className="font-bold">Responsável pelo Estoque:</p>
-                  <p className="text-gray-500">Assinatura: ___________________________</p>
-                </div>
-                <div className="border-t border-black pt-1">
-                  <p className="font-bold">Motorista / Transportador:</p>
-                  <p className="text-gray-500">Assinatura: ___________________________</p>
-                </div>
-              </div>
 
-              <div className="text-[9px] text-gray-400 text-center pt-2">
-                Documento para controle interno — PLP de Envios Best Fit
+                <div className="text-[8px] text-gray-400 text-center pt-1.5">
+                  Documento para controle interno — PLP de Envios Best Fit
+                </div>
               </div>
             </div>
 
