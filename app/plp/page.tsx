@@ -31,9 +31,81 @@ const analistasPadraoBase: Record<string, string> = {
   "Shopee": "Alisson",
   "Centauro": "Felipe",
   "TikTok": "Alisson",
+  "Tiktok": "Alisson",
   "Site": "Alisson e Gabrielle",
   "Shein": "Gabrielle"
 };
+
+// HELPER: LOCALIZA O ANALISTA DO CANAL DE FORMA INSENSÍVEL A MAIÚSCULAS/MINÚSCULAS E VARIAÇÕES
+function obterAnalistaDoCanal(canalNome: string, mapaAnalistas: Record<string, string>): string {
+  if (!canalNome) return "Expedição";
+  const cNorm = String(canalNome).trim().toLowerCase();
+
+  // 1. Busca direta insensível a maiúsculas
+  for (const [k, v] of Object.entries(mapaAnalistas)) {
+    if (k.trim().toLowerCase() === cNorm) {
+      return v || "Expedição";
+    }
+  }
+
+  // 2. Variações comuns de TikTok
+  if (cNorm === "tiktok" || cNorm === "tik tok" || cNorm === "tiktok shop") {
+    for (const [k, v] of Object.entries(mapaAnalistas)) {
+      const kNorm = k.trim().toLowerCase();
+      if (kNorm === "tiktok" || kNorm === "tik tok" || kNorm === "tiktok shop") {
+        return v || "Expedição";
+      }
+    }
+    return "Alisson";
+  }
+
+  // 3. Variações comuns de Magalu
+  if (cNorm === "magalu" || cNorm === "magazine luiza" || cNorm === "magazinedeluiza") {
+    for (const [k, v] of Object.entries(mapaAnalistas)) {
+      const kNorm = k.trim().toLowerCase();
+      if (kNorm === "magalu" || kNorm === "magazine luiza") {
+        return v || "Expedição";
+      }
+    }
+    return "Gabrielle";
+  }
+
+  // 4. Variações com '0' (ex: Mercado Livre 02 -> Mercado Livre 2)
+  const cNormZero = cNorm.replace(" 0", " ");
+  for (const [k, v] of Object.entries(mapaAnalistas)) {
+    if (k.trim().toLowerCase().replace(" 0", " ") === cNormZero) {
+      return v || "Expedição";
+    }
+  }
+
+  // 5. Busca por inclusão sem espaços
+  const cLimpo = cNorm.replace(/[\s\-_]/g, "");
+  for (const [k, v] of Object.entries(mapaAnalistas)) {
+    const kLimpo = k.trim().toLowerCase().replace(/[\s\-_]/g, "");
+    if (cLimpo === kLimpo || cLimpo.includes(kLimpo) || kLimpo.includes(cLimpo)) {
+      return v || "Expedição";
+    }
+  }
+
+  return "Expedição";
+}
+
+function obterTaxaFlexDoCanal(canalNome: string, mapaTaxas: Record<string, number>): number {
+  if (!canalNome) return 12.99;
+  const cNorm = String(canalNome).trim().toLowerCase();
+
+  for (const [k, v] of Object.entries(mapaTaxas)) {
+    if (k.trim().toLowerCase() === cNorm) return Number(v);
+  }
+  const cLimpo = cNorm.replace(/[\s\-_]/g, "");
+  for (const [k, v] of Object.entries(mapaTaxas)) {
+    const kLimpo = k.trim().toLowerCase().replace(/[\s\-_]/g, "");
+    if (cLimpo === kLimpo || cLimpo.includes(kLimpo) || kLimpo.includes(cLimpo)) {
+      return Number(v);
+    }
+  }
+  return 12.99;
+}
 
 const formatarMoeda = (valor: number) =>
   "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -47,7 +119,7 @@ export default function PlpPage() {
   // 2 Abas: Entrada | Manifesto
   const [abaAtiva, setAbaAtiva] = useState<"entrada" | "manifesto">("manifesto");
 
-  // Canais, Taxas e Analistas Fixos por Canal (Armazenados no Supabase de forma Universal)
+  // Canais, Taxas e Analistas Fixos por Canal
   const [canais, setCanais] = useState<string[]>(canaisPadraoBase);
   const [taxasFlexCanal, setTaxasFlexCanal] = useState<Record<string, number>>({});
   const [analistasPorCanal, setAnalistasPorCanal] = useState<Record<string, string>>(analistasPadraoBase);
@@ -95,7 +167,6 @@ export default function PlpPage() {
   }, [filtroDataInicio, filtroDataFim, filtroCanal, filtroModalidade, filtroAnalista, analistasPorCanal]);
 
   // LISTA DINÂMICA DE ANALISTAS NO FILTRO:
-  // Mostra APENAS os nomes reais atribuídos aos canais (Alisson, Felipe, Gabrielle)
   const listaAnalistasUnicos = Array.from(
     new Set(
       Object.values(analistasPorCanal)
@@ -111,16 +182,16 @@ export default function PlpPage() {
     }
   }, [listaAnalistasUnicos, filtroAnalista]);
 
-  // Canais disponíveis no select com base no analista filtrado
+  // Canais disponíveis no dropdown conforme o analista filtrado (com busca insensível)
   const canaisFiltradosParaSelect =
     filtroAnalista === "TODOS"
       ? canais
       : canais.filter((c) => {
-          const resp = analistasPorCanal[c] || "";
+          const resp = obterAnalistaDoCanal(c, analistasPorCanal);
           return resp === filtroAnalista || resp.includes(filtroAnalista);
         });
 
-  // CARREGA DO SUPABASE DE FORMA UNIVERSAL (TODOS OS USUÁRIOS VÊEM O MESMO)
+  // CARREGA DO SUPABASE DE FORMA UNIVERSAL
   const carregarCanaisTaxasEAnalistas = async () => {
     try {
       const { data: configData, error: configError } = await supabase
@@ -200,7 +271,6 @@ export default function PlpPage() {
     }
   };
 
-  // SALVA NO SUPABASE DE FORMA UNIVERSAL PARA TODOS OS USUÁRIOS
   const salvarConfiguracoesUniversais = async () => {
     setSalvandoConfig(true);
     try {
@@ -242,7 +312,8 @@ export default function PlpPage() {
   const handleMudarFiltroAnalista = (novoAnalista: string) => {
     setFiltroAnalista(novoAnalista);
     if (novoAnalista !== "TODOS") {
-      if (filtroCanal !== "TODOS" && !(analistasPorCanal[filtroCanal] || "").includes(novoAnalista)) {
+      const analistaDoCanalAtual = obterAnalistaDoCanal(filtroCanal, analistasPorCanal);
+      if (filtroCanal !== "TODOS" && !analistaDoCanalAtual.includes(novoAnalista)) {
         setFiltroCanal("TODOS");
       }
     }
@@ -296,7 +367,7 @@ export default function PlpPage() {
       .order("created_at", { ascending: true });
 
     if (filtroCanal !== "TODOS") {
-      query = query.eq("canal", filtroCanal);
+      query = query.ilike("canal", filtroCanal);
     }
 
     if (filtroModalidade === "FLEX_CORREIOS") {
@@ -308,13 +379,13 @@ export default function PlpPage() {
     const { data } = await query;
     let dadosFiltrados = data || [];
 
-    // REGRA DE FILTRO POR ANALISTA COM APROVEITAMENTO DO FLEX:
+    // FILTRO POR ANALISTA COM COMPATIBILIDADE CASE-INSENSITIVE PARA TIKTOK
     if (filtroAnalista !== "TODOS") {
       dadosFiltrados = dadosFiltrados.filter((p: any) => {
         if (p.modalidade === "FLEX") {
-          return true; // Sempre mantém os pedidos Flex de todos os canais/analistas!
+          return true; // Flex sempre é unificado
         }
-        const analistaDoCanal = analistasPorCanal[p.canal] || "";
+        const analistaDoCanal = obterAnalistaDoCanal(p.canal, analistasPorCanal);
         return analistaDoCanal === filtroAnalista || analistaDoCanal.includes(filtroAnalista);
       });
     }
@@ -323,15 +394,14 @@ export default function PlpPage() {
     setLoading(false);
   };
 
-  // SINCRONIZA AUTOMATICAMENTE O NOME DO ANALISTA NO CABEÇALHO E ASSINATURA
+  // SINCRONIZA AUTOMATICAMENTE O NOME DO ANALISTA NO CABEÇALHO
   useEffect(() => {
-    // 1. Regra especial para o FLEX:
     if (filtroModalidade === "FLEX") {
       const analistasFlexPresentes = Array.from(
         new Set(
           pedidos
             .filter((p) => p.modalidade === "FLEX")
-            .map((p) => analistasPorCanal[p.canal] || "")
+            .map((p) => obterAnalistaDoCanal(p.canal, analistasPorCanal))
             .filter((n) => n && n !== "Expedição")
         )
       ).sort();
@@ -353,15 +423,14 @@ export default function PlpPage() {
       return;
     }
 
-    // 2. Se filtrou por um analista específico:
     if (filtroAnalista !== "TODOS") {
       if (filtroModalidade === "FLEX_CORREIOS") {
         const temFlexDeOutro = pedidos.some(
-          (p) => p.modalidade === "FLEX" && !(analistasPorCanal[p.canal] || "").includes(filtroAnalista)
+          (p) => p.modalidade === "FLEX" && !obterAnalistaDoCanal(p.canal, analistasPorCanal).includes(filtroAnalista)
         );
         if (temFlexDeOutro) {
           const analistasPresentes = Array.from(
-            new Set(pedidos.map((p) => analistasPorCanal[p.canal] || "Expedição"))
+            new Set(pedidos.map((p) => obterAnalistaDoCanal(p.canal, analistasPorCanal)))
           ).filter((n) => n && n !== "Expedição").sort();
           if (analistasPresentes.length >= 2) {
             setAnalistaDocumento(analistasPresentes.join(" & "));
@@ -373,15 +442,13 @@ export default function PlpPage() {
       return;
     }
 
-    // 3. Se filtrou por um canal específico:
     if (filtroCanal !== "TODOS") {
-      setAnalistaDocumento(analistasPorCanal[filtroCanal] || "Expedição");
+      setAnalistaDocumento(obterAnalistaDoCanal(filtroCanal, analistasPorCanal));
       return;
     }
 
-    // 4. Se está em "TODOS os Canais" e "TODOS os Analistas":
     const analistasPresentes = Array.from(
-      new Set(pedidos.map((p) => analistasPorCanal[p.canal] || "Expedição"))
+      new Set(pedidos.map((p) => obterAnalistaDoCanal(p.canal, analistasPorCanal)))
     ).filter((n) => n && n !== "Expedição").sort();
 
     if (analistasPresentes.length === 1) {
@@ -438,7 +505,7 @@ export default function PlpPage() {
     }
 
     setSalvando(true);
-    const valorFreteUnit = modalidade === "FLEX" ? Number(taxasFlexCanal[canalSelecionado] ?? 12.99) : 0;
+    const valorFreteUnit = modalidade === "FLEX" ? obterTaxaFlexDoCanal(canalSelecionado, taxasFlexCanal) : 0;
 
     const payload = listaPedidos.map((ped) => ({
       data_envio: dataEnvio,
@@ -484,7 +551,7 @@ export default function PlpPage() {
       "Data de Envio": item.data_envio,
       "Número do Pedido": item.numero_pedido,
       Canal: item.canal,
-      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0, // COLUNA D ESTRITA
+      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0,
       Modalidade: item.modalidade,
     }));
 
@@ -501,13 +568,15 @@ export default function PlpPage() {
     window.print();
   };
 
-  // AGRUPA OS PEDIDOS EM COLUNAS POR CANAL
+  // AGRUPA OS PEDIDOS EM COLUNAS POR CANAL NORMALIZADO
   const gerarColunasPorCanal = (listaPedidos: any[], maxLinhasPorColuna = 26) => {
     const mapa = new Map<string, string[]>();
     for (const p of listaPedidos) {
-      const c = p.canal || "Geral";
-      if (!mapa.has(c)) mapa.set(c, []);
-      mapa.get(c)!.push(p.numero_pedido);
+      const cOriginal = String(p.canal || "Geral").trim();
+      const cCanonico = canais.find((cn) => cn.trim().toLowerCase() === cOriginal.toLowerCase()) || cOriginal;
+
+      if (!mapa.has(cCanonico)) mapa.set(cCanonico, []);
+      mapa.get(cCanonico)!.push(p.numero_pedido);
     }
 
     const colunas: { canal: string; totalCanal: number; pedidos: { idx: number; numero: string }[] }[] = [];
@@ -696,7 +765,7 @@ export default function PlpPage() {
                 >
                   {canais.map((c, i) => (
                     <option key={i} value={c}>
-                      {c} {analistasPorCanal[c] ? `(${analistasPorCanal[c]})` : ""}
+                      {c} ({obterAnalistaDoCanal(c, analistasPorCanal)})
                     </option>
                   ))}
                 </select>
@@ -721,10 +790,10 @@ export default function PlpPage() {
 
             <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
               <span className="text-slate-400">
-                Colaborador(a) Fixo(a) do Canal: <strong className="text-indigo-400">{analistasPorCanal[canalSelecionado] || "Expedição"}</strong> | Frete na Coluna D (Excel):
+                Colaborador(a) Fixo(a) do Canal: <strong className="text-indigo-400">{obterAnalistaDoCanal(canalSelecionado, analistasPorCanal)}</strong> | Frete na Coluna D (Excel):
               </span>
               <strong className={modalidade === "FLEX" ? "text-amber-400 text-sm font-mono" : "text-slate-500"}>
-                {modalidade === "FLEX" ? formatarMoeda(taxasFlexCanal[canalSelecionado] ?? 12.99) : "R$ 0,00"}
+                {modalidade === "FLEX" ? formatarMoeda(obterTaxaFlexDoCanal(canalSelecionado, taxasFlexCanal)) : "R$ 0,00"}
               </strong>
             </div>
 
@@ -823,7 +892,7 @@ export default function PlpPage() {
                 </div>
               </div>
 
-              {/* Filtros Integrados com Filtro por Analista Ativo */}
+              {/* Filtros Integrados */}
               <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">De:</label>
@@ -937,7 +1006,7 @@ export default function PlpPage() {
             {/* ======================================================== */}
             <div className="folha-print-manifesto bg-white text-black p-4 rounded-xl border border-slate-300 shadow-xl">
               
-              {/* CABEÇALHO COM MODALIDADE DE ENVIO EM DESTAQUE */}
+              {/* CABEÇALHO */}
               <div className="border-b-2 border-black pb-2 mb-3">
                 <div className="flex justify-between items-center">
                   <div>
@@ -988,14 +1057,13 @@ export default function PlpPage() {
                 )}
               </div>
 
-              {/* BLOCO DE TOTALIZADOR E APENAS 2 ASSINATURAS (SEM MOTORISTA) */}
+              {/* BLOCO DE TOTALIZADOR E 2 ASSINATURAS */}
               <div className="bloco-assinatura-print mt-3">
                 <div className="flex justify-between items-center border-t-2 border-black p-1.5 bg-gray-100 text-xs font-bold">
                   <span>TOTAL DE VOLUMES CONFERIDOS:</span>
                   <span className="font-mono text-sm">{kpis.total} pacotes</span>
                 </div>
 
-                {/* 2 ASSINATURAS: COLABORADOR DO CANAL E RESPONSÁVEL PELA EMBALAGEM */}
                 <div className="grid grid-cols-2 gap-8 pt-4 mt-2 border-t border-gray-300 text-[11px]">
                   <div className="border-t border-black pt-1">
                     <p className="font-bold">Colaborador(es) do Canal ({analistaDocumento || "Expedição"}):</p>
