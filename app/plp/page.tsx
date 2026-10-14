@@ -12,6 +12,7 @@ const canaisPadraoBase = [
   "Shopee",
   "Amazon",
   "Magalu",
+  "Magazine Luiza",
   "Netshoes",
   "Centauro",
   "Shein",
@@ -20,17 +21,18 @@ const canaisPadraoBase = [
 ];
 
 const analistasPadraoBase: Record<string, string> = {
-  "Mercado Livre 1": "Alisson",
+  "Mercado Livre 1": "Gabrielle",
   "Mercado Livre 2": "Alisson",
-  "Mercado Livre 3": "Alisson",
+  "Mercado Livre 3": "Felipe",
   "Amazon": "Gabrielle",
+  "Netshoes": "Alisson",
   "Magalu": "Gabrielle",
-  "Shopee": "Felipe",
-  "Shein": "Gabrielle",
-  "Netshoes": "Henrique",
-  "Centauro": "Henrique",
-  "TikTok": "Gabrielle",
-  "Site": "Felipe"
+  "Magazine Luiza": "Gabrielle",
+  "Shopee": "Alisson",
+  "Centauro": "Felipe",
+  "TikTok": "Alisson",
+  "Site": "Alisson e Gabrielle",
+  "Shein": "Gabrielle"
 };
 
 const formatarMoeda = (valor: number) =>
@@ -40,11 +42,12 @@ export default function PlpPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [salvandoConfig, setSalvandoConfig] = useState(false);
 
   // 2 Abas: Entrada | Manifesto
   const [abaAtiva, setAbaAtiva] = useState<"entrada" | "manifesto">("manifesto");
 
-  // Canais, Taxas e Analistas Fixos por Canal
+  // Canais, Taxas e Analistas Fixos por Canal (Armazenados no Supabase de forma Universal)
   const [canais, setCanais] = useState<string[]>(canaisPadraoBase);
   const [taxasFlexCanal, setTaxasFlexCanal] = useState<Record<string, number>>({});
   const [analistasPorCanal, setAnalistasPorCanal] = useState<Record<string, string>>(analistasPadraoBase);
@@ -89,83 +92,197 @@ export default function PlpPage() {
 
   useEffect(() => {
     buscarPedidos();
-  }, [filtroDataInicio, filtroDataFim, filtroCanal, filtroModalidade, filtroAnalista]);
+  }, [filtroDataInicio, filtroDataFim, filtroCanal, filtroModalidade, filtroAnalista, analistasPorCanal]);
 
-  // Lista de analistas únicos cadastrados
+  // LISTA DINÂMICA DE ANALISTAS NO FILTRO:
+  // Mostra APENAS os nomes reais atribuídos aos canais (Alisson, Felipe, Gabrielle)
   const listaAnalistasUnicos = Array.from(
-    new Set(Object.values(analistasPorCanal).filter((n) => n && n.trim() !== ""))
+    new Set(
+      Object.values(analistasPorCanal)
+        .flatMap((n) => (n || "").replace(/\s+e\s+/gi, ",").replace(/&/g, ",").split(","))
+        .map((n) => n?.trim())
+        .filter((n) => n && n !== "" && n !== "Expedição")
+    )
   ).sort((a, b) => a.localeCompare(b));
+
+  useEffect(() => {
+    if (filtroAnalista !== "TODOS" && !listaAnalistasUnicos.includes(filtroAnalista)) {
+      setFiltroAnalista("TODOS");
+    }
+  }, [listaAnalistasUnicos, filtroAnalista]);
 
   // Canais disponíveis no select com base no analista filtrado
   const canaisFiltradosParaSelect =
     filtroAnalista === "TODOS"
       ? canais
-      : canais.filter((c) => analistasPorCanal[c] === filtroAnalista);
+      : canais.filter((c) => {
+          const resp = analistasPorCanal[c] || "";
+          return resp === filtroAnalista || resp.includes(filtroAnalista);
+        });
 
+  // CARREGA DO SUPABASE DE FORMA UNIVERSAL (TODOS OS USUÁRIOS VÊEM O MESMO)
   const carregarCanaisTaxasEAnalistas = async () => {
-    const mapaUnico = new Map<string, string>();
-    canaisPadraoBase.forEach((c) => mapaUnico.set(c.trim().toLowerCase(), c.trim()));
+    try {
+      const { data: configData, error: configError } = await supabase
+        .from("plp_config_canais")
+        .select("*")
+        .order("canal", { ascending: true });
 
-    const { data: canaisData } = await supabase.from("config_regras_canais").select("canal");
-    if (canaisData) {
-      canaisData.forEach((c: any) => {
-        if (c.canal?.trim()) mapaUnico.set(c.canal.trim().toLowerCase(), c.canal.trim());
+      const mapaTaxas: Record<string, number> = {};
+      const mapaAnalistas: Record<string, string> = {};
+      const canaisDoBanco: string[] = [];
+
+      if (!configError && configData && configData.length > 0) {
+        configData.forEach((row: any) => {
+          const nomeCanal = String(row.canal).trim();
+          canaisDoBanco.push(nomeCanal);
+          mapaAnalistas[nomeCanal] = String(row.analista_responsavel || "Expedição").trim();
+          mapaTaxas[nomeCanal] = Number(row.taxa_flex ?? 12.99);
+        });
+
+        canaisPadraoBase.forEach((c) => {
+          if (!canaisDoBanco.includes(c)) {
+            canaisDoBanco.push(c);
+            mapaAnalistas[c] = analistasPadraoBase[c] || "Expedição";
+            mapaTaxas[c] = 12.99;
+          }
+        });
+
+        setCanais(canaisDoBanco);
+        setTaxasFlexCanal(mapaTaxas);
+        setAnalistasPorCanal(mapaAnalistas);
+
+        localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(mapaTaxas));
+        localStorage.setItem("plp_analistas_por_canal", JSON.stringify(mapaAnalistas));
+
+        if (canaisDoBanco.length > 0 && !canalSelecionado) {
+          setCanalSelecionado(canaisDoBanco[0]);
+        }
+        return;
+      }
+
+      const mapaUnico = new Map<string, string>();
+      canaisPadraoBase.forEach((c) => mapaUnico.set(c.trim().toLowerCase(), c.trim()));
+
+      const { data: canaisData } = await supabase.from("config_regras_canais").select("canal");
+      if (canaisData) {
+        canaisData.forEach((c: any) => {
+          if (c.canal?.trim()) mapaUnico.set(c.canal.trim().toLowerCase(), c.canal.trim());
+        });
+      }
+
+      const lista = Array.from(mapaUnico.values()).sort((a, b) => a.localeCompare(b));
+      setCanais(lista);
+
+      const salvoTaxas = localStorage.getItem("plp_taxas_flex_por_canal");
+      const taxas: Record<string, number> = salvoTaxas ? JSON.parse(salvoTaxas) : {};
+      lista.forEach((c) => {
+        if (taxas[c] === undefined) taxas[c] = 12.99;
       });
+      setTaxasFlexCanal(taxas);
+
+      const salvoAnalistas = localStorage.getItem("plp_analistas_por_canal");
+      const analistas: Record<string, string> = salvoAnalistas ? JSON.parse(salvoAnalistas) : {};
+
+      const temHenrique = Object.values(analistas).some((v) => v.includes("Henrique"));
+      const analistasFinais =
+        temHenrique || Object.keys(analistas).length === 0
+          ? { ...analistasPadraoBase }
+          : { ...analistasPadraoBase, ...analistas };
+
+      lista.forEach((c) => {
+        if (!analistasFinais[c]) analistasFinais[c] = analistasPadraoBase[c] || "Expedição";
+      });
+      setAnalistasPorCanal(analistasFinais);
+      localStorage.setItem("plp_analistas_por_canal", JSON.stringify(analistasFinais));
+    } catch (err) {
+      console.error("Erro ao carregar configurações de canais:", err);
     }
-
-    const lista = Array.from(mapaUnico.values()).sort((a, b) => a.localeCompare(b));
-    setCanais(lista);
-
-    // Carrega taxas Flex salvas
-    const salvoTaxas = localStorage.getItem("plp_taxas_flex_por_canal");
-    const taxas: Record<string, number> = salvoTaxas ? JSON.parse(salvoTaxas) : {};
-    lista.forEach((c) => {
-      if (taxas[c] === undefined) taxas[c] = 12.99;
-    });
-    setTaxasFlexCanal(taxas);
-    localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(taxas));
-
-    // Carrega analistas responsáveis fixos por canal
-    const salvoAnalistas = localStorage.getItem("plp_analistas_por_canal");
-    const analistas: Record<string, string> = salvoAnalistas ? JSON.parse(salvoAnalistas) : { ...analistasPadraoBase };
-    lista.forEach((c) => {
-      if (!analistas[c]) analistas[c] = analistasPadraoBase[c] || "Expedição";
-    });
-    setAnalistasPorCanal(analistas);
-    localStorage.setItem("plp_analistas_por_canal", JSON.stringify(analistas));
   };
 
-  const atualizarTaxaFlex = (canal: string, valor: number) => {
-    const novo = { ...taxasFlexCanal, [canal]: valor };
-    setTaxasFlexCanal(novo);
-    localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(novo));
+  // SALVA NO SUPABASE DE FORMA UNIVERSAL PARA TODOS OS USUÁRIOS
+  const salvarConfiguracoesUniversais = async () => {
+    setSalvandoConfig(true);
+    try {
+      const payload = canais.map((c) => ({
+        canal: c,
+        analista_responsavel: analistasPorCanal[c]?.trim() || "Expedição",
+        taxa_flex: Number(taxasFlexCanal[c] ?? 12.99),
+        updated_at: new Date().toISOString()
+      }));
+
+      const { error } = await supabase
+        .from("plp_config_canais")
+        .upsert(payload, { onConflict: "canal" });
+
+      if (error) {
+        alert("Erro ao salvar no banco Supabase: " + error.message);
+      } else {
+        alert("✅ Configurações salvas universalmente! Todos os usuários agora verão estes mesmos responsáveis.");
+        localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(taxasFlexCanal));
+        localStorage.setItem("plp_analistas_por_canal", JSON.stringify(analistasPorCanal));
+        setModalConfigAberto(false);
+        await carregarCanaisTaxasEAnalistas();
+        await buscarPedidos();
+      }
+    } catch (err: any) {
+      alert("Erro ao salvar: " + err.message);
+    }
+    setSalvandoConfig(false);
   };
 
-  const atualizarAnalistaCanal = (canal: string, nome: string) => {
-    const novo = { ...analistasPorCanal, [canal]: nome };
-    setAnalistasPorCanal(novo);
-    localStorage.setItem("plp_analistas_por_canal", JSON.stringify(novo));
+  const atualizarTaxaFlexLocal = (canal: string, valor: number) => {
+    setTaxasFlexCanal((prev) => ({ ...prev, [canal]: valor }));
+  };
+
+  const atualizarAnalistaCanalLocal = (canal: string, nome: string) => {
+    setAnalistasPorCanal((prev) => ({ ...prev, [canal]: nome }));
   };
 
   const handleMudarFiltroAnalista = (novoAnalista: string) => {
     setFiltroAnalista(novoAnalista);
     if (novoAnalista !== "TODOS") {
-      if (filtroCanal !== "TODOS" && analistasPorCanal[filtroCanal] !== novoAnalista) {
+      if (filtroCanal !== "TODOS" && !(analistasPorCanal[filtroCanal] || "").includes(novoAnalista)) {
         setFiltroCanal("TODOS");
       }
     }
   };
 
-  const handleAdicionarCanal = () => {
+  const handleAdicionarCanal = async () => {
     const n = novoCanalNome.trim();
     if (!n) return;
     if (!canais.some((c) => c.toLowerCase() === n.toLowerCase())) {
       const novaLista = [...canais, n].sort((a, b) => a.localeCompare(b));
       setCanais(novaLista);
-      atualizarTaxaFlex(n, 12.99);
-      atualizarAnalistaCanal(n, "Expedição");
+      const novoTaxas = { ...taxasFlexCanal, [n]: 12.99 };
+      const novoAnalistas = { ...analistasPorCanal, [n]: "Expedição" };
+      setTaxasFlexCanal(novoTaxas);
+      setAnalistasPorCanal(novoAnalistas);
       setNovoCanalNome("");
+
+      await supabase.from("plp_config_canais").upsert({
+        canal: n,
+        analista_responsavel: "Expedição",
+        taxa_flex: 12.99,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "canal" });
+    } else {
+      alert("Este canal já está na lista.");
     }
+  };
+
+  const handleRemoverCanal = async (canalParaRemover: string) => {
+    if (!confirm(`Deseja remover o canal "${canalParaRemover}" das configurações?`)) return;
+    const novaLista = canais.filter((c) => c !== canalParaRemover);
+    setCanais(novaLista);
+    const nAnalistas = { ...analistasPorCanal };
+    delete nAnalistas[canalParaRemover];
+    setAnalistasPorCanal(nAnalistas);
+    const nTaxas = { ...taxasFlexCanal };
+    delete nTaxas[canalParaRemover];
+    setTaxasFlexCanal(nTaxas);
+
+    await supabase.from("plp_config_canais").delete().eq("canal", canalParaRemover);
   };
 
   const buscarPedidos = async () => {
@@ -191,14 +308,14 @@ export default function PlpPage() {
     const { data } = await query;
     let dadosFiltrados = data || [];
 
-    // REGRA DE FILTRO POR ANALISTA COM APROVEITAMENTO DO FLEX
+    // REGRA DE FILTRO POR ANALISTA COM APROVEITAMENTO DO FLEX:
     if (filtroAnalista !== "TODOS") {
       dadosFiltrados = dadosFiltrados.filter((p: any) => {
         if (p.modalidade === "FLEX") {
           return true; // Sempre mantém os pedidos Flex de todos os canais/analistas!
         }
         const analistaDoCanal = analistasPorCanal[p.canal] || "";
-        return analistaDoCanal === filtroAnalista;
+        return analistaDoCanal === filtroAnalista || analistaDoCanal.includes(filtroAnalista);
       });
     }
 
@@ -214,16 +331,19 @@ export default function PlpPage() {
         new Set(
           pedidos
             .filter((p) => p.modalidade === "FLEX")
-            .map((p) => analistasPorCanal[p.canal] || "Expedição")
+            .map((p) => analistasPorCanal[p.canal] || "")
+            .filter((n) => n && n !== "Expedição")
         )
-      ).filter(Boolean).sort();
+      ).sort();
 
       if (analistasFlexPresentes.length >= 2) {
         setAnalistaDocumento(analistasFlexPresentes.join(" & "));
       } else {
-        const todosAnalistas = new Set(Object.values(analistasPorCanal));
-        if (todosAnalistas.has("Alisson") && todosAnalistas.has("Gabrielle")) {
-          setAnalistaDocumento("Alisson & Gabrielle");
+        const todosAtivos = Array.from(
+          new Set(Object.values(analistasPorCanal).filter((n) => n && n !== "Expedição"))
+        ).sort();
+        if (todosAtivos.length >= 2) {
+          setAnalistaDocumento(todosAtivos.slice(0, 2).join(" & "));
         } else if (analistasFlexPresentes.length === 1) {
           setAnalistaDocumento(analistasFlexPresentes[0]);
         } else {
@@ -233,16 +353,16 @@ export default function PlpPage() {
       return;
     }
 
-    // 2. Se filtrou por um analista específico (ex: Agência da Gabrielle):
+    // 2. Se filtrou por um analista específico:
     if (filtroAnalista !== "TODOS") {
       if (filtroModalidade === "FLEX_CORREIOS") {
         const temFlexDeOutro = pedidos.some(
-          (p) => p.modalidade === "FLEX" && (analistasPorCanal[p.canal] || "") !== filtroAnalista
+          (p) => p.modalidade === "FLEX" && !(analistasPorCanal[p.canal] || "").includes(filtroAnalista)
         );
         if (temFlexDeOutro) {
           const analistasPresentes = Array.from(
             new Set(pedidos.map((p) => analistasPorCanal[p.canal] || "Expedição"))
-          ).filter(Boolean).sort();
+          ).filter((n) => n && n !== "Expedição").sort();
           if (analistasPresentes.length >= 2) {
             setAnalistaDocumento(analistasPresentes.join(" & "));
             return;
@@ -262,7 +382,7 @@ export default function PlpPage() {
     // 4. Se está em "TODOS os Canais" e "TODOS os Analistas":
     const analistasPresentes = Array.from(
       new Set(pedidos.map((p) => analistasPorCanal[p.canal] || "Expedição"))
-    ).filter(Boolean).sort();
+    ).filter((n) => n && n !== "Expedição").sort();
 
     if (analistasPresentes.length === 1) {
       setAnalistaDocumento(analistasPresentes[0]);
@@ -357,7 +477,6 @@ export default function PlpPage() {
     buscarPedidos();
   };
 
-  // EXPORTAÇÃO EXCEL: COLUNA D CONTÉM ESTRITAMENTE O VALOR DO FRETE
   const handleBaixarExcel = () => {
     if (pedidos.length === 0) return alert("Nenhum pedido no período filtrado.");
 
@@ -486,9 +605,9 @@ export default function PlpPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setModalConfigAberto(true)}
-              className="bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-800 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
+              className="bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-800 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all flex items-center gap-2"
             >
-              ⚙️ Canais, Taxas & Analistas
+              <span>⚙️ Canais, Taxas & Analistas</span>
             </button>
             <Navbar />
           </div>
@@ -704,7 +823,7 @@ export default function PlpPage() {
                 </div>
               </div>
 
-              {/* Filtros Integrados (com Filtro por Analista) */}
+              {/* Filtros Integrados com Filtro por Analista Ativo */}
               <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">De:</label>
@@ -725,7 +844,7 @@ export default function PlpPage() {
                   />
                 </div>
 
-                {/* NOVO: FILTRAR POR ANALISTA */}
+                {/* FILTRAR POR ANALISTA ATIVO */}
                 <div>
                   <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">
                     Filtrar Analista:
@@ -742,7 +861,7 @@ export default function PlpPage() {
                   </select>
                 </div>
 
-                {/* CANAL (FILTRADO PELO ANALISTA SELECIONADO) */}
+                {/* CANAL (ADAPTADO AO ANALISTA SELECIONADO) */}
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal:</label>
                   <select
@@ -776,7 +895,7 @@ export default function PlpPage() {
 
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                    Analista(s) no Documento:
+                    Colaborador(es) no Papel:
                   </label>
                   <input
                     type="text"
@@ -842,7 +961,7 @@ export default function PlpPage() {
                       {col.canal} <span className="text-[10px] text-gray-600 font-normal">({col.pedidos.length})</span>
                     </div>
 
-                    {/* LISTA SEQUENCIAL DE PEDIDOS DO CANAL (PEDIDO 1, 2, 3...) */}
+                    {/* LISTA SEQUENCIAL DE PEDIDOS DO CANAL */}
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-300 text-[9px] uppercase font-bold text-gray-700">
@@ -954,7 +1073,7 @@ export default function PlpPage() {
           </div>
         )}
 
-        {/* MODAL CONFIGURAÇÃO TAXAS FLEX E ANALISTAS */}
+        {/* MODAL CONFIGURAÇÃO TAXAS FLEX E ANALISTAS UNIVERSAL */}
         {modalConfigAberto && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200 print:hidden">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl space-y-5">
@@ -963,7 +1082,9 @@ export default function PlpPage() {
                   <h3 className="text-base font-bold text-amber-400 flex items-center gap-2">
                     <span>⚙️ Canais, Analistas Responsáveis & Taxas Flex</span>
                   </h3>
-                  <p className="text-xs text-slate-400">Defina o analista fixo e a tarifa Flex para cada canal</p>
+                  <p className="text-xs text-slate-400">
+                    Ao salvar, as alterações ficam gravadas no banco Supabase e serão sincronizadas para <strong>todos os usuários</strong>.
+                  </p>
                 </div>
                 <button
                   onClick={() => setModalConfigAberto(false)}
@@ -992,17 +1113,29 @@ export default function PlpPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
                 {canais.map((c, i) => (
-                  <div key={i} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
-                    <span className="text-xs font-bold text-white block">{c}</span>
+                  <div key={i} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 relative group">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-white block">{c}</span>
+                      {!canaisPadraoBase.includes(c) && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoverCanal(c)}
+                          className="text-rose-400 hover:text-rose-300 text-[10px] font-bold uppercase cursor-pointer"
+                          title="Remover canal"
+                        >
+                          ✕ Remover
+                        </button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <span className="text-[9px] text-slate-500 block">Colaborador(a) Responsável:</span>
                         <input
                           type="text"
                           value={analistasPorCanal[c] || ""}
-                          onChange={(e) => atualizarAnalistaCanal(c, e.target.value)}
+                          onChange={(e) => atualizarAnalistaCanalLocal(c, e.target.value)}
                           placeholder="Nome..."
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs font-semibold text-white outline-none"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs font-semibold text-white outline-none focus:border-purple-500"
                         />
                       </div>
                       <div>
@@ -1011,7 +1144,7 @@ export default function PlpPage() {
                           type="number"
                           step="0.01"
                           value={taxasFlexCanal[c] ?? 12.99}
-                          onChange={(e) => atualizarTaxaFlex(c, parseFloat(e.target.value) || 0)}
+                          onChange={(e) => atualizarTaxaFlexLocal(c, parseFloat(e.target.value) || 0)}
                           className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-1.5 text-xs font-mono text-center text-amber-300 font-bold outline-none"
                         />
                       </div>
@@ -1020,13 +1153,27 @@ export default function PlpPage() {
                 ))}
               </div>
 
-              <div className="flex justify-end pt-3 border-t border-slate-800">
-                <button
-                  onClick={() => setModalConfigAberto(false)}
-                  className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase cursor-pointer"
-                >
-                  Concluir
-                </button>
+              <div className="flex justify-between items-center pt-3 border-t border-slate-800">
+                <span className="text-[11px] text-slate-500 italic">
+                  Salva no Supabase para sincronização universal entre computadores.
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setModalConfigAberto(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 px-5 rounded-xl text-xs uppercase cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={salvarConfiguracoesUniversais}
+                    disabled={salvandoConfig}
+                    className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase cursor-pointer shadow-lg shadow-purple-900/40 transition-all"
+                  >
+                    {salvandoConfig ? "A Salvar no Banco..." : "Salvar Configurações Universais"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
