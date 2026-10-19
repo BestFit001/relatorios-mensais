@@ -15,10 +15,11 @@ function normalizarSku(valor: any) {
 
 function parsePorcentagem(valor: any): number {
   if (valor === null || valor === undefined || valor === "") return 0;
-  if (typeof valor === "number") return valor;
+  if (typeof valor === "number") return (valor > 0 && valor < 1) ? valor * 100 : valor;
   let s = String(valor).replace(/%/g, "").trim().replace(",", ".");
   const num = parseFloat(s);
-  return isNaN(num) ? 0 : num;
+  if (isNaN(num)) return 0;
+  return (num > 0 && num < 1) ? num * 100 : num;
 }
 
 const formatarMoeda = (valor: number) =>
@@ -161,7 +162,7 @@ export default function PromocoesPage() {
       });
 
       const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
-      const imposto = 0.09;
+      const imposto = 0.09; // 9% de imposto corporativo[cite: 1]
 
       const resultados: any[] = [];
 
@@ -181,7 +182,7 @@ export default function PromocoesPage() {
         // 1. Custo
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
 
-        // 2. Consulta estrita nas bases do Supabase (mlRegrasMap / mapeamentoMap)
+        // 2. Consulta nas bases do Supabase
         const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey);
         
         let statusItem = "APTO";
@@ -190,7 +191,6 @@ export default function PromocoesPage() {
         let freteVal = 20.75;
         let tarifaFixa = 4.00;
 
-        // VERIFICAÇÃO 1: Se o MLB ou SKU NÃO estiver na base carregada do Supabase
         if (!anuncioInfo) {
           statusItem = "INAPTO";
           errosList.push("MLB não cadastrado na base — Atualizar base");
@@ -199,14 +199,12 @@ export default function PromocoesPage() {
           freteVal = anuncioInfo.frete !== null && anuncioInfo.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
           tarifaFixa = anuncioInfo.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
 
-          // VERIFICAÇÃO 2: Se estiver na base, mas a comissão for 0 ou menor
           if (comissaoVal <= 0) {
             statusItem = "INAPTO";
             errosList.push("Comissão 0% na base — Atualizar base");
           }
         }
 
-        // VERIFICAÇÃO 3: Custo do SKU
         if (custo <= 0) {
           statusItem = "INAPTO";
           errosList.push("Custo não encontrado — Atualizar base");
@@ -214,9 +212,14 @@ export default function PromocoesPage() {
 
         let novoPreco = originalPrice;
         if (statusItem === "APTO") {
+          // Conversão correta da comissão para percentual decimal (ex: 14% -> 0.14)
           const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
+          
+          // Fórmula Correta de Precificação com Markup / Margem Líquida sobre Preço de Venda:
+          // Preço = (Custo + Tarifa Fixa + Frete) / (1 - (Comissão + Imposto + Margem Desejada))
           const denominador = 1 - (comissaoDec + imposto + margemDesejada);
           novoPreco = denominador > 0 ? (custo + tarifaFixa + freteVal) / denominador : originalPrice * 0.9;
+          
           if (originalPrice <= 0 || novoPreco <= 0) {
             statusItem = "INAPTO";
             errosList.push("Preço Inválido");
