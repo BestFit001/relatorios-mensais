@@ -181,7 +181,7 @@ export default function PromocoesPage() {
         // 1. Custo
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
 
-        // 2. Busca com prioridade absoluta em mlRegrasMap, depois mapeamentoMap
+        // 2. Busca nas bases
         const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey);
         
         let statusItem = "APTO";
@@ -190,24 +190,26 @@ export default function PromocoesPage() {
         let freteVal = 20.75;
         let tarifaFixa = 4.00;
 
-        // Validação rigorosa: se o anúncio não estiver na base, considera desatualizado
+        // VALIDAÇÃO 1: Se o MLB/SKU não está cadastrado nas regras do ML
         if (!anuncioInfo) {
           statusItem = "INAPTO";
-          errosList.push("base desatualizada");
+          errosList.push("MLB não cadastrado na base");
         } else {
           comissaoVal = Number(anuncioInfo.comissao) || 0;
           freteVal = anuncioInfo.frete !== null && anuncioInfo.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
           tarifaFixa = anuncioInfo.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
 
+          // VALIDAÇÃO 2: Se está cadastrado mas a comissão é 0 ou menor
           if (comissaoVal <= 0) {
             statusItem = "INAPTO";
-            errosList.push("base desatualizada");
+            errosList.push("Comissão 0% - Corrigir na base");
           }
         }
 
+        // VALIDAÇÃO 3: Custo inválido
         if (custo <= 0) {
           statusItem = "INAPTO";
-          errosList.push("base desatualizada");
+          errosList.push("Custo zerado ou não encontrado");
         }
 
         let novoPreco = originalPrice;
