@@ -25,11 +25,11 @@ export default function Navbar() {
       {/* Direita: Menus com Dropdown por Hover */}
       <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
         
-        {/* Cadastros */}
+        {/* Cadastros (Mapeamento) */}
         <Link
-          href="/cadastros"
+          href="/mapeamento"
           className={`px-3 py-2 rounded-xl transition-all ${
-            pathname?.includes("/cadastros") ? "bg-purple-600 text-white shadow-md" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+            pathname?.includes("/mapeamento") ? "bg-purple-600 text-white shadow-md" : "text-slate-300 hover:bg-slate-800 hover:text-white"
           }`}
         >
           Cadastros
@@ -42,13 +42,13 @@ export default function Navbar() {
           </button>
           <div className="absolute top-full left-0 mt-1 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 hidden group-hover:block z-50">
             <Link
-              href="/curva-abc"
+              href="/full"
               className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
             >
               Curva ABC
             </Link>
             <Link
-              href="/adsense"
+              href="/ads"
               className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
             >
               Adsense
@@ -62,7 +62,7 @@ export default function Navbar() {
               Devoluções
             </Link>
             <Link
-              href="/full-fba"
+              href="/full"
               className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
             >
               Full / FBA
@@ -83,7 +83,7 @@ export default function Navbar() {
               Regras
             </Link>
             <Link
-              href="/uploads"
+              href="/upload"
               className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
             >
               Uploads
