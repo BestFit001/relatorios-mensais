@@ -293,7 +293,6 @@ export default function PromocoesPage() {
     setLoading(false);
   };
 
-  // Função para salvar os itens APTOS no Supabase passando explicitamente a promoção e o período (date_validity)
   const salvarPromocoesNoBanco = async () => {
     const itensAptos = dadosProcessados.filter(r => r.STATUS === "APTO");
     if (itensAptos.length === 0) {
@@ -311,12 +310,34 @@ export default function PromocoesPage() {
           date_validity: item.DATE_VALIDITY
         }]);
       }
-      carregarPromocoesAtivasSupabase();
-      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso, incluindo o período de validade!`);
+      await carregarPromocoesAtivasSupabase();
+      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso, incluindo nome e período de validade!`);
+      setAbaAtiva("ativas");
     } catch (err: any) {
       alert("Erro ao salvar no banco: " + err.message);
     }
     setSalvandoBanco(false);
+  };
+
+  const excluirPromocaoIndividual = async (id: number) => {
+    if (!confirm("Tem certeza que deseja apagar esta promoção da base?")) return;
+    const { error } = await supabase.from("promocoes_ativas_ml").delete().eq("id", id);
+    if (error) {
+      alert("Erro ao excluir: " + error.message);
+    } else {
+      carregarPromocoesAtivasSupabase();
+    }
+  };
+
+  const limparBasePromocoes = async () => {
+    if (!confirm("ATENÇÃO: Deseja apagar TODAS as promoções ativas guardadas na base?")) return;
+    const { error } = await supabase.from("promocoes_ativas_ml").delete().neq("id", 0);
+    if (error) {
+      alert("Erro ao limpar base: " + error.message);
+    } else {
+      carregarPromocoesAtivasSupabase();
+      alert("🗑️ Base de promoções ativas limpa com sucesso!");
+    }
   };
 
   const baixarAptosExcel = () => {
@@ -368,7 +389,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa com salvamento completo do período de vigência</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa com salvamento completo e gestão da base ativa</p>
           </div>
           <Navbar />
         </div>
@@ -491,7 +512,16 @@ export default function PromocoesPage() {
         ) : (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden p-6 space-y-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Painel de Campanhas & Promoções Ativas</h3>
+              <div className="flex items-center gap-4">
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Painel de Campanhas & Promoções Ativas</h3>
+                <button
+                  type="button"
+                  onClick={limparBasePromocoes}
+                  className="bg-rose-950/80 hover:bg-rose-900 text-rose-400 border border-rose-900/50 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all"
+                >
+                  🗑️ Limpar Toda a Base
+                </button>
+              </div>
               <input
                 type="text"
                 value={termoBusca}
@@ -509,20 +539,30 @@ export default function PromocoesPage() {
                     <th className="p-3.5">SKU</th>
                     <th className="p-3.5">Nome da Promoção</th>
                     <th className="p-3.5">Período de Validade (DATE_VALIDITY)</th>
+                    <th className="p-3.5 text-center">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                   {promocoesFiltradas.map((p, idx) => (
-                    <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                    <tr key={p.id || idx} className="hover:bg-slate-800/40 transition-colors">
                       <td className="p-3.5 font-mono text-indigo-400">{p.mlb}</td>
                       <td className="p-3.5 font-mono text-slate-300">{p.sku}</td>
                       <td className="p-3.5 font-bold text-white">{p.promocao}</td>
-                      <td className="p-3.5 font-mono text-amber-400">{p.date_validity}</td>
+                      <td className="p-3.5 font-mono text-amber-400">{p.date_validity || "Indeterminado"}</td>
+                      <td className="p-3.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => excluirPromocaoIndividual(p.id)}
+                          className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer transition-all"
+                        >
+                          Excluir
+                        </button>
+                      </td>
                     </tr>
                   ))}
                   {promocoesFiltradas.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="p-8 text-center text-slate-500">Nenhuma promoção ativa encontrada.</td>
+                      <td colSpan={5} className="p-8 text-center text-slate-500">Nenhuma promoção ativa encontrada.</td>
                     </tr>
                   )}
                 </tbody>
