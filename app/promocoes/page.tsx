@@ -69,7 +69,6 @@ export default function PromocoesPage() {
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [mlRegrasMap, setMlRegrasMap] = useState<Map<string, any>>(new Map());
-  const [mapeamentoMap, setMapeamentoMap] = useState<Map<string, any>>(new Map());
   const [obsoletosSet, setObsoletosSet] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -120,24 +119,6 @@ export default function PromocoesPage() {
         });
       }
       setMlRegrasMap(mlMap);
-
-      const mapMap = new Map<string, any>();
-      const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*");
-      if (mapAnuncios) {
-        mapAnuncios.forEach((m: any) => {
-          const mlbKey = String(m.mlb || "").trim().toUpperCase();
-          const comissaoNum = parsePorcentagem(m.comissao);
-          const info = {
-            comissao: comissaoNum,
-            peso_real: Number(m.peso_real || 2.0),
-            altura: Number(m.altura || 10),
-            largura: Number(m.largura || 10),
-            comprimento: Number(m.comprimento || 10)
-          };
-          if (mlbKey) mapMap.set(mlbKey, info);
-        });
-      }
-      setMapeamentoMap(mapMap);
 
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
@@ -209,17 +190,36 @@ export default function PromocoesPage() {
 
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
         
-        // CONSULTA ESTRITA E PRIORITÁRIA PELO MLB (ITEM_ID)
+        // 1. Procura primeiro no mapa em memória
         const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
-        
-        let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada) || mapeamentoMap.get(mlbKeyNormalizada);
-        
+        let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada);
+
         if (!anuncioInfo) {
           for (const [key, value] of mlRegrasMap.entries()) {
             if (key.replace(/\s+/g, "").toUpperCase() === mlbKeyNormalizada) {
               anuncioInfo = value;
               break;
             }
+          }
+        }
+
+        // 2. BUSCA DIRETA NO SUPABASE: Se ainda não encontrou na memória, consulta diretamente a tabela do banco
+        if (!anuncioInfo) {
+          const { data: dbMatch } = await supabase
+            .from("ml_anuncios_regras")
+            .select("*")
+            .ilike("mlb", mlbRaw)
+            .maybeSingle();
+
+          if (dbMatch) {
+            const comissaoNum = parsePorcentagem(dbMatch.comissao);
+            anuncioInfo = {
+              comissao: comissaoNum,
+              peso_real: Number(dbMatch.peso_real || 2.0),
+              altura: Number(dbMatch.altura || 10),
+              largura: Number(dbMatch.largura || 10),
+              comprimento: Number(dbMatch.comprimento || 10)
+            };
           }
         }
 
@@ -370,7 +370,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa com consulta prioritária e estrita por MLB</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa com consulta estrita e busca direta por MLB no Supabase</p>
           </div>
           <Navbar />
         </div>
