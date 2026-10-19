@@ -146,21 +146,25 @@ export default function CalculadoraPage() {
     }
   };
 
+  // Função robusta de correspondência com a aba de Regras
   const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
     const cLower = canalNome.toLowerCase();
     
     const regrasDoCanal = regrasTarifacao.filter((r) => {
       const rCanal = String(r.canal || "").toLowerCase();
       if (rCanal === cLower) return true;
+      // Mapeamentos exatos de apelidos (ex: Magalu vs Magazine Luiza)
+      if ((cLower.includes("magalu") || cLower.includes("magazine")) && (rCanal.includes("magalu") || rCanal.includes("magazine"))) return true;
       if (cLower.includes("tiktok") && rCanal.includes("tiktok")) return true;
-      if (cLower.includes("magalu") && rCanal.includes("magalu")) return true;
-      return rCanal.includes(cLower) || cLower.includes(rCanal);
+      if (rCanal.includes(cLower) || cLower.includes(rCanal)) return true;
+      return false;
     });
 
     if (regrasDoCanal.length === 0) {
       return { comissao: cLower.includes("premium") ? 19 : 14, tarifa_fixa: 0, frete: 0 };
     }
 
+    // Procura a faixa de preço correspondente
     for (const regra of regrasDoCanal) {
       const faixaStr = String(regra.faixa_preco || "").toLowerCase();
       const matchNums = faixaStr.match(/[\d.,]+/g);
@@ -212,8 +216,9 @@ export default function CalculadoraPage() {
             freteVariavel = anuncPremium ? Number(anuncPremium.frete || 0) : 0;
           }
         } else {
-          const precoRef = modoCalculo === "pdv_ideal" ? 80.0 : parseNumero(precoFixo);
-          const regraTabela = obterRegraCanalDaTabela(canalNome, precoRef);
+          // Preço base de estimativa inicial para checar a faixa de preço na tabela de regras
+          const precoRefEst = modoCalculo === "pdv_ideal" ? 80.0 : parseNumero(precoFixo);
+          let regraTabela = obterRegraCanalDaTabela(canalNome, precoRefEst);
 
           comissaoPct = Number(regraTabela.comissao || 14) / 100;
           tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
@@ -226,6 +231,7 @@ export default function CalculadoraPage() {
 
           let pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
 
+          // Recalcula com a faixa exata baseada no PDV encontrado para canais externos
           if (!cLower.includes("mercado livre")) {
             const regraExata = obterRegraCanalDaTabela(canalNome, pdvCalculado);
             comissaoPct = Number(regraExata.comissao || 14) / 100;
@@ -311,7 +317,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Consulta de anúncios existentes (MLB), comissões reais e unificação do Mercado Livre</p>
+            <p className="text-sm font-medium text-slate-400">Leitura rigorosa e exata das regras cadastradas na aba de Regras em tempo real</p>
           </div>
           <Navbar />
         </div>
