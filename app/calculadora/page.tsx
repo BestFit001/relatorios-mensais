@@ -13,7 +13,7 @@ function normalizarSku(valor: any) {
 }
 
 const formatarMoeda = (valor: number) =>
-  "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function CalculadoraPage() {
   const router = useRouter();
@@ -26,7 +26,7 @@ export default function CalculadoraPage() {
   const [margemAlvo, setMargemAlvo] = useState("30");
   const [precoFixo, setPrecoFixo] = useState("60.00");
 
-  // Rebates individuais por canal (chave: nome do canal, valor: string/number)
+  // Rebates individuais por canal
   const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
 
   // Dados e Bases
@@ -51,7 +51,6 @@ export default function CalculadoraPage() {
   const carregarBasesEmTempoReal = async () => {
     setLoading(true);
 
-    // 1. Carrega custos dos SKUs
     let allCustos: any[] = [];
     let from = 0;
     const step = 1000;
@@ -72,7 +71,6 @@ export default function CalculadoraPage() {
     });
     setCustosMap(mapaCustos);
 
-    // 2. Carrega tabela de mapeamento de anúncios (MLB / Comissões específicas)
     const mapaAnunciosSku = new Map();
     try {
       const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(3000);
@@ -90,7 +88,6 @@ export default function CalculadoraPage() {
     }
     setMapeamentoMap(mapaAnunciosSku);
 
-    // 3. Define os canais unificados
     const { data: canaisData } = await supabase.from("config_regras_canais").select("*").order("id");
     let listaNomesCanais: string[] = [];
     if (canaisData && canaisData.length > 0) {
@@ -104,7 +101,6 @@ export default function CalculadoraPage() {
     setCanaisConfig(listaNomesCanais);
     setCanaisSelecionados(listaNomesCanais);
 
-    // 4. Carrega regras de tarifação em tempo real (config_regras_tarifacao)
     const { data: tarifacaoData } = await supabase.from("config_regras_tarifacao").select("*");
     if (tarifacaoData) {
       setRegrasTarifacao(tarifacaoData);
@@ -246,6 +242,7 @@ export default function CalculadoraPage() {
           return {
             canal: canalNome,
             pdv: pdvCalculado,
+            rebate: 0,
             custoProduto,
             comissaoPct: comissaoPct * 100,
             valorComissao,
@@ -257,7 +254,6 @@ export default function CalculadoraPage() {
             temMlb: cLower.includes("mercado livre") ? (cLower.includes("clássico") ? !!anuncClassico : !!anuncPremium) : true
           };
         } else {
-          // Margem Reversa considerando o Rebate específico daquele canal
           const pdvBase = parseNumero(precoFixo);
           const valRebate = parseNumero(rebatesCanais[canalNome] || "0");
           const pdvEfetivo = Math.max(0, pdvBase - valRebate);
@@ -271,7 +267,6 @@ export default function CalculadoraPage() {
 
           const valorComissao = pdvEfetivo * comissaoPct;
           const valorImposto = pdvEfetivo * impostoPercent;
-          // Lucro líquido soma o rebate (bônus) recebido
           const lucroLiquido = pdvEfetivo - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto) + valRebate;
           const margemFinal = pdvBase > 0 ? (lucroLiquido / pdvBase) * 100 : 0;
 
