@@ -1,152 +1,148 @@
 "use client";
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 
-const canaisPadraoBase = [
-  "Mercado Livre 1",
-  "Mercado Livre 2",
-  "Mercado Livre 3",
-  "Shopee",
-  "Amazon",
-  "Magalu",
-  "Magazine Luiza",
-  "Netshoes",
-  "Centauro",
-  "Shein",
-  "TikTok",
-  "Site"
+const MOTIVOS_OFICIAIS = [
+  "Arrependimento da compra.",
+  "O produto chegou com defeito.",
+  "O pedido chegou incompleto.",
+  "A cor recebida é diferente.",
+  "O tamanho recebido é diferente.",
+  "Defeito de fabricação."
 ];
 
-const analistasPadraoBase: Record<string, string> = {
-  "Mercado Livre 1": "Gabrielle",
-  "Mercado Livre 2": "Alisson",
-  "Mercado Livre 3": "Felipe",
-  "Amazon": "Gabrielle",
-  "Netshoes": "Alisson",
-  "Magalu": "Gabrielle",
-  "Magazine Luiza": "Gabrielle",
-  "Shopee": "Alisson",
-  "Centauro": "Felipe",
-  "TikTok": "Alisson",
-  "Tiktok": "Alisson",
-  "Site": "Alisson e Gabrielle",
-  "Shein": "Gabrielle"
+function normalizarSku(valor: any) {
+  if (valor === null || valor === undefined) return "";
+  let s = String(valor).trim();
+  if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
+  s = s.replace(/^["']|["']$/g, "").trim();
+  return s.toLowerCase();
+}
+
+function parseNumero(valor: any): number {
+  if (valor === null || valor === undefined || valor === "") return 0;
+  if (typeof valor === "number") return valor;
+  let s = String(valor).replace(/R\$/g, "").replace(/\s/g, "").trim();
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  }
+  const num = parseFloat(s);
+  return isNaN(num) ? 0 : num;
+}
+
+const formatarMoeda = (valor: number) => {
+  return "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-function obterAnalistaDoCanal(canalNome: string, mapaAnalistas: Record<string, string>): string {
-  if (!canalNome) return "Expedição";
-  const cNorm = String(canalNome).trim().toLowerCase();
+type SubItemCarrinho = {
+  sku: string;
+  quantidade: string | number;
+  produto: string;
+  marca: string;
+  pdv: string;
+  custo_unitario: number;
+  motivo: string;
+  observacoes: string;
+  condicoes: "Sim" | "Não";
+};
 
-  for (const [k, v] of Object.entries(mapaAnalistas)) {
-    if (k.trim().toLowerCase() === cNorm) {
-      return v || "Expedição";
-    }
-  }
+type LinhaDevolucao = {
+  carrinho: boolean;
+  pedido: string;
+  canal: string;
+  nf: string;
+  solicitacao: "Devolução" | "Troca";
+  custo_frete: string;
+  mediacao: "Nenhuma" | "Em Disputa" | "Ganha" | "Perdida";
+  protocolo_mediacao: string;
+  sku: string;
+  quantidade: string | number;
+  produto: string;
+  marca: string;
+  pdv: string;
+  custo_unitario: number;
+  motivo: string;
+  observacoes: string;
+  condicoes: "Sim" | "Não";
+  itensCarrinho: SubItemCarrinho[];
+};
 
-  if (cNorm === "tiktok" || cNorm === "tik tok" || cNorm === "tiktok shop") {
-    for (const [k, v] of Object.entries(mapaAnalistas)) {
-      const kNorm = k.trim().toLowerCase();
-      if (kNorm === "tiktok" || kNorm === "tik tok" || kNorm === "tiktok shop") {
-        return v || "Expedição";
-      }
-    }
-    return "Alisson";
-  }
-
-  if (cNorm === "magalu" || cNorm === "magazine luiza" || cNorm === "magazinedeluiza") {
-    for (const [k, v] of Object.entries(mapaAnalistas)) {
-      const kNorm = k.trim().toLowerCase();
-      if (kNorm === "magalu" || kNorm === "magazine luiza") {
-        return v || "Expedição";
-      }
-    }
-    return "Gabrielle";
-  }
-
-  const cNormZero = cNorm.replace(" 0", " ");
-  for (const [k, v] of Object.entries(mapaAnalistas)) {
-    if (k.trim().toLowerCase().replace(" 0", " ") === cNormZero) {
-      return v || "Expedição";
-    }
-  }
-
-  const cLimpo = cNorm.replace(/[\s\-_]/g, "");
-  for (const [k, v] of Object.entries(mapaAnalistas)) {
-    const kLimpo = k.trim().toLowerCase().replace(/[\s\-_]/g, "");
-    if (cLimpo === kLimpo || cLimpo.includes(kLimpo) || kLimpo.includes(cLimpo)) {
-      return v || "Expedição";
-    }
-  }
-
-  return "Expedição";
-}
-
-function obterTaxaFlexDoCanal(canalNome: string, mapaTaxas: Record<string, number>): number {
-  if (!canalNome) return 12.99;
-  const cNorm = String(canalNome).trim().toLowerCase();
-
-  for (const [k, v] of Object.entries(mapaTaxas)) {
-    if (k.trim().toLowerCase() === cNorm) return Number(v);
-  }
-  const cLimpo = cNorm.replace(/[\s\-_]/g, "");
-  for (const [k, v] of Object.entries(mapaTaxas)) {
-    const kLimpo = k.trim().toLowerCase().replace(/[\s\-_]/g, "");
-    if (cLimpo === kLimpo || cLimpo.includes(kLimpo) || kLimpo.includes(cLimpo)) {
-      return Number(v);
-    }
-  }
-  return 12.99;
-}
-
-const formatarMoeda = (valor: number) =>
-  "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-export default function PlpPage() {
+export default function DevolucoesPage() {
   const router = useRouter();
+  const [subAba, setSubAba] = useState<"registros" | "plano_acao">("registros");
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
-  const [salvandoConfig, setSalvandoConfig] = useState(false);
 
-  // 2 Abas: Entrada | Manifesto
-  const [abaAtiva, setAbaAtiva] = useState<"entrada" | "manifesto">("manifesto");
+  const hojeIso = new Date().toISOString().split("T")[0];
+  const [dataGlobalRetorno, setDataGlobalRetorno] = useState(hojeIso);
 
-  // Canais, Taxas e Analistas Fixos por Canal
-  const [canais, setCanais] = useState<string[]>(canaisPadraoBase);
-  const [taxasFlexCanal, setTaxasFlexCanal] = useState<Record<string, number>>({});
-  const [analistasPorCanal, setAnalistasPorCanal] = useState<Record<string, string>>(analistasPadraoBase);
-  const [modalConfigAberto, setModalConfigAberto] = useState(false);
-  const [novoCanalNome, setNovoCanalNome] = useState("");
+  const [canais, setCanais] = useState<string[]>([
+    "Mercado Livre 1",
+    "Mercado Livre 2.0",
+    "Shopee",
+    "Amazon",
+    "Amazon_FBA",
+    "Centauro",
+    "Netshoes",
+    "Magalu",
+    "TikTok",
+    "Site"
+  ]);
 
-  // Analista/Colaborador exibido no documento atual
-  const [analistaDocumento, setAnalistaDocumento] = useState("Gabrielle");
+  const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
+  const [devolucoes, setDevolucoes] = useState<any[]>([]);
 
-  // ==========================================
-  // ABA 1: ENTRADA (MANUAL & PLANILHA)
-  // ==========================================
-  const [modoEntrada, setModoEntrada] = useState<"manual" | "planilha">("manual");
-  const [dataEnvio, setDataEnvio] = useState(new Date().toISOString().split("T")[0]);
-  const [canalSelecionado, setCanalSelecionado] = useState(canaisPadraoBase[0]);
-  const [modalidade, setModalidade] = useState<"FLEX" | "AGENCIA" | "CORREIOS">("FLEX");
-
-  const [pedidosTexto, setPedidosTexto] = useState("");
-  const [matrizPlanilha, setMatrizPlanilha] = useState<any[]>([]);
-  const [colunaPedido, setColunaPedido] = useState("A");
-  const [linhaInicial, setLinhaInicial] = useState("2");
-  const [previewQtd, setPreviewQtd] = useState(0);
-
-  // ==========================================
-  // ABA 2: MANIFESTO & IMPRESSÃO
-  // ==========================================
-  const [filtroDataInicio, setFiltroDataInicio] = useState(new Date().toISOString().split("T")[0]);
-  const [filtroDataFim, setFiltroDataFim] = useState(new Date().toISOString().split("T")[0]);
-  const [filtroAnalista, setFiltroAnalista] = useState("TODOS");
+  // Filtros
   const [filtroCanal, setFiltroCanal] = useState("TODOS");
-  const [filtroModalidade, setFiltroModalidade] = useState("TODOS");
-  const [termoPesquisaPedido, setTermoPesquisaPedido] = useState("");
-  const [pedidos, setPedidos] = useState<any[]>([]);
+  const [filtroMarca, setFiltroMarca] = useState("TODAS");
+  const [filtroSolicitacao, setFiltroSolicitacao] = useState("TODOS");
+  const [filtroMediacao, setFiltroMediacao] = useState("TODOS");
+  const [buscaTexto, setBuscaTexto] = useState("");
+
+  // Edição Inline
+  const [idEditando, setIdEditando] = useState<number | null>(null);
+  const [dadosEdicao, setDadosEdicao] = useState<any>({});
+
+  const criarLinhaVazia = (): LinhaDevolucao => ({
+    carrinho: false,
+    pedido: "",
+    canal: canais[0] || "Mercado Livre 1",
+    nf: "",
+    solicitacao: "Devolução",
+    custo_frete: "0",
+    mediacao: "Nenhuma",
+    protocolo_mediacao: "",
+    sku: "",
+    quantidade: "1",
+    produto: "",
+    marca: "Auto",
+    pdv: "",
+    custo_unitario: 0,
+    motivo: MOTIVOS_OFICIAIS[0],
+    observacoes: "",
+    condicoes: "Não",
+    itensCarrinho: [
+      {
+        sku: "",
+        quantidade: "1",
+        produto: "",
+        marca: "Auto",
+        pdv: "",
+        custo_unitario: 0,
+        motivo: MOTIVOS_OFICIAIS[0],
+        observacoes: "",
+        condicoes: "Não"
+      }
+    ]
+  });
+
+  const [linhas, setLinhas] = useState<LinhaDevolucao[]>([criarLinhaVazia()]);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -154,1125 +150,1303 @@ export default function PlpPage() {
       router.push("/login");
       return;
     }
-    carregarCanaisTaxasEAnalistas();
+    carregarAuxiliares();
+    carregarDevolucoes();
   }, []);
 
-  useEffect(() => {
-    buscarPedidos();
-  }, [filtroDataInicio, filtroDataFim, filtroCanal, filtroModalidade, filtroAnalista, analistasPorCanal]);
-
-  // Lista dinâmica de analistas
-  const listaAnalistasUnicos = Array.from(
-    new Set(
-      Object.values(analistasPorCanal)
-        .flatMap((n) => (n || "").replace(/\s+e\s+/gi, ",").replace(/&/g, ",").split(","))
-        .map((n) => n?.trim())
-        .filter((n) => n && n !== "" && n !== "Expedição")
-    )
-  ).sort((a, b) => a.localeCompare(b));
-
-  useEffect(() => {
-    if (filtroAnalista !== "TODOS" && !listaAnalistasUnicos.includes(filtroAnalista)) {
-      setFiltroAnalista("TODOS");
+  const carregarAuxiliares = async () => {
+    const { data: canaisData } = await supabase.from("config_regras_canais").select("canal").order("id");
+    if (canaisData && canaisData.length > 0) {
+      setCanais(canaisData.map((c: any) => c.canal));
     }
-  }, [listaAnalistasUnicos, filtroAnalista]);
 
-  const canaisFiltradosParaSelect =
-    filtroAnalista === "TODOS"
-      ? canais
-      : canais.filter((c) => {
-          const resp = obterAnalistaDoCanal(c, analistasPorCanal);
-          return resp === filtroAnalista || resp.includes(filtroAnalista);
-        });
-
-  const carregarCanaisTaxasEAnalistas = async () => {
-    try {
-      const { data: configData, error: configError } = await supabase
-        .from("plp_config_canais")
-        .select("*")
-        .order("canal", { ascending: true });
-
-      const mapaTaxas: Record<string, number> = {};
-      const mapaAnalistas: Record<string, string> = {};
-      const canaisDoBanco: string[] = [];
-
-      if (!configError && configData && configData.length > 0) {
-        configData.forEach((row: any) => {
-          const nomeCanal = String(row.canal).trim();
-          canaisDoBanco.push(nomeCanal);
-          mapaAnalistas[nomeCanal] = String(row.analista_responsavel || "Expedição").trim();
-          mapaTaxas[nomeCanal] = Number(row.taxa_flex ?? 12.99);
-        });
-
-        canaisPadraoBase.forEach((c) => {
-          if (!canaisDoBanco.includes(c)) {
-            canaisDoBanco.push(c);
-            mapaAnalistas[c] = analistasPadraoBase[c] || "Expedição";
-            mapaTaxas[c] = 12.99;
-          }
-        });
-
-        setCanais(canaisDoBanco);
-        setTaxasFlexCanal(mapaTaxas);
-        setAnalistasPorCanal(mapaAnalistas);
-
-        localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(mapaTaxas));
-        localStorage.setItem("plp_analistas_por_canal", JSON.stringify(mapaAnalistas));
-
-        if (canaisDoBanco.length > 0 && !canalSelecionado) {
-          setCanalSelecionado(canaisDoBanco[0]);
-        }
-        return;
-      }
-
-      const mapaUnico = new Map<string, string>();
-      canaisPadraoBase.forEach((c) => mapaUnico.set(c.trim().toLowerCase(), c.trim()));
-
-      const { data: canaisData } = await supabase.from("config_regras_canais").select("canal");
-      if (canaisData) {
-        canaisData.forEach((c: any) => {
-          if (c.canal?.trim()) mapaUnico.set(c.canal.trim().toLowerCase(), c.canal.trim());
-        });
-      }
-
-      const lista = Array.from(mapaUnico.values()).sort((a, b) => a.localeCompare(b));
-      setCanais(lista);
-
-      const salvoTaxas = localStorage.getItem("plp_taxas_flex_por_canal");
-      const taxas: Record<string, number> = salvoTaxas ? JSON.parse(salvoTaxas) : {};
-      lista.forEach((c) => {
-        if (taxas[c] === undefined) taxas[c] = 12.99;
-      });
-      setTaxasFlexCanal(taxas);
-
-      const salvoAnalistas = localStorage.getItem("plp_analistas_por_canal");
-      const analistas: Record<string, string> = salvoAnalistas ? JSON.parse(salvoAnalistas) : {};
-
-      const temHenrique = Object.values(analistas).some((v) => v.includes("Henrique"));
-      const analistasFinais =
-        temHenrique || Object.keys(analistas).length === 0
-          ? { ...analistasPadraoBase }
-          : { ...analistasPadraoBase, ...analistas };
-
-      lista.forEach((c) => {
-        if (!analistasFinais[c]) analistasFinais[c] = analistasPadraoBase[c] || "Expedição";
-      });
-      setAnalistasPorCanal(analistasFinais);
-      localStorage.setItem("plp_analistas_por_canal", JSON.stringify(analistasFinais));
-    } catch (err) {
-      console.error("Erro ao carregar configurações de canais:", err);
+    let allCustos: any[] = [];
+    let from = 0;
+    const step = 1000;
+    let keep = true;
+    while (keep) {
+      const { data } = await supabase.from("tabela_custos_skus").select("*").range(from, from + step - 1);
+      if (data && data.length > 0) {
+        allCustos = [...allCustos, ...data];
+        from += step;
+        if (data.length < step) keep = false;
+      } else keep = false;
     }
+
+    const mapa = new Map();
+    allCustos.forEach((c: any) => {
+      const k = normalizarSku(c.sku);
+      if (k) mapa.set(k, c);
+    });
+    setCustosMap(mapa);
   };
 
-  const salvarConfiguracoesUniversais = async () => {
-    setSalvandoConfig(true);
-    try {
-      const payload = canais.map((c) => ({
-        canal: c,
-        analista_responsavel: analistasPorCanal[c]?.trim() || "Expedição",
-        taxa_flex: Number(taxasFlexCanal[c] ?? 12.99),
-        updated_at: new Date().toISOString()
-      }));
-
-      const { error } = await supabase
-        .from("plp_config_canais")
-        .upsert(payload, { onConflict: "canal" });
-
-      if (error) {
-        alert("Erro ao salvar no banco Supabase: " + error.message);
-      } else {
-        alert("✅ Configurações salvas universalmente!");
-        localStorage.setItem("plp_taxas_flex_por_canal", JSON.stringify(taxasFlexCanal));
-        localStorage.setItem("plp_analistas_por_canal", JSON.stringify(analistasPorCanal));
-        setModalConfigAberto(false);
-        await carregarCanaisTaxasEAnalistas();
-        await buscarPedidos();
-      }
-    } catch (err: any) {
-      alert("Erro ao salvar: " + err.message);
-    }
-    setSalvandoConfig(false);
-  };
-
-  const atualizarTaxaFlexLocal = (canal: string, valor: number) => {
-    setTaxasFlexCanal((prev) => ({ ...prev, [canal]: valor }));
-  };
-
-  const atualizarAnalistaCanalLocal = (canal: string, nome: string) => {
-    setAnalistasPorCanal((prev) => ({ ...prev, [canal]: nome }));
-  };
-
-  const handleMudarFiltroAnalista = (novoAnalista: string) => {
-    setFiltroAnalista(novoAnalista);
-    if (novoAnalista !== "TODOS") {
-      const analistaDoCanalAtual = obterAnalistaDoCanal(filtroCanal, analistasPorCanal);
-      if (filtroCanal !== "TODOS" && !analistaDoCanalAtual.includes(novoAnalista)) {
-        setFiltroCanal("TODOS");
-      }
-    }
-  };
-
-  const handleAdicionarCanal = async () => {
-    const n = novoCanalNome.trim();
-    if (!n) return;
-    if (!canais.some((c) => c.toLowerCase() === n.toLowerCase())) {
-      const novaLista = [...canais, n].sort((a, b) => a.localeCompare(b));
-      setCanais(novaLista);
-      const novoTaxas = { ...taxasFlexCanal, [n]: 12.99 };
-      const novoAnalistas = { ...analistasPorCanal, [n]: "Expedição" };
-      setTaxasFlexCanal(novoTaxas);
-      setAnalistasPorCanal(novoAnalistas);
-      setNovoCanalNome("");
-
-      await supabase.from("plp_config_canais").upsert({
-        canal: n,
-        analista_responsavel: "Expedição",
-        taxa_flex: 12.99,
-        updated_at: new Date().toISOString()
-      }, { onConflict: "canal" });
-    } else {
-      alert("Este canal já está na lista.");
-    }
-  };
-
-  const handleRemoverCanal = async (canalParaRemover: string) => {
-    if (!confirm(`Deseja remover o canal "${canalParaRemover}" das configurações?`)) return;
-    const novaLista = canais.filter((c) => c !== canalParaRemover);
-    setCanais(novaLista);
-    const nAnalistas = { ...analistasPorCanal };
-    delete nAnalistas[canalParaRemover];
-    setAnalistasPorCanal(nAnalistas);
-    const nTaxas = { ...taxasFlexCanal };
-    delete nTaxas[canalParaRemover];
-    setTaxasFlexCanal(nTaxas);
-
-    await supabase.from("plp_config_canais").delete().eq("canal", canalParaRemover);
-  };
-
-  const buscarPedidos = async () => {
+  const carregarDevolucoes = async () => {
     setLoading(true);
-    let query = supabase
-      .from("plp_pedidos")
+    const { data, error } = await supabase
+      .from("devolucoes")
       .select("*")
-      .gte("data_envio", filtroDataInicio)
-      .lte("data_envio", filtroDataFim)
-      .order("canal", { ascending: true })
-      .order("created_at", { ascending: true });
+      .order("id", { ascending: false });
 
-    if (filtroCanal !== "TODOS") {
-      query = query.ilike("canal", filtroCanal);
+    if (!error && data) {
+      setDevolucoes(data);
     }
-
-    if (filtroModalidade === "FLEX") {
-      query = query.eq("modalidade", "FLEX");
-    } else if (filtroModalidade === "AGENCIA") {
-      query = query.eq("modalidade", "AGENCIA");
-    } else if (filtroModalidade === "CORREIOS") {
-      query = query.eq("modalidade", "CORREIOS");
-    } else if (filtroModalidade === "AGENCIA_CORREIOS") {
-      query = query.in("modalidade", ["AGENCIA", "CORREIOS"]);
-    }
-    // Se for "TODOS", traz todas as modalidades
-
-    const { data } = await query;
-    let dadosFiltrados = data || [];
-
-    if (filtroAnalista !== "TODOS") {
-      dadosFiltrados = dadosFiltrados.filter((p: any) => {
-        if (p.modalidade === "FLEX" && filtroModalidade === "TODOS") {
-          return true;
-        }
-        const analistaDoCanal = obterAnalistaDoCanal(p.canal, analistasPorCanal);
-        return analistaDoCanal === filtroAnalista || analistaDoCanal.includes(filtroAnalista);
-      });
-    }
-
-    setPedidos(dadosFiltrados);
     setLoading(false);
   };
 
-  useEffect(() => {
-    if (filtroModalidade === "FLEX") {
-      const analistasFlexPresentes = Array.from(
-        new Set(
-          pedidos
-            .filter((p) => p.modalidade === "FLEX")
-            .map((p) => obterAnalistaDoCanal(p.canal, analistasPorCanal))
-            .filter((n) => n && n !== "Expedição")
-        )
-      ).sort();
-
-      if (analistasFlexPresentes.length >= 2) {
-        setAnalistaDocumento(analistasFlexPresentes.join(" & "));
-      } else {
-        const todosAtivos = Array.from(
-          new Set(Object.values(analistasPorCanal).filter((n) => n && n !== "Expedição"))
-        ).sort();
-        if (todosAtivos.length >= 2) {
-          setAnalistaDocumento(todosAtivos.slice(0, 2).join(" & "));
-        } else if (analistasFlexPresentes.length === 1) {
-          setAnalistaDocumento(analistasFlexPresentes[0]);
-        } else {
-          setAnalistaDocumento("Alisson & Gabrielle");
-        }
-      }
-      return;
-    }
-
-    if (filtroAnalista !== "TODOS") {
-      setAnalistaDocumento(filtroAnalista);
-      return;
-    }
-
-    if (filtroCanal !== "TODOS") {
-      setAnalistaDocumento(obterAnalistaDoCanal(filtroCanal, analistasPorCanal));
-      return;
-    }
-
-    const analistasPresentes = Array.from(
-      new Set(pedidos.map((p) => obterAnalistaDoCanal(p.canal, analistasPorCanal)))
-    ).filter((n) => n && n !== "Expedição").sort();
-
-    if (analistasPresentes.length === 1) {
-      setAnalistaDocumento(analistasPresentes[0]);
-    } else if (analistasPresentes.length > 1) {
-      setAnalistaDocumento(analistasPresentes.join(" & "));
-    } else {
-      setAnalistaDocumento("Expedição");
-    }
-  }, [filtroModalidade, filtroAnalista, filtroCanal, pedidos, analistasPorCanal]);
-
-  const handleUploadPlanilha = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt: any) => {
-      try {
-        const wb = XLSX.read(evt.target.result, { type: "binary" });
-        const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
-        setMatrizPlanilha(matrix);
-
-        const col = colunaPedido.trim().toUpperCase();
-        const start = Math.max(0, parseInt(linhaInicial, 10) - 1 || 0);
-        const count = matrix.slice(start).filter((r: any) => String(r[col] || "").trim()).length;
-        setPreviewQtd(count);
-      } catch (err: any) {
-        alert("Erro ao ler ficheiro: " + err.message);
-      }
-    };
-    reader.readAsBinaryString(file);
+  const adicionarLinha = () => {
+    setLinhas([...linhas, criarLinhaVazia()]);
   };
 
-  const handleSalvarPedidos = async () => {
-    let listaPedidos: string[] = [];
+  const removerLinha = (index: number) => {
+    if (linhas.length <= 1) return;
+    setLinhas(linhas.filter((_, i) => i !== index));
+  };
 
-    if (modoEntrada === "manual") {
-      listaPedidos = pedidosTexto
-        .split(/[\n,;]+/)
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0);
-      if (listaPedidos.length === 0) return alert("Digite ou cole ao menos um número de pedido.");
-    } else {
-      if (matrizPlanilha.length === 0) return alert("Selecione um ficheiro Excel/CSV.");
-      const col = colunaPedido.trim().toUpperCase();
-      const start = Math.max(0, parseInt(linhaInicial, 10) - 1 || 0);
+  const atualizarLinha = (index: number, campo: keyof LinhaDevolucao, valor: any) => {
+    const novas = [...linhas];
+    novas[index] = { ...novas[index], [campo]: valor };
 
-      for (let r = start; r < matrizPlanilha.length; r++) {
-        const v = String(matrizPlanilha[r]?.[col] || "").trim();
-        if (v && v.toLowerCase() !== "pedido" && v.toLowerCase() !== "n.º de venda") {
-          listaPedidos.push(v);
+    if (campo === "carrinho" && valor === true && novas[index].itensCarrinho.length === 0) {
+      novas[index].itensCarrinho = [
+        {
+          sku: novas[index].sku || "",
+          quantidade: novas[index].quantidade || "1",
+          produto: novas[index].produto || "",
+          marca: novas[index].marca || "Auto",
+          pdv: novas[index].pdv || "",
+          custo_unitario: novas[index].custo_unitario || 0,
+          motivo: novas[index].motivo || MOTIVOS_OFICIAIS[0],
+          observacoes: novas[index].observacoes || "",
+          condicoes: novas[index].condicoes || "Não"
         }
-      }
-      if (listaPedidos.length === 0) return alert(`Nenhum pedido encontrado na coluna ${col}.`);
+      ];
     }
 
+    if (campo === "sku") {
+      const skuKey = normalizarSku(valor);
+      const match = custosMap.get(skuKey);
+      if (match) {
+        novas[index].produto = match.produto || "";
+        novas[index].marca = match.marca || "BEST FIT";
+        novas[index].custo_unitario = Number(match.custo_unitario || 0);
+      }
+    }
+
+    setLinhas(novas);
+  };
+
+  const adicionarItemCarrinho = (indexLinha: number) => {
+    const novas = [...linhas];
+    novas[indexLinha].itensCarrinho.push({
+      sku: "",
+      quantidade: "1",
+      produto: "",
+      marca: "Auto",
+      pdv: "",
+      custo_unitario: 0,
+      motivo: MOTIVOS_OFICIAIS[0],
+      observacoes: "",
+      condicoes: "Não"
+    });
+    setLinhas(novas);
+  };
+
+  const removerItemCarrinho = (indexLinha: number, indexSub: number) => {
+    const novas = [...linhas];
+    novas[indexLinha].itensCarrinho.splice(indexSub, 1);
+    setLinhas(novas);
+  };
+
+  const atualizarItemCarrinho = (indexLinha: number, indexSub: number, campo: keyof SubItemCarrinho, valor: any) => {
+    const novas = [...linhas];
+    novas[indexLinha].itensCarrinho[indexSub] = {
+      ...novas[indexLinha].itensCarrinho[indexSub],
+      [campo]: valor
+    };
+
+    if (campo === "sku") {
+      const skuKey = normalizarSku(valor);
+      const match = custosMap.get(skuKey);
+      if (match) {
+        novas[indexLinha].itensCarrinho[indexSub].produto = match.produto || "";
+        novas[indexLinha].itensCarrinho[indexSub].marca = match.marca || "BEST FIT";
+        novas[indexLinha].itensCarrinho[indexSub].custo_unitario = Number(match.custo_unitario || 0);
+      }
+    }
+
+    setLinhas(novas);
+  };
+
+  const salvarDevolucoes = async (e: React.FormEvent) => {
+    e.preventDefault();
     setSalvando(true);
-    const valorFreteUnit = modalidade === "FLEX" ? obterTaxaFlexDoCanal(canalSelecionado, taxasFlexCanal) : 0;
 
-    const payload = listaPedidos.map((ped) => ({
-      data_envio: dataEnvio,
-      numero_pedido: ped,
-      modalidade: modalidade,
-      canal: canalSelecionado,
-      valor_frete: valorFreteUnit,
-    }));
+    const registrosFormatados: any[] = [];
 
-    const { error } = await supabase.from("plp_pedidos").insert(payload);
-    if (error) {
-      alert("Erro ao gravar pedidos: " + error.message);
+    for (const l of linhas) {
+      if (!l.pedido.trim()) continue;
+
+      if (l.carrinho) {
+        const totalSubItens = l.itensCarrinho.length || 1;
+        const freteRateado = Number((parseNumero(l.custo_frete) / totalSubItens).toFixed(2));
+
+        for (const sub of l.itensCarrinho) {
+          if (!sub.sku.trim()) continue;
+          const skuKey = normalizarSku(sub.sku);
+          const custoCalculado = sub.custo_unitario || Number(custosMap.get(skuKey)?.custo_unitario || 0);
+
+          registrosFormatados.push({
+            data_retorno: dataGlobalRetorno,
+            pedido: l.pedido.trim(),
+            canal: l.canal,
+            nf: l.nf.trim(),
+            solicitacao: l.solicitacao,
+            sku: sub.sku.trim(),
+            quantidade: Math.max(1, parseInt(String(sub.quantidade), 10) || 1),
+            produto: sub.produto.trim() || "Produto sem cadastro",
+            marca: sub.marca.trim() || "Auto",
+            pdv: Number(parseNumero(sub.pdv)),
+            custo_frete: freteRateado,
+            custo_unitario: custoCalculado,
+            motivo: sub.motivo,
+            observacoes: (sub.observacoes.trim() + (l.protocolo_mediacao ? ` [Protocolo: ${l.protocolo_mediacao}]` : "")).trim(),
+            condicoes: sub.condicoes,
+            mediacao: l.mediacao,
+            plano_acao: ""
+          });
+        }
+      } else {
+        if (!l.sku.trim()) continue;
+        const skuKey = normalizarSku(l.sku);
+        const custoCalculado = l.custo_unitario || Number(custosMap.get(skuKey)?.custo_unitario || 0);
+
+        registrosFormatados.push({
+          data_retorno: dataGlobalRetorno,
+          pedido: l.pedido.trim(),
+          canal: l.canal,
+          nf: l.nf.trim(),
+          solicitacao: l.solicitacao,
+          sku: l.sku.trim(),
+          quantidade: Math.max(1, parseInt(String(l.quantidade), 10) || 1),
+          produto: l.produto.trim() || "Produto sem cadastro",
+          marca: l.marca.trim() || "Auto",
+          pdv: Number(parseNumero(l.pdv)),
+          custo_frete: Number(parseNumero(l.custo_frete)),
+          custo_unitario: custoCalculado,
+          motivo: l.motivo,
+          observacoes: (l.observacoes.trim() + (l.protocolo_mediacao ? ` [Protocolo: ${l.protocolo_mediacao}]` : "")).trim(),
+          condicoes: l.condicoes,
+          mediacao: l.mediacao,
+          plano_acao: ""
+        });
+      }
+    }
+
+    if (registrosFormatados.length === 0) {
+      alert("Preencha ao menos um item válido com Pedido e SKU.");
+      setSalvando(false);
+      return;
+    }
+
+    let res = await supabase.from("devolucoes").insert(registrosFormatados);
+
+    if (res.error) {
+      let fallback = registrosFormatados.map((item) => {
+        const copy = { ...item };
+        if (res.error?.message.includes("custo_frete")) {
+          copy.frete = copy.custo_frete;
+          delete copy.custo_frete;
+        }
+        if (res.error?.message.includes("quantidade")) delete copy.quantidade;
+        if (res.error?.message.includes("custo_unitario")) delete copy.custo_unitario;
+        if (res.error?.message.includes("plano_acao")) delete copy.plano_acao;
+        if (res.error?.message.includes("mediacao")) delete copy.mediacao;
+        return copy;
+      });
+      res = await supabase.from("devolucoes").insert(fallback);
+    }
+
+    if (res.error) {
+      alert("Erro ao gravar: " + res.error.message);
     } else {
-      alert(`✅ ${payload.length} pedido(s) gravado(s) com sucesso para ${canalSelecionado}!`);
-      setPedidosTexto("");
-      setMatrizPlanilha([]);
-      setPreviewQtd(0);
-      buscarPedidos();
-      setAbaAtiva("manifesto");
+      alert("✅ Devoluções gravadas com sucesso!");
+      setLinhas([criarLinhaVazia()]);
+      carregarDevolucoes();
     }
     setSalvando(false);
   };
 
-  const handleExcluirPedido = async (id: number) => {
-    if (!confirm("Remover este pedido?")) return;
-    await supabase.from("plp_pedidos").delete().eq("id", id);
-    buscarPedidos();
+  const excluirDevolucao = async (id: number) => {
+    if (!confirm("Tem certeza que deseja apagar este registo?")) return;
+    const { error } = await supabase.from("devolucoes").delete().eq("id", id);
+    if (error) alert("Erro ao excluir: " + error.message);
+    else carregarDevolucoes();
   };
 
-  const handleLimparPeriodo = async () => {
-    if (!confirm(`Remover TODOS os ${pedidos.length} pedidos deste filtro?`)) return;
-    const ids = pedidos.map((p) => p.id);
-    if (ids.length === 0) return;
-    setLoading(true);
-    await supabase.from("plp_pedidos").delete().in("id", ids);
-    buscarPedidos();
+  const salvarEdicaoInline = async (id: number) => {
+    const skuKey = normalizarSku(dadosEdicao.sku);
+    const custoCalc = Number(dadosEdicao.custo_unitario || custosMap.get(skuKey)?.custo_unitario || 0);
+
+    const payload: any = {
+      pedido: dadosEdicao.pedido,
+      canal: dadosEdicao.canal,
+      nf: dadosEdicao.nf,
+      solicitacao: dadosEdicao.solicitacao,
+      sku: dadosEdicao.sku,
+      quantidade: Math.max(1, parseInt(String(dadosEdicao.quantidade), 10) || 1),
+      produto: dadosEdicao.produto,
+      marca: dadosEdicao.marca,
+      pdv: Number(parseNumero(dadosEdicao.pdv)),
+      custo_frete: Number(parseNumero(dadosEdicao.custo_frete ?? dadosEdicao.frete)),
+      custo_unitario: custoCalc,
+      motivo: dadosEdicao.motivo,
+      observacoes: dadosEdicao.observacoes,
+      condicoes: dadosEdicao.condicoes,
+      mediacao: dadosEdicao.mediacao
+    };
+
+    let { error } = await supabase.from("devolucoes").update(payload).eq("id", id);
+    if (error && error.message.includes("custo_frete")) {
+      payload.frete = payload.custo_frete;
+      delete payload.custo_frete;
+      delete payload.quantidade;
+      delete payload.custo_unitario;
+      const res = await supabase.from("devolucoes").update(payload).eq("id", id);
+      error = res.error;
+    }
+
+    if (error) alert("Erro ao atualizar: " + error.message);
+    else {
+      setIdEditando(null);
+      carregarDevolucoes();
+    }
   };
 
   const handleBaixarExcel = () => {
-    if (pedidos.length === 0) return alert("Nenhum pedido no período filtrado.");
+    if (devolucoesFiltradas.length === 0) return alert("Nenhum registo para exportar.");
 
-    const dados = pedidos.map((item) => ({
-      "Data de Envio": item.data_envio,
-      "Número do Pedido": item.numero_pedido,
-      Canal: item.canal,
-      "Valor Frete (R$)": item.modalidade === "FLEX" ? Number(item.valor_frete || 0) : 0,
-      Modalidade: item.modalidade,
+    const dadosExportacao = devolucoesFiltradas.map((item) => ({
+      "Data": item.data_retorno ? item.data_retorno.split("-").reverse().join("/") : "",
+      "Pedido": item.pedido,
+      "Canal": item.canal,
+      "NF": item.nf || "",
+      "Solicitação": item.solicitacao || "Devolução",
+      "SKU": item.sku,
+      "Quantidade": item.quantidade || 1,
+      "Produto": item.produto,
+      "Marca": item.marca || "",
+      "PDV (R$)": Number(item.pdv || 0),
+      "Frete Reverso (R$)": Number(item.custo_frete ?? item.frete ?? 0),
+      "Motivo": item.motivo || "",
+      "Observações": item.observacoes || "",
+      "Boas Condições?": item.condicoes || "Não",
+      "Mediação": item.mediacao || "Nenhuma"
     }));
 
-    const ws = XLSX.utils.json_to_sheet(dados);
-    ws["!cols"] = [{ wch: 14 }, { wch: 24 }, { wch: 20 }, { wch: 18 }, { wch: 14 }];
-
+    const ws = XLSX.utils.json_to_sheet(dadosExportacao);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "PLP Expedição");
-    XLSX.writeFile(wb, `PLP_${filtroDataInicio}_ate_${filtroDataFim}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "Devoluções");
+    XLSX.writeFile(wb, `Relatorio_Devolucoes_${new Date().toISOString().split("T")[0]}.xlsx`);
   };
 
-  const handleImprimir = () => {
-    if (pedidos.length === 0) return alert("Nenhum pedido para imprimir.");
-    window.print();
-  };
+  const marcasDisponiveis = Array.from(
+    new Set(devolucoes.map((d) => d.marca).filter(Boolean))
+  );
 
-  const gerarColunasPorCanal = (listaPedidos: any[], maxLinhasPorColuna = 26) => {
-    const mapa = new Map<string, string[]>();
+  const devolucoesFiltradas = devolucoes.filter((item) => {
+    const matchCanal = filtroCanal === "TODOS" || item.canal === filtroCanal;
+    const matchMarca = filtroMarca === "TODAS" || item.marca === filtroMarca;
+    const matchSol = filtroSolicitacao === "TODOS" || item.solicitacao === filtroSolicitacao;
+    const matchMed =
+      filtroMediacao === "TODOS" ||
+      (filtroMediacao === "Ganha" && (item.mediacao === "Ganha" || item.mediacao === "Convertida / Ganha")) ||
+      item.mediacao === filtroMediacao;
+    const matchBusca =
+      !buscaTexto ||
+      String(item.pedido || "").toLowerCase().includes(buscaTexto.toLowerCase()) ||
+      String(item.nf || "").toLowerCase().includes(buscaTexto.toLowerCase()) ||
+      String(item.sku || "").toLowerCase().includes(buscaTexto.toLowerCase()) ||
+      String(item.produto || "").toLowerCase().includes(buscaTexto.toLowerCase()) ||
+      String(item.marca || "").toLowerCase().includes(buscaTexto.toLowerCase());
 
-    for (const p of listaPedidos) {
-      let grupoKey = String(p.canal || "Geral").trim();
+    return matchCanal && matchMarca && matchSol && matchMed && matchBusca;
+  });
 
-      if (p.modalidade === "FLEX" && filtroModalidade === "TODOS") {
-        grupoKey = "FLEX";
-      } else {
-        grupoKey = canais.find((cn) => cn.trim().toLowerCase() === grupoKey.toLowerCase()) || grupoKey;
-      }
-
-      if (!mapa.has(grupoKey)) mapa.set(grupoKey, []);
-      mapa.get(grupoKey)!.push(p.numero_pedido);
+  // MAPA PARA FORMATAR NÚMERO DE PEDIDO COMO CARRINHO CONJUNTO (EX: 49929, 49929 (1), 49929 (2)...)
+  const pedidoCounts = new Map<string, number>();
+  devolucoesFiltradas.forEach((item) => {
+    const ped = String(item.pedido || "").trim();
+    if (ped) {
+      pedidoCounts.set(ped, (pedidoCounts.get(ped) || 0) + 1);
     }
+  });
 
-    const colunas: { canal: string; totalCanal: number; pedidos: { idx: number; numero: string }[] }[] = [];
+  const pedidoCurrentIndex = new Map<string, number>();
 
-    mapa.forEach((peds, grupoNome) => {
-      const total = peds.length;
-      for (let i = 0; i < total; i += maxLinhasPorColuna) {
-        const pedSlice = peds.slice(i, i + maxLinhasPorColuna);
-        colunas.push({
-          canal: i === 0 ? grupoNome : `${grupoNome} (cont.)`,
-          totalCanal: total,
-          pedidos: pedSlice.map((num, j) => ({ idx: i + j + 1, numero: num }))
-        });
-      }
-    });
+  // Métricas do Topo
+  const totalItens = devolucoesFiltradas.reduce((acc, cur) => acc + Number(cur.quantidade || 1), 0);
+  const totalPdv = devolucoesFiltradas.reduce((acc, cur) => acc + Number(cur.pdv || 0), 0);
+  const totalFreteReverso = devolucoesFiltradas.reduce(
+    (acc, cur) => acc + Number(cur.custo_frete ?? cur.frete ?? 0),
+    0
+  );
 
-    return colunas;
-  };
+  const valorMediacoesGanhas = devolucoesFiltradas
+    .filter((cur) => cur.mediacao === "Ganha" || cur.mediacao === "Convertida / Ganha")
+    .reduce((acc, cur) => acc + Number(cur.pdv || 0), 0);
 
-  const pedidosFiltradosPesquisa = termoPesquisaPedido.trim()
-    ? pedidos.filter((p) => String(p.numero_pedido).toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase()))
-    : pedidos;
-
-  const colunasPorCanal = gerarColunasPorCanal(pedidosFiltradosPesquisa, 26);
-
-  const kpis = {
-    total: pedidosFiltradosPesquisa.length,
-    flex: pedidosFiltradosPesquisa.filter((p) => p.modalidade === "FLEX").length,
-    agencia: pedidosFiltradosPesquisa.filter((p) => p.modalidade === "AGENCIA").length,
-    correios: pedidosFiltradosPesquisa.filter((p) => p.modalidade === "CORREIOS").length,
-    custoTotalFlex: pedidosFiltradosPesquisa
-      .filter((p) => p.modalidade === "FLEX")
-      .reduce((acc, p) => acc + Number(p.valor_frete || 0), 0),
-  };
-
-  const formatarMetodoEnvioTexto = () => {
-    if (filtroModalidade === "TODOS") return "Todas as Modalidades";
-    if (filtroModalidade === "FLEX") return "Apenas pedidos Flex";
-    if (filtroModalidade === "AGENCIA") return "Apenas pedidos Agência";
-    if (filtroModalidade === "CORREIOS") return "Apenas pedidos Correios";
-    if (filtroModalidade === "AGENCIA_CORREIOS") return "Agências e Correios";
-    return "Todas as Modalidades";
-  };
+  const valorMediacoesPerdidas = devolucoesFiltradas
+    .filter((cur) => cur.mediacao === "Perdida")
+    .reduce((acc, cur) => {
+      const qtd = Math.max(1, Number(cur.quantidade || 1));
+      const skuKey = normalizarSku(cur.sku);
+      const custo = Number(cur.custo_unitario || custosMap.get(skuKey)?.custo_unitario || 0);
+      return acc + (qtd * custo);
+    }, 0);
 
   return (
-    <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans print:p-0 print:bg-white print:text-black">
-      
-      {/* CSS DE IMPRESSÃO MINIMALISTA A4 PAISAGEM */}
-      <style jsx global>{`
-        @media print {
-          @page {
-            size: A4 landscape;
-            margin: 6mm 8mm;
-          }
-          html, body {
-            background: #ffffff !important;
-            color: #000000 !important;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-          nav, header, button, .print-hide {
-            display: none !important;
-          }
-          .folha-print-manifesto {
-            width: 100% !important;
-            border: 1.5px solid #000000 !important;
-            background: #ffffff !important;
-            color: #000000 !important;
-            padding: 6px 8px !important;
-            box-shadow: none !important;
-          }
-          .bloco-assinatura-print {
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-          }
-          table {
-            border-collapse: collapse !important;
-            width: 100% !important;
-          }
-          td, th {
-            border: 1px solid #d1d5db !important;
-            padding: 2.5px 5px !important;
-            font-size: 10px !important;
-            line-height: 1.2 !important;
-          }
-        }
-      `}</style>
-
-      <div className="max-w-[98%] mx-auto space-y-6">
-        
-        {/* CABEÇALHO EM TELA */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
+    <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
+      <div className="max-w-[98%] mx-auto relative">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Expedição & PLPs</h1>
-            <p className="text-sm font-medium text-slate-400">
-              Controle de envios, analistas fixos por canal e impressão de manifesto
-            </p>
+            <h1 className="text-2xl font-black text-white tracking-tight">Painel de Devoluções & Mediações</h1>
+            <p className="text-sm font-medium text-slate-400">Controlo de Logística Reversa, Disputas e Plano de Ação</p>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setModalConfigAberto(true)}
-              className="bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-800 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all flex items-center gap-2"
-            >
-              <span>⚙️ Canais, Taxas & Analistas</span>
-            </button>
-            <Navbar />
-          </div>
+          <Navbar />
         </div>
 
-        {/* 2 ABAS */}
-        <div className="flex gap-3 print:hidden">
+        {/* NAVEGAÇÃO ENTRE ABAS */}
+        <div className="flex flex-wrap gap-3 mb-6">
           <button
-            onClick={() => setAbaAtiva("entrada")}
-            className={`px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
-              abaAtiva === "entrada"
-                ? "bg-purple-600 text-white shadow-purple-900/40"
-                : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-white"
+            onClick={() => setSubAba("registros")}
+            className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              subAba === "registros" ? "bg-purple-600 text-white shadow-purple-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"
             }`}
           >
-            📥 1. Entrada de Pedidos
+            📦 Registos & Devoluções
           </button>
           <button
-            onClick={() => setAbaAtiva("manifesto")}
-            className={`px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
-              abaAtiva === "manifesto"
-                ? "bg-indigo-600 text-white shadow-indigo-900/40"
-                : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-white"
+            onClick={() => setSubAba("plano_acao")}
+            className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              subAba === "plano_acao" ? "bg-purple-600 text-white shadow-purple-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"
             }`}
           >
-            🖨️ 2. Manifesto de Expedição & Impressão
+            🎯 Plano de Ação
           </button>
         </div>
 
-        {/* ======================================================== */}
-        {/* ABA 1: ENTRADA DE PEDIDOS (MANUAL OU PLANILHA)           */}
-        {/* ======================================================== */}
-        {abaAtiva === "entrada" && (
-          <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-5 animate-in fade-in duration-300 print:hidden">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-4">
-              <div>
-                <h2 className="text-base font-bold text-white flex items-center gap-2">
-                  <span>📥 Lançamento de Pedidos</span>
-                </h2>
-                <p className="text-xs text-slate-400 mt-0.5">Selecione o canal e a modalidade para registro</p>
-              </div>
+        {/* CARDS DE RESUMO (KPIs) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+          <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-xl">
+            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Total de Itens</span>
+            <span className="text-2xl font-black text-white">{totalItens} un.</span>
+          </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-400 uppercase">Origem:</span>
-                <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setModoEntrada("manual")}
-                    className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
-                      modoEntrada === "manual" ? "bg-purple-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    ✍️ Digitar / Colar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setModoEntrada("planilha")}
-                    className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
-                      modoEntrada === "planilha" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    📑 Planilha
-                  </button>
+          <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-xl">
+            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Total em PDV</span>
+            <span className="text-2xl font-black text-slate-200">{formatarMoeda(totalPdv)}</span>
+          </div>
+
+          <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-xl">
+            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Custo Frete Reverso</span>
+            <span className="text-2xl font-black text-rose-400">{formatarMoeda(totalFreteReverso)}</span>
+          </div>
+
+          <div className="bg-slate-900/90 border border-emerald-900/40 p-5 rounded-2xl shadow-xl bg-gradient-to-b from-emerald-950/20 to-slate-900">
+            <span className="block text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1">Mediações Ganhas (Recuperado)</span>
+            <span className="block text-[9px] text-slate-500 mb-2">Valor Total PDV Restituído</span>
+            <span className="text-2xl font-black text-emerald-400">{formatarMoeda(valorMediacoesGanhas)}</span>
+          </div>
+
+          <div className="bg-slate-900/90 border border-rose-900/40 p-5 rounded-2xl shadow-xl bg-gradient-to-b from-rose-950/20 to-slate-900">
+            <span className="block text-[10px] font-bold text-rose-400 uppercase tracking-wider mb-1">Mediações Perdidas (Prejuízo)</span>
+            <span className="block text-[9px] text-slate-500 mb-2">Quantidade × Custo SKU (CMV)</span>
+            <span className="text-2xl font-black text-rose-400">{formatarMoeda(valorMediacoesPerdidas)}</span>
+          </div>
+        </div>
+
+        {/* ABA 1: REGISTOS E DEVOLUÇÕES */}
+        {subAba === "registros" && (
+          <div className="space-y-8">
+            <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <span>➕ Registar Devoluções & Mediações</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Marque <strong>🛒</strong> para abrir a caixinha de múltiplos SKUs no mesmo pedido. Ao selecionar Mediação, registre a contestação.
+                  </p>
                 </div>
-              </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data de Envio:</label>
-                <input
-                  type="date"
-                  value={dataEnvio}
-                  onChange={(e) => setDataEnvio(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                  Canal de Venda:
-                </label>
-                <select
-                  value={canalSelecionado}
-                  onChange={(e) => setCanalSelecionado(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer"
-                >
-                  {canais.map((c, i) => (
-                    <option key={i} value={c}>
-                      {c} ({obterAnalistaDoCanal(c, analistasPorCanal)})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                  Modalidade de Envio:
-                </label>
-                <select
-                  value={modalidade}
-                  onChange={(e) => setModalidade(e.target.value as any)}
-                  className={`w-full bg-slate-950 border rounded-xl p-2.5 text-xs font-black outline-none cursor-pointer ${
-                    modalidade === "FLEX" ? "border-amber-500/80 text-amber-400" : "border-slate-700 text-white"
-                  }`}
-                >
-                  <option value="FLEX">⚡ FLEX (Com Frete)</option>
-                  <option value="AGENCIA">🏢 AGÊNCIA (R$ 0,00)</option>
-                  <option value="CORREIOS">📮 CORREIOS (R$ 0,00)</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
-              <span className="text-slate-400">
-                Colaborador(a) Fixo(a) do Canal: <strong className="text-indigo-400">{obterAnalistaDoCanal(canalSelecionado, analistasPorCanal)}</strong> | Frete na Coluna D (Excel):
-              </span>
-              <strong className={modalidade === "FLEX" ? "text-amber-400 text-sm font-mono" : "text-slate-500"}>
-                {modalidade === "FLEX" ? formatarMoeda(obterTaxaFlexDoCanal(canalSelecionado, taxasFlexCanal)) : "R$ 0,00"}
-              </strong>
-            </div>
-
-            {modoEntrada === "manual" ? (
-              <div className="space-y-2">
-                <label className="block text-[10px] font-bold text-slate-400 uppercase">
-                  Cole os números de pedido (um por linha ou separados por vírgula):
-                </label>
-                <textarea
-                  rows={4}
-                  value={pedidosTexto}
-                  onChange={(e) => setPedidosTexto(e.target.value)}
-                  placeholder="2000018949435054&#10;2000018941773046&#10;2000018941467386"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-white outline-none focus:border-purple-500 transition-all resize-y"
-                />
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800 items-end">
-                <div className="md:col-span-2">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ficheiro (Excel/CSV):</label>
+                <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Data Global de Retorno:</label>
                   <input
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    onChange={handleUploadPlanilha}
-                    className="w-full bg-slate-900 border border-slate-700 file:border-0 file:bg-indigo-600 file:text-white file:text-xs file:font-bold file:py-1.5 file:px-3 file:rounded-lg file:mr-3 file:cursor-pointer rounded-xl p-1 text-xs text-slate-300 cursor-pointer"
+                    type="date"
+                    value={dataGlobalRetorno}
+                    onChange={(e) => setDataGlobalRetorno(e.target.value)}
+                    className="bg-slate-900 border border-slate-700 text-white rounded-lg p-1.5 text-xs font-mono outline-none focus:border-purple-500 cursor-pointer"
                   />
                 </div>
+              </div>
+
+              <form onSubmit={salvarDevolucoes} className="space-y-4">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[10px] border-b border-slate-800">
+                      <tr>
+                        <th className="p-2 text-center w-8" title="Múltiplos SKUs / Carrinho">🛒</th>
+                        <th className="p-2 w-28">Pedido</th>
+                        <th className="p-2 w-36">Canal</th>
+                        <th className="p-2 w-24">NF</th>
+                        <th className="p-2 w-28">Solicitação</th>
+                        <th className="p-2 w-32">SKU</th>
+                        <th className="p-2 text-center w-16">Qtd</th>
+                        <th className="p-2 min-w-[180px]">Produto</th>
+                        <th className="p-2 w-24">Marca</th>
+                        <th className="p-2 w-24 text-right">PDV (R$)</th>
+                        <th className="p-2 w-20 text-right">Frete</th>
+                        <th className="p-2 w-48">Motivo</th>
+                        <th className="p-2 min-w-[140px]">Observações</th>
+                        <th className="p-2 w-20 text-center">Condições?</th>
+                        <th className="p-2 w-36">Mediação / Status</th>
+                        <th className="p-2 text-center w-12">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                      {linhas.map((l, index) => {
+                        const totalPdvCarrinho = l.carrinho
+                          ? l.itensCarrinho.reduce((acc, sub) => acc + Number(parseNumero(sub.pdv)), 0)
+                          : 0;
+
+                        return (
+                          <React.Fragment key={index}>
+                            <tr className={`hover:bg-slate-800/20 ${l.carrinho ? "bg-purple-950/20" : ""}`}>
+                              {/* CARRINHO CHECKBOX */}
+                              <td className="p-2 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={l.carrinho}
+                                  onChange={(e) => atualizarLinha(index, "carrinho", e.target.checked)}
+                                  className="accent-purple-600 rounded cursor-pointer w-4 h-4"
+                                  title="Marque para abrir a caixinha de múltiplos SKUs"
+                                />
+                              </td>
+
+                              {/* Pedido */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.pedido}
+                                  onChange={(e) => atualizarLinha(index, "pedido", e.target.value)}
+                                  placeholder="123456789"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500"
+                                  required
+                                />
+                              </td>
+
+                              {/* Canal */}
+                              <td className="p-2">
+                                <select
+                                  value={l.canal}
+                                  onChange={(e) => atualizarLinha(index, "canal", e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500 cursor-pointer"
+                                >
+                                  {canais.map((c, i) => (
+                                    <option key={i} value={c}>{c}</option>
+                                  ))}
+                                </select>
+                              </td>
+
+                              {/* NF */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.nf}
+                                  onChange={(e) => atualizarLinha(index, "nf", e.target.value)}
+                                  placeholder="12345"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500"
+                                />
+                              </td>
+
+                              {/* Solicitação */}
+                              <td className="p-2">
+                                <select
+                                  value={l.solicitacao}
+                                  onChange={(e) => atualizarLinha(index, "solicitacao", e.target.value as any)}
+                                  className={`w-full bg-slate-900 border rounded-lg p-2 text-xs font-bold outline-none cursor-pointer ${
+                                    l.solicitacao === "Troca" ? "text-amber-400 border-amber-600/50" : "text-purple-400 border-purple-600/50"
+                                  }`}
+                                >
+                                  <option value="Devolução">Devolução</option>
+                                  <option value="Troca">Troca</option>
+                                </select>
+                              </td>
+
+                              {/* SKU */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.carrinho ? "Múltiplos (Caixinha)" : l.sku}
+                                  onChange={(e) => atualizarLinha(index, "sku", e.target.value)}
+                                  placeholder="SKU..."
+                                  disabled={l.carrinho}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono outline-none ${
+                                    l.carrinho ? "text-purple-400 opacity-70 cursor-not-allowed italic" : "text-white focus:border-purple-500"
+                                  }`}
+                                  required={!l.carrinho}
+                                />
+                              </td>
+
+                              {/* QUANTIDADE */}
+                              <td className="p-2 text-center">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={l.carrinho ? l.itensCarrinho.reduce((acc, sub) => acc + (parseInt(String(sub.quantidade), 10) || 1), 0) : l.quantidade}
+                                  onChange={(e) => atualizarLinha(index, "quantidade", e.target.value)}
+                                  disabled={l.carrinho}
+                                  className={`w-14 bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center outline-none ${
+                                    l.carrinho ? "text-purple-400 opacity-70 cursor-not-allowed font-bold" : "text-indigo-400 font-bold focus:border-purple-500"
+                                  }`}
+                                />
+                              </td>
+
+                              {/* Produto */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.carrinho ? `${l.itensCarrinho.length} item(ns) no carrinho` : l.produto}
+                                  onChange={(e) => atualizarLinha(index, "produto", e.target.value)}
+                                  placeholder="Auto-preenchido"
+                                  disabled={l.carrinho}
+                                  className={`w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs outline-none truncate ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed italic" : "text-slate-300"
+                                  }`}
+                                />
+                              </td>
+
+                              {/* Marca */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.carrinho ? "-" : l.marca}
+                                  onChange={(e) => atualizarLinha(index, "marca", e.target.value)}
+                                  placeholder="Marca"
+                                  disabled={l.carrinho}
+                                  className={`w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs outline-none text-center ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed" : "text-slate-300"
+                                  }`}
+                                />
+                              </td>
+
+                              {/* PDV (R$) */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.carrinho ? formatarMoeda(totalPdvCarrinho) : l.pdv}
+                                  onChange={(e) => atualizarLinha(index, "pdv", e.target.value)}
+                                  placeholder="0.00"
+                                  disabled={l.carrinho}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-right outline-none ${
+                                    l.carrinho ? "text-emerald-400 font-bold bg-slate-950/80 cursor-not-allowed" : "text-emerald-400 focus:border-purple-500"
+                                  }`}
+                                />
+                              </td>
+
+                              {/* Frete */}
+                              <td className="p-2">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={l.custo_frete}
+                                  onChange={(e) => atualizarLinha(index, "custo_frete", e.target.value)}
+                                  placeholder="0"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-rose-400 text-right outline-none focus:border-purple-500"
+                                />
+                              </td>
+
+                              {/* Motivo */}
+                              <td className="p-2">
+                                <select
+                                  value={l.motivo}
+                                  disabled={l.carrinho}
+                                  onChange={(e) => atualizarLinha(index, "motivo", e.target.value)}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs outline-none cursor-pointer truncate ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed opacity-60" : "text-white"
+                                  }`}
+                                >
+                                  {MOTIVOS_OFICIAIS.map((m, i) => (
+                                    <option key={i} value={m}>{m}</option>
+                                  ))}
+                                </select>
+                              </td>
+
+                              {/* Observações */}
+                              <td className="p-2">
+                                <input
+                                  type="text"
+                                  value={l.observacoes}
+                                  disabled={l.carrinho}
+                                  onChange={(e) => atualizarLinha(index, "observacoes", e.target.value)}
+                                  placeholder={l.carrinho ? "Preencha na caixinha abaixo" : "Detalhes..."}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs outline-none ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed opacity-60" : "text-slate-300"
+                                  }`}
+                                />
+                              </td>
+
+                              {/* Condições */}
+                              <td className="p-2 text-center">
+                                <select
+                                  value={l.condicoes}
+                                  disabled={l.carrinho}
+                                  onChange={(e) => atualizarLinha(index, "condicoes", e.target.value as any)}
+                                  className={`w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs outline-none cursor-pointer text-center ${
+                                    l.carrinho ? "text-slate-500 cursor-not-allowed opacity-60" : "text-white"
+                                  }`}
+                                >
+                                  <option value="Não">Não</option>
+                                  <option value="Sim">Sim</option>
+                                </select>
+                              </td>
+
+                              {/* MEDIAÇÃO / STATUS */}
+                              <td className="p-2">
+                                <select
+                                  value={l.mediacao}
+                                  onChange={(e) => atualizarLinha(index, "mediacao", e.target.value as any)}
+                                  className={`w-full bg-slate-900 border rounded-lg p-2 text-xs font-black outline-none cursor-pointer ${
+                                    l.mediacao === "Ganha"
+                                      ? "border-emerald-500 text-emerald-400 bg-emerald-950/20"
+                                      : l.mediacao === "Perdida"
+                                      ? "border-rose-500 text-rose-400 bg-rose-950/20"
+                                      : l.mediacao === "Em Disputa"
+                                      ? "border-amber-500 text-amber-400 bg-amber-950/20"
+                                      : "border-slate-700 text-slate-400"
+                                  }`}
+                                >
+                                  <option value="Nenhuma">Nenhuma</option>
+                                  <option value="Em Disputa">Em Disputa</option>
+                                  <option value="Ganha">Ganha</option>
+                                  <option value="Perdida">Perdida</option>
+                                </select>
+                              </td>
+
+                              {/* Remover Linha Principal */}
+                              <td className="p-2 text-center">
+                                {linhas.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removerLinha(index)}
+                                    className="bg-rose-950/60 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded-lg text-xs font-bold cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+
+                            {/* CAIXINHA EXPANSÍVEL: MÚLTIPLOS PRODUTOS DO CARRINHO */}
+                            {l.carrinho && (
+                              <tr className="bg-purple-950/15 border-b border-purple-900/40">
+                                <td colSpan={16} className="p-4 pl-6 md:pl-10">
+                                  <div className="bg-slate-950/80 p-5 rounded-2xl border border-purple-800/40 shadow-2xl">
+                                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-2 border-b border-slate-800">
+                                      <h4 className="text-xs font-black text-purple-400 uppercase tracking-wider flex items-center gap-2">
+                                        <span>🛒 Caixinha do Carrinho · Pedido #{l.pedido || "---"} ({l.canal})</span>
+                                      </h4>
+                                      <span className="text-[11px] font-mono font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-900 px-3 py-1 rounded-lg">
+                                        Total PDV: {formatarMoeda(totalPdvCarrinho)} | Frete p/ item: {formatarMoeda(Number((parseNumero(l.custo_frete) / (l.itensCarrinho.length || 1)).toFixed(2)))}
+                                      </span>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                      {l.itensCarrinho.map((sub, subIdx) => (
+                                        <div key={subIdx} className="grid grid-cols-1 md:grid-cols-12 gap-2 bg-slate-900/90 p-3 rounded-xl border border-slate-800 items-center">
+                                          <div className="md:col-span-2">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">SKU</label>
+                                            <input
+                                              type="text"
+                                              placeholder="SKU"
+                                              value={sub.sku}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "sku", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs font-mono text-white outline-none focus:border-purple-500"
+                                              required
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-1">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Qtd</label>
+                                            <input
+                                              type="number"
+                                              min="1"
+                                              value={sub.quantidade}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "quantidade", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs font-mono text-indigo-400 font-bold outline-none text-center"
+                                              required
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-3">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Produto</label>
+                                            <input
+                                              type="text"
+                                              placeholder="Nome do Produto"
+                                              value={sub.produto}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "produto", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-300 outline-none truncate"
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-1">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Marca</label>
+                                            <input
+                                              type="text"
+                                              placeholder="Marca"
+                                              value={sub.marca}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "marca", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-400 outline-none text-center"
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-1">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">PDV (R$)</label>
+                                            <input
+                                              type="number"
+                                              step="0.01"
+                                              placeholder="0.00"
+                                              value={sub.pdv}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "pdv", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs font-mono text-emerald-400 outline-none text-right"
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-2">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Motivo</label>
+                                            <select
+                                              value={sub.motivo}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "motivo", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-white outline-none cursor-pointer truncate"
+                                            >
+                                              {MOTIVOS_OFICIAIS.map((m, i) => (
+                                                <option key={i} value={m}>{m}</option>
+                                              ))}
+                                            </select>
+                                          </div>
+
+                                          <div className="md:col-span-1">
+                                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Obs</label>
+                                            <input
+                                              type="text"
+                                              placeholder="Obs"
+                                              value={sub.observacoes}
+                                              onChange={(e) => atualizarItemCarrinho(index, subIdx, "observacoes", e.target.value)}
+                                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-300 outline-none"
+                                            />
+                                          </div>
+
+                                          <div className="md:col-span-1 flex items-center justify-end gap-1 pt-3">
+                                            {l.itensCarrinho.length > 1 && (
+                                              <button
+                                                type="button"
+                                                onClick={() => removerItemCarrinho(index, subIdx)}
+                                                className="text-rose-400 hover:text-rose-300 font-bold px-2 py-1 text-xs bg-rose-950/60 rounded"
+                                                title="Remover este item do carrinho"
+                                              >
+                                                ✕
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+
+                                      <button
+                                        type="button"
+                                        onClick={() => adicionarItemCarrinho(index)}
+                                        className="mt-3 text-[10px] font-bold uppercase text-purple-400 hover:text-purple-300 flex items-center gap-1.5 cursor-pointer bg-purple-950/30 px-3 py-1.5 rounded-lg border border-purple-800/40"
+                                      >
+                                        <span>+ Adicionar Outro Produto a Este Pedido (Carrinho)</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+
+                            {/* CAIXINHA EXPANSÍVEL: DETALHES DE MEDIAÇÃO */}
+                            {l.mediacao !== "Nenhuma" && (
+                              <tr className="bg-amber-950/10 border-b border-amber-900/30">
+                                <td colSpan={16} className="p-3 pl-6 md:pl-10">
+                                  <div className="bg-slate-950/90 p-3 rounded-xl border border-amber-800/40 flex flex-wrap items-center gap-4">
+                                    <span className="text-[11px] font-black uppercase text-amber-400">
+                                      ⚖️ Detalhes da Mediação ({l.mediacao}):
+                                    </span>
+                                    <div className="flex-1 min-w-[200px]">
+                                      <input
+                                        type="text"
+                                        value={l.protocolo_mediacao}
+                                        onChange={(e) => atualizarLinha(index, "protocolo_mediacao", e.target.value)}
+                                        placeholder="Protocolo da Disputa / Chamado / Motivo do Ganho ou Perda..."
+                                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-white outline-none focus:border-amber-500"
+                                      />
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex justify-between items-center pt-3">
+                  <button
+                    type="button"
+                    onClick={adicionarLinha}
+                    className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer"
+                  >
+                    + Adicionar Outro Pedido
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={salvando}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg"
+                  >
+                    {salvando ? "A Salvar..." : "💾 Salvar Devoluções"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* TABELA DE DEVOLUÇÕES REGISTADAS */}
+            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+              <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Coluna do Pedido:</label>
+                  <h2 className="text-lg font-bold text-white">Devoluções Registadas</h2>
+                  <p className="text-xs text-slate-400 mt-1">Histórico completo com marcas, custos de logística reversa e desfecho das mediações.</p>
+                </div>
+
+                {/* Filtros e Botão Download Excel */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleBaixarExcel}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-md flex items-center gap-2"
+                  >
+                    <span>📥 Baixar Relatório Excel</span>
+                  </button>
+
                   <input
                     type="text"
-                    value={colunaPedido}
-                    onChange={(e) => setColunaPedido(e.target.value.toUpperCase())}
-                    placeholder="A"
-                    className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none"
+                    placeholder="Buscar Pedido, NF, SKU..."
+                    value={buscaTexto}
+                    onChange={(e) => setBuscaTexto(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-44"
                   />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha Inicial:</label>
-                  <input
-                    type="number"
-                    value={linhaInicial}
-                    onChange={(e) => setLinhaInicial(e.target.value)}
-                    placeholder="2"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none"
-                  />
-                </div>
-              </div>
-            )}
 
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={handleSalvarPedidos}
-                disabled={salvando}
-                className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-8 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-purple-900/40 transition-all"
-              >
-                {salvando ? "A Gravar..." : modoEntrada === "manual" ? "Salvar Pedido(s)" : `Importar Planilha ${previewQtd > 0 ? `(${previewQtd} encontrados)` : ""}`}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* ABA 2: MANIFESTO DE EXPEDIÇÃO & IMPRESSÃO PAISAGEM       */}
-        {/* ======================================================== */}
-        {abaAtiva === "manifesto" && (
-          <div className="space-y-6">
-            
-            {/* PAINEL DE FILTROS EM TELA */}
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 print:hidden">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                <div>
-                  <h2 className="text-base font-bold text-white">Manifesto de Expedição</h2>
-                  <p className="text-xs text-slate-400">Listas organizadas por canal lado a lado na folha deitada</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={handleImprimir}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-indigo-900/40 transition-all flex items-center gap-2"
-                  >
-                    <span>🖨️ Imprimir Lista (A4 Deitada)</span>
-                  </button>
-                  <button
-                    onClick={handleBaixarExcel}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-emerald-900/30 transition-all flex items-center gap-2"
-                  >
-                    <span>📥 Baixar Excel</span>
-                  </button>
-                  <button
-                    onClick={handleLimparPeriodo}
-                    disabled={pedidos.length === 0}
-                    className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
-                  >
-                    🗑️ Limpar Filtro
-                  </button>
-                </div>
-              </div>
-
-              {/* Filtros Integrados */}
-              <div className="grid grid-cols-1 md:grid-cols-7 gap-3 items-end">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">De:</label>
-                  <input
-                    type="date"
-                    value={filtroDataInicio}
-                    onChange={(e) => setFiltroDataInicio(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Até:</label>
-                  <input
-                    type="date"
-                    value={filtroDataFim}
-                    onChange={(e) => setFiltroDataFim(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white outline-none"
-                  />
-                </div>
-
-                {/* FILTRAR POR ANALISTA */}
-                <div>
-                  <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">
-                    Filtrar Analista:
-                  </label>
-                  <select
-                    value={filtroAnalista}
-                    onChange={(e) => handleMudarFiltroAnalista(e.target.value)}
-                    className="w-full bg-slate-950 border border-purple-500/50 rounded-xl p-2 text-xs font-bold text-purple-300 outline-none cursor-pointer"
-                  >
-                    <option value="TODOS">Todos os Analistas</option>
-                    {listaAnalistasUnicos.map((a, i) => (
-                      <option key={i} value={a}>{a}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* CANAL */}
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal:</label>
                   <select
                     value={filtroCanal}
                     onChange={(e) => setFiltroCanal(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-bold text-white outline-none cursor-pointer"
+                    className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer"
                   >
-                    <option value="TODOS">
-                      {filtroAnalista === "TODOS" ? "Todos os Canais" : `Todos de ${filtroAnalista}`}
-                    </option>
-                    {canaisFiltradosParaSelect.map((c, i) => (
+                    <option value="TODOS">Todos os Canais</option>
+                    {canais.map((c, i) => (
                       <option key={i} value={c}>{c}</option>
                     ))}
                   </select>
-                </div>
 
-                {/* MODALIDADE COM AS 5 OPÇÕES SOLICITADAS */}
-                <div>
-                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Modalidade:</label>
                   <select
-                    value={filtroModalidade}
-                    onChange={(e) => setFiltroModalidade(e.target.value)}
-                    className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2 text-xs font-bold text-amber-300 outline-none cursor-pointer"
+                    value={filtroMarca}
+                    onChange={(e) => setFiltroMarca(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer"
                   >
-                    <option value="TODOS">Todas as modalidades</option>
-                    <option value="FLEX">Apenas pedidos Flex</option>
-                    <option value="AGENCIA">Apenas pedidos Agência</option>
-                    <option value="CORREIOS">Apenas pedidos Correios</option>
-                    <option value="AGENCIA_CORREIOS">Agências e Correios</option>
+                    <option value="TODAS">Todas as Marcas</option>
+                    {marcasDisponiveis.map((m, i) => (
+                      <option key={i} value={m}>{m}</option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={filtroSolicitacao}
+                    onChange={(e) => setFiltroSolicitacao(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer"
+                  >
+                    <option value="TODOS">Todas Solicitações</option>
+                    <option value="Devolução">Devolução</option>
+                    <option value="Troca">Troca</option>
+                  </select>
+
+                  <select
+                    value={filtroMediacao}
+                    onChange={(e) => setFiltroMediacao(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer"
+                  >
+                    <option value="TODOS">Todas Mediações</option>
+                    <option value="Nenhuma">Nenhuma</option>
+                    <option value="Em Disputa">Em Disputa</option>
+                    <option value="Ganha">Ganha</option>
+                    <option value="Perdida">Perdida</option>
                   </select>
                 </div>
-
-                {/* PESQUISAR PEDIDO */}
-                <div>
-                  <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">
-                    🔍 Pesquisar Pedido:
-                  </label>
-                  <input
-                    type="text"
-                    value={termoPesquisaPedido}
-                    onChange={(e) => setTermoPesquisaPedido(e.target.value)}
-                    placeholder="N.º do pedido..."
-                    className="w-full bg-slate-950 border border-emerald-500/50 rounded-xl p-2 text-xs font-mono text-emerald-300 outline-none placeholder:text-slate-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-                    Analista(s) no Papel:
-                  </label>
-                  <input
-                    type="text"
-                    value={analistaDocumento}
-                    onChange={(e) => setAnalistaDocumento(e.target.value)}
-                    placeholder="Nome..."
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-semibold text-white outline-none"
-                  />
-                </div>
               </div>
 
-              {/* KPIs de Tela */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-1">
-                <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-xl">
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Total Volumes</span>
-                  <span className="text-base font-black text-white">{kpis.total}</span>
-                </div>
-                <div className="bg-slate-950 border border-amber-900/40 p-2.5 rounded-xl">
-                  <span className="block text-[9px] font-bold text-amber-400 uppercase">Flex</span>
-                  <span className="text-base font-black text-amber-400">{kpis.flex}</span>
-                </div>
-                <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-xl">
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Agência</span>
-                  <span className="text-base font-black text-white">{kpis.agencia}</span>
-                </div>
-                <div className="bg-slate-950 border border-indigo-900/40 p-2.5 rounded-xl">
-                  <span className="block text-[9px] font-bold text-indigo-400 uppercase">Correios</span>
-                  <span className="text-base font-black text-indigo-400">{kpis.correios}</span>
-                </div>
-                <div className="bg-slate-950 border border-emerald-900/40 p-2.5 rounded-xl">
-                  <span className="block text-[9px] font-bold text-emerald-400 uppercase">Frete Flex Total</span>
-                  <span className="text-base font-black text-emerald-400">{formatarMoeda(kpis.custoTotalFlex)}</span>
-                </div>
-              </div>
-            </div>
+              {loading ? (
+                <p className="p-8 text-center text-slate-400 font-medium">A carregar devoluções...</p>
+              ) : devolucoesFiltradas.length === 0 ? (
+                <p className="p-8 text-center text-slate-500 font-medium">Nenhuma devolução encontrada para os filtros selecionados.</p>
+              ) : (
+                <div className="overflow-x-auto max-h-[600px]">
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                      <tr>
+                        <th className="p-3">Data</th>
+                        <th className="p-3">Pedido / NF</th>
+                        <th className="p-3">Canal</th>
+                        <th className="p-3 text-center">Tipo</th>
+                        <th className="p-3">SKU</th>
+                        <th className="p-3 text-center">Qtd</th>
+                        <th className="p-3 min-w-[200px]">Produto</th>
+                        <th className="p-3 text-center">Marca</th>
+                        <th className="p-3 text-right">PDV</th>
+                        <th className="p-3 text-right">Frete Reverso</th>
+                        <th className="p-3">Motivo / Obs</th>
+                        <th className="p-3 text-center">Boas Condições?</th>
+                        <th className="p-3 text-center">Mediação</th>
+                        <th className="p-3 text-center">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                      {devolucoesFiltradas.map((item) => {
+                        const isEditing = idEditando === item.id;
+                        const custoFreteItem = Number(item.custo_frete ?? item.frete ?? 0);
+                        const skuKey = normalizarSku(item.sku);
+                        const custoUnit = Number(item.custo_unitario || custosMap.get(skuKey)?.custo_unitario || 0);
+                        const qtdItem = Math.max(1, Number(item.quantidade || 1));
+                        const perdaTotalItem = qtdItem * custoUnit;
 
-            {/* ======================================================== */}
-            {/* DOCUMENTO DE IMPRESSÃO (A4 PAISAGEM - COLUNAS POR CANAL) */}
-            {/* ======================================================== */}
-            <div className="folha-print-manifesto bg-white text-black p-4 rounded-xl border border-slate-300 shadow-xl">
-              
-              {/* CABEÇALHO */}
-              <div className="border-b-2 border-black pb-2 mb-3">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h1 className="text-base font-black uppercase tracking-wide">PLP DE ENVIOS — BEST FIT</h1>
-                    <p className="text-[10px] text-gray-700">Controle de Expedição e Autorização de Envio</p>
-                  </div>
-                  <div className="text-right text-[11px] leading-tight">
-                    <p>Data de Envio: <strong>{filtroDataInicio === filtroDataFim ? filtroDataInicio : `${filtroDataInicio} a ${filtroDataFim}`}</strong></p>
-                    <p>Modalidade de Envio: <strong className="uppercase">{formatarMetodoEnvioTexto()}</strong></p>
-                    <p>Colaborador(es) do Canal: <strong>{analistaDocumento || "Expedição"}</strong></p>
-                  </div>
-                </div>
-              </div>
+                        const pedOriginal = String(item.pedido || "").trim();
+                        const totalPedidos = pedidoCounts.get(pedOriginal) || 1;
+                        let pedidoFormatado = pedOriginal;
 
-              {/* LISTAS DE PEDIDOS AGRUPADAS POR CANAL LADO A LADO */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 print:grid-cols-4 gap-3">
-                {colunasPorCanal.map((col, cIdx) => {
-                  const contemBusca = termoPesquisaPedido.trim() && col.pedidos.some(p => p.numero.toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase()));
+                        if (totalPedidos > 1) {
+                          const currIdx = (pedidoCurrentIndex.get(pedOriginal) || 0) + 1;
+                          pedidoCurrentIndex.set(pedOriginal, currIdx);
+                          if (currIdx > 1) {
+                            pedidoFormatado = `${pedOriginal} (${currIdx - 1})`;
+                          }
+                        }
 
-                  return (
-                    <div
-                      key={cIdx}
-                      className={`border rounded print:rounded-none overflow-hidden self-start ${
-                        contemBusca ? "border-2 border-purple-600 shadow-md" : "border-black"
-                      }`}
-                    >
-                      {/* TÍTULO DO CANAL */}
-                      <div className={`border-b border-black font-bold text-xs p-1.5 text-center uppercase tracking-wide ${
-                        col.canal === "FLEX" ? "bg-amber-100 text-amber-950 font-black" : contemBusca ? "bg-purple-100 text-purple-900" : "bg-gray-100"
-                      }`}>
-                        {col.canal} <span className="text-[10px] text-gray-600 font-normal">({col.pedidos.length})</span>
-                      </div>
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                            {/* Data */}
+                            <td className="p-3 font-mono text-slate-400">
+                              {item.data_retorno ? item.data_retorno.split("-").reverse().join("/") : "-"}
+                            </td>
 
-                      {/* LISTA SEQUENCIAL DE PEDIDOS DO CANAL */}
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-gray-50 border-b border-gray-300 text-[9px] uppercase font-bold text-gray-700">
-                            <th className="p-1 text-center w-8 border-r border-gray-300">#</th>
-                            <th className="p-1">Número do Pedido</th>
+                            {/* Pedido / NF formatado como conjunto */}
+                            <td className="p-3 font-mono font-bold text-slate-200">
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  value={dadosEdicao.pedido}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, pedido: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 w-24 text-white"
+                                />
+                              ) : (
+                                <div>
+                                  <span className={totalPedidos > 1 ? "text-purple-300 font-extrabold" : ""}>{pedidoFormatado}</span>
+                                  {item.nf && <span className="block text-[10px] text-slate-500">NF: {item.nf}</span>}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Canal */}
+                            <td className="p-3 font-bold text-white">{item.canal}</td>
+
+                            {/* Tipo */}
+                            <td className="p-3 text-center">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                  item.solicitacao === "Troca"
+                                    ? "bg-amber-950/60 text-amber-400 border border-amber-900/50"
+                                    : "bg-purple-950/60 text-purple-400 border border-purple-900/50"
+                                }`}
+                              >
+                                {item.solicitacao || "Devolução"}
+                              </span>
+                            </td>
+
+                            {/* SKU */}
+                            <td className="p-3 font-mono text-indigo-400 font-bold">{item.sku}</td>
+
+                            {/* QTD */}
+                            <td className="p-3 text-center font-bold text-indigo-300">
+                              {isEditing ? (
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={dadosEdicao.quantidade}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, quantidade: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 w-12 text-center text-white"
+                                />
+                              ) : (
+                                `${qtdItem} un.`
+                              )}
+                            </td>
+
+                            {/* Produto */}
+                            <td className="p-3 text-slate-300 max-w-[200px] truncate" title={item.produto}>
+                              {item.produto}
+                            </td>
+
+                            {/* MARCA */}
+                            <td className="p-3 text-center">
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  value={dadosEdicao.marca}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, marca: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-center text-white"
+                                />
+                              ) : (
+                                <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px] font-bold font-mono">
+                                  {item.marca || "-"}
+                                </span>
+                              )}
+                            </td>
+
+                            {/* PDV */}
+                            <td className="p-3 text-right font-mono text-emerald-400 font-bold">
+                              {isEditing ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={dadosEdicao.pdv}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, pdv: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 w-20 text-right text-white"
+                                />
+                              ) : (
+                                formatarMoeda(item.pdv)
+                              )}
+                            </td>
+
+                            {/* Frete Reverso */}
+                            <td className="p-3 text-right font-mono text-rose-400">
+                              {isEditing ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={dadosEdicao.custo_frete}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, custo_frete: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 w-16 text-right text-white"
+                                />
+                              ) : (
+                                formatarMoeda(custoFreteItem)
+                              )}
+                            </td>
+
+                            {/* Motivo */}
+                            <td className="p-3">
+                              {isEditing ? (
+                                <select
+                                  value={dadosEdicao.motivo}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, motivo: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white max-w-[200px]"
+                                >
+                                  {MOTIVOS_OFICIAIS.map((m, i) => (
+                                    <option key={i} value={m}>{m}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <>
+                                  <span className="font-bold text-slate-200">{item.motivo}</span>
+                                  {item.observacoes && (
+                                    <span className="block text-[11px] text-slate-400 max-w-[200px] truncate" title={item.observacoes}>
+                                      {item.observacoes}
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                            </td>
+
+                            {/* Condições */}
+                            <td className="p-3 text-center">
+                              {isEditing ? (
+                                <select
+                                  value={dadosEdicao.condicoes}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, condicoes: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white"
+                                >
+                                  <option value="Não">Não</option>
+                                  <option value="Sim">Sim</option>
+                                </select>
+                              ) : (
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    item.condicoes === "Sim"
+                                      ? "bg-emerald-950/60 text-emerald-400 border border-emerald-900/40"
+                                      : "bg-rose-950/60 text-rose-400 border border-rose-900/40"
+                                  }`}
+                                >
+                                  {item.condicoes || "Não"}
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Mediação */}
+                            <td className="p-3 text-center">
+                              {isEditing ? (
+                                <select
+                                  value={dadosEdicao.mediacao || "Nenhuma"}
+                                  onChange={(e) => setDadosEdicao({ ...dadosEdicao, mediacao: e.target.value })}
+                                  className="bg-slate-900 border border-slate-700 rounded p-1 text-xs text-white font-bold"
+                                >
+                                  <option value="Nenhuma">Nenhuma</option>
+                                  <option value="Em Disputa">Em Disputa</option>
+                                  <option value="Ganha">Ganha</option>
+                                  <option value="Perdida">Perdida</option>
+                                </select>
+                              ) : (
+                                <div className="flex flex-col items-center gap-0.5">
+                                  <span
+                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
+                                      item.mediacao === "Ganha" || item.mediacao === "Convertida / Ganha"
+                                        ? "bg-emerald-950/80 text-emerald-300 border-emerald-700"
+                                        : item.mediacao === "Perdida"
+                                        ? "bg-rose-950/80 text-rose-300 border-rose-700"
+                                        : item.mediacao === "Em Disputa"
+                                        ? "bg-amber-950/80 text-amber-300 border-amber-700"
+                                        : "bg-slate-900 text-slate-500 border-slate-800"
+                                    }`}
+                                  >
+                                    {item.mediacao || "Nenhuma"}
+                                  </span>
+                                  {item.mediacao === "Perdida" && (
+                                    <span className="text-[9px] font-mono font-bold text-rose-400" title={`Prejuízo = ${qtdItem} un x ${formatarMoeda(custoUnit)}`}>
+                                      Prejuízo: {formatarMoeda(perdaTotalItem)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Ações */}
+                            <td className="p-3 text-center">
+                              {isEditing ? (
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <button
+                                    onClick={() => salvarEdicaoInline(item.id)}
+                                    className="bg-emerald-600 text-white px-2 py-1 rounded text-[10px] font-bold cursor-pointer"
+                                  >
+                                    Salvar
+                                  </button>
+                                  <button
+                                    onClick={() => setIdEditando(null)}
+                                    className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-[10px] font-bold cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-center gap-2">
+                                  <button
+                                    onClick={() => {
+                                      setIdEditando(item.id);
+                                      setDadosEdicao({
+                                        ...item,
+                                        quantidade: item.quantidade || 1,
+                                        custo_unitario: custoUnit,
+                                        custo_frete: custoFreteItem
+                                      });
+                                    }}
+                                    className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer"
+                                  >
+                                    Editar
+                                  </button>
+                                  <button
+                                    onClick={() => excluirDevolucao(item.id)}
+                                    className="bg-rose-950/60 hover:bg-rose-900 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer"
+                                  >
+                                    Remover
+                                  </button>
+                                </div>
+                              )}
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200 text-[10px] font-mono">
-                          {col.pedidos.map((p) => {
-                            const matchItem = termoPesquisaPedido.trim() && p.numero.toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase());
-                            return (
-                              <tr key={p.idx} className={`h-5 ${matchItem ? "bg-purple-200 text-purple-950 font-extrabold" : "hover:bg-gray-50"}`}>
-                                <td className="p-0.5 text-center text-gray-500 border-r border-gray-200 w-8">{p.idx}</td>
-                                <td className={`p-0.5 pl-1.5 font-bold ${matchItem ? "text-purple-950 underline decoration-purple-600 decoration-2" : "text-black"}`}>
-                                  {p.numero}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  );
-                })}
-
-                {pedidosFiltradosPesquisa.length === 0 && (
-                  <div className="col-span-4 p-8 text-center text-gray-500 italic text-xs border border-dashed border-gray-300 rounded">
-                    Nenhum pedido encontrado para a pesquisa ou filtros selecionados.
-                  </div>
-                )}
-              </div>
-
-              {/* BLOCO DE TOTALIZADOR E 2 ASSINATURAS */}
-              <div className="bloco-assinatura-print mt-3">
-                <div className="flex justify-between items-center border-t-2 border-black p-1.5 bg-gray-100 text-xs font-bold">
-                  <span>TOTAL DE VOLUMES CONFERIDOS:</span>
-                  <span className="font-mono text-sm">{kpis.total} pacotes</span>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-
-                <div className="grid grid-cols-2 gap-8 pt-4 mt-2 border-t border-gray-300 text-[11px]">
-                  <div className="border-t border-black pt-1">
-                    <p className="font-bold">Colaborador(es) do Canal ({analistaDocumento || "Expedição"}):</p>
-                    <p className="text-gray-500 mt-2">Assinatura: _________________________________________</p>
-                  </div>
-                  <div className="border-t border-black pt-1">
-                    <p className="font-bold">Responsável pela Embalagem:</p>
-                    <p className="text-gray-500 mt-2">Assinatura: _________________________________________</p>
-                  </div>
-                </div>
-
-                <div className="text-[8px] text-gray-400 text-center pt-2">
-                  Documento para controle interno — PLP de Envios Best Fit
-                </div>
-              </div>
+              )}
             </div>
-
-            {/* TABELA DE AUDITORIA INDIVIDUAL EM TELA */}
-            <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-3 print:hidden">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                Auditoria e Exclusão Individual ({pedidosFiltradosPesquisa.length})
-              </h3>
-              <div className="overflow-x-auto max-h-[300px]">
-                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase text-[10px]">
-                    <tr>
-                      <th className="p-2 text-center">#</th>
-                      <th className="p-2">Data</th>
-                      <th className="p-2">N.º do Pedido</th>
-                      <th className="p-2">Canal</th>
-                      <th className="p-2 text-center">Modalidade</th>
-                      <th className="p-2 text-right text-amber-300">Frete (Coluna D - Excel)</th>
-                      <th className="p-2 text-center">Excluir</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                    {pedidosFiltradosPesquisa.map((item, idx) => {
-                      const matchItem = termoPesquisaPedido.trim() && String(item.numero_pedido).toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase());
-                      return (
-                        <tr key={item.id} className={`transition-colors ${matchItem ? "bg-purple-950/60 font-bold" : "hover:bg-slate-800/40"}`}>
-                          <td className="p-2 text-center font-mono text-slate-500">{idx + 1}</td>
-                          <td className="p-2 font-mono text-slate-300">{item.data_envio}</td>
-                          <td className={`p-2 font-mono ${matchItem ? "text-purple-300 underline" : "text-white font-bold"}`}>{item.numero_pedido}</td>
-                          <td className="p-2 text-slate-300 font-semibold">{item.canal}</td>
-                          <td className="p-2 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
-                                item.modalidade === "FLEX"
-                                  ? "bg-amber-900/30 text-amber-400 border-amber-800/50"
-                                  : item.modalidade === "AGENCIA"
-                                  ? "bg-slate-800 text-slate-300 border-slate-700"
-                                  : "bg-indigo-900/30 text-indigo-400 border-indigo-800/50"
-                              }`}
-                            >
-                              {item.modalidade}
-                            </span>
-                          </td>
-                          <td className="p-2 text-right font-mono font-bold text-emerald-400">
-                            {item.modalidade === "FLEX" ? formatarMoeda(item.valor_frete) : "R$ 0,00"}
-                          </td>
-                          <td className="p-2 text-center">
-                            <button
-                              onClick={() => handleExcluirPedido(item.id)}
-                              className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer font-bold"
-                              title="Remover pedido"
-                            >
-                              ✕
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
           </div>
         )}
 
-        {/* MODAL CONFIGURAÇÃO TAXAS FLEX E ANALISTAS UNIVERSAL */}
-        {modalConfigAberto && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200 print:hidden">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl space-y-5">
-              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                <div>
-                  <h3 className="text-base font-bold text-amber-400 flex items-center gap-2">
-                    <span>⚙️ Canais, Analistas Responsáveis & Taxas Flex</span>
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Ao salvar, as alterações ficam gravadas no banco de dados e serão aplicadas para <strong>todos os usuários</strong>.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setModalConfigAberto(false)}
-                  className="text-slate-400 hover:text-white text-base cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
+        {/* ABA 2: PLANO DE AÇÃO */}
+        {subAba === "plano_acao" && (
+          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+            <div>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <span>🎯 Gestão de Planos de Ação Operacionais</span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Aponte medidas corretivas para os principais motivos de devolução e reduza o índice nos canais.
+              </p>
+            </div>
 
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Novo canal..."
-                  value={novoCanalNome}
-                  onChange={(e) => setNovoCanalNome(e.target.value)}
-                  className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none flex-1"
-                />
-                <button
-                  type="button"
-                  onClick={handleAdicionarCanal}
-                  className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 px-4 rounded-xl text-xs uppercase cursor-pointer"
-                >
-                  + Adicionar Canal
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
-                {canais.map((c, i) => (
-                  <div key={i} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 relative group">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-bold text-white block">{c}</span>
-                      {!canaisPadraoBase.includes(c) && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoverCanal(c)}
-                          className="text-rose-400 hover:text-rose-300 text-[10px] font-bold uppercase cursor-pointer"
-                          title="Remover canal"
-                        >
-                          ✕ Remover
-                        </button>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="text-[9px] text-slate-500 block">Colaborador(a) Responsável:</span>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="p-3">Pedido / NF</th>
+                    <th className="p-3">Canal</th>
+                    <th className="p-3">SKU</th>
+                    <th className="p-3 text-center">Qtd</th>
+                    <th className="p-3">Produto</th>
+                    <th className="p-3 text-center">Marca</th>
+                    <th className="p-3">Motivo Reclamado</th>
+                    <th className="p-3 min-w-[300px]">Plano de Ação Corretivo</th>
+                    <th className="p-3 text-center">Salvar</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                  {devolucoes.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-800/30">
+                      <td className="p-3 font-mono font-bold text-white">{item.pedido}</td>
+                      <td className="p-3 text-slate-300">{item.canal}</td>
+                      <td className="p-3 font-mono text-indigo-400">{item.sku}</td>
+                      <td className="p-3 text-center font-bold text-slate-300">{item.quantidade || 1} un.</td>
+                      <td className="p-3 text-slate-300 max-w-[200px] truncate">{item.produto}</td>
+                      <td className="p-3 text-center font-mono text-slate-400">{item.marca || "-"}</td>
+                      <td className="p-3 text-rose-400 font-bold">{item.motivo}</td>
+                      <td className="p-3">
                         <input
                           type="text"
-                          value={analistasPorCanal[c] || ""}
-                          onChange={(e) => atualizarAnalistaCanalLocal(c, e.target.value)}
-                          placeholder="Nome..."
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs font-semibold text-white outline-none focus:border-purple-500"
+                          defaultValue={item.plano_acao || ""}
+                          placeholder="Ex: Ajustar tabela de medidas no canal, reforçar embalagem..."
+                          onBlur={async (e) => {
+                            const val = e.target.value.trim();
+                            await supabase.from("devolucoes").update({ plano_acao: val }).eq("id", item.id);
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500"
                         />
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-slate-500 block">Frete Flex (R$):</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={taxasFlexCanal[c] ?? 12.99}
-                          onChange={(e) => atualizarTaxaFlexLocal(c, parseFloat(e.target.value) || 0)}
-                          className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-1.5 text-xs font-mono text-center text-amber-300 font-bold outline-none"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex justify-between items-center pt-3 border-t border-slate-800">
-                <span className="text-[11px] text-slate-500 italic">
-                  Salva no Supabase para sincronização universal entre computadores.
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setModalConfigAberto(false)}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 px-5 rounded-xl text-xs uppercase cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={salvarConfiguracoesUniversais}
-                    disabled={salvandoConfig}
-                    className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase cursor-pointer shadow-lg shadow-purple-900/40 transition-all"
-                  >
-                    {salvandoConfig ? "A Salvar no Banco..." : "Salvar Configurações Universais"}
-                  </button>
-                </div>
-              </div>
+                      </td>
+                      <td className="p-3 text-center text-slate-500 text-[10px]">
+                        Auto-salvo ao sair
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
-
       </div>
     </div>
   );
