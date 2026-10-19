@@ -73,7 +73,6 @@ export default function CalculadoraPage() {
     // 2. Carrega tabela de mapeamento de anúncios (MLB / Comissões específicas)
     const mapaAnunciosSku = new Map();
     try {
-      // Tenta carregar da tabela de anúncios / mapeamento do ML
       const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(3000);
       if (mapAnuncios) {
         mapAnuncios.forEach((m: any) => {
@@ -91,12 +90,10 @@ export default function CalculadoraPage() {
 
     // 3. Define os canais unificados (Mercado Livre Clássico, Mercado Livre Premium e demais da base de regras)
     const { data: canaisData } = await supabase.from("config_regras_canais").select("*").order("id");
-    let listaCanaisBase: string[] = [];
+    let listaNomesCanais: string[] = [];
     if (canaisData && canaisData.length > 0) {
-      // Filtra para remover "Mercado Livre 1, 2, 3" e substitui pelas modalidades Clássico e Premium
       const filtrados = canaisData.map((c: any) => c.canal).filter((c: string) => !c.toLowerCase().includes("mercado livre"));
-      listaCanaisBase = ["Mercado Livre Clássico", "Mercado Livre Premium", ...filtrados];
-      // Remove duplicados se houver
+      const listaCanaisBase = ["Mercado Livre Clássico", "Mercado Livre Premium", ...filtrados];
       listaNomesCanais = Array.from(new Set(listaCanaisBase));
     } else {
       listaNomesCanais = ["Mercado Livre Clássico", "Mercado Livre Premium", "Amazon", "Shopee", "Magalu", "Netshoes", "Shein", "TikTok Shop", "Centauro", "Site"];
@@ -149,7 +146,6 @@ export default function CalculadoraPage() {
     }
   };
 
-  // Função para buscar tarifação diretamente na aba de Regras (config_regras_tarifacao)
   const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
     const cLower = canalNome.toLowerCase();
     
@@ -186,10 +182,9 @@ export default function CalculadoraPage() {
     if (!produtoEncontrado) return [];
 
     const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
-    const impostoPercent = 0.09; // 9% imposto corporativo fixo
+    const impostoPercent = 0.09;
     const skuKey = normalizarSku(produtoEncontrado.sku);
 
-    // Consulta de anúncios existentes na base para o SKU (verificação de MLB, comissão e frete específico)
     const anunciosSku = mapeamentoMap.get(skuKey) || [];
     const anuncClassico = anunciosSku.find((a: any) => 
       (String(a.tipo || a.canal || "").toLowerCase().includes("clássico") || Number(a.comissao) <= 14) && a.mlb
@@ -208,18 +203,15 @@ export default function CalculadoraPage() {
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            // Se houver anúncio cadastrado com MLB, usa os dados reais; senão, usa 14% padrão
             comissaoPct = anuncClassico ? Number(anuncClassico.comissao) / 100 : 0.14;
             tarifaFixa = anuncClassico ? Number(anuncClassico.tarifa_fixa || 0) : 0;
             freteVariavel = anuncClassico ? Number(anuncClassico.frete || 0) : 0;
           } else if (cLower.includes("premium")) {
-            // Se houver anúncio cadastrado com MLB, usa os dados reais; senão, usa 19% padrão
             comissaoPct = anuncPremium ? Number(anuncPremium.comissao) / 100 : 0.19;
             tarifaFixa = anuncPremium ? Number(anuncPremium.tarifa_fixa || 0) : 0;
             freteVariavel = anuncPremium ? Number(anuncPremium.frete || 0) : 0;
           }
         } else {
-          // Demais canais buscam dinamicamente na aba de regras em tempo real
           const precoRef = modoCalculo === "pdv_ideal" ? 80.0 : parseNumero(precoFixo);
           const regraTabela = obterRegraCanalDaTabela(canalNome, precoRef);
 
@@ -263,7 +255,6 @@ export default function CalculadoraPage() {
             temMlb: cLower.includes("mercado livre") ? (cLower.includes("clássico") ? !!anuncClassico : !!anuncPremium) : true
           };
         } else {
-          // Modo Margem Reversa
           const pdvBase = parseNumero(precoFixo);
           const valRebate = parseNumero(rebate);
           const pdvEfetivo = Math.max(0, pdvBase - valRebate);
