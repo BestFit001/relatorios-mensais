@@ -1,86 +1,130 @@
 "use client";
+import React from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
 
 export default function Navbar() {
-  const pathname = usePathname();
   const router = useRouter();
-  const [paginasPermitidas, setPaginasPermitidas] = useState<string[]>([]);
-
-  const abas = [
-    { nome: "Curva ABC", href: "/" },
-    { nome: "Cadastros", href: "/mapeamento" },
-    { nome: "Adsense", href: "/ads" },
-    { nome: "Devoluções", href: "/devolucoes" },
-    { nome: "FULL / FBA", href: "/full" },
-    { nome: "PLPs", href: "/plp" },
-    { nome: "Agenda", href: "/agenda" }, 
-    { nome: "Regras", href: "/regras" },
-    { nome: "Uploads", href: "/upload" },
-    { nome: "Admin", href: "/admin" },
-  ];
-
-  useEffect(() => {
-    const usuarioLogado = localStorage.getItem("usuario_logado");
-    if (usuarioLogado) {
-      try {
-        const usuario = JSON.parse(usuarioLogado);
-        
-        // Se for admin, garante acesso automático a todas as abas (inclusive a nova PLPs)
-        let permitidas: string[] = [];
-        if (usuario.perfil === "admin") {
-          permitidas = abas.map(a => a.href);
-        } else {
-          permitidas = usuario.paginas_permitidas || [];
-        }
-
-        setPaginasPermitidas(permitidas);
-
-        if (permitidas.length > 0 && !permitidas.includes(pathname)) {
-          alert("🔒 Acesso Negado: Não tem permissão para aceder a esta página.");
-          router.push(permitidas[0] || "/");
-        }
-      } catch (e) {
-        router.push("/login");
-      }
-    } else {
-      router.push("/login");
-    }
-  }, [pathname, router]);
+  const pathname = usePathname();
 
   const handleSair = () => {
     localStorage.removeItem("usuario_logado");
     router.push("/login");
   };
 
-  const abasFiltradas = abas.filter(aba => paginasPermitidas.includes(aba.href));
-
   return (
-    <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800 flex-wrap">
-      {abasFiltradas.map((aba) => {
-        const ativo = pathname === aba.href;
-        return (
-          <Link
-            key={aba.href}
-            href={aba.href}
-            className={`px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all ${
-              ativo
-                ? "bg-purple-600 text-white shadow-sm shadow-purple-900/40"
-                : "text-slate-400 hover:text-white"
-            }`}
-          >
-            {aba.nome}
-          </Link>
-        );
-      })}
+    <nav className="bg-slate-900 border border-slate-800 rounded-2xl px-6 py-3 flex items-center justify-between shadow-xl print:hidden">
+      {/* Esquerda: Logo / Título */}
+      <div className="flex items-center gap-3">
+        <div>
+          <h2 className="text-sm font-black text-white tracking-tight">Relatórios Mensais</h2>
+          <p className="text-[10px] text-slate-400">Gestão de Performance e Compras — Best Fit</p>
+        </div>
+      </div>
 
-      <button
-        onClick={handleSair}
-        className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider text-rose-400 hover:bg-rose-950/40 transition-all cursor-pointer ml-auto"
-      >
-        Sair
-      </button>
-    </div>
+      {/* Direita: Menus com Dropdown por Hover */}
+      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+        
+        {/* Cadastros */}
+        <Link
+          href="/cadastros"
+          className={`px-3 py-2 rounded-xl transition-all ${
+            pathname?.includes("/cadastros") ? "bg-purple-600 text-white shadow-md" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+          }`}
+        >
+          Cadastros
+        </Link>
+
+        {/* Relatórios (Dropdown) */}
+        <div className="relative group">
+          <button className="px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all flex items-center gap-1 cursor-pointer">
+            Relatórios ▾
+          </button>
+          <div className="absolute top-full left-0 mt-1 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 hidden group-hover:block z-50">
+            <Link
+              href="/curva-abc"
+              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+            >
+              Curva ABC
+            </Link>
+            <Link
+              href="/adsense"
+              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+            >
+              Adsense
+            </Link>
+            <Link
+              href="/devolucoes"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/devolucoes") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
+            >
+              Devoluções
+            </Link>
+            <Link
+              href="/full-fba"
+              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+            >
+              Full / FBA
+            </Link>
+          </div>
+        </div>
+
+        {/* Configurações (Dropdown) */}
+        <div className="relative group">
+          <button className="px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all flex items-center gap-1 cursor-pointer">
+            Configurações ▾
+          </button>
+          <div className="absolute top-full left-0 mt-1 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 hidden group-hover:block z-50">
+            <Link
+              href="/regras"
+              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+            >
+              Regras
+            </Link>
+            <Link
+              href="/uploads"
+              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+            >
+              Uploads
+            </Link>
+            <Link
+              href="/admin"
+              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+            >
+              Admin
+            </Link>
+          </div>
+        </div>
+
+        {/* PLPs */}
+        <Link
+          href="/plp"
+          className={`px-3 py-2 rounded-xl transition-all ${
+            pathname?.includes("/plp") ? "bg-purple-600 text-white shadow-md" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+          }`}
+        >
+          PLPs
+        </Link>
+
+        {/* Agenda */}
+        <Link
+          href="/agenda"
+          className={`px-3 py-2 rounded-xl transition-all ${
+            pathname?.includes("/agenda") ? "bg-purple-600 text-white shadow-md" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+          }`}
+        >
+          Agenda
+        </Link>
+
+        {/* Sair */}
+        <button
+          onClick={handleSair}
+          className="ml-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
+        >
+          Sair
+        </button>
+      </div>
+    </nav>
   );
 }
