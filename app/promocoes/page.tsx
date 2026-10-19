@@ -100,58 +100,50 @@ export default function PromocoesPage() {
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: "binary" });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
         
-        // Lê como array de arrays para ignorar o cabeçalho descritivo do ML (linhas 0 a 3)
-        const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        // Garante que lê estritamente a aba "Promoções" (ou a primeira se não achar pelo nome)
+        const sheetName = wb.SheetNames.includes("Promoções") ? "Promoções" : wb.SheetNames[0];
+        const ws = wb.Sheets[sheetName];
         
-        if (rawData.length < 5) {
-          alert("A planilha parece estar vazia ou fora do formato esperado do Mercado Livre.");
-          setLoading(false);
-          return;
-        }
-
-        const headers = rawData[0]; // Linha 0 costuma conter as chaves (TITLE, ITEM_ID, SKU, etc.)
-        const rows = rawData.slice(4); // Dados reais começam após as linhas descritivas do ML
-
+        const rows: any[] = XLSX.utils.sheet_to_json(ws);
         const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
         const imposto = 0.09;
 
-        const resultados = rows.map((r: any[]) => {
-          const rowObj: any = {};
-          headers.forEach((h: string, idx: number) => {
-            if (h) rowObj[h] = r[idx];
+        const resultados = rows
+          .filter((row: any) => {
+            const mlb = String(row.ITEM_ID || row.MLB || "").trim();
+            // Ignora linhas descritivas de cabeçalho do ML (ex: "Número do anúncio" ou vazias)
+            return mlb && mlb.startsWith("MLB");
+          })
+          .map((row: any) => {
+            const mlb = String(row.ITEM_ID || row.MLB || "").trim();
+            const sku = normalizarSku(row.SKU);
+            const originalPrice = Number(row.ORIGINAL_PRICE || 0);
+            const promoName = row.PROMOTION_NAME || "Campanha Geral";
+            const dateValidity = row.DATE_VALIDITY || "Indeterminado";
+
+            const custo = custosMap.get(sku) || 25.88;
+            const comissao = comissoesMap.get(mlb) || 0.14;
+            const freteFixo = 20.75;
+
+            const denominador = 1 - (comissao + imposto + margemDesejada);
+            const novoPrecoCalc = denominador > 0 ? (custo + freteFixo) / denominador : originalPrice * 0.9;
+
+            const isObsoleto = obsoletosSet.has(sku);
+            const status = (custo > 0 && originalPrice > 0 && novoPrecoCalc > 0) ? "APTO" : "INAPTO";
+
+            return {
+              ...row,
+              MLB: mlb,
+              SKU: row.SKU || sku,
+              PROMOTION_NAME: promoName,
+              DATE_VALIDITY: dateValidity,
+              ORIGINAL_PRICE: originalPrice,
+              FINAL_PRICE: Number(novoPrecoCalc.toFixed(2)),
+              STATUS: status,
+              OBSOLETO: isObsoleto ? "SIM" : "NÃO"
+            };
           });
-
-          const mlb = String(rowObj.ITEM_ID || rowObj.MLB || "").trim();
-          const sku = normalizarSku(rowObj.SKU);
-          const originalPrice = Number(rowObj.ORIGINAL_PRICE || 0);
-          const promoName = rowObj.PROMOTION_NAME || "Campanha Geral";
-          const dateValidity = rowObj.DATE_VALIDITY || "Indeterminado";
-
-          const custo = custosMap.get(sku) || 25.88;
-          const comissao = comissoesMap.get(mlb) || 0.14;
-          const freteFixo = 20.75;
-
-          const denominador = 1 - (comissao + imposto + margemDesejada);
-          const novoPrecoCalc = denominador > 0 ? (custo + freteFixo) / denominador : originalPrice * 0.9;
-
-          const isObsoleto = obsoletosSet.has(sku);
-          const status = (mlb.startsWith("MLB") && custo > 0 && originalPrice > 0 && novoPrecoCalc > 0) ? "APTO" : "INAPTO";
-
-          return {
-            ...rowObj,
-            MLB: mlb,
-            SKU: rowObj.SKU || sku,
-            PROMOTION_NAME: promoName,
-            DATE_VALIDITY: dateValidity,
-            ORIGINAL_PRICE: originalPrice,
-            FINAL_PRICE: Number(novoPrecoCalc.toFixed(2)),
-            STATUS: status,
-            OBSOLETO: isObsoleto ? "SIM" : "NÃO"
-          };
-        }).filter(r => r.MLB && r.MLB.startsWith("MLB"));
 
         setDadosProcessados(resultados);
 
