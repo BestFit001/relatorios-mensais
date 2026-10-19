@@ -214,32 +214,47 @@ export default function CalculadoraPage() {
     const skuKey = normalizarSku(produtoEncontrado.sku);
 
     const anunciosSku = mapeamentoMap.get(skuKey) || [];
-    const anuncMl = anunciosSku.length > 0 ? anunciosSku[0] : null;
 
     return canaisConfig
       .filter((canalNome) => canaisSelecionados.includes(canalNome))
       .map((canalNome) => {
         const cLower = canalNome.toLowerCase();
         let comissaoPct = 0.14;
+        let anuncMl = null;
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            comissaoPct = anuncMl && Number(anuncMl.comissao) > 0 ? Number(anuncMl.comissao) / 100 : 0.14;
+            // Procura anúncio clássico (comissão <= 14%)
+            anuncMl = anunciosSku.find((a: any) => Number(a.comissao) <= 14);
+            if (anuncMl && Number(anuncMl.comissao) > 0) {
+              comissaoPct = Number(anuncMl.comissao) / 100;
+            } else {
+              // Se não tiver clássico mas tiver anúncio cadastrado, usa o teto do clássico (14%)
+              comissaoPct = 0.14;
+            }
           } else if (cLower.includes("premium")) {
-            comissaoPct = anuncMl && Number(anuncMl.comissao) > 0 ? Number(anuncMl.comissao) / 100 : 0.19;
+            // Procura anúncio premium (comissão > 14%)
+            anuncMl = anunciosSku.find((a: any) => Number(a.comissao) > 14);
+            if (anuncMl && Number(anuncMl.comissao) > 0) {
+              comissaoPct = Number(anuncMl.comissao) / 100;
+            } else {
+              // Se não tiver premium mas tiver anúncio cadastrado, usa o teto do premium (19%)
+              comissaoPct = 0.19;
+            }
           }
         }
 
-        const pesoReal = anuncMl && Number(anuncMl.peso_real) > 0 ? Number(anuncMl.peso_real) : 2.0;
-        const altura = anuncMl && Number(anuncMl.altura) > 0 ? Number(anuncMl.altura) : 10;
-        const largura = anuncMl && Number(anuncMl.largura) > 0 ? Number(anuncMl.largura) : 10;
-        const comprimento = anuncMl && Number(anuncMl.comprimento) > 0 ? Number(anuncMl.comprimento) : 10;
+        // Pega medidas do primeiro anúncio disponível do SKU caso exista na base do ML
+        const refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
+        const pesoReal = refAnuncio && Number(refAnuncio.peso_real) > 0 ? Number(refAnuncio.peso_real) : 2.0;
+        const altura = refAnuncio && Number(refAnuncio.altura) > 0 ? Number(refAnuncio.altura) : 10;
+        const largura = refAnuncio && Number(refAnuncio.largura) > 0 ? Number(refAnuncio.largura) : 10;
+        const comprimento = refAnuncio && Number(refAnuncio.comprimento) > 0 ? Number(refAnuncio.comprimento) : 10;
 
         if (modoCalculo === "pdv_ideal") {
           const margemAlvoDec = parseFloat(margemAlvo) / 100;
           let pdvCalculado = custoProduto * 2;
 
-          // Iteração para estabilizar o preço considerando o frete e tarifa fixa dinâmicos do ML
           for (let iter = 0; iter < 5; iter++) {
             let tarifaFixa = 0;
             let freteVariavel = 0;
@@ -353,7 +368,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação avançada com frete dinâmico por cubagem e regras do Mercado Livre em tempo real</p>
+            <p className="text-sm font-medium text-slate-400">Precificação avançada com separação de comissões Clássico (≤14%) e Premium (>14%)</p>
           </div>
           <Navbar />
         </div>
