@@ -25,31 +25,33 @@ export default function Navbar() {
       {/* Direita: Menus com Dropdown por Hover */}
       <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
         
-        {/* Cadastros (Mapeamento) */}
-        <Link
-          href="/mapeamento"
-          className={`px-3 py-2 rounded-xl transition-all ${
-            pathname?.includes("/mapeamento") ? "bg-purple-600 text-white shadow-md" : "text-slate-300 hover:bg-slate-800 hover:text-white"
-          }`}
-        >
-          Cadastros
-        </Link>
-
-        {/* Relatórios (Dropdown) */}
+        {/* Relatórios (Dropdown incluindo Cadastros) */}
         <div className="relative group">
           <button className="px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all flex items-center gap-1 cursor-pointer">
             Relatórios ▾
           </button>
           <div className="absolute top-full left-0 mt-1 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 hidden group-hover:block z-50">
             <Link
+              href="/mapeamento"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/mapeamento") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
+            >
+              Cadastros
+            </Link>
+            <Link
               href="/full"
-              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/full") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
             >
               Curva ABC
             </Link>
             <Link
               href="/ads"
-              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/ads") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
             >
               Adsense
             </Link>
@@ -63,7 +65,9 @@ export default function Navbar() {
             </Link>
             <Link
               href="/full"
-              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/full") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
             >
               Full / FBA
             </Link>
@@ -78,19 +82,25 @@ export default function Navbar() {
           <div className="absolute top-full left-0 mt-1 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 hidden group-hover:block z-50">
             <Link
               href="/regras"
-              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/regras") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
             >
               Regras
             </Link>
             <Link
               href="/upload"
-              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/upload") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
             >
               Uploads
             </Link>
             <Link
               href="/admin"
-              className="block px-4 py-2 text-slate-300 hover:bg-purple-600 hover:text-white transition-all"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/admin") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
             >
               Admin
             </Link>
