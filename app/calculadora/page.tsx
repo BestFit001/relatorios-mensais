@@ -23,17 +23,18 @@ export default function CalculadoraPage() {
   // Inputs
   const [skuBusca, setSkuBusca] = useState("");
   const [marcaFiltro, setMarcaFiltro] = useState("");
-  const [canalSelecionado, setCanalSelecionado] = useState("TODOS");
   const [margemAlvo, setMargemAlvo] = useState("30");
   const [precoFixo, setPrecoFixo] = useState("60.00");
   const [rebate, setRebate] = useState("0.00");
 
-  // Dados do produto encontrado
+  // Dados e Bases
   const [produtoEncontrado, setProdutoEncontrado] = useState<any>(null);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
-
-  // Canais disponíveis e regras de taxas
+  const [mapeamentoMap, setMapeamentoMap] = useState<Map<string, any[]>>(new Map());
   const [canaisConfig, setCanaisConfig] = useState<any[]>([]);
+
+  // Canais selecionados para exibição (Checkbox filter)
+  const [canaisSelecionados, setCanaisSelecionados] = useState<string[]>([]);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -41,12 +42,13 @@ export default function CalculadoraPage() {
       router.push("/login");
       return;
     }
-    carregarBaseCustosECanais();
+    carregarBases();
   }, []);
 
-  const carregarBaseCustosECanais = async () => {
+  const carregarBases = async () => {
     setLoading(true);
-    // 1. Carrega custos dos SKUs da base unificada
+
+    // 1. Carrega custos dos SKUs
     let allCustos: any[] = [];
     let from = 0;
     const step = 1000;
@@ -60,27 +62,63 @@ export default function CalculadoraPage() {
       } else keep = false;
     }
 
-    const mapa = new Map();
+    const mapaCustos = new Map();
     allCustos.forEach((c: any) => {
       const k = normalizarSku(c.sku);
-      if (k) mapa.set(k, c);
+      if (k) mapaCustos.set(k, c);
     });
-    setCustosMap(mapa);
+    setCustosMap(mapaCustos);
 
-    // 2. Carrega configuração de canais, comissões e tarifas do Supabase
+    // 2. Carrega tabela de mapeamento / anúncios (para verificar se tem MLB e comissões específicas)
+    let allMap: any[] = [];
+    from = 0;
+    keep = true;
+    while (keep) {
+      const { data } = await supabase.from("config_regras_canais").select("*").range(from, from + step - 1);
+      if (data && data.length > 0) {
+        allMap = [...allMap, ...data];
+        from += step;
+        if (data.length < step) keep = false;
+      } else keep = false;
+    }
+
+    // Se houver tabela de mapeamento de anúncios (ex: mapeamento_skus ou similar)
+    const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(2000).catch(() => ({ data: [] }));
+    const mapaAnunciosSku = new Map();
+    if (mapAnuncios) {
+      mapAnuncios.forEach((m: any) => {
+        const k = normalizarSku(m.sku);
+        if (k) {
+          if (!mapaAnunciosSku.has(k)) mapaAnunciosSku.set(k, []);
+          mapaAnunciosSku.get(k).push(m);
+        }
+      });
+    }
+    setMapeamentoMap(mapaAnunciosSku);
+
+    // 3. Carrega regras de canais (comissões, tarifas fixas, fretes)
     const { data: regrasData } = await supabase.from("config_regras_canais").select("*");
+    let listaCanais = [];
     if (regrasData && regrasData.length > 0) {
-      setCanaisConfig(regrasData);
+      listaCanais = regrasData;
     } else {
-      // Padrões se não houver tabela carregada
-      setCanaisConfig([
+      listaCanais = [
         { canal: "Mercado Livre Clássico", comissao: 14, tarifa_fixa: 0, frete: 0 },
         { canal: "Mercado Livre Premium", comissao: 18, tarifa_fixa: 0, frete: 0 },
         { canal: "Shopee", comissao: 20, tarifa_fixa: 4.00, frete: 0 },
         { canal: "Amazon", comissao: 14, tarifa_fixa: 4.00, frete: 21.95 },
         { canal: "Magalu", comissao: 18, tarifa_fixa: 5.00, frete: 20.45 },
-      ]);
+        { canal: "Netshoes", comissao: 25, tarifa_fixa: 5.00, frete: 0 },
+        { canal: "Shein", comissao: 16, tarifa_fixa: 6.00, frete: 0 },
+        { canal: "TikTok", comissao: 15, tarifa_fixa: 3.00, frete: 0 },
+        { canal: "Centauro", comissao: 21, tarifa_fixa: 0, frete: 0 }
+      ];
     }
+
+    setCanaisConfig(listaCanais);
+    // Por padrão, seleciona todos os canais
+    setCanaisSelecionados(listaCanais.map((c: any) => c.canal));
+
     setLoading(false);
   };
 
@@ -94,7 +132,6 @@ export default function CalculadoraPage() {
     if (match) {
       setProdutoEncontrado(match);
     } else {
-      // Cria um produto genérico caso não esteja na tabela de custos para não travar o teste
       setProdutoEncontrado({
         sku: skuBusca.trim(),
         produto: "Produto Base (Manual)",
@@ -104,91 +141,112 @@ export default function CalculadoraPage() {
     }
   };
 
-  // Lógica de cálculo dos canais
+  const toggleCanalSelecao = (canalNome: string) => {
+    if (canaisSelecionados.includes(canalNome)) {
+      setCanaisSelecionados(canaisSelecionados.filter((c) => c !== canalNome));
+    } else {
+      setCanaisSelecionados([...canaisSelecionados, canalNome]);
+    }
+  };
+
+  const selecionarTodosCanais = (selecionar: boolean) => {
+    if (selecionar) {
+      setCanaisSelecionados(canaisConfig.map((c) => c.canal));
+    } else {
+      setCanaisSelecionados([]);
+    }
+  };
+
+  // Cálculo por canal aplicando regras de comissão ML (MLB) e taxa de imposto 9%
   const calcularResultadosCanais = () => {
     if (!produtoEncontrado) return [];
 
     const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
-    const impostoPercent = 0.09; // 9% imposto fixo corporativo
+    const impostoPercent = 0.09; // 9% imposto corporativo fixo
+    const skuKey = normalizarSku(produtoEncontrado.sku);
 
-    // Se o usuário selecionou um canal específico, filtra; senão, mostra os principais
-    const canaisExibidos = canalSelecionado === "TODOS" 
-      ? ["Mercado Livre Clássico", "Mercado Livre Premium", "Shopee", "Amazon", "Magalu"]
-      : [canalSelecionado];
+    // Verifica se tem anúncio com MLB na base para este SKU
+    const anunciosSku = mapeamentoMap.get(skuKey) || [];
+    const temMlbClassico = anunciosSku.some((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("clássico") || Number(a.comissao) <= 14);
+    const temMlbPremium = anunciosSku.some((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("premium") || Number(a.comissao) > 14);
 
-    return canaisExibidos.map((canalNome) => {
-      const regra = canaisConfig.find((c) => c.canal.toLowerCase() === canalNome.toLowerCase()) || {
-        comissao: canalNome.includes("Premium") ? 18 : 14,
-        tarifa_fixa: 0,
-        frete: 12.99
-      };
+    return canaisConfig
+      .filter((c) => canaisSelecionados.includes(c.canal))
+      .map((regra) => {
+        const canalNome = regra.canal;
+        let comissaoPct = Number(regra.comissao || 14) / 100;
 
-      const comissaoPct = Number(regra.comissao || 14) / 100;
-      const tarifaFixa = Number(regra.tarifa_fixa || 0);
-      let freteVariavel = Number(regra.frete || 12.99);
-
-      if (modoCalculo === "pdv_ideal") {
-        // --- CÁLCULO MARGEM NORMAL (PDV IDEAL) ---
-        // Fórmula de formação de preço com base em margem alvo:
-        // PDV = (Custo + Tarifa Fixa + Frete) / (1 - (Comissão + Imposto + MargemAlvo))
-        const margemAlvoDec = parseFloat(margemAlvo) / 100;
-        const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
-
-        let pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
-
-        // Regra de frete para ML / Shopee / Magalu baseada em faixa de preço (Ex: < 78.99 frete zero ou diferenciado)
-        if (pdvCalculado <= 78.99 && (canalNome.includes("Amazon") || canalNome.includes("Magalu") || canalNome.includes("Shopee"))) {
-          freteVariavel = 0;
-          pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : pdvCalculado;
+        // Regra específica solicitada para o Mercado Livre:
+        // Se for Clássico e não houver MLB específico, usa margem travada de 14%
+        // Se for Premium e não houver MLB específico, usa margem travada de 18%
+        if (canalNome.toLowerCase().includes("clássico") && !temMlbClassico) {
+          comissaoPct = 0.14;
+        } else if (canalNome.toLowerCase().includes("premium") && !temMlbPremium) {
+          comissaoPct = 0.18;
         }
 
-        const valorComissao = pdvCalculado * comissaoPct;
-        const valorImposto = pdvCalculado * impostoPercent;
-        const lucroLiquido = pdvCalculado - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto);
-        const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
+        const tarifaFixa = Number(regra.tarifa_fixa || regra.tarifa || 0);
+        let freteVariavel = Number(regra.frete || 12.99);
 
-        return {
-          canal: canalNome,
-          pdv: pdvCalculado,
-          custoProduto,
-          comissaoPct: Number(regra.comissao || 14),
-          valorComissao,
-          tarifaFixa,
-          frete: freteVariavel,
-          valorImposto,
-          lucroLiquido,
-          margemFinal
-        };
-      } else {
-        // --- CÁLCULO MARGEM REVERSA ---
-        const pdvBase = parseNumero(precoFixo);
-        const valRebate = parseNumero(rebate);
-        const pdvEfetivo = Math.max(0, pdvBase - valRebate);
+        if (modoCalculo === "pdv_ideal") {
+          const margemAlvoDec = parseFloat(margemAlvo) / 100;
+          const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
 
-        if (pdvEfetivo <= 78.99 && (canalNome.includes("Amazon") || canalNome.includes("Magalu"))) {
-          freteVariavel = 0;
+          let pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
+
+          // Regra de isenção/redução de frete para preços <= R$ 78.99 em marketplaces parceiros
+          if (pdvCalculado <= 78.99 && (canalNome.toLowerCase().includes("amazon") || canalNome.toLowerCase().includes("magalu") || canalNome.toLowerCase().includes("shopee"))) {
+            freteVariavel = 0;
+            pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : pdvCalculado;
+          }
+
+          const valorComissao = pdvCalculado * comissaoPct;
+          const valorImposto = pdvCalculado * impostoPercent;
+          const lucroLiquido = pdvCalculado - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto);
+          const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
+
+          return {
+            canal: canalNome,
+            pdv: pdvCalculado,
+            custoProduto,
+            comissaoPct: comissaoPct * 100,
+            valorComissao,
+            tarifaFixa,
+            frete: freteVariavel,
+            valorImposto,
+            lucroLiquido,
+            margemFinal
+          };
+        } else {
+          // Modo Margem Reversa
+          const pdvBase = parseNumero(precoFixo);
+          const valRebate = parseNumero(rebate);
+          const pdvEfetivo = Math.max(0, pdvBase - valRebate);
+
+          if (pdvEfetivo <= 78.99 && (canalNome.toLowerCase().includes("amazon") || canalNome.toLowerCase().includes("magalu"))) {
+            freteVariavel = 0;
+          }
+
+          const valorComissao = pdvEfetivo * comissaoPct;
+          const valorImposto = pdvEfetivo * impostoPercent;
+          const lucroLiquido = pdvEfetivo - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto);
+          const margemFinal = pdvEfetivo > 0 ? (lucroLiquido / pdvEfetivo) * 100 : 0;
+
+          return {
+            canal: canalNome,
+            pdv: pdvBase,
+            rebate: valRebate,
+            custoProduto,
+            comissaoPct: comissaoPct * 100,
+            valorComissao,
+            tarifaFixa,
+            frete: freteVariavel,
+            valorImposto,
+            lucroLiquido,
+            margemFinal
+          };
         }
-
-        const valorComissao = pdvEfetivo * comissaoPct;
-        const valorImposto = pdvEfetivo * impostoPercent;
-        const lucroLiquido = pdvEfetivo - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto);
-        const margemFinal = pdvEfetivo > 0 ? (lucroLiquido / pdvEfetivo) * 100 : 0;
-
-        return {
-          canal: canalNome,
-          pdv: pdvBase,
-          rebate: valRebate,
-          custoProduto,
-          comissaoPct: Number(regra.comissao || 14),
-          valorComissao,
-          tarifaFixa,
-          frete: freteVariavel,
-          valorImposto,
-          lucroLiquido,
-          margemFinal
-        };
-      }
-    });
+      });
   };
 
   function parseNumero(valor: any): number {
@@ -214,7 +272,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Simulação de PDV ideal e margem reversa por canal com custos integrados</p>
+            <p className="text-sm font-medium text-slate-400">Simulação de PDV ideal e margem reversa com regras MLB e seleção customizada de canais</p>
           </div>
           <Navbar />
         </div>
@@ -274,22 +332,8 @@ export default function CalculadoraPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Venda:</label>
-              <select
-                value={canalSelecionado}
-                onChange={(e) => setCanalSelecionado(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer"
-              >
-                <option value="TODOS">Todos os Canais</option>
-                {canaisConfig.map((c, i) => (
-                  <option key={i} value={c.canal}>{c.canal}</option>
-                ))}
-              </select>
-            </div>
-
             {modoCalculo === "pdv_ideal" ? (
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Alvo (%):</label>
                 <input
                   type="number"
@@ -299,17 +343,64 @@ export default function CalculadoraPage() {
                 />
               </div>
             ) : (
-              <div>
-                <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Preço Fixo (R$):</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={precoFixo}
-                  onChange={(e) => setPrecoFixo(e.target.value)}
-                  className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
-                />
-              </div>
+              <>
+                <div>
+                  <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Preço Fixo (R$):</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={precoFixo}
+                    onChange={(e) => setPrecoFixo(e.target.value)}
+                    className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Rebate (R$):</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={rebate}
+                    onChange={(e) => setRebate(e.target.value)}
+                    className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
+                  />
+                </div>
+              </>
             )}
+          </div>
+
+          {/* SELETOR DE CANAIS POR CHECKBOX */}
+          <div className="pt-4 border-t border-slate-800 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Canais Visíveis na Precificação:</span>
+              <div className="flex gap-3 text-xs">
+                <button type="button" onClick={() => selecionarTodosCanais(true)} className="text-purple-400 hover:underline cursor-pointer">
+                  Marcar Todos
+                </button>
+                <span className="text-slate-600">|</span>
+                <button type="button" onClick={() => selecionarTodosCanais(false)} className="text-slate-400 hover:underline cursor-pointer">
+                  Desmarcar Todos
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {canaisConfig.map((c, i) => {
+                const ativo = canaisSelecionados.includes(c.canal);
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => toggleCanalSelecao(c.canal)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                      ativo
+                        ? "bg-purple-600/30 text-purple-300 border-purple-500/60 shadow-sm"
+                        : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300"
+                    }`}
+                  >
+                    {ativo ? "✓ " : "+ "} {c.canal}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -339,24 +430,15 @@ export default function CalculadoraPage() {
           </div>
         )}
 
-        {/* Cards de Resultados por Canal */}
+        {/* Cards de Resultados por Canal Selecionado */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {resultadosCanais.map((res, idx) => (
             <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col justify-between">
               <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
                 <h3 className="text-sm font-bold text-white">{res.canal}</h3>
-                {modoCalculo === "reversa" && (
-                  <div>
-                    <span className="text-[9px] text-slate-400 block text-right">Rebate (R$)</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      defaultValue={rebate}
-                      onChange={(e) => setRebate(e.target.value)}
-                      className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-right text-xs font-mono text-purple-300"
-                    />
-                  </div>
-                )}
+                <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
+                  Comissão: {res.comissaoPct.toFixed(0)}%
+                </span>
               </div>
 
               <div className="p-5 space-y-3">
@@ -375,7 +457,7 @@ export default function CalculadoraPage() {
                     <span className="text-rose-400">- {formatarMoeda(res.custoProduto)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Comissão ({res.comissaoPct}%):</span>
+                    <span className="text-slate-500">Comissão ({res.comissaoPct.toFixed(0)}%):</span>
                     <span className="text-rose-400">- {formatarMoeda(res.valorComissao)}</span>
                   </div>
                   {res.tarifaFixa > 0 && (
