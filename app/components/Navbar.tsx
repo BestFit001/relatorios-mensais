@@ -25,7 +25,7 @@ export default function Navbar() {
       {/* Direita: Menus com Dropdown por Hover */}
       <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
         
-        {/* Relatórios (Dropdown incluindo Cadastros) */}
+        {/* Relatórios (Dropdown) */}
         <div className="relative group">
           <button className="px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all flex items-center gap-1 cursor-pointer">
             Relatórios ▾
@@ -40,9 +40,9 @@ export default function Navbar() {
               Cadastros
             </Link>
             <Link
-              href="/full"
+              href="/"
               className={`block px-4 py-2 transition-all ${
-                pathname?.includes("/full") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+                pathname === "/" ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
               }`}
             >
               Curva ABC
