@@ -63,7 +63,7 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      // 2. Carrega regras do Mercado Livre enviadas em uploads (ml_anuncios_regras e mapeamento_skus)
+      // 2. Carrega regras do Mercado Livre (ml_anuncios_regras e mapeamento_skus)
       const aMap = new Map<string, any>();
       
       const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
@@ -71,10 +71,10 @@ export default function PromocoesPage() {
         mlRegras.forEach((m: any) => {
           const mlbKey = String(m.mlb || "").trim().toLowerCase();
           const skuKey = normalizarSku(m.sku);
-          const comissaoNum = m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : 0;
+          const comissaoNum = Number(m.comissao ?? 0);
           const info = {
             comissao: comissaoNum,
-            frete: m.peso_real ? m.peso_real * 10 : 20.75,
+            frete: m.peso_real ? Number(m.peso_real) * 10 : 20.75,
             tarifa_fixa: 4.00
           };
           if (mlbKey) aMap.set(mlbKey, info);
@@ -87,7 +87,7 @@ export default function PromocoesPage() {
         mapAnuncios.forEach((m: any) => {
           const mlbKey = String(m.mlb || "").trim().toLowerCase();
           const skuKey = normalizarSku(m.sku);
-          const comissaoNum = m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : 0;
+          const comissaoNum = Number(m.comissao ?? 0);
           const info = {
             comissao: comissaoNum,
             frete: m.frete !== null && m.frete !== undefined ? Number(m.frete) : 20.75,
@@ -167,21 +167,21 @@ export default function PromocoesPage() {
         const promoName = r[colIdx["PROMOTION_NAME"]] || "Campanha Geral";
         const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
 
-        // Validação estrita de Custo (deve ser > 0)
-        const temCusto = custosMap.has(skuKey);
-        const custo = temCusto ? custosMap.get(skuKey)! : 0;
+        // 1. Validação estrita de Custo (> 0)
+        const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
 
-        // Busca Comissão e Frete na Base (por MLB ou SKU)
+        // 2. Busca Comissão e Frete na Base (por MLB ou SKU)
         const anuncioInfo = anunciosMap.get(mlb.toLowerCase()) || anunciosMap.get(skuKey) || null;
         
-        const comissaoVal = anuncioInfo?.comissao !== null && anuncioInfo?.comissao !== undefined ? anuncioInfo.comissao : 0;
-        const freteVal = anuncioInfo?.frete !== null && anuncioInfo?.frete !== undefined ? anuncioInfo.frete : null;
-        const tarifaFixa = anuncioInfo?.tarifa_fixa !== undefined ? anuncioInfo.tarifa_fixa : 4.00;
+        const comissaoVal = anuncioInfo ? Number(anuncioInfo.comissao) : 0;
+        const freteVal = anuncioInfo?.frete !== null && anuncioInfo?.frete !== undefined ? Number(anuncioInfo.frete) : null;
+        const tarifaFixa = anuncioInfo?.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
 
-        if (!temCusto || custo <= 0) {
+        // Validações rigorosas exigidas
+        if (custo <= 0) {
           statusItem = "INAPTO";
           errosList.push("base desatualizada");
         }
