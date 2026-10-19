@@ -20,12 +20,14 @@ export default function CalculadoraPage() {
   const [loading, setLoading] = useState(false);
   const [modoCalculo, setModoCalculo] = useState<"pdv_ideal" | "reversa">("pdv_ideal");
 
-  // Inputs
+  // Inputs Globais
   const [skuBusca, setSkuBusca] = useState("");
   const [marcaFiltro, setMarcaFiltro] = useState("");
   const [margemAlvo, setMargemAlvo] = useState("30");
   const [precoFixo, setPrecoFixo] = useState("60.00");
-  const [rebate, setRebate] = useState("0.00");
+
+  // Rebates individuais por canal (chave: nome do canal, valor: string/number)
+  const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
 
   // Dados e Bases
   const [produtoEncontrado, setProdutoEncontrado] = useState<any>(null);
@@ -146,18 +148,14 @@ export default function CalculadoraPage() {
     }
   };
 
-  // Função com mapeamento inteligente de sinónimos para bater com a aba de Regras
   const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
     const cLower = canalNome.toLowerCase();
     
     const regrasDoCanal = regrasTarifacao.filter((r) => {
       const rCanal = String(r.canal || "").toLowerCase();
       if (rCanal === cLower) return true;
-      
-      // Mapeamento exato de sinónimos entre o card e a aba de Regras
       if ((cLower.includes("magalu") || cLower.includes("magazine")) && (rCanal.includes("magalu") || rCanal.includes("magazine"))) return true;
-      if ((cLower.includes("tiktok")) && (rCanal.includes("tiktok"))) return true;
-      
+      if (cLower.includes("tiktok") && rCanal.includes("tiktok")) return true;
       return rCanal.includes(cLower) || cLower.includes(rCanal);
     });
 
@@ -165,7 +163,6 @@ export default function CalculadoraPage() {
       return { comissao: cLower.includes("premium") ? 19 : 14, tarifa_fixa: 0, frete: 0 };
     }
 
-    // Procura a faixa de preço exata na tabela de regras
     for (const regra of regrasDoCanal) {
       const faixaStr = String(regra.faixa_preco || "").toLowerCase();
       const matchNums = faixaStr.match(/[\d.,]+/g);
@@ -260,8 +257,9 @@ export default function CalculadoraPage() {
             temMlb: cLower.includes("mercado livre") ? (cLower.includes("clássico") ? !!anuncClassico : !!anuncPremium) : true
           };
         } else {
+          // Margem Reversa considerando o Rebate específico daquele canal
           const pdvBase = parseNumero(precoFixo);
-          const valRebate = parseNumero(rebate);
+          const valRebate = parseNumero(rebatesCanais[canalNome] || "0");
           const pdvEfetivo = Math.max(0, pdvBase - valRebate);
 
           if (!cLower.includes("mercado livre")) {
@@ -273,8 +271,9 @@ export default function CalculadoraPage() {
 
           const valorComissao = pdvEfetivo * comissaoPct;
           const valorImposto = pdvEfetivo * impostoPercent;
-          const lucroLiquido = pdvEfetivo - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto);
-          const margemFinal = pdvEfetivo > 0 ? (lucroLiquido / pdvEfetivo) * 100 : 0;
+          // Lucro líquido soma o rebate (bônus) recebido
+          const lucroLiquido = pdvEfetivo - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto) + valRebate;
+          const margemFinal = pdvBase > 0 ? (lucroLiquido / pdvBase) * 100 : 0;
 
           return {
             canal: canalNome,
@@ -316,7 +315,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Leitura exata de regras com suporte a sinónimos (Ex: Magalu / Magazine Luiza)</p>
+            <p className="text-sm font-medium text-slate-400">Precificação avançada com rebate individual por canal e leitura em tempo real da aba de Regras</p>
           </div>
           <Navbar />
         </div>
@@ -385,28 +384,16 @@ export default function CalculadoraPage() {
                 />
               </div>
             ) : (
-              <>
-                <div>
-                  <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Preço Fixo (R$):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={precoFixo}
-                    onChange={(e) => setPrecoFixo(e.target.value)}
-                    className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Rebate (R$):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={rebate}
-                    onChange={(e) => setRebate(e.target.value)}
-                    className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
-                  />
-                </div>
-              </>
+              <div className="md:col-span-2">
+                <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Preço Fixo Global (R$):</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={precoFixo}
+                  onChange={(e) => setPrecoFixo(e.target.value)}
+                  className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
+                />
+              </div>
             )}
           </div>
 
@@ -488,13 +475,28 @@ export default function CalculadoraPage() {
               </div>
 
               <div className="p-5 space-y-3">
-                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
-                  <span className="block text-[10px] font-bold text-slate-400 uppercase">
-                    {modoCalculo === "pdv_ideal" ? "Preço de Venda (PDV Ideal)" : "Preço de Venda (PDV Fixo)"}
-                  </span>
-                  <span className="text-2xl font-black text-emerald-400 font-mono mt-0.5 block">
-                    {formatarMoeda(res.pdv)}
-                  </span>
+                <div className="flex items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                  <div>
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">
+                      {modoCalculo === "pdv_ideal" ? "Preço de Venda (PDV Ideal)" : "Preço de Venda (PDV)"}
+                    </span>
+                    <span className="text-xl font-black text-emerald-400 font-mono mt-0.5 block">
+                      {formatarMoeda(res.pdv)}
+                    </span>
+                  </div>
+
+                  {modoCalculo === "reversa" && (
+                    <div className="text-right">
+                      <label className="block text-[9px] font-bold text-purple-400 uppercase mb-1">Rebate (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={rebatesCanais[res.canal] || "0.00"}
+                        onChange={(e) => setRebatesCanais({ ...rebatesCanais, [res.canal]: e.target.value })}
+                        className="w-20 bg-slate-900 border border-purple-600/60 rounded-lg p-1.5 text-right text-xs font-mono text-purple-300 outline-none"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-1.5 text-xs font-mono text-slate-300 pt-1">
@@ -522,6 +524,13 @@ export default function CalculadoraPage() {
                     <span className="text-slate-500">Imposto (9%):</span>
                     <span className="text-rose-400">- {formatarMoeda(res.valorImposto)}</span>
                   </div>
+
+                  {modoCalculo === "reversa" && Number(res.rebate || 0) > 0 && (
+                    <div className="flex justify-between pt-1 border-t border-slate-800 text-purple-300 font-bold">
+                      <span>Rebate (Bônus):</span>
+                      <span>+ {formatarMoeda(res.rebate)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
