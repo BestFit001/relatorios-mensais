@@ -74,12 +74,20 @@ export default function Navbar() {
           </div>
         </div>
 
-        {/* Ferramentas (Dropdown) */}
+        {/* Ferramentas (Dropdown com Calculadora e PLPs) */}
         <div className="relative group">
           <button className="px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all flex items-center gap-1 cursor-pointer">
             Ferramentas ▾
           </button>
           <div className="absolute top-full left-0 mt-1 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 hidden group-hover:block z-50">
+            <Link
+              href="/calculadora"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/calculadora") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
+            >
+              Calculadora
+            </Link>
             <Link
               href="/plp"
               className={`block px-4 py-2 transition-all ${
