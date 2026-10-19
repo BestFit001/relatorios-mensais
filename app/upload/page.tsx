@@ -477,7 +477,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // UPLOAD DE REGRAS ML COM COLUNAS DINÂMICAS CONFIGURADAS PELO USUÁRIO
+  // UPLOAD DE REGRAS ML COM CONVERSÃO CORRETA DA COMISSÃO PERCENTUAL (TRATANDO 0.14 COMO 14)
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -504,7 +504,7 @@ export default function UploadPage() {
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         const mapaMlPendente = new Map<string, { registro: any, score: number }>();
-        const linhaInicio = 1; // Analisa a partir da primeira linha de dados
+        const linhaInicio = 1;
 
         for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
@@ -515,8 +515,21 @@ export default function UploadPage() {
           
           if (!mlb || !mlb.startsWith("MLB")) continue;
 
-          let comissaoVal = String(row[idxCom] || "0").replace("%", "").trim().replace(",", ".");
-          const comissao = Number(comissaoVal) || 0;
+          // Tratamento para ler corretamente a comissão em formato decimal (ex: 0.14 vira 14) ou string percentual
+          let rawComissao = row[idxCom];
+          let comissaoNum = 0;
+          if (rawComissao !== undefined && rawComissao !== null && rawComissao !== "") {
+            let strCom = String(rawComissao).replace("%", "").trim().replace(",", ".");
+            let parsed = parseFloat(strCom);
+            if (!isNaN(parsed)) {
+              // Se o excel traz 0.14 referente a 14%, convertemos para 14
+              if (parsed > 0 && parsed < 1) {
+                comissaoNum = parsed * 100;
+              } else {
+                comissaoNum = parsed;
+              }
+            }
+          }
 
           let pesoReal = 2.000;
           if (idxPeso >= 0 && row[idxPeso] !== undefined && row[idxPeso] !== "") {
@@ -529,13 +542,13 @@ export default function UploadPage() {
           const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
 
           let score = 0;
-          if (comissao > 0) score++;
+          if (comissaoNum > 0) score++;
           if (pesoReal !== 2.000) score++;
           if (altura > 0) score++;
           if (largura > 0) score++;
           if (comprimento > 0) score++;
 
-          const objReg = { mlb, sku, comissao, peso_real: pesoReal, altura, largura, comprimento };
+          const objReg = { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento };
 
           if (!mapaMlPendente.has(mlb) || score > mapaMlPendente.get(mlb)!.score) {
             mapaMlPendente.set(mlb, { registro: objReg, score });
