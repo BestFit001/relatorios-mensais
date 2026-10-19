@@ -190,25 +190,25 @@ export default function PromocoesPage() {
         let freteVal = 20.75;
         let tarifaFixa = 4.00;
 
-        // Validação rigorosa: se não encontrar o anúncio nas regras/mapeamento
+        // VALIDAÇÃO RIGOROSA DA COMISSÃO E CADASTRO
         if (!anuncioInfo) {
           statusItem = "INAPTO";
-          errosList.push("MLB não cadastrado na base");
+          errosList.push("base desatualizada (MLB não cadastrado)");
         } else {
           comissaoVal = Number(anuncioInfo.comissao) || 0;
           freteVal = anuncioInfo.frete !== null && anuncioInfo.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
           tarifaFixa = anuncioInfo.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
 
-          // Validação rigorosa: se a comissão for 0 ou menor, aponta que está desatualizada/zerada na base
+          // REGRA SOLICITADA: Se a comissão for estritamente 0 ou menor, barra a precificação imediatamente
           if (comissaoVal <= 0) {
             statusItem = "INAPTO";
-            errosList.push("Comissão 0% - Corrigir na base");
+            errosList.push("base desatualizada (comissão 0% - atualizar base)");
           }
         }
 
         if (custo <= 0) {
           statusItem = "INAPTO";
-          errosList.push("Custo zerado ou não encontrado");
+          errosList.push("base desatualizada (custo zerado)");
         }
 
         let novoPreco = originalPrice;
