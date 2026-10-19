@@ -70,7 +70,7 @@ export default function CalculadoraPage() {
     });
     setCustosMap(mapaCustos);
 
-    // 2. Carrega tabela de mapeamento de anúncios (Mercado Livre MLB / Comissões específicas)
+    // 2. Carrega tabela de mapeamento de anúncios (MLB / Comissões específicas)
     const mapaAnunciosSku = new Map();
     try {
       const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(2000);
@@ -144,40 +144,40 @@ export default function CalculadoraPage() {
     }
   };
 
-  // Função auxiliar para encontrar a regra de tarifação com base no canal e faixa de preço
-  const obterRegraCanal = (canalNome: string, precoReferencia: number) => {
-    const regrasDoCanal = regrasTarifacao.filter((r) => r.canal.toLowerCase() === canalNome.toLowerCase());
+  // Função estritamente baseada na aba de Regras (config_regras_tarifacao)
+  const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
+    const cLower = canalNome.toLowerCase();
+    
+    // Filtra as regras do canal na tabela do banco
+    const regrasDoCanal = regrasTarifacao.filter((r) => {
+      const rCanal = String(r.canal || "").toLowerCase();
+      // Trata variações de nome ex: "TikTok" vs "TikTok Shop" ou "Magalu" vs "Magazine Luiza"
+      if (rCanal === cLower) return true;
+      if (cLower.includes("tiktok") && rCanal.includes("tiktok")) return true;
+      if (cLower.includes("magalu") && rCanal.includes("magalu")) return true;
+      return rCanal.includes(cLower) || cLower.includes(rCanal);
+    });
 
     if (regrasDoCanal.length === 0) {
-      // Regras padrão caso não estejam cadastradas na aba de regras
-      if (canalNome.toLowerCase().includes("clássico")) return { comissao: 14, tarifa_fixa: 0, frete: 0 };
-      if (canalNome.toLowerCase().includes("premium")) return { comissao: 18, tarifa_fixa: 0, frete: 0 };
-      return { comissao: 15, tarifa_fixa: 4.00, frete: 12.99 };
+      return { comissao: cLower.includes("premium") ? 19 : 14, tarifa_fixa: 0, frete: 0 };
     }
 
-    // Procura por faixa de preço correspondente (ex: "R$ 0.00 até R$ 78.99" ou "0 até 50")
+    // Procura a faixa de preço correspondente na tabela de regras
     for (const regra of regrasDoCanal) {
       const faixaStr = String(regra.faixa_preco || "").toLowerCase();
-      if (faixaStr.includes("em diante") || faixaStr.includes("até 99999")) {
-        // Verifica limite inferior se houver
-        const matchNums = faixaStr.match(/[\d.,]+/g);
-        if (matchNums && matchNums.length > 0) {
-          const limiteInf = parseNumero(matchNums[0]);
-          if (precoReferencia >= limiteInf) return regra;
-        } else {
-          return regra;
-        }
-      } else if (faixaStr.includes("até")) {
-        const matchNums = faixaStr.match(/[\d.,]+/g);
-        if (matchNums && matchNums.length >= 2) {
-          const min = parseNumero(matchNums[0]);
-          const max = parseNumero(matchNums[1]);
-          if (precoReferencia >= min && precoReferencia <= max) return regra;
-        }
+      const matchNums = faixaStr.match(/[\d.,]+/g);
+
+      if (faixaStr.includes("em diante") || faixaStr.includes("99999") || (matchNums && matchNums.length === 1)) {
+        const limiteInf = matchNums ? parseNumero(matchNums[0]) : 0;
+        if (precoReferencia >= limiteInf) return regra;
+      } else if (matchNums && matchNums.length >= 2) {
+        const min = parseNumero(matchNums[0]);
+        const max = parseNumero(matchNums[1]);
+        if (precoReferencia >= min && precoReferencia <= max) return regra;
       }
     }
 
-    // Retorna a primeira regra encontrada caso nenhuma faixa exata bata
+    // Se nenhuma faixa exata corresponder, retorna a primeira regra válida do canal
     return regrasDoCanal[0];
   };
 
@@ -185,54 +185,53 @@ export default function CalculadoraPage() {
     if (!produtoEncontrado) return [];
 
     const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
-    const impostoPercent = 0.09; // 9% imposto fixo corporativo
+    const impostoPercent = 0.09; // 9% imposto corporativo fixo
     const skuKey = normalizarSku(produtoEncontrado.sku);
 
     // Mapeamento MLB para Mercado Livre
     const anunciosSku = mapeamentoMap.get(skuKey) || [];
-    const temMlbClassico = anunciosSku.some((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("clássico") || Number(a.comissao) <= 14);
-    const temMlbPremium = anunciosSku.some((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("premium") || Number(a.comissao) > 14);
+    const anuncClassico = anunciosSku.find((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("clássico") || Number(a.comissao) <= 14);
+    const anuncPremium = anunciosSku.find((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("premium") || Number(a.comissao) > 14);
 
     return canaisConfig
       .filter((canalNome) => canaisSelecionados.includes(canalNome))
       .map((canalNome) => {
+        const cLower = canalNome.toLowerCase();
         let comissaoPct = 0.14;
         let tarifaFixa = 0;
-        let freteVariavel = 12.99;
-
-        const cLower = canalNome.toLowerCase();
+        let freteVariavel = 0;
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            comissaoPct = temMlbClassico ? 0.14 : 0.14;
+            comissaoPct = anuncClassico ? Number(anuncClassico.comissao) / 100 : 0.14;
           } else if (cLower.includes("premium")) {
-            comissaoPct = temMlbPremium ? 0.18 : 0.18;
+            comissaoPct = anuncPremium ? Number(anuncPremium.comissao) / 100 : 0.19;
+          } else {
+            comissaoPct = 0.14;
           }
-          const regraMl = obterRegraCanal(canalNome, 100);
-          tarifaFixa = Number(regraMl.tarifa_fixa || 0);
-          freteVariavel = Number(regraMl.frete || 0);
         } else {
-          // Demais canais buscam dinamicamente na aba de regras (config_regras_tarifacao)
-          const precoEstimado = modoCalculo === "pdv_ideal" ? 80.0 : parseNumero(precoFixo);
-          const regraEncontrada = obterRegraCanal(canalNome, precoEstimado);
+          // Busca estritamente na aba de regras com base no preço estimado/efetivo
+          const precoRef = modoCalculo === "pdv_ideal" ? 80.0 : parseNumero(precoFixo);
+          const regraTabela = obterRegraCanalDaTabela(canalNome, precoRef);
 
-          comissaoPct = Number(regraEncontrada.comissao || 14) / 100;
-          tarifaFixa = Number(regraEncontrada.tarifa_fixa || 0);
-          freteVariavel = Number(regraEncontrada.frete || 0);
+          comissaoPct = Number(regraTabela.comissao || 14) / 100;
+          tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
+          freteVariavel = Number(regraTabela.frete || 0);
         }
 
         if (modoCalculo === "pdv_ideal") {
           const margemAlvoDec = parseFloat(margemAlvo) / 100;
-          const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
+          let denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
 
           let pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
 
-          // Se recalculado o preço cair na faixa <= 78.99, ajusta frete conforme as regras
-          if (pdvCalculado <= 78.99) {
-            const regraFaixaBaixa = obterRegraCanal(canalNome, pdvCalculado);
-            freteVariavel = Number(regraFaixaBaixa.frete || 0);
-            tarifaFixa = Number(regraFaixaBaixa.tarifa_fixa || 0);
-            comissaoPct = Number(regraFaixaBaixa.comissao || (cLower.includes("premium") ? 18 : 14)) / 100;
+          // Reavalia a regra de faixa de preço exata com o PDV calculado
+          if (!cLower.includes("mercado livre")) {
+            const regraExata = obterRegraCanalDaTabela(canalNome, pdvCalculado);
+            comissaoPct = Number(regraExata.comissao || 14) / 100;
+            tarifaFixa = Number(regraExata.tarifa_fixa || 0);
+            freteVariavel = Number(regraExata.frete || 0);
+
             const novoDenominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
             pdvCalculado = novoDenominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / novoDenominador : pdvCalculado;
           }
@@ -255,15 +254,17 @@ export default function CalculadoraPage() {
             margemFinal
           };
         } else {
-          // Margem Reversa
+          // Modo Margem Reversa
           const pdvBase = parseNumero(precoFixo);
           const valRebate = parseNumero(rebate);
           const pdvEfetivo = Math.max(0, pdvBase - valRebate);
 
-          const regraFaixa = obterRegraCanal(canalNome, pdvEfetivo);
-          comissaoPct = Number(regraFaixa.comissao || (cLower.includes("premium") ? 18 : 14)) / 100;
-          tarifaFixa = Number(regraFaixa.tarifa_fixa || 0);
-          freteVariavel = Number(regraFaixa.frete || 0);
+          if (!cLower.includes("mercado livre")) {
+            const regraExata = obterRegraCanalDaTabela(canalNome, pdvEfetivo);
+            comissaoPct = Number(regraExata.comissao || 14) / 100;
+            tarifaFixa = Number(regraExata.tarifa_fixa || 0);
+            freteVariavel = Number(regraExata.frete || 0);
+          }
 
           const valorComissao = pdvEfetivo * comissaoPct;
           const valorImposto = pdvEfetivo * impostoPercent;
@@ -309,7 +310,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Cálculos baseados em tempo real na aba de Regras (Tarifas, Comissões e Fretes)</p>
+            <p className="text-sm font-medium text-slate-400">Leitura estrita das Regras cadastradas e padrão de 14% (Clássico) e 19% (Premium) para ML sem MLB</p>
           </div>
           <Navbar />
         </div>
