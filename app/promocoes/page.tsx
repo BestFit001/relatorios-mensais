@@ -53,6 +53,7 @@ export default function PromocoesPage() {
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
+      // 1. Custos
       const { data: custos } = await supabase.from("tabela_custos_skus").select("*");
       const cMap = new Map<string, number>();
       const obsSet = new Set<string>();
@@ -71,6 +72,7 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
+      // 2. Regras ML (ml_anuncios_regras)
       const mlMap = new Map<string, any>();
       const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
       if (mlRegras) {
@@ -89,6 +91,7 @@ export default function PromocoesPage() {
       }
       setMlRegrasMap(mlMap);
 
+      // 3. Mapeamento de SKUs (mapeamento_skus)
       const mapMap = new Map<string, any>();
       const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*");
       if (mapAnuncios) {
@@ -175,31 +178,38 @@ export default function PromocoesPage() {
         const promoName = r[colIdx["PROMOTION_NAME"]] || "Campanha Geral";
         const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
 
-        // Validação de existência do anúncio na base
-        const anuncioEncontrado = mlRegrasMap.has(mlb) || mlRegrasMap.has(skuKey) || mapeamentoMap.has(mlb) || mapeamentoMap.has(skuKey);
-        const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey) || null;
-        
+        // 1. Custo
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
-        const comissaoVal = anuncioInfo ? Number(anuncioInfo.comissao) : 0;
-        const freteVal = anuncioInfo?.frete !== null && anuncioInfo?.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
-        const tarifaFixa = anuncioInfo?.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
 
+        // 2. Consulta estrita nas bases do Supabase (mlRegrasMap / mapeamentoMap)
+        const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey);
+        
         let statusItem = "APTO";
         let errosList: string[] = [];
+        let comissaoVal = 0;
+        let freteVal = 20.75;
+        let tarifaFixa = 4.00;
 
-        // Regras estritas de validação
-        if (!anuncioEncontrado) {
+        // VERIFICAÇÃO 1: Se o MLB ou SKU NÃO estiver na base carregada do Supabase
+        if (!anuncioInfo) {
           statusItem = "INAPTO";
-          errosList.push("base desatualizada (MLB não cadastrado)");
+          errosList.push("MLB não cadastrado na base — Atualizar base");
         } else {
-          if (custo <= 0) {
-            statusItem = "INAPTO";
-            errosList.push("base desatualizada (sem custo)");
-          }
+          comissaoVal = Number(anuncioInfo.comissao) || 0;
+          freteVal = anuncioInfo.frete !== null && anuncioInfo.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
+          tarifaFixa = anuncioInfo.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
+
+          // VERIFICAÇÃO 2: Se estiver na base, mas a comissão for 0 ou menor
           if (comissaoVal <= 0) {
             statusItem = "INAPTO";
-            errosList.push("base desatualizada (comissão zerada/ausente)");
+            errosList.push("Comissão 0% na base — Atualizar base");
           }
+        }
+
+        // VERIFICAÇÃO 3: Custo do SKU
+        if (custo <= 0) {
+          statusItem = "INAPTO";
+          errosList.push("Custo não encontrado — Atualizar base");
         }
 
         let novoPreco = originalPrice;
@@ -297,7 +307,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa de cadastro, comissão (&gt;0%) e custo com bloqueio automático</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com bloqueio automático para base desatualizada</p>
           </div>
           <Navbar />
         </div>
