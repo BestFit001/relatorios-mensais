@@ -30,7 +30,6 @@ export default function PromocoesPage() {
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [comissoesMap, setComissoesMap] = useState<Map<string, number>>(new Map());
   const [obsoletosSet, setObsoletosSet] = useState<Set<string>>(new Set());
-  const [excecoesMap, setExcecoesMap] = useState<Map<string, number>>(new Map());
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -45,38 +44,32 @@ export default function PromocoesPage() {
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
-      // 1. Custos
       const { data: custos } = await supabase.from("tabela_custos_skus").select("*");
-      const cMap = new Map();
+      const cMap = new Map<string, number>();
+      const obsSet = new Set<string>();
+
       if (custos) {
         custos.forEach((c: any) => {
           const k = normalizarSku(c.sku);
-          if (k) cMap.set(k, Number(c.custo_unitario || c.custo || 0));
+          if (k) {
+            cMap.set(k, Number(c.custo_unitario || c.custo || 0));
+            if (String(c.status || "").toLowerCase().includes("obsoleto")) {
+              obsSet.add(k);
+            }
+          }
         });
       }
       setCustosMap(cMap);
+      setObsoletosSet(obsSet);
 
-      // 2. Mapeamento / Comissões ML por MLB ou SKU
       const { data: mapMl } = await supabase.from("config_regras_canais").select("*");
-      const comMap = new Map();
+      const comMap = new Map<string, number>();
       if (mapMl) {
         mapMl.forEach((m: any) => {
           if (m.mlb) comMap.set(String(m.mlb).trim(), Number(m.comissao || 14) / 100);
         });
       }
       setComissoesMap(comMap);
-
-      // 3. Obsoletos
-      const { data: obs } = await supabase.from("tabela_custos_skus").select("*");
-      const obsSet = new Set();
-      if (obs) {
-        obs.forEach((o: any) => {
-          if (String(o.status || "").toLowerCase().includes("obsoleto")) {
-            obsSet.add(normalizarSku(o.sku));
-          }
-        });
-      }
-      setObsoletosSet(obsSet);
 
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
@@ -112,7 +105,7 @@ export default function PromocoesPage() {
         const rows: any[] = XLSX.utils.sheet_to_json(ws);
 
         const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
-        const imposto = 0.09; // 9% imposto fixo
+        const imposto = 0.09;
 
         const resultados = rows.map((row) => {
           const mlb = String(row.ITEM_ID || row.MLB || "").trim();
@@ -122,11 +115,9 @@ export default function PromocoesPage() {
           const dateValidity = row.DATE_VALIDITY || "Indeterminado";
 
           const custo = custosMap.get(sku) || 25.88;
-          const comissao = comissoesMap.get(mlb) || 0.14; // Padrão Clássico 14%
-          const freteFixo = 20.75; // Frete padrão ML corporativo
+          const comissao = comissoesMap.get(mlb) || 0.14;
+          const freteFixo = 20.75;
 
-          // Fórmula de formação de preço de campanha:
-          // Preço = (Custo + Frete) / (1 - (Comissão + Imposto + Margem))
           const denominador = 1 - (comissao + imposto + margemDesejada);
           const novoPrecoCalc = denominador > 0 ? (custo + freteFixo) / denominador : originalPrice * 0.9;
 
@@ -148,14 +139,17 @@ export default function PromocoesPage() {
 
         setDadosProcessados(resultados);
 
-        // Salva na tabela de promoções ativas no Supabase
         for (const item of resultados.filter(r => r.STATUS === "APTO")) {
-          await supabase.from("promocoes_ativas_ml").insert([{
-            mlb: item.MLB,
-            sku: item.SKU,
-            promocao: item.PROMOTION_NAME,
-            date_validity: item.DATE_VALIDITY
-          }]).catch(() => {});
+          try {
+            await supabase.from("promocoes_ativas_ml").insert([{
+              mlb: item.MLB,
+              sku: item.SKU,
+              promocao: item.PROMOTION_NAME,
+              date_validity: item.DATE_VALIDITY
+            }]);
+          } catch (insertErr) {
+            console.log("Erro ao salvar promoção:", insertErr);
+          }
         }
 
         carregarPromocoesAtivasSupabase();
@@ -199,7 +193,6 @@ export default function PromocoesPage() {
           <Navbar />
         </div>
 
-        {/* Abas Internas */}
         <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
           <button
             onClick={() => setAbaAtiva("precificar")}
@@ -221,7 +214,6 @@ export default function PromocoesPage() {
 
         {abaAtiva === "precificar" ? (
           <div className="space-y-6">
-            {/* Painel de Upload e Parâmetros */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Campanha (Excel):</label>
@@ -267,7 +259,6 @@ export default function PromocoesPage() {
               )}
             </div>
 
-            {/* Visualização de Todos os Itens (Aptos e Inaptos) */}
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
@@ -310,7 +301,6 @@ export default function PromocoesPage() {
             )}
           </div>
         ) : (
-          /* Painel de Promoções Ativas */
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden p-6 space-y-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">Painel de Campanhas & Promoções Ativas</h3>
