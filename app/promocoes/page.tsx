@@ -121,13 +121,17 @@ export default function PromocoesPage() {
           const mlbKey = String(m.mlb || "").trim().toUpperCase();
           const comissaoNum = parsePorcentagem(m.comissao);
           const info = {
+            sku: m.sku || "",
             comissao: comissaoNum,
             peso_real: Number(m.peso_real || 2.0),
             altura: Number(m.altura || 10),
             largura: Number(m.largura || 10),
             comprimento: Number(m.comprimento || 10)
           };
-          if (mlbKey) mlMap.set(mlbKey, info);
+          // Consolidação sem duplicar: mantém a primeira ocorrência se já existir
+          if (mlbKey && !mlMap.has(mlbKey)) {
+            mlMap.set(mlbKey, info);
+          }
         });
       }
       setMlRegrasMap(mlMap);
@@ -160,7 +164,7 @@ export default function PromocoesPage() {
     }
   };
 
-  // PROCESSAR PRECIFICAÇÃO TRADICIONAL
+  // PROCESSAR PRECIFICAÇÃO TRADICIONAL COM CONSOLIDAÇÃO DE MLB ÚNICO (SEM DUPLICAÇÃO)
   const processarPlanilhaCampanha = async () => {
     if (!dadosProcessados || !dadosProcessados.rawData) {
       alert("Por favor, selecione uma planilha de campanha do Mercado Livre.");
@@ -199,6 +203,8 @@ export default function PromocoesPage() {
 
       const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
       const imposto = 0.09;
+      
+      const mlbProcessadosSet = new Set<string>();
       const resultados: any[] = [];
 
       for (let i = 1; i < rawData.length; i++) {
@@ -208,25 +214,18 @@ export default function PromocoesPage() {
         const mlbRaw = String(r[idxItemId] || "").trim().toUpperCase();
         if (!mlbRaw || !mlbRaw.startsWith("MLB")) continue;
 
-        const skuRaw = idxSku !== -1 ? String(r[idxSku] || "") : "";
-        const skuKey = normalizarSku(skuRaw);
-        const originalPrice = Number(r[idxOriginalPrice] || 0);
+        const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
+        
+        // EVITA DUPLICAÇÃO: Mantém apenas a primeira ocorrência encontrada para o mesmo MLB
+        if (mlbProcessadosSet.has(mlbKeyNormalizada)) continue;
+        mlbProcessadosSet.add(mlbKeyNormalizada);
+
+        let skuRaw = idxSku !== -1 ? String(r[idxSku] || "") : "";
+        let originalPrice = Number(r[idxOriginalPrice] || 0);
         const promoName = idxPromotionName !== -1 ? (r[idxPromotionName] || "Campanha Geral") : "Campanha Geral";
         const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
 
-        const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
-        
-        const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
         let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada);
-
-        if (!anuncioInfo) {
-          for (const [key, value] of mlRegrasMap.entries()) {
-            if (key.replace(/\s+/g, "").toUpperCase() === mlbKeyNormalizada) {
-              anuncioInfo = value;
-              break;
-            }
-          }
-        }
 
         if (!anuncioInfo) {
           const { data: dbMatch } = await supabase
@@ -238,6 +237,7 @@ export default function PromocoesPage() {
           if (dbMatch) {
             const comissaoNum = parsePorcentagem(dbMatch.comissao);
             anuncioInfo = {
+              sku: dbMatch.sku || "",
               comissao: comissaoNum,
               peso_real: Number(dbMatch.peso_real || 2.0),
               altura: Number(dbMatch.altura || 10),
@@ -246,6 +246,14 @@ export default function PromocoesPage() {
             };
           }
         }
+
+        // Se o SKU estiver vazio na linha da planilha, herda o SKU de referência cadastrado no MLB
+        if (!skuRaw && anuncioInfo && anuncioInfo.sku) {
+          skuRaw = anuncioInfo.sku;
+        }
+
+        const skuKey = normalizarSku(skuRaw);
+        const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
@@ -312,14 +320,14 @@ export default function PromocoesPage() {
       }
 
       setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "precificar" });
-      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+      alert(`✅ Processamento concluído sem duplicatas! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
     }
     setLoading(false);
   };
 
-  // PROCESSAR PLANILHA DE REBATE / REDUÇÃO DE TARIFAS
+  // PROCESSAR PLANILHA DE REBATE / REDUÇÃO DE TARIFAS SEM DUPLICAÇÃO DE MLB
   const processarPlanilhaRebate = async () => {
     if (!dadosProcessados || !dadosProcessados.rawData) {
       alert("Por favor, selecione uma planilha de rebate/redução de tarifas do Mercado Livre.");
@@ -359,6 +367,8 @@ export default function PromocoesPage() {
 
       const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
       const imposto = 0.09;
+      
+      const mlbProcessadosSet = new Set<string>();
       const resultados: any[] = [];
 
       for (let i = 1; i < rawData.length; i++) {
@@ -368,27 +378,17 @@ export default function PromocoesPage() {
         const mlbRaw = String(r[idxItemId] || "").trim().toUpperCase();
         if (!mlbRaw || !mlbRaw.startsWith("MLB")) continue;
 
-        const skuRaw = idxSku !== -1 ? String(r[idxSku] || "") : "";
-        const skuKey = normalizarSku(skuRaw);
+        const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
+        if (mlbProcessadosSet.has(mlbKeyNormalizada)) continue;
+        mlbProcessadosSet.add(mlbKeyNormalizada);
+
+        let skuRaw = idxSku !== -1 ? String(r[idxSku] || "") : "";
         const finalPrice = Number(r[idxFinalPrice] || 0);
         const newReceives = idxNewReceives !== -1 ? parseNumeroBruto(r[idxNewReceives]) : 0;
         const promoName = idxPromotionName !== -1 ? (r[idxPromotionName] || "Com redução de tarifas") : "Com redução de tarifas";
         const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
 
-        const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
-        
-        const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
         let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada);
-
-        if (!anuncioInfo) {
-          for (const [key, value] of mlRegrasMap.entries()) {
-            if (key.replace(/\s+/g, "").toUpperCase() === mlbKeyNormalizada) {
-              anuncioInfo = value;
-              break;
-            }
-          }
-        }
-
         if (!anuncioInfo) {
           const { data: dbMatch } = await supabase
             .from("ml_anuncios_regras")
@@ -397,16 +397,16 @@ export default function PromocoesPage() {
             .maybeSingle();
 
           if (dbMatch) {
-            const comissaoNum = parsePorcentagem(dbMatch.comissao);
-            anuncioInfo = {
-              comissao: comissaoNum,
-              peso_real: Number(dbMatch.peso_real || 2.0),
-              altura: Number(dbMatch.altura || 10),
-              largura: Number(dbMatch.largura || 10),
-              comprimento: Number(dbMatch.comprimento || 10)
-            };
+            anuncioInfo = { sku: dbMatch.sku || "" };
           }
         }
+
+        if (!skuRaw && anuncioInfo && anuncioInfo.sku) {
+          skuRaw = anuncioInfo.sku;
+        }
+
+        const skuKey = normalizarSku(skuRaw);
+        const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
@@ -425,8 +425,6 @@ export default function PromocoesPage() {
         let margemFinal = 0;
 
         if (statusItem === "APTO") {
-          // Lógica de Rebate:
-          // NEW_RECEIVES é o valor líquido com rebate embutido. Descontamos CMV, Imposto (9% sobre o FINAL_PRICE)
           const impostoTotal = finalPrice * imposto;
           lucroLiquido = newReceives - custo - impostoTotal;
           margemFinal = finalPrice > 0 ? (lucroLiquido / finalPrice) * 100 : 0;
@@ -453,7 +451,7 @@ export default function PromocoesPage() {
       }
 
       setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "rebate" });
-      alert(`✅ Processamento de Rebate concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+      alert(`✅ Processamento de Rebate concluído sem duplicatas! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
     } catch (err: any) {
       alert("Erro ao processar rebate: " + err.message);
     }
@@ -520,7 +518,7 @@ export default function PromocoesPage() {
     const dadosOtimizados = dadosProcessados.itens.map((item: any) => ({
       ITEM_ID: item.MLB,
       SKU: item.SKU,
-      FINAL_PRICE: item.FINAL_PRICE,
+      FINAL_PRICE: item.STATUS === "APTO" ? item.FINAL_PRICE : item.ORIGINAL_PRICE,
       STATUS: item.STATUS === "APTO" ? "Elegível" : "Inapto",
       OBSERVACOES: item.ERRO || ""
     }));
@@ -548,7 +546,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação de Campanhas Tradicionais e Rebate / Redução de Tarifas</p>
+            <p className="text-sm font-medium text-slate-400">Validação com consolidação de MLB único e Rebate / Redução de Tarifas</p>
           </div>
           <Navbar />
         </div>
@@ -639,8 +637,8 @@ export default function PromocoesPage() {
             {listaItens.length > 0 && tipoProcessamento === "precificar" && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">Resultado do Processamento da Campanha</h3>
-                  <span className="text-xs text-slate-400">Total processados: {listaItens.length}</span>
+                  <h3 className="text-sm font-bold text-white">Resultado do Processamento da Campanha (Consolidado por MLB)</h3>
+                  <span className="text-xs text-slate-400">Total únicos: {listaItens.length}</span>
                 </div>
                 <div className="overflow-x-auto max-h-[500px]">
                   <table className="w-full text-left border-collapse text-xs">
@@ -735,8 +733,8 @@ export default function PromocoesPage() {
             {listaItens.length > 0 && tipoProcessamento === "rebate" && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">Resultado da Análise de Rebate & Redução de Tarifas</h3>
-                  <span className="text-xs text-slate-400">Total processados: {listaItens.length}</span>
+                  <h3 className="text-sm font-bold text-white">Resultado da Análise de Rebate (Consolidado por MLB)</h3>
+                  <span className="text-xs text-slate-400">Total únicos: {listaItens.length}</span>
                 </div>
                 <div className="overflow-x-auto max-h-[500px]">
                   <table className="w-full text-left border-collapse text-xs">
