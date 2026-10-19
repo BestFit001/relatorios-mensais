@@ -21,14 +21,14 @@ export default function PromocoesPage() {
   const [loading, setLoading] = useState(false);
   const [margemAlvo, setMargemAlvo] = useState("20");
   const [arquivoUpload, setArquivoUpload] = useState<File | null>(null);
+  const [workbookOriginal, setWorkbookOriginal] = useState<any>(null);
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
   const [promocoesAtivas, setPromocoesAtivas] = useState<any[]>([]);
   const [termoBusca, setTermoBusca] = useState("");
   const [abaAtiva, setAbaAtiva] = useState<"precificar" | "ativas">("precificar");
 
-  // Bases carregadas do Supabase
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
-  const [comissoesMap, setComissoesMap] = useState<Map<string, number>>(new Map());
+  const [anunciosMap, setAnunciosMap] = useState<Map<string, any>>(new Map());
   const [obsoletosSet, setObsoletosSet] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -44,6 +44,7 @@ export default function PromocoesPage() {
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
+      // 1. Custos
       const { data: custos } = await supabase.from("tabela_custos_skus").select("*");
       const cMap = new Map<string, number>();
       const obsSet = new Set<string>();
@@ -62,14 +63,23 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      const { data: mapMl } = await supabase.from("config_regras_canais").select("*");
-      const comMap = new Map<string, number>();
-      if (mapMl) {
-        mapMl.forEach((m: any) => {
-          if (m.mlb) comMap.set(String(m.mlb).trim(), Number(m.comissao || 14) / 100);
+      // 2. Mapeamento de anúncios e comissão/frete específicos (mapeamento_skus)
+      const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*");
+      const aMap = new Map<string, any>();
+      if (mapAnuncios) {
+        mapAnuncios.forEach((m: any) => {
+          const mlbKey = String(m.mlb || "").trim().toLowerCase();
+          const skuKey = normalizarSku(m.sku);
+          const info = {
+            comissao: m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : null,
+            frete: m.frete !== null && m.frete !== undefined ? Number(m.frete) : null,
+            tarifa_fixa: m.tarifa_fixa !== null && m.tarifa_fixa !== undefined ? Number(m.tarifa_fixa) : 4.00
+          };
+          if (mlbKey) aMap.set(mlbKey, info);
+          if (skuKey) aMap.set(skuKey, info);
         });
       }
-      setComissoesMap(comMap);
+      setAnunciosMap(aMap);
 
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
@@ -84,103 +94,168 @@ export default function PromocoesPage() {
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setArquivoUpload(e.target.files[0]);
+      const file = e.target.files[0];
+      setArquivoUpload(file);
+
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: "binary" });
+        setWorkbookOriginal(wb);
+      };
+      reader.readAsBinaryString(file);
     }
   };
 
   const processarPlanilhaCampanha = async () => {
-    if (!arquivoUpload) {
+    if (!workbookOriginal) {
       alert("Por favor, selecione uma planilha de campanha do Mercado Livre.");
       return;
     }
 
     setLoading(true);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: "binary" });
+    try {
+      const sheetName = workbookOriginal.SheetNames.includes("Promoções") ? "Promoções" : workbookOriginal.SheetNames[0];
+      const ws = workbookOriginal.Sheets[sheetName];
+      const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+      if (rawData.length < 5) {
+        alert("A planilha parece estar vazia ou fora do formato esperado.");
+        setLoading(false);
+        return;
+      }
+
+      const headers = rawData[0];
+      const colIdx: any = {};
+      headers.forEach((h: string, idx: number) => {
+        if (h) colIdx[h.trim()] = idx;
+      });
+
+      const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
+      const imposto = 0.09;
+
+      const resultados: any[] = [];
+
+      for (let i = 5; i < rawData.length; i++) {
+        const r = rawData[i];
+        if (!r || r.length === 0) continue;
+
+        const mlb = String(r[colIdx["ITEM_ID"]] || "").trim();
+        if (!mlb || !mlb.startsWith("MLB")) continue;
+
+        const skuRaw = String(r[colIdx["SKU"]] || "");
+        const skuKey = normalizarSku(skuRaw);
+        const originalPrice = Number(r[colIdx["ORIGINAL_PRICE"]] || 0);
+        const promoName = r[colIdx["PROMOTION_NAME"]] || "Campanha Geral";
+        const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
+
+        // Custo
+        const temCusto = custosMap.has(skuKey);
+        const custo = temCusto ? custosMap.get(skuKey)! : 0;
+
+        // Comissão e Frete específicos na base (busca por MLB ou SKU)
+        const anuncioInfo = anunciosMap.get(mlb.toLowerCase()) || anunciosMap.get(skuKey) || null;
         
-        // Garante que lê estritamente a aba "Promoções" (ou a primeira se não achar pelo nome)
-        const sheetName = wb.SheetNames.includes("Promoções") ? "Promoções" : wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
-        
-        const rows: any[] = XLSX.utils.sheet_to_json(ws);
-        const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
-        const imposto = 0.09;
+        const comissaoVal = anuncioInfo?.comissao !== null && anuncioInfo?.comissao !== undefined ? anuncioInfo.comissao : null;
+        const freteVal = anuncioInfo?.frete !== null && anuncioInfo?.frete !== undefined ? anuncioInfo.frete : null;
+        const tarifaFixa = anuncioInfo?.tarifa_fixa !== undefined ? anuncioInfo.tarifa_fixa : 4.00;
 
-        const resultados = rows
-          .filter((row: any) => {
-            const mlb = String(row.ITEM_ID || row.MLB || "").trim();
-            // Ignora linhas descritivas de cabeçalho do ML (ex: "Número do anúncio" ou vazias)
-            return mlb && mlb.startsWith("MLB");
-          })
-          .map((row: any) => {
-            const mlb = String(row.ITEM_ID || row.MLB || "").trim();
-            const sku = normalizarSku(row.SKU);
-            const originalPrice = Number(row.ORIGINAL_PRICE || 0);
-            const promoName = row.PROMOTION_NAME || "Campanha Geral";
-            const dateValidity = row.DATE_VALIDITY || "Indeterminado";
+        let statusItem = "APTO";
+        let errosList: string[] = [];
 
-            const custo = custosMap.get(sku) || 25.88;
-            const comissao = comissoesMap.get(mlb) || 0.14;
-            const freteFixo = 20.75;
+        if (!temCusto || custo <= 0) {
+          statusItem = "INAPTO";
+          errosList.push("SEM CUSTO");
+        }
+        if (comissaoVal === null || comissaoVal === undefined) {
+          statusItem = "INAPTO";
+          errosList.push("SEM COMISSÃO");
+        }
+        if (freteVal === null || freteVal === undefined) {
+          statusItem = "INAPTO";
+          errosList.push("SEM FRETE");
+        }
 
-            const denominador = 1 - (comissao + imposto + margemDesejada);
-            const novoPrecoCalc = denominador > 0 ? (custo + freteFixo) / denominador : originalPrice * 0.9;
-
-            const isObsoleto = obsoletosSet.has(sku);
-            const status = (custo > 0 && originalPrice > 0 && novoPrecoCalc > 0) ? "APTO" : "INAPTO";
-
-            return {
-              ...row,
-              MLB: mlb,
-              SKU: row.SKU || sku,
-              PROMOTION_NAME: promoName,
-              DATE_VALIDITY: dateValidity,
-              ORIGINAL_PRICE: originalPrice,
-              FINAL_PRICE: Number(novoPrecoCalc.toFixed(2)),
-              STATUS: status,
-              OBSOLETO: isObsoleto ? "SIM" : "NÃO"
-            };
-          });
-
-        setDadosProcessados(resultados);
-
-        for (const item of resultados.filter(r => r.STATUS === "APTO")) {
-          try {
-            await supabase.from("promocoes_ativas_ml").insert([{
-              mlb: item.MLB,
-              sku: item.SKU,
-              promocao: item.PROMOTION_NAME,
-              date_validity: item.DATE_VALIDITY
-            }]);
-          } catch (insertErr) {
-            console.log("Erro ao salvar promoção:", insertErr);
+        let novoPreco = originalPrice;
+        if (statusItem === "APTO") {
+          const comissaoDec = (comissaoVal > 1 ? comissaoVal / 100 : comissaoVal);
+          const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+          novoPreco = denominador > 0 ? (custo + tarifaFixa + freteVal) / denominador : originalPrice * 0.9;
+          if (originalPrice <= 0 || novoPreco <= 0) {
+            statusItem = "INAPTO";
+            errosList.push("Preço Inválido");
           }
         }
 
-        carregarPromocoesAtivasSupabase();
-        alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos gerados.`);
-      } catch (err: any) {
-        alert("Erro ao processar ficheiro: " + err.message);
+        resultados.push({
+          rowIndex: i,
+          MLB: mlb,
+          SKU: skuRaw,
+          PROMOTION_NAME: promoName,
+          DATE_VALIDITY: dateValidity,
+          ORIGINAL_PRICE: originalPrice,
+          FINAL_PRICE: Number(novoPreco.toFixed(2)),
+          STATUS: statusItem,
+          OBSOLETO: obsoletosSet.has(skuKey) ? "SIM" : "NÃO",
+          ERRO: errosList.join(" | ")
+        });
       }
-      setLoading(false);
-    };
-    reader.readAsBinaryString(arquivoUpload);
+
+      setDadosProcessados(resultados);
+
+      for (const item of resultados.filter(r => r.STATUS === "APTO")) {
+        try {
+          await supabase.from("promocoes_ativas_ml").insert([{
+            mlb: item.MLB,
+            sku: item.SKU,
+            promocao: item.PROMOTION_NAME,
+            date_validity: item.DATE_VALIDITY
+          }]);
+        } catch (err) {}
+      }
+
+      carregarPromocoesAtivasSupabase();
+      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+    } catch (err: any) {
+      alert("Erro ao processar: " + err.message);
+    }
+    setLoading(false);
   };
 
   const baixarAptosExcel = () => {
-    const aptos = dadosProcessados.filter((r) => r.STATUS === "APTO");
-    if (aptos.length === 0) {
-      alert("Nenhum item apto para exportar.");
+    if (!workbookOriginal || dadosProcessados.length === 0) {
+      alert("Processe a planilha primeiro.");
       return;
     }
 
-    const ws = XLSX.utils.json_to_sheet(aptos);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Promoções Aptos");
-    XLSX.writeFile(wb, "ml_promocoes_precificadas_aptos.xlsx");
+    const sheetName = workbookOriginal.SheetNames.includes("Promoções") ? "Promoções" : workbookOriginal.SheetNames[0];
+    const ws = workbookOriginal.Sheets[sheetName];
+    const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+    const headers = rawData[0];
+    const colIdx: any = {};
+    headers.forEach((h: string, idx: number) => {
+      if (h) colIdx[h.trim()] = idx;
+    });
+
+    dadosProcessados.forEach((item) => {
+      const i = item.rowIndex;
+      if (item.STATUS === "APTO") {
+        if (colIdx["FINAL_PRICE"] !== undefined) rawData[i][colIdx["FINAL_PRICE"]] = item.FINAL_PRICE;
+        if (colIdx["STATUS"] !== undefined) rawData[i][colIdx["STATUS"]] = "Elegível";
+        if (colIdx["ACTION"] !== undefined) rawData[i][colIdx["ACTION"]] = "Participar";
+        if (colIdx["ERRORS"] !== undefined) rawData[i][colIdx["ERRORS"]] = "";
+      } else {
+        if (colIdx["STATUS"] !== undefined) rawData[i][colIdx["STATUS"]] = "Inapto";
+        if (colIdx["ACTION"] !== undefined) rawData[i][colIdx["ACTION"]] = "Não participar";
+        if (colIdx["ERRORS"] !== undefined) rawData[i][colIdx["ERRORS"]] = item.ERRO || "Inapto";
+      }
+    });
+
+    const newWs = XLSX.utils.aoa_to_sheet(rawData);
+    workbookOriginal.Sheets[sheetName] = newWs;
+
+    XLSX.writeFile(workbookOriginal, "ml_campanha_precificada_com_cabecalho.xlsx");
   };
 
   const promocoesFiltradas = promocoesAtivas.filter((p) => 
@@ -196,7 +271,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação automática de campanhas, validação de aptos/inaptos e painel de campanhas ativas</p>
+            <p className="text-sm font-medium text-slate-400">Leitura exata de custo, comissão e frete da base com relatórios de inaptidão detalhados</p>
           </div>
           <Navbar />
         </div>
@@ -261,7 +336,7 @@ export default function PromocoesPage() {
                     onClick={baixarAptosExcel}
                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
                   >
-                    Baixar Apenas Aptos (.xlsx)
+                    Baixar Planilha Pronta (.xlsx)
                   </button>
                 </div>
               )}
@@ -283,7 +358,7 @@ export default function PromocoesPage() {
                         <th className="p-3 text-right">Preço Original</th>
                         <th className="p-3 text-right">Novo Preço Sugerido</th>
                         <th className="p-3 text-center">Status</th>
-                        <th className="p-3 text-center">Obsoleto</th>
+                        <th className="p-3 text-center">Observações / Erros</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
@@ -299,7 +374,7 @@ export default function PromocoesPage() {
                               {item.STATUS}
                             </span>
                           </td>
-                          <td className="p-3 text-center font-bold text-slate-400">{item.OBSOLETO}</td>
+                          <td className="p-3 text-center font-bold text-rose-400">{item.ERRO || "-"}</td>
                         </tr>
                       ))}
                     </tbody>
