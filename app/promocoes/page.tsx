@@ -108,7 +108,6 @@ export default function PromocoesPage() {
       if (mlRegras) {
         mlRegras.forEach((m: any) => {
           const mlbKey = String(m.mlb || "").trim().toUpperCase();
-          const skuKey = normalizarSku(m.sku);
           const comissaoNum = parsePorcentagem(m.comissao);
           const info = {
             comissao: comissaoNum,
@@ -118,7 +117,6 @@ export default function PromocoesPage() {
             comprimento: Number(m.comprimento || 10)
           };
           if (mlbKey) mlMap.set(mlbKey, info);
-          if (skuKey) mlMap.set(skuKey, info);
         });
       }
       setMlRegrasMap(mlMap);
@@ -128,7 +126,6 @@ export default function PromocoesPage() {
       if (mapAnuncios) {
         mapAnuncios.forEach((m: any) => {
           const mlbKey = String(m.mlb || "").trim().toUpperCase();
-          const skuKey = normalizarSku(m.sku);
           const comissaoNum = parsePorcentagem(m.comissao);
           const info = {
             comissao: comissaoNum,
@@ -138,7 +135,6 @@ export default function PromocoesPage() {
             comprimento: Number(m.comprimento || 10)
           };
           if (mlbKey) mapMap.set(mlbKey, info);
-          if (skuKey) mapMap.set(skuKey, info);
         });
       }
       setMapeamentoMap(mapMap);
@@ -213,15 +209,14 @@ export default function PromocoesPage() {
 
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
         
-        // BUSCA ROBUSTA: Normaliza maiúsculas/minúsculas e remove espaços para garantir o match exato
+        // CONSULTA ESTRITA E PRIORITÁRIA PELO MLB (ITEM_ID)
         const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
         
-        let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlbKeyNormalizada) || mapeamentoMap.get(skuKey);
+        let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada) || mapeamentoMap.get(mlbKeyNormalizada);
         
         if (!anuncioInfo) {
-          // Tenta busca flexível varrendo as chaves do map caso haja diferença de formatação
           for (const [key, value] of mlRegrasMap.entries()) {
-            if (key.replace(/\s+/g, "").toUpperCase() === mlbKeyNormalizada || key === skuKey) {
+            if (key.replace(/\s+/g, "").toUpperCase() === mlbKeyNormalizada) {
               anuncioInfo = value;
               break;
             }
@@ -375,7 +370,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com busca flexível de anúncios</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa com consulta prioritária e estrita por MLB</p>
           </div>
           <Navbar />
         </div>
