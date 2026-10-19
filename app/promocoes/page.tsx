@@ -61,7 +61,6 @@ export default function PromocoesPage() {
   const [salvandoBanco, setSalvandoBanco] = useState(false);
   const [margemAlvo, setMargemAlvo] = useState("20");
   const [arquivoUpload, setArquivoUpload] = useState<File | null>(null);
-  const [workbookOriginal, setWorkbookOriginal] = useState<any>(null);
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
   const [promocoesAtivas, setPromocoesAtivas] = useState<any[]>([]);
   const [termoBusca, setTermoBusca] = useState("");
@@ -139,32 +138,30 @@ export default function PromocoesPage() {
       reader.onload = (evt) => {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: "binary" });
-        setWorkbookOriginal(wb);
+        const sheetName = wb.SheetNames.includes("Promoções") ? "Promoções" : wb.SheetNames[0];
+        const ws = wb.Sheets[sheetName];
+        const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        setDadosProcessados({ rawData, sheetName } as any);
       };
       reader.readAsBinaryString(file);
     }
   };
 
   const processarPlanilhaCampanha = async () => {
-    if (!workbookOriginal) {
+    if (!dadosProcessados || !(dadosProcessados as any).rawData) {
       alert("Por favor, selecione uma planilha de campanha do Mercado Livre.");
       return;
     }
 
     setLoading(true);
     try {
-      // Procura a aba "Promoções" ou pega a primeira aba disponível
-      const sheetName = workbookOriginal.SheetNames.includes("Promoções") ? "Promoções" : workbookOriginal.SheetNames[0];
-      const ws = workbookOriginal.Sheets[sheetName];
-      const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-
+      const { rawData } = dadosProcessados as any;
       if (rawData.length < 1) {
         alert("A planilha parece estar vazia.");
         setLoading(false);
         return;
       }
 
-      // LEITURA DINÂMICA DO CABEÇALHO POR TÍTULO (Linha 0)
       const headers = rawData[0].map((h: any) => String(h || "").trim().toUpperCase());
       const getColIndex = (names: string[]) => {
         for (const name of names) {
@@ -181,7 +178,7 @@ export default function PromocoesPage() {
       const idxDateValidity = getColIndex(["DATE_VALIDITY", "VIGÊNCIA", "PERÍODO"]);
 
       if (idxItemId === -1 || idxOriginalPrice === -1) {
-        alert("Erro: Não foi possível localizar as colunas 'ITEM_ID' (ou Número do anúncio) e 'ORIGINAL_PRICE' (ou Preço original) na primeira linha da planilha.");
+        alert("Erro: Não foi possível localizar as colunas 'ITEM_ID' e 'ORIGINAL_PRICE' na planilha.");
         setLoading(false);
         return;
       }
@@ -191,7 +188,6 @@ export default function PromocoesPage() {
 
       const resultados: any[] = [];
 
-      // Varre as linhas a partir da linha 1 (dados)
       for (let i = 1; i < rawData.length; i++) {
         const r = rawData[i];
         if (!r || r.length === 0) continue;
@@ -207,7 +203,6 @@ export default function PromocoesPage() {
 
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
         
-        // Consulta o MLB na base
         const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
         let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada);
 
@@ -304,8 +299,8 @@ export default function PromocoesPage() {
         });
       }
 
-      setDadosProcessados(resultados);
-      alert(`✅ Processamento concluído por título de coluna! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+      setDadosProcessados({ rawData, sheetName, itens: resultados } as any);
+      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
     }
@@ -313,7 +308,12 @@ export default function PromocoesPage() {
   };
 
   const salvarPromocoesNoBanco = async () => {
-    const itensAptos = dadosProcessados.filter(r => r.STATUS === "APTO");
+    const proc = dadosProcessados as any;
+    if (!proc || !proc.itens) {
+      alert("Processe a planilha primeiro.");
+      return;
+    }
+    const itensAptos = proc.itens.filter((r: any) => r.STATUS === "APTO");
     if (itensAptos.length === 0) {
       alert("Nenhum item apto para salvar.");
       return;
@@ -330,7 +330,7 @@ export default function PromocoesPage() {
         }]);
       }
       await carregarPromocoesAtivasSupabase();
-      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso na base de Promoções Ativas!`);
+      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso, incluindo nome e período de validade!`);
       setAbaAtiva("ativas");
     } catch (err: any) {
       alert("Erro ao salvar no banco: " + err.message);
@@ -359,52 +359,30 @@ export default function PromocoesPage() {
     }
   };
 
+  // DOWNLOAD OTIMIZADO: Contém apenas ITEM_ID (MLB), FINAL_PRICE (Preço Final) e STATUS (Apto/Inapto/Erros)
   const baixarAptosExcel = () => {
-    if (!workbookOriginal || dadosProcessados.length === 0) {
+    const proc = dadosProcessados as any;
+    if (!proc || !proc.itens || proc.itens.length === 0) {
       alert("Processe a planilha primeiro.");
       return;
     }
 
-    const sheetName = workbookOriginal.SheetNames.includes("Promoções") ? "Promoções" : workbookOriginal.SheetNames[0];
-    const ws = workbookOriginal.Sheets[sheetName];
-    const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    const dadosOtimizados = proc.itens.map((item: any) => ({
+      ITEM_ID: item.MLB,
+      FINAL_PRICE: item.STATUS === "APTO" ? item.FINAL_PRICE : item.ORIGINAL_PRICE,
+      STATUS: item.STATUS === "APTO" ? "Elegível" : "Inapto",
+      OBSERVACOES: item.ERRO || ""
+    }));
 
-    if (rawData.length < 1) return;
-    const headers = rawData[0].map((h: any) => String(h || "").trim().toUpperCase());
-    const getColIdx = (names: string[]) => {
-      for (const name of names) {
-        const idx = headers.indexOf(name.toUpperCase());
-        if (idx !== -1) return idx;
-      }
-      return -1;
-    };
+    const newWs = XLSX.utils.json_to_sheet(dadosOtimizados);
+    const newWb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(newWb, newWs, proc.sheetName || "Promoções");
 
-    const idxFinalPrice = getColIdx(["FINAL_PRICE", "PREÇO FINAL"]);
-    const idxStatus = getColIdx(["STATUS", "STATUS DA PROMOÇÃO"]);
-    const idxAction = getColIdx(["ACTION", "O QUE VOCÊ QUER FAZER COM ESTE ANÚNCIO?"]);
-    const idxErrors = getColIdx(["ERRORS", "OBSERVAÇÕES E ERROS"]);
-
-    dadosProcessados.forEach((item) => {
-      const i = item.rowIndex;
-      if (!rawData[i]) return;
-
-      if (item.STATUS === "APTO") {
-        if (idxFinalPrice !== -1) rawData[i][idxFinalPrice] = item.FINAL_PRICE;
-        if (idxStatus !== -1) rawData[i][idxStatus] = "Elegível";
-        if (idxAction !== -1) rawData[i][idxAction] = "Participar";
-        if (idxErrors !== -1) rawData[i][idxErrors] = "";
-      } else {
-        if (idxStatus !== -1) rawData[i][idxStatus] = "Inapto";
-        if (idxAction !== -1) rawData[i][idxAction] = "Não participar";
-        if (idxErrors !== -1) rawData[i][idxErrors] = item.ERRO || "base desatualizada";
-      }
-    });
-
-    const newWs = XLSX.utils.aoa_to_sheet(rawData);
-    workbookOriginal.Sheets[sheetName] = newWs;
-
-    XLSX.writeFile(workbookOriginal, "ml_campanha_precificada_com_cabecalho.xlsx");
+    XLSX.writeFile(newWb, "ml_campanha_otimizada_com_status.xlsx");
   };
+
+  const procState = dadosProcessados as any;
+  const listaItens = procState?.itens || [];
 
   const promocoesFiltradas = promocoesAtivas.filter((p) => 
     String(p.sku || "").toLowerCase().includes(termoBusca.toLowerCase()) ||
@@ -419,7 +397,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Leitura dinâmica por título de coluna (ITEM_ID, SKU, ORIGINAL_PRICE, etc.)</p>
+            <p className="text-sm font-medium text-slate-400">Download otimizado contendo MLB, Preço Final e Status (Apto/Inapto)</p>
           </div>
           <Navbar />
         </div>
@@ -477,7 +455,7 @@ export default function PromocoesPage() {
                 </button>
               </div>
 
-              {dadosProcessados.length > 0 && (
+              {listaItens.length > 0 && (
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -492,17 +470,17 @@ export default function PromocoesPage() {
                     onClick={baixarAptosExcel}
                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
                   >
-                    Baixar Excel
+                    Baixar Excel Otimizado
                   </button>
                 </div>
               )}
             </div>
 
-            {dadosProcessados.length > 0 && (
+            {listaItens.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
                   <h3 className="text-sm font-bold text-white">Resultado do Processamento da Campanha</h3>
-                  <span className="text-xs text-slate-400">Total processados: {dadosProcessados.length}</span>
+                  <span className="text-xs text-slate-400">Total processados: {listaItens.length}</span>
                 </div>
                 <div className="overflow-x-auto max-h-[500px]">
                   <table className="w-full text-left border-collapse text-xs">
@@ -518,7 +496,7 @@ export default function PromocoesPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                      {dadosProcessados.map((item, idx) => (
+                      {listaItens.map((item: any, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                           <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
                           <td className="p-3 font-mono text-slate-300">{item.SKU}</td>
