@@ -44,6 +44,7 @@ export default function PromocoesPage() {
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
+      // 1. Custos
       const { data: custos } = await supabase.from("tabela_custos_skus").select("*");
       const cMap = new Map<string, number>();
       const obsSet = new Set<string>();
@@ -62,12 +63,13 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
+      // 2. Mapeamento de regras do ML (ml_anuncios_regras e mapeamento_skus)
       const aMap = new Map<string, any>();
       
       const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
       if (mlRegras) {
         mlRegras.forEach((m: any) => {
-          const mlbKey = String(m.mlb || "").trim().toLowerCase();
+          const mlbKey = String(m.mlb || "").trim().toUpperCase();
           const skuKey = normalizarSku(m.sku);
           const comissaoNum = Number(m.comissao ?? 0);
           const info = {
@@ -83,7 +85,7 @@ export default function PromocoesPage() {
       const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*");
       if (mapAnuncios) {
         mapAnuncios.forEach((m: any) => {
-          const mlbKey = String(m.mlb || "").trim().toLowerCase();
+          const mlbKey = String(m.mlb || "").trim().toUpperCase();
           const skuKey = normalizarSku(m.sku);
           const comissaoNum = Number(m.comissao ?? 0);
           const info = {
@@ -156,7 +158,7 @@ export default function PromocoesPage() {
         const r = rawData[i];
         if (!r || r.length === 0) continue;
 
-        const mlb = String(r[colIdx["ITEM_ID"]] || "").trim();
+        const mlb = String(r[colIdx["ITEM_ID"]] || "").trim().toUpperCase();
         if (!mlb || !mlb.startsWith("MLB")) continue;
 
         const skuRaw = String(r[colIdx["SKU"]] || "");
@@ -165,16 +167,20 @@ export default function PromocoesPage() {
         const promoName = r[colIdx["PROMOTION_NAME"]] || "Campanha Geral";
         const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
 
+        // 1. Custo
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
-        const anuncioInfo = anunciosMap.get(mlb.toLowerCase()) || anunciosMap.get(skuKey) || null;
+
+        // 2. Busca exata por MLB na base de anúncios (prioridade absoluta), senão busca por SKU
+        const anuncioInfo = anunciosMap.get(mlb) || anunciosMap.get(skuKey) || null;
         
         const comissaoVal = anuncioInfo ? Number(anuncioInfo.comissao) : 0;
-        const freteVal = anuncioInfo?.frete !== null && anuncioInfo?.frete !== undefined ? Number(anuncioInfo.frete) : null;
+        const freteVal = anuncioInfo?.frete !== null && anuncioInfo?.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
         const tarifaFixa = anuncioInfo?.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
 
+        // Validação rigorosa: se custo for <= 0 ou comissão for <= 0 -> base desatualizada
         if (custo <= 0) {
           statusItem = "INAPTO";
           errosList.push("base desatualizada");
@@ -183,17 +189,12 @@ export default function PromocoesPage() {
           statusItem = "INAPTO";
           errosList.push("base desatualizada");
         }
-        if (freteVal === null || freteVal === undefined) {
-          statusItem = "INAPTO";
-          errosList.push("sem frete");
-        }
 
         let novoPreco = originalPrice;
         if (statusItem === "APTO") {
-          const comissaoDec = (comissaoVal > 1 ? comissaoVal / 100 : comissaoVal);
+          const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
           const denominador = 1 - (comissaoDec + imposto + margemDesejada);
-          const freteNum = Number(freteVal ?? 20.75);
-          novoPreco = denominador > 0 ? (custo + tarifaFixa + freteNum) / denominador : originalPrice * 0.9;
+          novoPreco = denominador > 0 ? (custo + tarifaFixa + freteVal) / denominador : originalPrice * 0.9;
           if (originalPrice <= 0 || novoPreco <= 0) {
             statusItem = "INAPTO";
             errosList.push("Preço Inválido");
@@ -210,7 +211,7 @@ export default function PromocoesPage() {
           FINAL_PRICE: Number(novoPreco.toFixed(2)),
           STATUS: statusItem,
           OBSOLETO: obsoletosSet.has(skuKey) ? "SIM" : "NÃO",
-          ERRO: errosList.join(" | ")
+          ERRO: errosList.length > 0 ? errosList.join(" | ") : ""
         });
       }
 
@@ -284,7 +285,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa de comissão e custo com exportação no formato original</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa por MLB/SKU com bloqueio automático para base desatualizada</p>
           </div>
           <Navbar />
         </div>
