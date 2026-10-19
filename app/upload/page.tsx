@@ -108,6 +108,21 @@ export default function UploadPage() {
     setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
+  // Função para salvar automaticamente cada alteração de coluna no Supabase
+  const atualizarColunaConfig = async (campo: string, coluna: string) => {
+    const novasRegras = { ...regrasColsDinamicas, [campo]: coluna };
+    setRegrasColsDinamicas(novasRegras);
+
+    try {
+      await supabase.from('config_regras_tiny').upsert(
+        { campo: campo, coluna: coluna },
+        { onConflict: 'campo' }
+      );
+    } catch (err) {
+      console.error("Erro ao salvar configuração da coluna:", err);
+    }
+  };
+
   const pesquisarCustosNoBanco = async () => {
     if (!pesquisaCusto || pesquisaCusto.trim() === "") {
       setListaCustosFiltrados([]);
@@ -477,7 +492,6 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // UPLOAD DE REGRAS ML COM CONVERSÃO CORRETA DA COMISSÃO PERCENTUAL (TRATANDO 0.14 COMO 14)
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -515,14 +529,12 @@ export default function UploadPage() {
           
           if (!mlb || !mlb.startsWith("MLB")) continue;
 
-          // Tratamento para ler corretamente a comissão em formato decimal (ex: 0.14 vira 14) ou string percentual
           let rawComissao = row[idxCom];
           let comissaoNum = 0;
           if (rawComissao !== undefined && rawComissao !== null && rawComissao !== "") {
             let strCom = String(rawComissao).replace("%", "").trim().replace(",", ".");
             let parsed = parseFloat(strCom);
             if (!isNaN(parsed)) {
-              // Se o excel traz 0.14 referente a 14%, convertemos para 14
               if (parsed > 0 && parsed < 1) {
                 comissaoNum = parsed * 100;
               } else {
@@ -983,7 +995,7 @@ export default function UploadPage() {
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400 mt-1">Configure abaixo as colunas exatas da sua planilha de anúncios do Mercado Livre antes de fazer o upload.</p>
+                <p className="text-xs text-slate-400 mt-1">Configure abaixo as colunas exatas da sua planilha de anúncios do Mercado Livre. As alterações são salvas automaticamente.</p>
               </div>
               <button 
                 onClick={limparRegrasMl}
@@ -993,14 +1005,14 @@ export default function UploadPage() {
               </button>
             </div>
 
-            {/* PAINEL DE CONFIGURAÇÃO DE COLUNAS DO ML */}
+            {/* PAINEL DE CONFIGURAÇÃO DE COLUNAS DO ML (COM SALVAMENTO AUTOMÁTICO) */}
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna MLB:</label>
                 <input 
                   type="text" 
                   value={regrasColsDinamicas.ml_mlb} 
-                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_mlb: e.target.value.toUpperCase() })} 
+                  onChange={(e) => atualizarColunaConfig('ml_mlb', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1009,7 +1021,7 @@ export default function UploadPage() {
                 <input 
                   type="text" 
                   value={regrasColsDinamicas.ml_sku} 
-                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_sku: e.target.value.toUpperCase() })} 
+                  onChange={(e) => atualizarColunaConfig('ml_sku', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1018,7 +1030,7 @@ export default function UploadPage() {
                 <input 
                   type="text" 
                   value={regrasColsDinamicas.ml_comissao} 
-                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_comissao: e.target.value.toUpperCase() })} 
+                  onChange={(e) => atualizarColunaConfig('ml_comissao', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1027,7 +1039,7 @@ export default function UploadPage() {
                 <input 
                   type="text" 
                   value={regrasColsDinamicas.ml_peso} 
-                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_peso: e.target.value.toUpperCase() })} 
+                  onChange={(e) => atualizarColunaConfig('ml_peso', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1036,7 +1048,7 @@ export default function UploadPage() {
                 <input 
                   type="text" 
                   value={regrasColsDinamicas.ml_altura} 
-                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_altura: e.target.value.toUpperCase() })} 
+                  onChange={(e) => atualizarColunaConfig('ml_altura', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1045,7 +1057,7 @@ export default function UploadPage() {
                 <input 
                   type="text" 
                   value={regrasColsDinamicas.ml_largura} 
-                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_largura: e.target.value.toUpperCase() })} 
+                  onChange={(e) => atualizarColunaConfig('ml_largura', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1054,7 +1066,7 @@ export default function UploadPage() {
                 <input 
                   type="text" 
                   value={regrasColsDinamicas.ml_comprimento} 
-                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_comprimento: e.target.value.toUpperCase() })} 
+                  onChange={(e) => atualizarColunaConfig('ml_comprimento', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
