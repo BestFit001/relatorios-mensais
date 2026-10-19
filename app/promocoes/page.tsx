@@ -202,8 +202,8 @@ export default function PromocoesPage() {
         const r = rawData[i];
         if (!r || r.length === 0) continue;
 
-        const mlb = String(r[colIdx["ITEM_ID"]] || "").trim().toUpperCase();
-        if (!mlb || !mlb.startsWith("MLB")) continue;
+        const mlbRaw = String(r[colIdx["ITEM_ID"]] || "").trim().toUpperCase();
+        if (!mlbRaw || !mlbRaw.startsWith("MLB")) continue;
 
         const skuRaw = String(r[colIdx["SKU"]] || "");
         const skuKey = normalizarSku(skuRaw);
@@ -212,8 +212,22 @@ export default function PromocoesPage() {
         const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
 
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
-        const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey);
         
+        // BUSCA ROBUSTA: Normaliza maiúsculas/minúsculas e remove espaços para garantir o match exato
+        const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
+        
+        let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlbKeyNormalizada) || mapeamentoMap.get(skuKey);
+        
+        if (!anuncioInfo) {
+          // Tenta busca flexível varrendo as chaves do map caso haja diferença de formatação
+          for (const [key, value] of mlRegrasMap.entries()) {
+            if (key.replace(/\s+/g, "").toUpperCase() === mlbKeyNormalizada || key === skuKey) {
+              anuncioInfo = value;
+              break;
+            }
+          }
+        }
+
         let statusItem = "APTO";
         let errosList: string[] = [];
         let comissaoVal = 0;
@@ -267,7 +281,7 @@ export default function PromocoesPage() {
 
         resultados.push({
           rowIndex: i,
-          MLB: mlb,
+          MLB: mlbRaw,
           SKU: skuRaw,
           PROMOTION_NAME: promoName,
           DATE_VALIDITY: dateValidity,
@@ -287,7 +301,6 @@ export default function PromocoesPage() {
     setLoading(false);
   };
 
-  // Função disparada pelo botão manual para salvar as promoções ativas no banco de dados
   const salvarPromocoesNoBanco = async () => {
     const itensAptos = dadosProcessados.filter(r => r.STATUS === "APTO");
     if (itensAptos.length === 0) {
@@ -362,7 +375,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com salvamento manual para promoções ativas</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com busca flexível de anúncios</p>
           </div>
           <Navbar />
         </div>
