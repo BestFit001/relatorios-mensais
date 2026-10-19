@@ -52,6 +52,19 @@ function parsePorcentagem(valor: any): number {
   return (num > 0 && num < 1) ? num * 100 : num;
 }
 
+function parseNumeroBruto(valor: any): number {
+  if (valor === null || valor === undefined || valor === "") return 0;
+  if (typeof valor === "number") return valor;
+  let s = String(valor).replace(/R\$/g, "").replace(/\$/g, "").replace(/\s/g, "").trim();
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  }
+  const num = parseFloat(s);
+  return isNaN(num) ? 0 : num;
+}
+
 const formatarMoeda = (valor: number) =>
   "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -64,7 +77,7 @@ export default function PromocoesPage() {
   const [dadosProcessados, setDadosProcessados] = useState<any>(null);
   const [promocoesAtivas, setPromocoesAtivas] = useState<any[]>([]);
   const [termoBusca, setTermoBusca] = useState("");
-  const [abaAtiva, setAbaAtiva] = useState<"precificar" | "ativas">("precificar");
+  const [abaAtiva, setAbaAtiva] = useState<"precificar" | "rebate" | "ativas">("precificar");
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [mlRegrasMap, setMlRegrasMap] = useState<Map<string, any>>(new Map());
@@ -147,6 +160,7 @@ export default function PromocoesPage() {
     }
   };
 
+  // PROCESSAR PRECIFICAÇÃO TRADICIONAL
   const processarPlanilhaCampanha = async () => {
     if (!dadosProcessados || !dadosProcessados.rawData) {
       alert("Por favor, selecione uma planilha de campanha do Mercado Livre.");
@@ -174,8 +188,8 @@ export default function PromocoesPage() {
       const idxItemId = getColIndex(["ITEM_ID", "NÚMERO DO ANÚNCIO", "ID"]);
       const idxSku = getColIndex(["SKU", "CÓDIGO SKU"]);
       const idxOriginalPrice = getColIndex(["ORIGINAL_PRICE", "PREÇO ORIGINAL"]);
-      const idxPromotionName = getColIndex(["PROMOTION_NAME", "PROMOÇÃO", "NOME DA PROMOÇÃO"]);
-      const idxDateValidity = getColIndex(["DATE_VALIDITY", "VIGÊNCIA", "PERÍODO"]);
+      const idxPromotionName = getColIndex(["PROMOTION_NAME", "PROMOÇÃO", "NOME DA PROMOÇÃO", "PROMO_NAME"]);
+      const idxDateValidity = getColIndex(["DATE_VALIDITY", "VIGÊNCIA", "PERÍODO", "DATE"]);
 
       if (idxItemId === -1 || idxOriginalPrice === -1) {
         alert("Erro: Não foi possível localizar as colunas 'ITEM_ID' e 'ORIGINAL_PRICE' na planilha.");
@@ -185,7 +199,6 @@ export default function PromocoesPage() {
 
       const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
       const imposto = 0.09;
-
       const resultados: any[] = [];
 
       for (let i = 1; i < rawData.length; i++) {
@@ -266,7 +279,6 @@ export default function PromocoesPage() {
         let novoPreco = originalPrice;
         if (statusItem === "APTO") {
           const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
-          
           let precoEstimado = originalPrice * 0.9;
           for (let iter = 0; iter < 5; iter++) {
             let tarifaFixaItem = precoEstimado < 79.00 ? 6.50 : 0.00;
@@ -299,10 +311,151 @@ export default function PromocoesPage() {
         });
       }
 
-      setDadosProcessados({ rawData, sheetName, itens: resultados });
+      setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "precificar" });
       alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
+    }
+    setLoading(false);
+  };
+
+  // PROCESSAR PLANILHA DE REBATE / REDUÇÃO DE TARIFAS
+  const processarPlanilhaRebate = async () => {
+    if (!dadosProcessados || !dadosProcessados.rawData) {
+      alert("Por favor, selecione uma planilha de rebate/redução de tarifas do Mercado Livre.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { rawData, sheetName } = dadosProcessados;
+      if (rawData.length < 1) {
+        alert("A planilha parece estar vazia.");
+        setLoading(false);
+        return;
+      }
+
+      const headers = rawData[0].map((h: any) => String(h || "").trim().toUpperCase());
+      const getColIndex = (names: string[]) => {
+        for (const name of names) {
+          const idx = headers.indexOf(name.toUpperCase());
+          if (idx !== -1) return idx;
+        }
+        return -1;
+      };
+
+      const idxItemId = getColIndex(["ITEM_ID", "NÚMERO DO ANÚNCIO", "ID"]);
+      const idxSku = getColIndex(["SKU", "CÓDIGO SKU"]);
+      const idxFinalPrice = getColIndex(["FINAL_PRICE", "PREÇO FINAL"]);
+      const idxNewReceives = getColIndex(["NEW_RECEIVES", "VOCÊ RECEBE", "MELI_AMOUNT", "REDUÇÃO NAS SUAS TARIFAS DE VENDA"]);
+      const idxPromotionName = getColIndex(["PROMOTION_NAME", "PROMOÇÃO", "NOME DA PROMOÇÃO", "PROMO_NAME"]);
+      const idxDateValidity = getColIndex(["DATE_VALIDITY", "VIGÊNCIA", "PERÍODO", "DATE"]);
+
+      if (idxItemId === -1 || idxFinalPrice === -1) {
+        alert("Erro: Não foi possível localizar as colunas 'ITEM_ID' e 'FINAL_PRICE' na planilha de rebate.");
+        setLoading(false);
+        return;
+      }
+
+      const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
+      const imposto = 0.09;
+      const resultados: any[] = [];
+
+      for (let i = 1; i < rawData.length; i++) {
+        const r = rawData[i];
+        if (!r || r.length === 0) continue;
+
+        const mlbRaw = String(r[idxItemId] || "").trim().toUpperCase();
+        if (!mlbRaw || !mlbRaw.startsWith("MLB")) continue;
+
+        const skuRaw = idxSku !== -1 ? String(r[idxSku] || "") : "";
+        const skuKey = normalizarSku(skuRaw);
+        const finalPrice = Number(r[idxFinalPrice] || 0);
+        const newReceives = idxNewReceives !== -1 ? parseNumeroBruto(r[idxNewReceives]) : 0;
+        const promoName = idxPromotionName !== -1 ? (r[idxPromotionName] || "Com redução de tarifas") : "Com redução de tarifas";
+        const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
+
+        const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
+        
+        const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
+        let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada);
+
+        if (!anuncioInfo) {
+          for (const [key, value] of mlRegrasMap.entries()) {
+            if (key.replace(/\s+/g, "").toUpperCase() === mlbKeyNormalizada) {
+              anuncioInfo = value;
+              break;
+            }
+          }
+        }
+
+        if (!anuncioInfo) {
+          const { data: dbMatch } = await supabase
+            .from("ml_anuncios_regras")
+            .select("*")
+            .ilike("mlb", mlbRaw)
+            .maybeSingle();
+
+          if (dbMatch) {
+            const comissaoNum = parsePorcentagem(dbMatch.comissao);
+            anuncioInfo = {
+              comissao: comissaoNum,
+              peso_real: Number(dbMatch.peso_real || 2.0),
+              altura: Number(dbMatch.altura || 10),
+              largura: Number(dbMatch.largura || 10),
+              comprimento: Number(dbMatch.comprimento || 10)
+            };
+          }
+        }
+
+        let statusItem = "APTO";
+        let errosList: string[] = [];
+
+        if (custo <= 0) {
+          statusItem = "INAPTO";
+          errosList.push("Custo não encontrado — Atualizar base");
+        }
+
+        if (finalPrice <= 0) {
+          statusItem = "INAPTO";
+          errosList.push("Preço Final Inválido");
+        }
+
+        let lucroLiquido = 0;
+        let margemFinal = 0;
+
+        if (statusItem === "APTO") {
+          // Lógica de Rebate:
+          // NEW_RECEIVES é o valor líquido com rebate embutido. Descontamos CMV, Imposto (9% sobre o FINAL_PRICE)
+          const impostoTotal = finalPrice * imposto;
+          lucroLiquido = newReceives - custo - impostoTotal;
+          margemFinal = finalPrice > 0 ? (lucroLiquido / finalPrice) * 100 : 0;
+
+          if (margemFinal < (margemDesejada * 100)) {
+            statusItem = "INAPTO";
+            errosList.push(`Margem (${margemFinal.toFixed(1)}%) abaixo da meta (${(margemDesejada * 100).toFixed(0)}%)`);
+          }
+        }
+
+        resultados.push({
+          rowIndex: i,
+          MLB: mlbRaw,
+          SKU: skuRaw,
+          PROMOTION_NAME: promoName,
+          DATE_VALIDITY: dateValidity,
+          FINAL_PRICE: finalPrice,
+          NEW_RECEIVES: newReceives,
+          LUCRO: Number(lucroLiquido.toFixed(2)),
+          MARGEM: Number(margemFinal.toFixed(1)),
+          STATUS: statusItem,
+          ERRO: errosList.length > 0 ? errosList.join(" | ") : ""
+        });
+      }
+
+      setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "rebate" });
+      alert(`✅ Processamento de Rebate concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+    } catch (err: any) {
+      alert("Erro ao processar rebate: " + err.message);
     }
     setLoading(false);
   };
@@ -329,7 +482,7 @@ export default function PromocoesPage() {
         }]);
       }
       await carregarPromocoesAtivasSupabase();
-      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso, incluindo nome e período de validade!`);
+      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso na base de Promoções Ativas!`);
       setAbaAtiva("ativas");
     } catch (err: any) {
       alert("Erro ao salvar no banco: " + err.message);
@@ -358,7 +511,7 @@ export default function PromocoesPage() {
     }
   };
 
-  const baixarAptosExcel = () => {
+  const baixarExcelOtimizado = () => {
     if (!dadosProcessados || !dadosProcessados.itens || dadosProcessados.itens.length === 0) {
       alert("Processe a planilha primeiro.");
       return;
@@ -367,7 +520,7 @@ export default function PromocoesPage() {
     const dadosOtimizados = dadosProcessados.itens.map((item: any) => ({
       ITEM_ID: item.MLB,
       SKU: item.SKU,
-      FINAL_PRICE: item.STATUS === "APTO" ? item.FINAL_PRICE : item.ORIGINAL_PRICE,
+      FINAL_PRICE: item.FINAL_PRICE,
       STATUS: item.STATUS === "APTO" ? "Elegível" : "Inapto",
       OBSERVACOES: item.ERRO || ""
     }));
@@ -376,10 +529,11 @@ export default function PromocoesPage() {
     const newWb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(newWb, newWs, dadosProcessados.sheetName || "Promoções");
 
-    XLSX.writeFile(newWb, "ml_campanha_otimizada_com_sku_e_status.xlsx");
+    XLSX.writeFile(newWb, "ml_campanha_ou_rebate_otimizada.xlsx");
   };
 
   const listaItens = dadosProcessados?.itens || [];
+  const tipoProcessamento = dadosProcessados?.tipo || "precificar";
 
   const promocoesFiltradas = promocoesAtivas.filter((p) => 
     String(p.sku || "").toLowerCase().includes(termoBusca.toLowerCase()) ||
@@ -394,11 +548,12 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Download otimizado contendo MLB, SKU, Preço Final e Status</p>
+            <p className="text-sm font-medium text-slate-400">Validação de Campanhas Tradicionais e Rebate / Redução de Tarifas</p>
           </div>
           <Navbar />
         </div>
 
+        {/* NAVEGAÇÃO DE ABAS */}
         <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
           <button
             onClick={() => setAbaAtiva("precificar")}
@@ -407,6 +562,14 @@ export default function PromocoesPage() {
             }`}
           >
             Precificar Campanha
+          </button>
+          <button
+            onClick={() => setAbaAtiva("rebate")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              abaAtiva === "rebate" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            Rebate / Redução de Tarifas
           </button>
           <button
             onClick={() => setAbaAtiva("ativas")}
@@ -452,7 +615,7 @@ export default function PromocoesPage() {
                 </button>
               </div>
 
-              {listaItens.length > 0 && (
+              {listaItens.length > 0 && tipoProcessamento === "precificar" && (
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -464,7 +627,7 @@ export default function PromocoesPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={baixarAptosExcel}
+                    onClick={baixarExcelOtimizado}
                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
                   >
                     Baixar Excel Otimizado
@@ -473,7 +636,7 @@ export default function PromocoesPage() {
               )}
             </div>
 
-            {listaItens.length > 0 && (
+            {listaItens.length > 0 && tipoProcessamento === "precificar" && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
                   <h3 className="text-sm font-bold text-white">Resultado do Processamento da Campanha</h3>
@@ -500,6 +663,108 @@ export default function PromocoesPage() {
                           <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
                           <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.ORIGINAL_PRICE)}</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.FINAL_PRICE)}</td>
+                          <td className="p-3 text-center">
+                            <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${item.STATUS === "APTO" ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-rose-950 text-rose-400 border border-rose-800"}`}>
+                              {item.STATUS}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center font-bold text-rose-400">{item.ERRO || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : abaAtiva === "rebate" ? (
+          <div className="space-y-6">
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Rebate (Excel):</label>
+                <input
+                  type="file"
+                  accept=".xlsx, .xls"
+                  onChange={handleFileUpload}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Mínima Alvo (%):</label>
+                <input
+                  type="number"
+                  value={margemAlvo}
+                  onChange={(e) => setMargemAlvo(e.target.value)}
+                  className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={processarPlanilhaRebate}
+                  disabled={loading}
+                  className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
+                >
+                  {loading ? "A processar..." : "Analisar Rebate"}
+                </button>
+              </div>
+
+              {listaItens.length > 0 && tipoProcessamento === "rebate" && (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={salvarPromocoesNoBanco}
+                    disabled={salvandoBanco}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                  >
+                    {salvandoBanco ? "A Salvar..." : "Salvar na Base Ativa"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={baixarExcelOtimizado}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                  >
+                    Baixar Excel Otimizado
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {listaItens.length > 0 && tipoProcessamento === "rebate" && (
+              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+                <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-white">Resultado da Análise de Rebate & Redução de Tarifas</h3>
+                  <span className="text-xs text-slate-400">Total processados: {listaItens.length}</span>
+                </div>
+                <div className="overflow-x-auto max-h-[500px]">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                      <tr>
+                        <th className="p-3">MLB</th>
+                        <th className="p-3">SKU</th>
+                        <th className="p-3">Promoção / Campanha</th>
+                        <th className="p-3 text-right">Preço Final (PDV)</th>
+                        <th className="p-3 text-right text-purple-400">Novo Recebe (Rebate)</th>
+                        <th className="p-3 text-right">Lucro Líquido</th>
+                        <th className="p-3 text-right">Margem Final</th>
+                        <th className="p-3 text-center">Status</th>
+                        <th className="p-3 text-center">Observações / Erros</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                      {listaItens.map((item: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
+                          <td className="p-3 font-mono text-slate-300">{item.SKU}</td>
+                          <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
+                          <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.FINAL_PRICE)}</td>
+                          <td className="p-3 text-right font-mono text-purple-300 font-bold">{formatarMoeda(item.NEW_RECEIVES)}</td>
+                          <td className="p-3 text-right font-mono text-emerald-400 font-bold">{formatarMoeda(item.LUCRO)}</td>
+                          <td className={`p-3 text-right font-mono font-bold ${item.MARGEM >= parseFloat(margemAlvo) ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {item.MARGEM}%
+                          </td>
                           <td className="p-3 text-center">
                             <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${item.STATUS === "APTO" ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-rose-950 text-rose-400 border border-rose-800"}`}>
                               {item.STATUS}
