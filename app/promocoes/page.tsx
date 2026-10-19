@@ -13,6 +13,14 @@ function normalizarSku(valor: any) {
   return s.toLowerCase();
 }
 
+function parsePorcentagem(valor: any): number {
+  if (valor === null || valor === undefined || valor === "") return 0;
+  if (typeof valor === "number") return valor;
+  let s = String(valor).replace(/%/g, "").trim().replace(",", ".");
+  const num = parseFloat(s);
+  return isNaN(num) ? 0 : num;
+}
+
 const formatarMoeda = (valor: number) =>
   "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -64,15 +72,16 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      // 2. Regras ML (ml_anuncios_regras) - Fonte Primária e Confiável
+      // 2. Regras ML (ml_anuncios_regras)
       const mlMap = new Map<string, any>();
       const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
       if (mlRegras) {
         mlRegras.forEach((m: any) => {
           const mlbKey = String(m.mlb || "").trim().toUpperCase();
           const skuKey = normalizarSku(m.sku);
+          const comissaoNum = parsePorcentagem(m.comissao);
           const info = {
-            comissao: m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : 0,
+            comissao: comissaoNum,
             frete: m.peso_real ? Number(m.peso_real) * 10 : 20.75,
             tarifa_fixa: 4.00
           };
@@ -82,15 +91,16 @@ export default function PromocoesPage() {
       }
       setMlRegrasMap(mlMap);
 
-      // 3. Mapeamento de SKUs (mapeamento_skus) - Fonte Secundária
+      // 3. Mapeamento de SKUs (mapeamento_skus)
       const mapMap = new Map<string, any>();
       const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*");
       if (mapAnuncios) {
         mapAnuncios.forEach((m: any) => {
           const mlbKey = String(m.mlb || "").trim().toUpperCase();
           const skuKey = normalizarSku(m.sku);
+          const comissaoNum = parsePorcentagem(m.comissao);
           const info = {
-            comissao: m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : 0,
+            comissao: comissaoNum,
             frete: m.frete !== null && m.frete !== undefined ? Number(m.frete) : 20.75,
             tarifa_fixa: m.tarifa_fixa !== null && m.tarifa_fixa !== undefined ? Number(m.tarifa_fixa) : 4.00
           };
@@ -171,7 +181,7 @@ export default function PromocoesPage() {
         // 1. Custo
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
 
-        // 2. Busca com prioridade absoluta em mlRegrasMap (regras ML enviadas em uploads), depois mapeamentoMap
+        // 2. Busca com prioridade absoluta em mlRegrasMap, depois mapeamentoMap
         const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey) || null;
         
         const comissaoVal = anuncioInfo ? Number(anuncioInfo.comissao) : 0;
@@ -286,7 +296,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa com bloqueio automático para comissão 0% ou base desatualizada</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com bloqueio automático para base desatualizada</p>
           </div>
           <Navbar />
         </div>
@@ -360,7 +370,7 @@ export default function PromocoesPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">Resultado do Processing da Campanha</h3>
+                  <h3 className="text-sm font-bold text-white">Resultado do Processamento da Campanha</h3>
                   <span className="text-xs text-slate-400">Total processados: {dadosProcessados.length}</span>
                 </div>
                 <div className="overflow-x-auto max-h-[500px]">
