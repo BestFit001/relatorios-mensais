@@ -184,7 +184,7 @@ export default function PromocoesPage() {
         // 2. Busca com prioridade absoluta em mlRegrasMap, depois mapeamentoMap
         const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey) || null;
         
-        // Validação rigorosa da comissão: se não achar o anúncio ou se a comissão for 0 / nula
+        // Validação rigorosa da comissão: se não achar o anúncio ou se a comissão for 0, nula ou menor/igual a 0
         const comissaoVal = anuncioInfo && anuncioInfo.comissao !== undefined && anuncioInfo.comissao !== null 
           ? Number(anuncioInfo.comissao) 
           : 0;
