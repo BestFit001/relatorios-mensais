@@ -184,7 +184,11 @@ export default function PromocoesPage() {
         // 2. Busca com prioridade absoluta em mlRegrasMap, depois mapeamentoMap
         const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey) || null;
         
-        const comissaoVal = anuncioInfo ? Number(anuncioInfo.comissao) : 0;
+        // Validação rigorosa da comissão: se não achar o anúncio ou se a comissão for 0 / nula
+        const comissaoVal = anuncioInfo && anuncioInfo.comissao !== undefined && anuncioInfo.comissao !== null 
+          ? Number(anuncioInfo.comissao) 
+          : 0;
+
         const freteVal = anuncioInfo?.frete !== null && anuncioInfo?.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
         const tarifaFixa = anuncioInfo?.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
 
@@ -196,6 +200,7 @@ export default function PromocoesPage() {
           statusItem = "INAPTO";
           errosList.push("base desatualizada");
         }
+        
         if (comissaoVal <= 0) {
           statusItem = "INAPTO";
           errosList.push("base desatualizada");
