@@ -256,18 +256,21 @@ export default function CalculadoraPage() {
         } else {
           const pdvBase = parseNumero(precoFixo);
           const valRebate = parseNumero(rebatesCanais[canalNome] || "0");
-          const pdvEfetivo = Math.max(0, pdvBase - valRebate);
 
           if (!cLower.includes("mercado livre")) {
-            const regraExata = obterRegraCanalDaTabela(canalNome, pdvEfetivo);
+            const regraExata = obterRegraCanalDaTabela(canalNome, pdvBase);
             comissaoPct = Number(regraExata.comissao || 14) / 100;
             tarifaFixa = Number(regraExata.tarifa_fixa || 0);
             freteVariavel = Number(regraExata.frete || 0);
           }
 
-          const valorComissao = pdvEfetivo * comissaoPct;
-          const valorImposto = pdvEfetivo * impostoPercent;
-          const lucroLiquido = pdvEfetivo - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto) + valRebate;
+          const valorComissao = pdvBase * comissaoPct;
+          const valorImposto = pdvBase * impostoPercent;
+          
+          // O rebate abate/compensa diretamente sobre as retenções (comissão/frete/imposto/tarifa),
+          // aumentando o lucro líquido exatamente pelo valor subsidiado que entra a mais no seu recebimento.
+          const lucroLiquidoBase = pdvBase - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto);
+          const lucroLiquido = lucroLiquidoBase + valRebate;
           const margemFinal = pdvBase > 0 ? (lucroLiquido / pdvBase) * 100 : 0;
 
           return {
