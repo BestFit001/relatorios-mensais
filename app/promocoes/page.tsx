@@ -190,7 +190,7 @@ export default function PromocoesPage() {
         let freteVal = 20.75;
         let tarifaFixa = 4.00;
 
-        // VALIDAÇÃO 1: Se o MLB/SKU não está cadastrado nas regras do ML
+        // Validação rigorosa: se não encontrar o anúncio nas regras/mapeamento
         if (!anuncioInfo) {
           statusItem = "INAPTO";
           errosList.push("MLB não cadastrado na base");
@@ -199,14 +199,13 @@ export default function PromocoesPage() {
           freteVal = anuncioInfo.frete !== null && anuncioInfo.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
           tarifaFixa = anuncioInfo.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
 
-          // VALIDAÇÃO 2: Se está cadastrado mas a comissão é 0 ou menor
+          // Validação rigorosa: se a comissão for 0 ou menor, aponta que está desatualizada/zerada na base
           if (comissaoVal <= 0) {
             statusItem = "INAPTO";
             errosList.push("Comissão 0% - Corrigir na base");
           }
         }
 
-        // VALIDAÇÃO 3: Custo inválido
         if (custo <= 0) {
           statusItem = "INAPTO";
           errosList.push("Custo zerado ou não encontrado");
