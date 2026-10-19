@@ -224,27 +224,22 @@ export default function CalculadoraPage() {
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            // Procura anúncio clássico (comissão <= 14%)
             anuncMl = anunciosSku.find((a: any) => Number(a.comissao) <= 14);
             if (anuncMl && Number(anuncMl.comissao) > 0) {
               comissaoPct = Number(anuncMl.comissao) / 100;
             } else {
-              // Se não tiver clássico mas tiver anúncio cadastrado, usa o teto do clássico (14%)
               comissaoPct = 0.14;
             }
           } else if (cLower.includes("premium")) {
-            // Procura anúncio premium (comissão > 14%)
             anuncMl = anunciosSku.find((a: any) => Number(a.comissao) > 14);
             if (anuncMl && Number(anuncMl.comissao) > 0) {
               comissaoPct = Number(anuncMl.comissao) / 100;
             } else {
-              // Se não tiver premium mas tiver anúncio cadastrado, usa o teto do premium (19%)
               comissaoPct = 0.19;
             }
           }
         }
 
-        // Pega medidas do primeiro anúncio disponível do SKU caso exista na base do ML
         const refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
         const pesoReal = refAnuncio && Number(refAnuncio.peso_real) > 0 ? Number(refAnuncio.peso_real) : 2.0;
         const altura = refAnuncio && Number(refAnuncio.altura) > 0 ? Number(refAnuncio.altura) : 10;
@@ -368,7 +363,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação avançada com separação de comissões Clássico (≤14%) e Premium (>14%)</p>
+            <p className="text-sm font-medium text-slate-400">Precificação avançada com comissões Clássico (&le;14%) e Premium (&gt;14%)</p>
           </div>
           <Navbar />
         </div>
