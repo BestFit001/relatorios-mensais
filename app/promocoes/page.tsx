@@ -58,6 +58,7 @@ const formatarMoeda = (valor: number) =>
 export default function PromocoesPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [salvandoBanco, setSalvandoBanco] = useState(false);
   const [margemAlvo, setMargemAlvo] = useState("20");
   const [arquivoUpload, setArquivoUpload] = useState<File | null>(null);
   const [workbookOriginal, setWorkbookOriginal] = useState<any>(null);
@@ -84,7 +85,6 @@ export default function PromocoesPage() {
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
-      // 1. Custos
       const { data: custos } = await supabase.from("tabela_custos_skus").select("*");
       const cMap = new Map<string, number>();
       const obsSet = new Set<string>();
@@ -103,7 +103,6 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      // 2. Regras ML (ml_anuncios_regras)
       const mlMap = new Map<string, any>();
       const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
       if (mlRegras) {
@@ -124,7 +123,6 @@ export default function PromocoesPage() {
       }
       setMlRegrasMap(mlMap);
 
-      // 3. Mapeamento de SKUs (mapeamento_skus)
       const mapMap = new Map<string, any>();
       const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*");
       if (mapAnuncios) {
@@ -213,10 +211,7 @@ export default function PromocoesPage() {
         const promoName = r[colIdx["PROMOTION_NAME"]] || "Campanha Geral";
         const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
 
-        // 1. Custo
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
-
-        // 2. Consulta nas bases do Supabase
         const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey);
         
         let statusItem = "APTO";
@@ -285,25 +280,37 @@ export default function PromocoesPage() {
       }
 
       setDadosProcessados(resultados);
-
-      // Salva automaticamente os itens APTO na tabela "promocoes_ativas_ml" do Supabase
-      for (const item of resultados.filter(r => r.STATUS === "APTO")) {
-        try {
-          await supabase.from("promocoes_ativas_ml").insert([{
-            mlb: item.MLB,
-            sku: item.SKU,
-            promocao: item.PROMOTION_NAME,
-            date_validity: item.DATE_VALIDITY
-          }]);
-        } catch (err) {}
-      }
-
-      carregarPromocoesAtivasSupabase();
-      alert(`✅ Processamento concluído e promoções salvas! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
     }
     setLoading(false);
+  };
+
+  // Função disparada pelo botão manual para salvar as promoções ativas no banco de dados
+  const salvarPromocoesNoBanco = async () => {
+    const itensAptos = dadosProcessados.filter(r => r.STATUS === "APTO");
+    if (itensAptos.length === 0) {
+      alert("Nenhum item apto para salvar.");
+      return;
+    }
+
+    setSalvandoBanco(true);
+    try {
+      for (const item of itensAptos) {
+        await supabase.from("promocoes_ativas_ml").insert([{
+          mlb: item.MLB,
+          sku: item.SKU,
+          promocao: item.PROMOTION_NAME,
+          date_validity: item.DATE_VALIDITY
+        }]);
+      }
+      carregarPromocoesAtivasSupabase();
+      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso na base de Promoções Ativas!`);
+    } catch (err: any) {
+      alert("Erro ao salvar no banco: " + err.message);
+    }
+    setSalvandoBanco(false);
   };
 
   const baixarAptosExcel = () => {
@@ -355,7 +362,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com salvamento automático para promoções ativas</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com salvamento manual para promoções ativas</p>
           </div>
           <Navbar />
         </div>
@@ -414,13 +421,21 @@ export default function PromocoesPage() {
               </div>
 
               {dadosProcessados.length > 0 && (
-                <div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={salvarPromocoesNoBanco}
+                    disabled={salvandoBanco}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                  >
+                    {salvandoBanco ? "A Salvar..." : "Salvar na Base Ativa"}
+                  </button>
                   <button
                     type="button"
                     onClick={baixarAptosExcel}
                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
                   >
-                    Baixar Planilha Pronta (.xlsx)
+                    Baixar Excel
                   </button>
                 </div>
               )}
