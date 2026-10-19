@@ -153,42 +153,61 @@ export default function PromocoesPage() {
 
     setLoading(true);
     try {
+      // Procura a aba "Promoções" ou pega a primeira aba disponível
       const sheetName = workbookOriginal.SheetNames.includes("Promoções") ? "Promoções" : workbookOriginal.SheetNames[0];
       const ws = workbookOriginal.Sheets[sheetName];
       const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-      if (rawData.length < 5) {
-        alert("A planilha parece estar vazia ou fora do formato esperado.");
+      if (rawData.length < 1) {
+        alert("A planilha parece estar vazia.");
         setLoading(false);
         return;
       }
 
-      const headers = rawData[0];
-      const colIdx: any = {};
-      headers.forEach((h: string, idx: number) => {
-        if (h) colIdx[h.trim()] = idx;
-      });
+      // LEITURA DINÂMICA DO CABEÇALHO POR TÍTULO (Linha 0)
+      const headers = rawData[0].map((h: any) => String(h || "").trim().toUpperCase());
+      const getColIndex = (names: string[]) => {
+        for (const name of names) {
+          const idx = headers.indexOf(name.toUpperCase());
+          if (idx !== -1) return idx;
+        }
+        return -1;
+      };
+
+      const idxItemId = getColIndex(["ITEM_ID", "NÚMERO DO ANÚNCIO", "ID"]);
+      const idxSku = getColIndex(["SKU", "CÓDIGO SKU"]);
+      const idxOriginalPrice = getColIndex(["ORIGINAL_PRICE", "PREÇO ORIGINAL"]);
+      const idxPromotionName = getColIndex(["PROMOTION_NAME", "PROMOÇÃO", "NOME DA PROMOÇÃO"]);
+      const idxDateValidity = getColIndex(["DATE_VALIDITY", "VIGÊNCIA", "PERÍODO"]);
+
+      if (idxItemId === -1 || idxOriginalPrice === -1) {
+        alert("Erro: Não foi possível localizar as colunas 'ITEM_ID' (ou Número do anúncio) e 'ORIGINAL_PRICE' (ou Preço original) na primeira linha da planilha.");
+        setLoading(false);
+        return;
+      }
 
       const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
       const imposto = 0.09;
 
       const resultados: any[] = [];
 
-      for (let i = 5; i < rawData.length; i++) {
+      // Varre as linhas a partir da linha 1 (dados)
+      for (let i = 1; i < rawData.length; i++) {
         const r = rawData[i];
         if (!r || r.length === 0) continue;
 
-        const mlbRaw = String(r[colIdx["ITEM_ID"]] || "").trim().toUpperCase();
+        const mlbRaw = String(r[idxItemId] || "").trim().toUpperCase();
         if (!mlbRaw || !mlbRaw.startsWith("MLB")) continue;
 
-        const skuRaw = String(r[colIdx["SKU"]] || "");
+        const skuRaw = idxSku !== -1 ? String(r[idxSku] || "") : "";
         const skuKey = normalizarSku(skuRaw);
-        const originalPrice = Number(r[colIdx["ORIGINAL_PRICE"]] || 0);
-        const promoName = r[colIdx["PROMOTION_NAME"]] || "Campanha Geral";
-        const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
+        const originalPrice = Number(r[idxOriginalPrice] || 0);
+        const promoName = idxPromotionName !== -1 ? (r[idxPromotionName] || "Campanha Geral") : "Campanha Geral";
+        const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
 
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
         
+        // Consulta o MLB na base
         const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
         let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada);
 
@@ -286,7 +305,7 @@ export default function PromocoesPage() {
       }
 
       setDadosProcessados(resultados);
-      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+      alert(`✅ Processamento concluído por título de coluna! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
     }
@@ -311,7 +330,7 @@ export default function PromocoesPage() {
         }]);
       }
       await carregarPromocoesAtivasSupabase();
-      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso, incluindo nome e período de validade!`);
+      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso na base de Promoções Ativas!`);
       setAbaAtiva("ativas");
     } catch (err: any) {
       alert("Erro ao salvar no banco: " + err.message);
@@ -350,23 +369,34 @@ export default function PromocoesPage() {
     const ws = workbookOriginal.Sheets[sheetName];
     const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-    const headers = rawData[0];
-    const colIdx: any = {};
-    headers.forEach((h: string, idx: number) => {
-      if (h) colIdx[h.trim()] = idx;
-    });
+    if (rawData.length < 1) return;
+    const headers = rawData[0].map((h: any) => String(h || "").trim().toUpperCase());
+    const getColIdx = (names: string[]) => {
+      for (const name of names) {
+        const idx = headers.indexOf(name.toUpperCase());
+        if (idx !== -1) return idx;
+      }
+      return -1;
+    };
+
+    const idxFinalPrice = getColIdx(["FINAL_PRICE", "PREÇO FINAL"]);
+    const idxStatus = getColIdx(["STATUS", "STATUS DA PROMOÇÃO"]);
+    const idxAction = getColIdx(["ACTION", "O QUE VOCÊ QUER FAZER COM ESTE ANÚNCIO?"]);
+    const idxErrors = getColIdx(["ERRORS", "OBSERVAÇÕES E ERROS"]);
 
     dadosProcessados.forEach((item) => {
       const i = item.rowIndex;
+      if (!rawData[i]) return;
+
       if (item.STATUS === "APTO") {
-        if (colIdx["FINAL_PRICE"] !== undefined) rawData[i][colIdx["FINAL_PRICE"]] = item.FINAL_PRICE;
-        if (colIdx["STATUS"] !== undefined) rawData[i][colIdx["STATUS"]] = "Elegível";
-        if (colIdx["ACTION"] !== undefined) rawData[i][colIdx["ACTION"]] = "Participar";
-        if (colIdx["ERRORS"] !== undefined) rawData[i][colIdx["ERRORS"]] = "";
+        if (idxFinalPrice !== -1) rawData[i][idxFinalPrice] = item.FINAL_PRICE;
+        if (idxStatus !== -1) rawData[i][idxStatus] = "Elegível";
+        if (idxAction !== -1) rawData[i][idxAction] = "Participar";
+        if (idxErrors !== -1) rawData[i][idxErrors] = "";
       } else {
-        if (colIdx["STATUS"] !== undefined) rawData[i][colIdx["STATUS"]] = "Inapto";
-        if (colIdx["ACTION"] !== undefined) rawData[i][colIdx["ACTION"]] = "Não participar";
-        if (colIdx["ERRORS"] !== undefined) rawData[i][colIdx["ERRORS"]] = item.ERRO || "base desatualizada";
+        if (idxStatus !== -1) rawData[i][idxStatus] = "Inapto";
+        if (idxAction !== -1) rawData[i][idxAction] = "Não participar";
+        if (idxErrors !== -1) rawData[i][idxErrors] = item.ERRO || "base desatualizada";
       }
     });
 
@@ -389,7 +419,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa com salvamento completo e gestão da base ativa</p>
+            <p className="text-sm font-medium text-slate-400">Leitura dinâmica por título de coluna (ITEM_ID, SKU, ORIGINAL_PRICE, etc.)</p>
           </div>
           <Navbar />
         </div>
