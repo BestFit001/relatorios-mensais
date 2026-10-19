@@ -32,7 +32,7 @@ export default function CalculadoraPage() {
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [mapeamentoMap, setMapeamentoMap] = useState<Map<string, any[]>>(new Map());
   
-  // Regras vindas em tempo real do banco
+  // Regras e Canais
   const [canaisConfig, setCanaisConfig] = useState<string[]>([]);
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
   const [canaisSelecionados, setCanaisSelecionados] = useState<string[]>([]);
@@ -73,7 +73,8 @@ export default function CalculadoraPage() {
     // 2. Carrega tabela de mapeamento de anúncios (MLB / Comissões específicas)
     const mapaAnunciosSku = new Map();
     try {
-      const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(2000);
+      // Tenta carregar da tabela de anúncios / mapeamento do ML
+      const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(3000);
       if (mapAnuncios) {
         mapAnuncios.forEach((m: any) => {
           const k = normalizarSku(m.sku);
@@ -88,11 +89,15 @@ export default function CalculadoraPage() {
     }
     setMapeamentoMap(mapaAnunciosSku);
 
-    // 3. Carrega canais cadastrados
+    // 3. Define os canais unificados (Mercado Livre Clássico, Mercado Livre Premium e demais da base de regras)
     const { data: canaisData } = await supabase.from("config_regras_canais").select("*").order("id");
-    let listaNomesCanais: string[] = [];
+    let listaCanaisBase: string[] = [];
     if (canaisData && canaisData.length > 0) {
-      listaNomesCanais = canaisData.map((c: any) => c.canal);
+      // Filtra para remover "Mercado Livre 1, 2, 3" e substitui pelas modalidades Clássico e Premium
+      const filtrados = canaisData.map((c: any) => c.canal).filter((c: string) => !c.toLowerCase().includes("mercado livre"));
+      listaCanaisBase = ["Mercado Livre Clássico", "Mercado Livre Premium", ...filtrados];
+      // Remove duplicados se houver
+      listaNomesCanais = Array.from(new Set(listaCanaisBase));
     } else {
       listaNomesCanais = ["Mercado Livre Clássico", "Mercado Livre Premium", "Amazon", "Shopee", "Magalu", "Netshoes", "Shein", "TikTok Shop", "Centauro", "Site"];
     }
@@ -144,14 +149,12 @@ export default function CalculadoraPage() {
     }
   };
 
-  // Função estritamente baseada na aba de Regras (config_regras_tarifacao)
+  // Função para buscar tarifação diretamente na aba de Regras (config_regras_tarifacao)
   const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
     const cLower = canalNome.toLowerCase();
     
-    // Filtra as regras do canal na tabela do banco
     const regrasDoCanal = regrasTarifacao.filter((r) => {
       const rCanal = String(r.canal || "").toLowerCase();
-      // Trata variações de nome ex: "TikTok" vs "TikTok Shop" ou "Magalu" vs "Magazine Luiza"
       if (rCanal === cLower) return true;
       if (cLower.includes("tiktok") && rCanal.includes("tiktok")) return true;
       if (cLower.includes("magalu") && rCanal.includes("magalu")) return true;
@@ -162,7 +165,6 @@ export default function CalculadoraPage() {
       return { comissao: cLower.includes("premium") ? 19 : 14, tarifa_fixa: 0, frete: 0 };
     }
 
-    // Procura a faixa de preço correspondente na tabela de regras
     for (const regra of regrasDoCanal) {
       const faixaStr = String(regra.faixa_preco || "").toLowerCase();
       const matchNums = faixaStr.match(/[\d.,]+/g);
@@ -177,7 +179,6 @@ export default function CalculadoraPage() {
       }
     }
 
-    // Se nenhuma faixa exata corresponder, retorna a primeira regra válida do canal
     return regrasDoCanal[0];
   };
 
@@ -188,10 +189,14 @@ export default function CalculadoraPage() {
     const impostoPercent = 0.09; // 9% imposto corporativo fixo
     const skuKey = normalizarSku(produtoEncontrado.sku);
 
-    // Mapeamento MLB para Mercado Livre
+    // Consulta de anúncios existentes na base para o SKU (verificação de MLB, comissão e frete específico)
     const anunciosSku = mapeamentoMap.get(skuKey) || [];
-    const anuncClassico = anunciosSku.find((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("clássico") || Number(a.comissao) <= 14);
-    const anuncPremium = anunciosSku.find((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("premium") || Number(a.comissao) > 14);
+    const anuncClassico = anunciosSku.find((a: any) => 
+      (String(a.tipo || a.canal || "").toLowerCase().includes("clássico") || Number(a.comissao) <= 14) && a.mlb
+    );
+    const anuncPremium = anunciosSku.find((a: any) => 
+      (String(a.tipo || a.canal || "").toLowerCase().includes("premium") || Number(a.comissao) > 14) && a.mlb
+    );
 
     return canaisConfig
       .filter((canalNome) => canaisSelecionados.includes(canalNome))
@@ -203,14 +208,18 @@ export default function CalculadoraPage() {
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
+            // Se houver anúncio cadastrado com MLB, usa os dados reais; senão, usa 14% padrão
             comissaoPct = anuncClassico ? Number(anuncClassico.comissao) / 100 : 0.14;
+            tarifaFixa = anuncClassico ? Number(anuncClassico.tarifa_fixa || 0) : 0;
+            freteVariavel = anuncClassico ? Number(anuncClassico.frete || 0) : 0;
           } else if (cLower.includes("premium")) {
+            // Se houver anúncio cadastrado com MLB, usa os dados reais; senão, usa 19% padrão
             comissaoPct = anuncPremium ? Number(anuncPremium.comissao) / 100 : 0.19;
-          } else {
-            comissaoPct = 0.14;
+            tarifaFixa = anuncPremium ? Number(anuncPremium.tarifa_fixa || 0) : 0;
+            freteVariavel = anuncPremium ? Number(anuncPremium.frete || 0) : 0;
           }
         } else {
-          // Busca estritamente na aba de regras com base no preço estimado/efetivo
+          // Demais canais buscam dinamicamente na aba de regras em tempo real
           const precoRef = modoCalculo === "pdv_ideal" ? 80.0 : parseNumero(precoFixo);
           const regraTabela = obterRegraCanalDaTabela(canalNome, precoRef);
 
@@ -225,7 +234,6 @@ export default function CalculadoraPage() {
 
           let pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
 
-          // Reavalia a regra de faixa de preço exata com o PDV calculado
           if (!cLower.includes("mercado livre")) {
             const regraExata = obterRegraCanalDaTabela(canalNome, pdvCalculado);
             comissaoPct = Number(regraExata.comissao || 14) / 100;
@@ -251,7 +259,8 @@ export default function CalculadoraPage() {
             frete: freteVariavel,
             valorImposto,
             lucroLiquido,
-            margemFinal
+            margemFinal,
+            temMlb: cLower.includes("mercado livre") ? (cLower.includes("clássico") ? !!anuncClassico : !!anuncPremium) : true
           };
         } else {
           // Modo Margem Reversa
@@ -282,7 +291,8 @@ export default function CalculadoraPage() {
             frete: freteVariavel,
             valorImposto,
             lucroLiquido,
-            margemFinal
+            margemFinal,
+            temMlb: cLower.includes("mercado livre") ? (cLower.includes("clássico") ? !!anuncClassico : !!anuncPremium) : true
           };
         }
       });
@@ -310,7 +320,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Leitura estrita das Regras cadastradas e padrão de 14% (Clássico) e 19% (Premium) para ML sem MLB</p>
+            <p className="text-sm font-medium text-slate-400">Consulta de anúncios existentes (MLB), comissões reais e unificação do Mercado Livre</p>
           </div>
           <Navbar />
         </div>
@@ -469,9 +479,16 @@ export default function CalculadoraPage() {
             <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col justify-between">
               <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
                 <h3 className="text-sm font-bold text-white">{res.canal}</h3>
-                <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
-                  Comissão: {res.comissaoPct.toFixed(0)}%
-                </span>
+                <div className="flex items-center gap-2">
+                  {res.canal.toLowerCase().includes("mercado livre") && (
+                    <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${res.temMlb ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-amber-950 text-amber-400 border border-amber-800"}`}>
+                      {res.temMlb ? "MLB Encontrado" : "Padrão (Sem MLB)"}
+                    </span>
+                  )}
+                  <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
+                    Comissão: {res.comissaoPct.toFixed(0)}%
+                  </span>
+                </div>
               </div>
 
               <div className="p-5 space-y-3">
