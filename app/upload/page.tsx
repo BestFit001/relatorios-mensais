@@ -18,17 +18,20 @@ export default function UploadPage() {
 
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
+  
+  // Colunas Dinâmicas Configuráveis para o Mercado Livre
   const [regrasColsDinamicas, setRegrasColsDinamicas] = useState({
-    custo_sku: 'A', custo_produto: 'B', custo_valor: 'C', custo_marca: 'D', // NOVO: custo_marca
-    ml_mlb: 'A', ml_sku: 'B', ml_comissao: 'C', ml_peso: 'D', ml_altura: 'E', ml_largura: 'F', ml_comprimento: 'G'
+    custo_sku: 'A', custo_produto: 'B', custo_valor: 'C', custo_marca: 'D',
+    ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'W', ml_peso: 'AB', ml_altura: '', ml_largura: '', ml_comprimento: ''
   });
+
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
 
   // Estados para Custos
   const [pesquisaCusto, setPesquisaCusto] = useState("");
   const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
   const [editandoCustoId, setEditandoCustoId] = useState<number | null>(null);
-  const [dadosEdicaoCusto, setDadosEdicaoCusto] = useState({ sku: "", produto: "", custo_unitario: 0, marca: "" }); // NOVO: marca
+  const [dadosEdicaoCusto, setDadosEdicaoCusto] = useState({ sku: "", produto: "", custo_unitario: 0, marca: "" });
 
   // Estados para Regras ML
   const [pesquisaMl, setPesquisaMl] = useState("");
@@ -69,9 +72,9 @@ export default function UploadPage() {
       const getC = (k: string, d: string) => tinyConfig.find((t: any) => t.campo === k)?.coluna || d;
       setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
       setRegrasColsDinamicas({
-        custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'), custo_marca: getC('custo_marca', 'D'), // NOVO
-        ml_mlb: getC('ml_mlb', 'A'), ml_sku: getC('ml_sku', 'B'), ml_comissao: getC('ml_comissao', 'C'),
-        ml_peso: getC('ml_peso', ''), ml_altura: getC('ml_altura', 'E'), ml_largura: getC('ml_largura', 'F'), ml_comprimento: getC('ml_comprimento', 'G')
+        custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'), custo_marca: getC('custo_marca', 'D'),
+        ml_mlb: getC('ml_mlb', 'B'), ml_sku: getC('ml_sku', 'E'), ml_comissao: getC('ml_comissao', 'W'),
+        ml_peso: getC('ml_peso', 'AB'), ml_altura: getC('ml_altura', ''), ml_largura: getC('ml_largura', ''), ml_comprimento: getC('ml_comprimento', '')
       });
     }
 
@@ -136,6 +139,7 @@ export default function UploadPage() {
   };
 
   const letraParaIndice = (str: string) => {
+    if (!str) return 0;
     let base = str.toUpperCase().trim();
     let coluna = 0;
     for (let i = 0; i < base.length; i++) {
@@ -431,7 +435,7 @@ export default function UploadPage() {
     const idxSku = letraParaIndice(regrasColsDinamicas.custo_sku);
     const idxProd = letraParaIndice(regrasColsDinamicas.custo_produto);
     const idxCusto = letraParaIndice(regrasColsDinamicas.custo_valor);
-    const idxMarca = letraParaIndice(regrasColsDinamicas.custo_marca); // NOVO
+    const idxMarca = letraParaIndice(regrasColsDinamicas.custo_marca);
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -449,10 +453,10 @@ export default function UploadPage() {
           const sku = normalizarSku(row[idxSku]);
           const produto = String(row[idxProd] || "Produto sem nome").trim();
           const custo = Number(row[idxCusto] || 0);
-          const marca = String(row[idxMarca] || "").trim(); // NOVO
+          const marca = String(row[idxMarca] || "").trim();
 
           if (sku && !isNaN(custo)) {
-            registros.push({ sku, produto, custo_unitario: custo, marca }); // NOVO
+            registros.push({ sku, produto, custo_unitario: custo, marca });
           }
         }
 
@@ -473,6 +477,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // UPLOAD DE REGRAS ML COM COLUNAS DINÂMICAS CONFIGURADAS PELO USUÁRIO
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -482,9 +487,9 @@ export default function UploadPage() {
     const idxSku = letraParaIndice(regrasColsDinamicas.ml_sku);
     const idxCom = letraParaIndice(regrasColsDinamicas.ml_comissao);
     const idxPeso = regrasColsDinamicas.ml_peso ? letraParaIndice(regrasColsDinamicas.ml_peso) : -1;
-    const idxAlt = letraParaIndice(regrasColsDinamicas.ml_altura);
-    const idxLarg = letraParaIndice(regrasColsDinamicas.ml_largura);
-    const idxComp = letraParaIndice(regrasColsDinamicas.ml_comprimento);
+    const idxAlt = regrasColsDinamicas.ml_altura ? letraParaIndice(regrasColsDinamicas.ml_altura) : -1;
+    const idxLarg = regrasColsDinamicas.ml_largura ? letraParaIndice(regrasColsDinamicas.ml_largura) : -1;
+    const idxComp = regrasColsDinamicas.ml_comprimento ? letraParaIndice(regrasColsDinamicas.ml_comprimento) : -1;
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -499,7 +504,7 @@ export default function UploadPage() {
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         const mapaMlPendente = new Map<string, { registro: any, score: number }>();
-        const linhaInicio = 6;
+        const linhaInicio = 1; // Analisa a partir da primeira linha de dados
 
         for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
@@ -508,7 +513,7 @@ export default function UploadPage() {
           const mlb = String(row[idxMlb] || "").trim().toUpperCase();
           const sku = normalizarSku(row[idxSku]);
           
-          if (!mlb || !sku || !mlb.startsWith("MLB")) continue;
+          if (!mlb || !mlb.startsWith("MLB")) continue;
 
           let comissaoVal = String(row[idxCom] || "0").replace("%", "").trim().replace(",", ".");
           const comissao = Number(comissaoVal) || 0;
@@ -519,9 +524,9 @@ export default function UploadPage() {
             if (!isNaN(valPeso) && valPeso > 0) pesoReal = valPeso;
           }
 
-          const altura = Number(String(row[idxAlt] || "0").replace(",", ".")) || 0;
-          const largura = Number(String(row[idxLarg] || "0").replace(",", ".")) || 0;
-          const comprimento = Number(String(row[idxComp] || "0").replace(",", ".")) || 0;
+          const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
+          const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
+          const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
 
           let score = 0;
           if (comissao > 0) score++;
@@ -540,7 +545,7 @@ export default function UploadPage() {
         const registros = Array.from(mapaMlPendente.values()).map(item => item.registro);
 
         if (registros.length === 0) {
-          alert("Nenhum anúncio válido foi encontrado. Verifique se as letras das colunas configuradas na aba Regras estão corretas.");
+          alert("Nenhum anúncio válido foi encontrado. Verifique se as letras das colunas configuradas estão corretas.");
           setLoading(false);
           return;
         }
@@ -652,7 +657,7 @@ export default function UploadPage() {
       sku: dadosEdicaoCusto.sku.trim(),
       produto: dadosEdicaoCusto.produto.trim(),
       custo_unitario: Number(dadosEdicaoCusto.custo_unitario || 0),
-      marca: dadosEdicaoCusto.marca.trim() // NOVO
+      marca: dadosEdicaoCusto.marca.trim()
     }).eq('id', id);
 
     if (error) alert("Erro ao atualizar custo: " + error.message);
@@ -961,11 +966,11 @@ export default function UploadPage() {
         )}
 
         {abaAtiva === "regras_ml" && (
-          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+            <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (MLB: <strong>{regrasColsDinamicas.ml_mlb}</strong>, SKU: <strong>{regrasColsDinamicas.ml_sku}</strong>, Comissão: <strong>{regrasColsDinamicas.ml_comissao}</strong>, Peso: <strong>{regrasColsDinamicas.ml_peso || 'Opcional (Padrão 2kg)'}</strong>).</p>
+                <p className="text-xs text-slate-400 mt-1">Configure abaixo as colunas exatas da sua planilha de anúncios do Mercado Livre antes de fazer o upload.</p>
               </div>
               <button 
                 onClick={limparRegrasMl}
@@ -975,7 +980,74 @@ export default function UploadPage() {
               </button>
             </div>
 
-            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 mb-6">
+            {/* PAINEL DE CONFIGURAÇÃO DE COLUNAS DO ML */}
+            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna MLB:</label>
+                <input 
+                  type="text" 
+                  value={regrasColsDinamicas.ml_mlb} 
+                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_mlb: e.target.value.toUpperCase() })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna SKU:</label>
+                <input 
+                  type="text" 
+                  value={regrasColsDinamicas.ml_sku} 
+                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_sku: e.target.value.toUpperCase() })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Comissão:</label>
+                <input 
+                  type="text" 
+                  value={regrasColsDinamicas.ml_comissao} 
+                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_comissao: e.target.value.toUpperCase() })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Peso:</label>
+                <input 
+                  type="text" 
+                  value={regrasColsDinamicas.ml_peso} 
+                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_peso: e.target.value.toUpperCase() })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Altura:</label>
+                <input 
+                  type="text" 
+                  value={regrasColsDinamicas.ml_altura} 
+                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_altura: e.target.value.toUpperCase() })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Largura:</label>
+                <input 
+                  type="text" 
+                  value={regrasColsDinamicas.ml_largura} 
+                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_largura: e.target.value.toUpperCase() })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Comp.:</label>
+                <input 
+                  type="text" 
+                  value={regrasColsDinamicas.ml_comprimento} 
+                  onChange={(e) => setRegrasColsDinamicas({ ...regrasColsDinamicas, ml_comprimento: e.target.value.toUpperCase() })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
+                />
+              </div>
+            </div>
+
+            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
               <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro de Regras ML (.xlsx)</label>
               <input 
                 type="file" 
