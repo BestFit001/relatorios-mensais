@@ -42,6 +42,15 @@ function normalizarSku(valor: any) {
   return s.toLowerCase();
 }
 
+function parsePorcentagem(valor: any): number {
+  if (valor === null || valor === undefined || valor === "") return 0;
+  if (typeof valor === "number") return (valor > 0 && valor < 1) ? valor * 100 : valor;
+  let s = String(valor).replace(/%/g, "").trim().replace(",", ".");
+  const num = parseFloat(s);
+  if (isNaN(num)) return 0;
+  return (num > 0 && num < 1) ? num * 100 : num;
+}
+
 const formatarMoeda = (valor: number) =>
   "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -50,21 +59,17 @@ export default function CalculadoraPage() {
   const [loading, setLoading] = useState(false);
   const [modoCalculo, setModoCalculo] = useState<"pdv_ideal" | "reversa">("pdv_ideal");
 
-  // Inputs Globais
   const [skuBusca, setSkuBusca] = useState("");
   const [marcaFiltro, setMarcaFiltro] = useState("");
   const [margemAlvo, setMargemAlvo] = useState("30");
   const [precoFixo, setPrecoFixo] = useState("60.00");
 
-  // Rebates individuais por canal
   const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
 
-  // Dados e Bases
   const [produtoEncontrado, setProdutoEncontrado] = useState<any>(null);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [mapeamentoMap, setMapeamentoMap] = useState<Map<string, any[]>>(new Map());
   
-  // Regras e Canais
   const [canaisConfig, setCanaisConfig] = useState<string[]>([]);
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
   const [canaisSelecionados, setCanaisSelecionados] = useState<string[]>([]);
@@ -103,15 +108,27 @@ export default function CalculadoraPage() {
 
     const mapaAnunciosSku = new Map();
     try {
-      const { data: mapAnuncios } = await supabase.from("ml_anuncios_regras").select("*").limit(5000);
-      if (mapAnuncios) {
-        mapAnuncios.forEach((m: any) => {
-          const k = normalizarSku(m.sku);
-          if (k) {
-            if (!mapaAnunciosSku.has(k)) mapaAnunciosSku.set(k, []);
-            mapaAnunciosSku.get(k).push(m);
-          }
-        });
+      let fromAnuncio = 0;
+      let keepAnuncio = true;
+      while (keepAnuncio) {
+        const { data: mapAnuncios } = await supabase.from("ml_anuncios_regras").select("*").range(fromAnuncio, fromAnuncio + step - 1);
+        if (mapAnuncios && mapAnuncios.length > 0) {
+          mapAnuncios.forEach((m: any) => {
+            const k = normalizarSku(m.sku);
+            if (k) {
+              if (!mapaAnunciosSku.has(k)) mapaAnunciosSku.set(k, []);
+              mapaAnunciosSku.get(k).push({
+                comissao: parsePorcentagem(m.comissao),
+                peso_real: Number(m.peso_real || 2.0),
+                altura: Number(m.altura || 10),
+                largura: Number(m.largura || 10),
+                comprimento: Number(m.comprimento || 10)
+              });
+            }
+          });
+          fromAnuncio += step;
+          if (mapAnuncios.length < step) keepAnuncio = false;
+        } else keepAnuncio = false;
       }
     } catch (err) {
       console.log("Regras do ML opcionais não encontradas.");
@@ -180,7 +197,7 @@ export default function CalculadoraPage() {
     const regrasDoCanal = regrasTarifacao.filter((r) => {
       const rCanal = String(r.canal || "").toLowerCase();
       if (rCanal === cLower) return true;
-      if ((cLower.includes("magalu") || cLower.includes("magazine")) && (rCanal.includes("magalu") || rCanal.includes("magazine"))) return true;
+      if ((cLower.includes("magalu") || cLower.includes("magazine")) && (rCanal.includes("magalu" ) || rCanal.includes("magazine"))) return true;
       if (cLower.includes("tiktok") && rCanal.includes("tiktok")) return true;
       return rCanal.includes(cLower) || cLower.includes(rCanal);
     });
@@ -220,27 +237,26 @@ export default function CalculadoraPage() {
       .map((canalNome) => {
         const cLower = canalNome.toLowerCase();
         let comissaoPct = 0.14;
-        let anuncMl = null;
-        let tipoComissaoEncontrada = false;
+        let temMlbEncontrado = false;
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            // Procura anúncio clássico na base (comissão <= 14%)
-            anuncMl = anunciosSku.find((a: any) => Number(a.comissao) > 0 && Number(a.comissao) <= 14);
-            if (anuncMl) {
-              comissaoPct = Number(anuncMl.comissao) / 100;
-              tipoComissaoEncontrada = true;
+            // Procura comissão clássica na base (<= 14%)
+            const matchClassico = anunciosSku.find((a: any) => a.comissao > 0 && a.comissao <= 14);
+            if (matchClassico) {
+              comissaoPct = matchClassico.comissao / 100;
+              temMlbEncontrado = true;
             } else {
-              comissaoPct = 0.14; // Teto padrão se não houver clássico na base
+              comissaoPct = 0.14;
             }
           } else if (cLower.includes("premium")) {
-            // Procura anúncio premium na base (comissão > 14%)
-            anuncMl = anunciosSku.find((a: any) => Number(a.comissao) > 14);
-            if (anuncMl) {
-              comissaoPct = Number(anuncMl.comissao) / 100;
-              tipoComissaoEncontrada = true;
+            // Procura comissão premium na base (> 14%)
+            const matchPremium = anunciosSku.find((a: any) => a.comissao > 14);
+            if (matchPremium) {
+              comissaoPct = matchPremium.comissao / 100;
+              temMlbEncontrado = true;
             } else {
-              comissaoPct = 0.19; // Teto padrão se não houver premium na base
+              comissaoPct = 0.19;
             }
           }
         }
@@ -302,7 +318,7 @@ export default function CalculadoraPage() {
             valorImposto,
             lucroLiquido,
             margemFinal,
-            temMlb: cLower.includes("mercado livre") ? (tipoComissaoEncontrada || anunciosSku.length > 0) : true
+            temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
           };
         } else {
           const pdvBase = parseNumero(precoFixo);
@@ -340,7 +356,7 @@ export default function CalculadoraPage() {
             valorImposto,
             lucroLiquido,
             margemFinal,
-            temMlb: cLower.includes("mercado livre") ? (tipoComissaoEncontrada || anunciosSku.length > 0) : true
+            temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
           };
         }
       });
@@ -368,7 +384,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação avançada com comissões Clássico (&le;14%) e Premium (&gt;14%)</p>
+            <p className="text-sm font-medium text-slate-400">Precificação avançada com comissões reais por anúncio da base</p>
           </div>
           <Navbar />
         </div>
@@ -422,7 +438,7 @@ export default function CalculadoraPage() {
                 value={marcaFiltro}
                 onChange={(e) => setMarcaFiltro(e.target.value)}
                 placeholder="Ex: BEST FIT"
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
               />
             </div>
 
@@ -522,7 +538,7 @@ export default function CalculadoraPage() {
                     </span>
                   )}
                   <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
-                    Comissão: {res.comissaoPct.toFixed(0)}%
+                    Comissão: {res.comissaoPct.toFixed(1)}%
                   </span>
                 </div>
               </div>
@@ -558,7 +574,7 @@ export default function CalculadoraPage() {
                     <span className="text-rose-400">- {formatarMoeda(res.custoProduto)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Comissão ({res.comissaoPct.toFixed(0)}%):</span>
+                    <span className="text-slate-500">Comissão ({res.comissaoPct.toFixed(1)}%):</span>
                     <span className="text-rose-400">- {formatarMoeda(res.valorComissao)}</span>
                   </div>
                   {res.tarifaFixa > 0 && (
