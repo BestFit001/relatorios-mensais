@@ -44,7 +44,7 @@ export default function PromocoesPage() {
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
-      // 1. Custos
+      // 1. Carrega custos da tabela tabela_custos_skus
       const { data: custos } = await supabase.from("tabela_custos_skus").select("*");
       const cMap = new Map<string, number>();
       const obsSet = new Set<string>();
@@ -63,7 +63,7 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      // 2. Carrega de ml_anuncios_regras e mapeamento_skus para abranger todas as fontes de comissão e frete
+      // 2. Carrega regras do Mercado Livre enviadas em uploads (ml_anuncios_regras e mapeamento_skus)
       const aMap = new Map<string, any>();
       
       const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
@@ -71,9 +71,10 @@ export default function PromocoesPage() {
         mlRegras.forEach((m: any) => {
           const mlbKey = String(m.mlb || "").trim().toLowerCase();
           const skuKey = normalizarSku(m.sku);
+          const comissaoNum = m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : 0;
           const info = {
-            comissao: m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : null,
-            frete: m.frete !== null && m.frete !== undefined ? Number(m.frete) : (m.peso_real ? m.peso_real * 10 : 20.75),
+            comissao: comissaoNum,
+            frete: m.peso_real ? m.peso_real * 10 : 20.75,
             tarifa_fixa: 4.00
           };
           if (mlbKey) aMap.set(mlbKey, info);
@@ -86,9 +87,10 @@ export default function PromocoesPage() {
         mapAnuncios.forEach((m: any) => {
           const mlbKey = String(m.mlb || "").trim().toLowerCase();
           const skuKey = normalizarSku(m.sku);
+          const comissaoNum = m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : 0;
           const info = {
-            comissao: m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : null,
-            frete: m.frete !== null && m.frete !== undefined ? Number(m.frete) : null,
+            comissao: comissaoNum,
+            frete: m.frete !== null && m.frete !== undefined ? Number(m.frete) : 20.75,
             tarifa_fixa: m.tarifa_fixa !== null && m.tarifa_fixa !== undefined ? Number(m.tarifa_fixa) : 4.00
           };
           if (mlbKey) aMap.set(mlbKey, info);
@@ -165,14 +167,14 @@ export default function PromocoesPage() {
         const promoName = r[colIdx["PROMOTION_NAME"]] || "Campanha Geral";
         const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
 
-        // 1. Validação de Custo
+        // Validação estrita de Custo (deve ser > 0)
         const temCusto = custosMap.has(skuKey);
         const custo = temCusto ? custosMap.get(skuKey)! : 0;
 
-        // 2. Busca Comissão e Frete na Base (por MLB ou SKU)
+        // Busca Comissão e Frete na Base (por MLB ou SKU)
         const anuncioInfo = anunciosMap.get(mlb.toLowerCase()) || anunciosMap.get(skuKey) || null;
         
-        const comissaoVal = anuncioInfo?.comissao !== null && anuncioInfo?.comissao !== undefined ? anuncioInfo.comissao : null;
+        const comissaoVal = anuncioInfo?.comissao !== null && anuncioInfo?.comissao !== undefined ? anuncioInfo.comissao : 0;
         const freteVal = anuncioInfo?.frete !== null && anuncioInfo?.frete !== undefined ? anuncioInfo.frete : null;
         const tarifaFixa = anuncioInfo?.tarifa_fixa !== undefined ? anuncioInfo.tarifa_fixa : 4.00;
 
@@ -181,15 +183,15 @@ export default function PromocoesPage() {
 
         if (!temCusto || custo <= 0) {
           statusItem = "INAPTO";
-          errosList.push("SEM CUSTO");
+          errosList.push("base desatualizada");
         }
-        if (comissaoVal === null || comissaoVal === undefined) {
+        if (comissaoVal <= 0) {
           statusItem = "INAPTO";
-          errosList.push("SEM COMISSÃO");
+          errosList.push("base desatualizada");
         }
         if (freteVal === null || freteVal === undefined) {
           statusItem = "INAPTO";
-          errosList.push("SEM FRETE");
+          errosList.push("sem frete");
         }
 
         let novoPreco = originalPrice;
@@ -264,7 +266,7 @@ export default function PromocoesPage() {
       } else {
         if (colIdx["STATUS"] !== undefined) rawData[i][colIdx["STATUS"]] = "Inapto";
         if (colIdx["ACTION"] !== undefined) rawData[i][colIdx["ACTION"]] = "Não participar";
-        if (colIdx["ERRORS"] !== undefined) rawData[i][colIdx["ERRORS"]] = item.ERRO || "Inapto";
+        if (colIdx["ERRORS"] !== undefined) rawData[i][colIdx["ERRORS"]] = item.ERRO || "base desatualizada";
       }
     });
 
@@ -287,7 +289,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Leitura rigorosa de custos, comissões e fretes da base com exportação no formato original</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa de comissão e custo com exportação no formato original</p>
           </div>
           <Navbar />
         </div>
