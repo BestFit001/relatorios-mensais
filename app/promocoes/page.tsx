@@ -366,6 +366,7 @@ export default function PromocoesPage() {
 
     const dadosOtimizados = dadosProcessados.itens.map((item: any) => ({
       ITEM_ID: item.MLB,
+      SKU: item.SKU,
       FINAL_PRICE: item.STATUS === "APTO" ? item.FINAL_PRICE : item.ORIGINAL_PRICE,
       STATUS: item.STATUS === "APTO" ? "Elegível" : "Inapto",
       OBSERVACOES: item.ERRO || ""
@@ -375,7 +376,7 @@ export default function PromocoesPage() {
     const newWb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(newWb, newWs, dadosProcessados.sheetName || "Promoções");
 
-    XLSX.writeFile(newWb, "ml_campanha_otimizada_com_status.xlsx");
+    XLSX.writeFile(newWb, "ml_campanha_otimizada_com_sku_e_status.xlsx");
   };
 
   const listaItens = dadosProcessados?.itens || [];
@@ -393,7 +394,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Download otimizado contendo MLB, Preço Final e Status (Apto/Inapto)</p>
+            <p className="text-sm font-medium text-slate-400">Download otimizado contendo MLB, SKU, Preço Final e Status</p>
           </div>
           <Navbar />
         </div>
