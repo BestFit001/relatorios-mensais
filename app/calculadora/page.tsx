@@ -57,12 +57,14 @@ const formatarMoeda = (valor: number) =>
 export default function CalculadoraPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [modoCalculo, setModoCalculo] = useState<"pdv_ideal" | "reversa">("pdv_ideal");
+  const [modoCalculo, setModoCalculo] = useState<"pdv_ideal" | "reversa" | "custo_ideal">("pdv_ideal");
 
   const [skuBusca, setSkuBusca] = useState("");
   const [marcaFiltro, setMarcaFiltro] = useState("");
   const [margemAlvo, setMargemAlvo] = useState("30");
   const [precoFixo, setPrecoFixo] = useState("60.00");
+  const [precoAlvoCustoIdeal, setPrecoAlvoCustoIdeal] = useState("100.00");
+  const [margemCustoIdeal, setMargemCustoIdeal] = useState("20");
 
   const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
 
@@ -197,7 +199,7 @@ export default function CalculadoraPage() {
     const regrasDoCanal = regrasTarifacao.filter((r) => {
       const rCanal = String(r.canal || "").toLowerCase();
       if (rCanal === cLower) return true;
-      if ((cLower.includes("magalu") || cLower.includes("magazine")) && (rCanal.includes("magalu" ) || rCanal.includes("magazine"))) return true;
+      if ((cLower.includes("magalu") || cLower.includes("magazine")) && (rCanal.includes("magalu") || rCanal.includes("magazine"))) return true;
       if (cLower.includes("tiktok") && rCanal.includes("tiktok")) return true;
       return rCanal.includes(cLower) || cLower.includes(rCanal);
     });
@@ -226,10 +228,8 @@ export default function CalculadoraPage() {
   const calcularResultadosCanais = () => {
     if (!produtoEncontrado) return [];
 
-    const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
     const impostoPercent = 0.09;
     const skuKey = normalizarSku(produtoEncontrado.sku);
-
     const anunciosSku = mapeamentoMap.get(skuKey) || [];
 
     return canaisConfig
@@ -241,7 +241,6 @@ export default function CalculadoraPage() {
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            // Procura comissão clássica na base (<= 14%)
             const matchClassico = anunciosSku.find((a: any) => a.comissao > 0 && a.comissao <= 14);
             if (matchClassico) {
               comissaoPct = matchClassico.comissao / 100;
@@ -250,7 +249,6 @@ export default function CalculadoraPage() {
               comissaoPct = 0.14;
             }
           } else if (cLower.includes("premium")) {
-            // Procura comissão premium na base (> 14%)
             const matchPremium = anunciosSku.find((a: any) => a.comissao > 14);
             if (matchPremium) {
               comissaoPct = matchPremium.comissao / 100;
@@ -268,6 +266,7 @@ export default function CalculadoraPage() {
         const comprimento = refAnuncio && Number(refAnuncio.comprimento) > 0 ? Number(refAnuncio.comprimento) : 10;
 
         if (modoCalculo === "pdv_ideal") {
+          const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
           const margemAlvoDec = parseFloat(margemAlvo) / 100;
           let pdvCalculado = custoProduto * 2;
 
@@ -309,7 +308,6 @@ export default function CalculadoraPage() {
           return {
             canal: canalNome,
             pdv: pdvCalculado,
-            rebate: 0,
             custoProduto,
             comissaoPct: comissaoPct * 100,
             valorComissao,
@@ -318,9 +316,11 @@ export default function CalculadoraPage() {
             valorImposto,
             lucroLiquido,
             margemFinal,
+            custoIdealCalculado: null,
             temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
           };
-        } else {
+        } else if (modoCalculo === "reversa") {
+          const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
           const pdvBase = parseNumero(precoFixo);
           const valRebate = parseNumero(rebatesCanais[canalNome] || "0");
 
@@ -347,7 +347,6 @@ export default function CalculadoraPage() {
           return {
             canal: canalNome,
             pdv: pdvBase,
-            rebate: valRebate,
             custoProduto,
             comissaoPct: comissaoPct * 100,
             valorComissao,
@@ -356,6 +355,50 @@ export default function CalculadoraPage() {
             valorImposto,
             lucroLiquido,
             margemFinal,
+            custoIdealCalculado: null,
+            temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
+          };
+        } else {
+          // MODO CUSTO IDEAL
+          const pdvAlvo = parseNumero(precoAlvoCustoIdeal);
+          const margemDesejadaDec = parseNumero(margemCustoIdeal) / 100;
+
+          let tarifaFixaFinal = 0;
+          let freteFinal = 0;
+
+          if (cLower.includes("mercado livre")) {
+            tarifaFixaFinal = pdvAlvo < 79.00 ? 6.50 : 0.00;
+            freteFinal = calcularFreteML(pdvAlvo, pesoReal, altura, largura, comprimento);
+          } else {
+            const regraTabela = obterRegraCanalDaTabela(canalNome, pdvAlvo);
+            comissaoPct = Number(regraTabela.comissao || 14) / 100;
+            tarifaFixaFinal = Number(regraTabela.tarifa_fixa || 0);
+            freteFinal = Number(regraTabela.frete || 0);
+          }
+
+          const valorComissao = pdvAlvo * comissaoPct;
+          const valorImposto = pdvAlvo * impostoPercent;
+
+          // Custo Ideal = PDV * (1 - (Comissao + Imposto + MargemDesejada)) - TarifaFixa - Frete
+          const termoMultiplicador = 1 - (comissaoPct + impostoPercent + margemDesejadaDec);
+          const custoIdealCalculado = (pdvAlvo * termoMultiplicador) - tarifaFixaFinal - freteFinal;
+
+          const custoProdutoReal = Number(produtoEncontrado.custo_unitario || 0);
+          const lucroLiquidoIdeal = pdvAlvo - (custoIdealCalculado + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+          const margemFinalIdeal = pdvAlvo > 0 ? (lucroLiquidoIdeal / pdvAlvo) * 100 : 0;
+
+          return {
+            canal: canalNome,
+            pdv: pdvAlvo,
+            custoProduto: custoIdealCalculado > 0 ? custoIdealCalculado : 0,
+            comissaoPct: comissaoPct * 100,
+            valorComissao,
+            tarifaFixa: tarifaFixaFinal,
+            frete: freteFinal,
+            valorImposto,
+            lucroLiquido: lucroLiquidoIdeal,
+            margemFinal: margemFinalIdeal,
+            custoIdealCalculado: custoIdealCalculado > 0 ? custoIdealCalculado : 0,
             temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
           };
         }
@@ -384,12 +427,13 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação avançada com comissões reais por anúncio da base</p>
+            <p className="text-sm font-medium text-slate-400">Precificação avançada com simulação de Custo Ideal de Aquisição</p>
           </div>
           <Navbar />
         </div>
 
-        <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
+        {/* NAVEGAÇÃO DE ABAS */}
+        <div className="flex flex-wrap gap-2 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
           <button
             onClick={() => setModoCalculo("pdv_ideal")}
             className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
@@ -406,8 +450,17 @@ export default function CalculadoraPage() {
           >
             Margem Reversa (Preço Fixo)
           </button>
+          <button
+            onClick={() => setModoCalculo("custo_ideal")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              modoCalculo === "custo_ideal" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            Custo Ideal (Margem Desejada)
+          </button>
         </div>
 
+        {/* PAINEL DE ENTRADA */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div>
@@ -442,7 +495,7 @@ export default function CalculadoraPage() {
               />
             </div>
 
-            {modoCalculo === "pdv_ideal" ? (
+            {modoCalculo === "pdv_ideal" && (
               <div className="md:col-span-2">
                 <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Alvo (%):</label>
                 <input
@@ -452,7 +505,9 @@ export default function CalculadoraPage() {
                   className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
                 />
               </div>
-            ) : (
+            )}
+
+            {modoCalculo === "reversa" && (
               <div className="md:col-span-2">
                 <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Preço Fixo Global (R$):</label>
                 <input
@@ -463,6 +518,30 @@ export default function CalculadoraPage() {
                   className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
                 />
               </div>
+            )}
+
+            {modoCalculo === "custo_ideal" && (
+              <>
+                <div>
+                  <label className="block text-[10px] font-bold text-cyan-400 uppercase mb-1">Preço de Venda Alvo (R$):</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={precoAlvoCustoIdeal}
+                    onChange={(e) => setPrecoAlvoCustoIdeal(e.target.value)}
+                    className="w-full bg-slate-950 border border-cyan-600/50 rounded-xl p-2.5 text-xs font-mono text-cyan-300 font-bold outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Lucro / Margem Desejada (%):</label>
+                  <input
+                    type="number"
+                    value={margemCustoIdeal}
+                    onChange={(e) => setMargemCustoIdeal(e.target.value)}
+                    className="w-full bg-slate-950 border border-emerald-600/50 rounded-xl p-2.5 text-xs font-mono text-emerald-300 font-bold outline-none"
+                  />
+                </div>
+              </>
             )}
           </div>
 
@@ -516,7 +595,7 @@ export default function CalculadoraPage() {
               <span className="text-xs font-bold text-slate-300">{produtoEncontrado.marca}</span>
             </div>
             <div>
-              <span className="block text-[9px] font-bold text-slate-500 uppercase">Custo Base (CMV)</span>
+              <span className="block text-[9px] font-bold text-slate-500 uppercase">Custo Base Atual (CMV)</span>
               <span className="text-xs font-mono font-bold text-rose-400">{formatarMoeda(produtoEncontrado.custo_unitario)}</span>
             </div>
             <div className="bg-emerald-950/40 border border-emerald-900/50 px-3 py-1.5 rounded-xl">
@@ -547,31 +626,20 @@ export default function CalculadoraPage() {
                 <div className="flex items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
                   <div>
                     <span className="block text-[10px] font-bold text-slate-400 uppercase">
-                      {modoCalculo === "pdv_ideal" ? "Preço de Venda (PDV Ideal)" : "Preço de Venda (PDV)"}
+                      {modoCalculo === "custo_ideal" ? "Custo Máximo (Ideal de Aquisição)" : (modoCalculo === "pdv_ideal" ? "Preço de Venda (PDV Ideal)" : "Preço de Venda (PDV)")}
                     </span>
-                    <span className="text-xl font-black text-emerald-400 font-mono mt-0.5 block">
-                      {formatarMoeda(res.pdv)}
+                    <span className={`text-xl font-black font-mono mt-0.5 block ${modoCalculo === "custo_ideal" ? "text-cyan-400" : "text-emerald-400"}`}>
+                      {modoCalculo === "custo_ideal" ? formatarMoeda(res.custoIdealCalculado || 0) : formatarMoeda(res.pdv)}
                     </span>
                   </div>
-
-                  {modoCalculo === "reversa" && (
-                    <div className="text-right">
-                      <label className="block text-[9px] font-bold text-purple-400 uppercase mb-1">Rebate (R$)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={rebatesCanais[res.canal] || "0.00"}
-                        onChange={(e) => setRebatesCanais({ ...rebatesCanais, [res.canal]: e.target.value })}
-                        className="w-20 bg-slate-900 border border-purple-600/60 rounded-lg p-1.5 text-right text-xs font-mono text-purple-300 outline-none"
-                      />
-                    </div>
-                  )}
                 </div>
 
                 <div className="space-y-1.5 text-xs font-mono text-slate-300 pt-1">
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Custo Produto:</span>
-                    <span className="text-rose-400">- {formatarMoeda(res.custoProduto)}</span>
+                    <span className="text-slate-500">{modoCalculo === "custo_ideal" ? "Custo Ideal Calculado:" : "Custo Produto:"}</span>
+                    <span className={modoCalculo === "custo_ideal" ? "text-cyan-400 font-bold" : "text-rose-400"}>
+                      - {formatarMoeda(modoCalculo === "custo_ideal" ? (res.custoIdealCalculado || 0) : res.custoProduto)}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Comissão ({res.comissaoPct.toFixed(1)}%):</span>
@@ -593,13 +661,6 @@ export default function CalculadoraPage() {
                     <span className="text-slate-500">Imposto (9%):</span>
                     <span className="text-rose-400">- {formatarMoeda(res.valorImposto)}</span>
                   </div>
-
-                  {modoCalculo === "reversa" && Number(res.rebate || 0) > 0 && (
-                    <div className="flex justify-between pt-1 border-t border-slate-800 text-purple-300 font-bold">
-                      <span>Rebate (Bônus):</span>
-                      <span>+ {formatarMoeda(res.rebate)}</span>
-                    </div>
-                  )}
                 </div>
               </div>
 
