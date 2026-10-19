@@ -4,6 +4,36 @@ import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
+const matrizFretes = [
+  { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
+  { atePeso: 0.5, faixas: { "78.99": 8.25, "99.99": 13.85, "119.99": 16.15, "149.99": 18.15, "199.99": 20.45, "200": 23.25 } },
+  { atePeso: 1.0, faixas: { "78.99": 8.45, "99.99": 14.45, "119.99": 16.85, "149.99": 19.05, "199.99": 21.35, "200": 24.45 } },
+  { atePeso: 1.5, faixas: { "78.99": 8.65, "99.99": 14.75, "119.99": 17.15, "149.99": 19.45, "199.99": 21.75, "200": 25.45 } },
+  { atePeso: 2.0, faixas: { "78.99": 8.75, "99.99": 15.05, "119.99": 17.65, "149.99": 19.85, "199.99": 22.25, "200": 25.55 } },
+  { atePeso: 3.0, faixas: { "78.99": 9.15, "99.99": 16.45, "119.99": 19.15, "149.99": 21.65, "199.99": 24.35, "200": 27.05 } },
+  { atePeso: 4.0, faixas: { "78.99": 9.75, "99.99": 17.85, "119.99": 20.75, "149.99": 23.35, "199.99": 26.35, "200": 29.25 } },
+  { atePeso: 5.0, faixas: { "78.99": 10.25, "99.99": 19.75, "119.99": 22.85, "149.99": 26.05, "199.99": 29.25, "200": 32.45 } },
+  { atePeso: 6.0, faixas: { "78.99": 10.35, "99.99": 25.95, "119.99": 29.15, "149.99": 33.35, "199.99": 36.45, "200": 40.85 } },
+  { atePeso: 7.0, faixas: { "78.99": 10.45, "99.99": 27.55, "119.99": 31.65, "149.99": 36.75, "199.99": 40.85, "200": 45.25 } },
+];
+
+function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura: number, comprimento: number): number {
+  if (pdv < 79.00) return 0.00;
+  const pesoVolumetrico = (altura * largura * comprimento) / 6000;
+  const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
+  let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
+  if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
+
+  let valorFrete = 0;
+  if (pdv < 79) valorFrete = linhaFrete.faixas["78.99"];
+  else if (pdv < 100) valorFrete = linhaFrete.faixas["99.99"];
+  else if (pdv < 120) valorFrete = linhaFrete.faixas["119.99"];
+  else if (pdv < 150) valorFrete = linhaFrete.faixas["149.99"];
+  else if (pdv < 200) valorFrete = linhaFrete.faixas["199.99"];
+  else valorFrete = linhaFrete.faixas["200"];
+  return valorFrete || 0;
+}
+
 function normalizarSku(valor: any) {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim();
@@ -73,7 +103,7 @@ export default function CalculadoraPage() {
 
     const mapaAnunciosSku = new Map();
     try {
-      const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(3000);
+      const { data: mapAnuncios } = await supabase.from("ml_anuncios_regras").select("*").limit(5000);
       if (mapAnuncios) {
         mapAnuncios.forEach((m: any) => {
           const k = normalizarSku(m.sku);
@@ -84,7 +114,7 @@ export default function CalculadoraPage() {
         });
       }
     } catch (err) {
-      console.log("Mapeamento de SKUs opcional não encontrado.");
+      console.log("Regras do ML opcionais não encontradas.");
     }
     setMapeamentoMap(mapaAnunciosSku);
 
@@ -184,59 +214,65 @@ export default function CalculadoraPage() {
     const skuKey = normalizarSku(produtoEncontrado.sku);
 
     const anunciosSku = mapeamentoMap.get(skuKey) || [];
-    const anuncClassico = anunciosSku.find((a: any) => 
-      (String(a.tipo || a.canal || "").toLowerCase().includes("clássico") || Number(a.comissao) <= 14) && a.mlb
-    );
-    const anuncPremium = anunciosSku.find((a: any) => 
-      (String(a.tipo || a.canal || "").toLowerCase().includes("premium") || Number(a.comissao) > 14) && a.mlb
-    );
+    const anuncMl = anunciosSku.length > 0 ? anunciosSku[0] : null;
 
     return canaisConfig
       .filter((canalNome) => canaisSelecionados.includes(canalNome))
       .map((canalNome) => {
         const cLower = canalNome.toLowerCase();
         let comissaoPct = 0.14;
-        let tarifaFixa = 0;
-        let freteVariavel = 0;
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            comissaoPct = anuncClassico ? Number(anuncClassico.comissao) / 100 : 0.14;
-            tarifaFixa = anuncClassico ? Number(anuncClassico.tarifa_fixa || 0) : 0;
-            freteVariavel = anuncClassico ? Number(anuncClassico.frete || 0) : 0;
+            comissaoPct = anuncMl && Number(anuncMl.comissao) > 0 ? Number(anuncMl.comissao) / 100 : 0.14;
           } else if (cLower.includes("premium")) {
-            comissaoPct = anuncPremium ? Number(anuncPremium.comissao) / 100 : 0.19;
-            tarifaFixa = anuncPremium ? Number(anuncPremium.tarifa_fixa || 0) : 0;
-            freteVariavel = anuncPremium ? Number(anuncPremium.frete || 0) : 0;
+            comissaoPct = anuncMl && Number(anuncMl.comissao) > 0 ? Number(anuncMl.comissao) / 100 : 0.19;
           }
-        } else {
-          const precoRefEst = modoCalculo === "pdv_ideal" ? 80.0 : parseNumero(precoFixo);
-          const regraTabela = obterRegraCanalDaTabela(canalNome, precoRefEst);
-
-          comissaoPct = Number(regraTabela.comissao || 14) / 100;
-          tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
-          freteVariavel = Number(regraTabela.frete || 0);
         }
+
+        const pesoReal = anuncMl && Number(anuncMl.peso_real) > 0 ? Number(anuncMl.peso_real) : 2.0;
+        const altura = anuncMl && Number(anuncMl.altura) > 0 ? Number(anuncMl.altura) : 10;
+        const largura = anuncMl && Number(anuncMl.largura) > 0 ? Number(anuncMl.largura) : 10;
+        const comprimento = anuncMl && Number(anuncMl.comprimento) > 0 ? Number(anuncMl.comprimento) : 10;
 
         if (modoCalculo === "pdv_ideal") {
           const margemAlvoDec = parseFloat(margemAlvo) / 100;
-          let denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
+          let pdvCalculado = custoProduto * 2;
 
-          let pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
+          // Iteração para estabilizar o preço considerando o frete e tarifa fixa dinâmicos do ML
+          for (let iter = 0; iter < 5; iter++) {
+            let tarifaFixa = 0;
+            let freteVariavel = 0;
 
-          if (!cLower.includes("mercado livre")) {
-            const regraExata = obterRegraCanalDaTabela(canalNome, pdvCalculado);
-            comissaoPct = Number(regraExata.comissao || 14) / 100;
-            tarifaFixa = Number(regraExata.tarifa_fixa || 0);
-            freteVariavel = Number(regraExata.frete || 0);
+            if (cLower.includes("mercado livre")) {
+              tarifaFixa = pdvCalculado < 79.00 ? 6.50 : 0.00;
+              freteVariavel = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
+            } else {
+              const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
+              comissaoPct = Number(regraTabela.comissao || 14) / 100;
+              tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
+              freteVariavel = Number(regraTabela.frete || 0);
+            }
 
-            const novoDenominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
-            pdvCalculado = novoDenominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / novoDenominador : pdvCalculado;
+            const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
+            pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
+          }
+
+          let tarifaFixaFinal = 0;
+          let freteFinal = 0;
+
+          if (cLower.includes("mercado livre")) {
+            tarifaFixaFinal = pdvCalculado < 79.00 ? 6.50 : 0.00;
+            freteFinal = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
+          } else {
+            const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
+            tarifaFixaFinal = Number(regraTabela.tarifa_fixa || 0);
+            freteFinal = Number(regraTabela.frete || 0);
           }
 
           const valorComissao = pdvCalculado * comissaoPct;
           const valorImposto = pdvCalculado * impostoPercent;
-          const lucroLiquido = pdvCalculado - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto);
+          const lucroLiquido = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
           const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
 
           return {
@@ -246,30 +282,34 @@ export default function CalculadoraPage() {
             custoProduto,
             comissaoPct: comissaoPct * 100,
             valorComissao,
-            tarifaFixa,
-            frete: freteVariavel,
+            tarifaFixa: tarifaFixaFinal,
+            frete: freteFinal,
             valorImposto,
             lucroLiquido,
             margemFinal,
-            temMlb: cLower.includes("mercado livre") ? (cLower.includes("clássico") ? !!anuncClassico : !!anuncPremium) : true
+            temMlb: cLower.includes("mercado livre") ? !!anuncMl : true
           };
         } else {
           const pdvBase = parseNumero(precoFixo);
           const valRebate = parseNumero(rebatesCanais[canalNome] || "0");
 
-          if (!cLower.includes("mercado livre")) {
-            const regraExata = obterRegraCanalDaTabela(canalNome, pdvBase);
-            comissaoPct = Number(regraExata.comissao || 14) / 100;
-            tarifaFixa = Number(regraExata.tarifa_fixa || 0);
-            freteVariavel = Number(regraExata.frete || 0);
+          let tarifaFixaFinal = 0;
+          let freteFinal = 0;
+
+          if (cLower.includes("mercado livre")) {
+            tarifaFixaFinal = pdvBase < 79.00 ? 6.50 : 0.00;
+            freteFinal = calcularFreteML(pdvBase, pesoReal, altura, largura, comprimento);
+          } else {
+            const regraTabela = obterRegraCanalDaTabela(canalNome, pdvBase);
+            comissaoPct = Number(regraTabela.comissao || 14) / 100;
+            tarifaFixaFinal = Number(regraTabela.tarifa_fixa || 0);
+            freteFinal = Number(regraTabela.frete || 0);
           }
 
           const valorComissao = pdvBase * comissaoPct;
           const valorImposto = pdvBase * impostoPercent;
           
-          // O rebate abate/compensa diretamente sobre as retenções (comissão/frete/imposto/tarifa),
-          // aumentando o lucro líquido exatamente pelo valor subsidiado que entra a mais no seu recebimento.
-          const lucroLiquidoBase = pdvBase - (custoProduto + valorComissao + tarifaFixa + freteVariavel + valorImposto);
+          const lucroLiquidoBase = pdvBase - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
           const lucroLiquido = lucroLiquidoBase + valRebate;
           const margemFinal = pdvBase > 0 ? (lucroLiquido / pdvBase) * 100 : 0;
 
@@ -280,12 +320,12 @@ export default function CalculadoraPage() {
             custoProduto,
             comissaoPct: comissaoPct * 100,
             valorComissao,
-            tarifaFixa,
-            frete: freteVariavel,
+            tarifaFixa: tarifaFixaFinal,
+            frete: freteFinal,
             valorImposto,
             lucroLiquido,
             margemFinal,
-            temMlb: cLower.includes("mercado livre") ? (cLower.includes("clássico") ? !!anuncClassico : !!anuncPremium) : true
+            temMlb: cLower.includes("mercado livre") ? !!anuncMl : true
           };
         }
       });
@@ -313,7 +353,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação avançada com rebate individual por canal e leitura em tempo real da aba de Regras</p>
+            <p className="text-sm font-medium text-slate-400">Precificação avançada com frete dinâmico por cubagem e regras do Mercado Livre em tempo real</p>
           </div>
           <Navbar />
         </div>
