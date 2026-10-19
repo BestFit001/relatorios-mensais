@@ -182,26 +182,30 @@ export default function PromocoesPage() {
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
 
         // 2. Busca com prioridade absoluta em mlRegrasMap, depois mapeamentoMap
-        const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey) || null;
+        const anuncioInfo = mlRegrasMap.get(mlb) || mlRegrasMap.get(skuKey) || mapeamentoMap.get(mlb) || mapeamentoMap.get(skuKey);
         
-        // Validação rigorosa da comissão: se não achar o anúncio ou se a comissão for 0, nula ou menor/igual a 0
-        const comissaoVal = anuncioInfo && anuncioInfo.comissao !== undefined && anuncioInfo.comissao !== null 
-          ? Number(anuncioInfo.comissao) 
-          : 0;
-
-        const freteVal = anuncioInfo?.frete !== null && anuncioInfo?.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
-        const tarifaFixa = anuncioInfo?.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
-
         let statusItem = "APTO";
         let errosList: string[] = [];
+        let comissaoVal = 0;
+        let freteVal = 20.75;
+        let tarifaFixa = 4.00;
 
-        // Validação rigorosa: se custo <= 0 ou comissão <= 0 -> "base desatualizada"
-        if (custo <= 0) {
+        // Validação rigorosa: se o anúncio não estiver na base, considera desatualizado
+        if (!anuncioInfo) {
           statusItem = "INAPTO";
           errosList.push("base desatualizada");
+        } else {
+          comissaoVal = Number(anuncioInfo.comissao) || 0;
+          freteVal = anuncioInfo.frete !== null && anuncioInfo.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
+          tarifaFixa = anuncioInfo.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
+
+          if (comissaoVal <= 0) {
+            statusItem = "INAPTO";
+            errosList.push("base desatualizada");
+          }
         }
-        
-        if (comissaoVal <= 0) {
+
+        if (custo <= 0) {
           statusItem = "INAPTO";
           errosList.push("base desatualizada");
         }
