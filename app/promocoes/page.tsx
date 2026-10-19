@@ -103,7 +103,7 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      // 2. Regras ML (ml_anuncios_regras) com suporte a peso e dimensões para o frete dinâmico
+      // 2. Regras ML (ml_anuncios_regras)
       const mlMap = new Map<string, any>();
       const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
       if (mlRegras) {
@@ -196,7 +196,7 @@ export default function PromocoesPage() {
       });
 
       const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
-      const imposto = 0.09; // 9% de imposto corporativo[cite: 1]
+      const imposto = 0.09;
 
       const resultados: any[] = [];
 
@@ -252,7 +252,6 @@ export default function PromocoesPage() {
         if (statusItem === "APTO") {
           const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
           
-          // Cálculo iterativo para encontrar o preço ideal englobando Frete Dinâmico (que varia conforme a faixa de preço >= 79)
           let precoEstimado = originalPrice * 0.9;
           for (let iter = 0; iter < 5; iter++) {
             let tarifaFixaItem = precoEstimado < 79.00 ? 6.50 : 0.00;
@@ -287,6 +286,7 @@ export default function PromocoesPage() {
 
       setDadosProcessados(resultados);
 
+      // Salva automaticamente os itens APTO na tabela "promocoes_ativas_ml" do Supabase
       for (const item of resultados.filter(r => r.STATUS === "APTO")) {
         try {
           await supabase.from("promocoes_ativas_ml").insert([{
@@ -299,7 +299,7 @@ export default function PromocoesPage() {
       }
 
       carregarPromocoesAtivasSupabase();
-      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+      alert(`✅ Processamento concluído e promoções salvas! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
     }
@@ -355,7 +355,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com cálculo dinâmico de frete por cubagem</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com salvamento automático para promoções ativas</p>
           </div>
           <Navbar />
         </div>
