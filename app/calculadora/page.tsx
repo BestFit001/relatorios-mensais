@@ -70,29 +70,20 @@ export default function CalculadoraPage() {
     setCustosMap(mapaCustos);
 
     // 2. Carrega tabela de mapeamento / anúncios (para verificar se tem MLB e comissões específicas)
-    let allMap: any[] = [];
-    from = 0;
-    keep = true;
-    while (keep) {
-      const { data } = await supabase.from("config_regras_canais").select("*").range(from, from + step - 1);
-      if (data && data.length > 0) {
-        allMap = [...allMap, ...data];
-        from += step;
-        if (data.length < step) keep = false;
-      } else keep = false;
-    }
-
-    // Se houver tabela de mapeamento de anúncios (ex: mapeamento_skus ou similar)
-    const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(2000).catch(() => ({ data: [] }));
     const mapaAnunciosSku = new Map();
-    if (mapAnuncios) {
-      mapAnuncios.forEach((m: any) => {
-        const k = normalizarSku(m.sku);
-        if (k) {
-          if (!mapaAnunciosSku.has(k)) mapaAnunciosSku.set(k, []);
-          mapaAnunciosSku.get(k).push(m);
-        }
-      });
+    try {
+      const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(2000);
+      if (mapAnuncios) {
+        mapAnuncios.forEach((m: any) => {
+          const k = normalizarSku(m.sku);
+          if (k) {
+            if (!mapaAnunciosSku.has(k)) mapaAnunciosSku.set(k, []);
+            mapaAnunciosSku.get(k).push(m);
+          }
+        });
+      }
+    } catch (err) {
+      console.log("Tabela mapeamento_skus opcional não encontrada ou vazia.");
     }
     setMapeamentoMap(mapaAnunciosSku);
 
@@ -116,7 +107,6 @@ export default function CalculadoraPage() {
     }
 
     setCanaisConfig(listaCanais);
-    // Por padrão, seleciona todos os canais
     setCanaisSelecionados(listaCanais.map((c: any) => c.canal));
 
     setLoading(false);
@@ -157,15 +147,13 @@ export default function CalculadoraPage() {
     }
   };
 
-  // Cálculo por canal aplicando regras de comissão ML (MLB) e taxa de imposto 9%
   const calcularResultadosCanais = () => {
     if (!produtoEncontrado) return [];
 
     const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
-    const impostoPercent = 0.09; // 9% imposto corporativo fixo
+    const impostoPercent = 0.09;
     const skuKey = normalizarSku(produtoEncontrado.sku);
 
-    // Verifica se tem anúncio com MLB na base para este SKU
     const anunciosSku = mapeamentoMap.get(skuKey) || [];
     const temMlbClassico = anunciosSku.some((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("clássico") || Number(a.comissao) <= 14);
     const temMlbPremium = anunciosSku.some((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("premium") || Number(a.comissao) > 14);
@@ -176,9 +164,6 @@ export default function CalculadoraPage() {
         const canalNome = regra.canal;
         let comissaoPct = Number(regra.comissao || 14) / 100;
 
-        // Regra específica solicitada para o Mercado Livre:
-        // Se for Clássico e não houver MLB específico, usa margem travada de 14%
-        // Se for Premium e não houver MLB específico, usa margem travada de 18%
         if (canalNome.toLowerCase().includes("clássico") && !temMlbClassico) {
           comissaoPct = 0.14;
         } else if (canalNome.toLowerCase().includes("premium") && !temMlbPremium) {
@@ -194,7 +179,6 @@ export default function CalculadoraPage() {
 
           let pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
 
-          // Regra de isenção/redução de frete para preços <= R$ 78.99 em marketplaces parceiros
           if (pdvCalculado <= 78.99 && (canalNome.toLowerCase().includes("amazon") || canalNome.toLowerCase().includes("magalu") || canalNome.toLowerCase().includes("shopee"))) {
             freteVariavel = 0;
             pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : pdvCalculado;
@@ -218,7 +202,6 @@ export default function CalculadoraPage() {
             margemFinal
           };
         } else {
-          // Modo Margem Reversa
           const pdvBase = parseNumero(precoFixo);
           const valRebate = parseNumero(rebate);
           const pdvEfetivo = Math.max(0, pdvBase - valRebate);
@@ -268,7 +251,6 @@ export default function CalculadoraPage() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
         
-        {/* Cabeçalho */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
@@ -277,7 +259,6 @@ export default function CalculadoraPage() {
           <Navbar />
         </div>
 
-        {/* Selecionar Modo de Cálculo */}
         <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
           <button
             onClick={() => setModoCalculo("pdv_ideal")}
@@ -297,7 +278,6 @@ export default function CalculadoraPage() {
           </button>
         </div>
 
-        {/* Formulário de Busca e Parâmetros */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div>
@@ -368,7 +348,6 @@ export default function CalculadoraPage() {
             )}
           </div>
 
-          {/* SELETOR DE CANAIS POR CHECKBOX */}
           <div className="pt-4 border-t border-slate-800 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-slate-400 uppercase">Canais Visíveis na Precificação:</span>
@@ -404,7 +383,6 @@ export default function CalculadoraPage() {
           </div>
         </div>
 
-        {/* Detalhes do Produto Selecionado */}
         {produtoEncontrado && (
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -430,7 +408,6 @@ export default function CalculadoraPage() {
           </div>
         )}
 
-        {/* Cards de Resultados por Canal Selecionado */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {resultadosCanais.map((res, idx) => (
             <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col justify-between">
