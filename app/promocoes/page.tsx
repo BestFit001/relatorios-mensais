@@ -5,6 +5,36 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 
+const matrizFretes = [
+  { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
+  { atePeso: 0.5, faixas: { "78.99": 8.25, "99.99": 13.85, "119.99": 16.15, "149.99": 18.15, "199.99": 20.45, "200": 23.25 } },
+  { atePeso: 1.0, faixas: { "78.99": 8.45, "99.99": 14.45, "119.99": 16.85, "149.99": 19.05, "199.99": 21.35, "200": 24.45 } },
+  { atePeso: 1.5, faixas: { "78.99": 8.65, "99.99": 14.75, "119.99": 17.15, "149.99": 19.45, "199.99": 21.75, "200": 25.45 } },
+  { atePeso: 2.0, faixas: { "78.99": 8.75, "99.99": 15.05, "119.99": 17.65, "149.99": 19.85, "199.99": 22.25, "200": 25.55 } },
+  { atePeso: 3.0, faixas: { "78.99": 9.15, "99.99": 16.45, "119.99": 19.15, "149.99": 21.65, "199.99": 24.35, "200": 27.05 } },
+  { atePeso: 4.0, faixas: { "78.99": 9.75, "99.99": 17.85, "119.99": 20.75, "149.99": 23.35, "199.99": 26.35, "200": 29.25 } },
+  { atePeso: 5.0, faixas: { "78.99": 10.25, "99.99": 19.75, "119.99": 22.85, "149.99": 26.05, "199.99": 29.25, "200": 32.45 } },
+  { atePeso: 6.0, faixas: { "78.99": 10.35, "99.99": 25.95, "119.99": 29.15, "149.99": 33.35, "199.99": 36.45, "200": 40.85 } },
+  { atePeso: 7.0, faixas: { "78.99": 10.45, "99.99": 27.55, "119.99": 31.65, "149.99": 36.75, "199.99": 40.85, "200": 45.25 } },
+];
+
+function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura: number, comprimento: number): number {
+  if (pdv < 79.00) return 0.00;
+  const pesoVolumetrico = (altura * largura * comprimento) / 6000;
+  const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
+  let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
+  if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
+
+  let valorFrete = 0;
+  if (pdv < 79) valorFrete = linhaFrete.faixas["78.99"];
+  else if (pdv < 100) valorFrete = linhaFrete.faixas["99.99"];
+  else if (pdv < 120) valorFrete = linhaFrete.faixas["119.99"];
+  else if (pdv < 150) valorFrete = linhaFrete.faixas["149.99"];
+  else if (pdv < 200) valorFrete = linhaFrete.faixas["199.99"];
+  else valorFrete = linhaFrete.faixas["200"];
+  return valorFrete || 0;
+}
+
 function normalizarSku(valor: any) {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim();
@@ -73,7 +103,7 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      // 2. Regras ML (ml_anuncios_regras)
+      // 2. Regras ML (ml_anuncios_regras) com suporte a peso e dimensões para o frete dinâmico
       const mlMap = new Map<string, any>();
       const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
       if (mlRegras) {
@@ -83,8 +113,10 @@ export default function PromocoesPage() {
           const comissaoNum = parsePorcentagem(m.comissao);
           const info = {
             comissao: comissaoNum,
-            frete: m.peso_real ? Number(m.peso_real) * 10 : 20.75,
-            tarifa_fixa: 4.00
+            peso_real: Number(m.peso_real || 2.0),
+            altura: Number(m.altura || 10),
+            largura: Number(m.largura || 10),
+            comprimento: Number(m.comprimento || 10)
           };
           if (mlbKey) mlMap.set(mlbKey, info);
           if (skuKey) mlMap.set(skuKey, info);
@@ -102,8 +134,10 @@ export default function PromocoesPage() {
           const comissaoNum = parsePorcentagem(m.comissao);
           const info = {
             comissao: comissaoNum,
-            frete: m.frete !== null && m.frete !== undefined ? Number(m.frete) : 20.75,
-            tarifa_fixa: m.tarifa_fixa !== null && m.tarifa_fixa !== undefined ? Number(m.tarifa_fixa) : 4.00
+            peso_real: Number(m.peso_real || 2.0),
+            altura: Number(m.altura || 10),
+            largura: Number(m.largura || 10),
+            comprimento: Number(m.comprimento || 10)
           };
           if (mlbKey) mapMap.set(mlbKey, info);
           if (skuKey) mapMap.set(skuKey, info);
@@ -188,16 +222,20 @@ export default function PromocoesPage() {
         let statusItem = "APTO";
         let errosList: string[] = [];
         let comissaoVal = 0;
-        let freteVal = 20.75;
-        let tarifaFixa = 4.00;
+        let pesoReal = 2.0;
+        let altura = 10;
+        let largura = 10;
+        let comprimento = 10;
 
         if (!anuncioInfo) {
           statusItem = "INAPTO";
           errosList.push("MLB não cadastrado na base — Atualizar base");
         } else {
           comissaoVal = Number(anuncioInfo.comissao) || 0;
-          freteVal = anuncioInfo.frete !== null && anuncioInfo.frete !== undefined ? Number(anuncioInfo.frete) : 20.75;
-          tarifaFixa = anuncioInfo.tarifa_fixa !== undefined ? Number(anuncioInfo.tarifa_fixa) : 4.00;
+          pesoReal = Number(anuncioInfo.peso_real || 2.0);
+          altura = Number(anuncioInfo.altura || 10);
+          largura = Number(anuncioInfo.largura || 10);
+          comprimento = Number(anuncioInfo.comprimento || 10);
 
           if (comissaoVal <= 0) {
             statusItem = "INAPTO";
@@ -212,14 +250,21 @@ export default function PromocoesPage() {
 
         let novoPreco = originalPrice;
         if (statusItem === "APTO") {
-          // Conversão correta da comissão para percentual decimal (ex: 14% -> 0.14)
           const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
           
-          // Fórmula Correta de Precificação com Markup / Margem Líquida sobre Preço de Venda:
-          // Preço = (Custo + Tarifa Fixa + Frete) / (1 - (Comissão + Imposto + Margem Desejada))
-          const denominador = 1 - (comissaoDec + imposto + margemDesejada);
-          novoPreco = denominador > 0 ? (custo + tarifaFixa + freteVal) / denominador : originalPrice * 0.9;
-          
+          // Cálculo iterativo para encontrar o preço ideal englobando Frete Dinâmico (que varia conforme a faixa de preço >= 79)
+          let precoEstimado = originalPrice * 0.9;
+          for (let iter = 0; iter < 5; iter++) {
+            let tarifaFixaItem = precoEstimado < 79.00 ? 6.50 : 0.00;
+            let freteItem = calcularFreteML(precoEstimado, pesoReal, altura, largura, comprimento);
+            
+            const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+            if (denominador > 0) {
+              precoEstimado = (custo + tarifaFixaItem + freteItem) / denominador;
+            }
+          }
+          novoPreco = precoEstimado > 0 ? precoEstimado : originalPrice * 0.9;
+
           if (originalPrice <= 0 || novoPreco <= 0) {
             statusItem = "INAPTO";
             errosList.push("Preço Inválido");
@@ -310,7 +355,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com bloqueio automático para base desatualizada</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa de percentuais e custos com cálculo dinâmico de frete por cubagem</p>
           </div>
           <Navbar />
         </div>
