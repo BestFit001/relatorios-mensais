@@ -108,7 +108,6 @@ export default function UploadPage() {
     setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
-  // Função para salvar automaticamente cada alteração de coluna no Supabase
   const atualizarColunaConfig = async (campo: string, coluna: string) => {
     const novasRegras = { ...regrasColsDinamicas, [campo]: coluna };
     setRegrasColsDinamicas(novasRegras);
@@ -492,6 +491,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // UPLOAD DE REGRAS DO ML CORRIGIDO COM HERANÇA DE SKU ENTRE VARIAÇÕES DO MESMO MLB
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -517,17 +517,35 @@ export default function UploadPage() {
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
+        // 1ª PASSAGEM: Mapeia o primeiro SKU válido encontrado para cada MLB na planilha inteira
+        const mapSkuPorMlb = new Map<string, string>();
+        for (let i = 4; i < json.length; i++) {
+          const row = json[i];
+          if (!row) continue;
+          const mlbVal = String(row[idxMlb] || "").trim().toUpperCase();
+          const skuVal = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
+          if (mlbVal && mlbVal.startsWith("MLB") && skuVal && skuVal !== "-" && !mapSkuPorMlb.has(mlbVal)) {
+            mapSkuPorMlb.set(mlbVal, skuVal);
+          }
+        }
+
+        // 2ª PASSAGEM: Coleta, consolida e aplica a herança de SKU entre as variações do mesmo MLB
         const mapaMlPendente = new Map<string, { registro: any, score: number }>();
-        const linhaInicio = 1;
+        const linhaInicio = 4;
 
         for (let i = linhaInicio; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
 
           const mlb = String(row[idxMlb] || "").trim().toUpperCase();
-          const sku = normalizarSku(row[idxSku]);
-          
           if (!mlb || !mlb.startsWith("MLB")) continue;
+
+          let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
+
+          // Herança de SKU: 1. Linha atual, 2. Outras linhas do mesmo MLB na planilha
+          if ((!sku || sku === "-") && mapSkuPorMlb.has(mlb)) {
+            sku = mapSkuPorMlb.get(mlb)!;
+          }
 
           let rawComissao = row[idxCom];
           let comissaoNum = 0;
@@ -554,16 +572,23 @@ export default function UploadPage() {
           const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
 
           let score = 0;
+          if (sku && sku !== "-") score += 2;
           if (comissaoNum > 0) score++;
           if (pesoReal !== 2.000) score++;
           if (altura > 0) score++;
           if (largura > 0) score++;
           if (comprimento > 0) score++;
 
-          const objReg = { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento };
+          const objReg = { mlb, sku, comissao: comissaoNum > 0 ? comissaoNum : 14, peso_real: pesoReal, altura, largura, comprimento };
 
           if (!mapaMlPendente.has(mlb) || score > mapaMlPendente.get(mlb)!.score) {
             mapaMlPendente.set(mlb, { registro: objReg, score });
+          } else {
+            // Se já existe, complementa o SKU caso o atual esteja vazio
+            const regAtual = mapaMlPendente.get(mlb)!.registro;
+            if ((!regAtual.sku || regAtual.sku === "-") && sku && sku !== "-") {
+              regAtual.sku = sku;
+            }
           }
         }
 
@@ -582,7 +607,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`🚀 Planilha de Regras do ML processada com sucesso! Total de ${registros.length} anúncios únicos salvos na base.`);
+        alert(`🚀 Planilha de Regras do ML processada com sucesso! Total de ${registros.length} anúncios únicos salvos na base com herança de SKU.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao processar planilha do ML: " + err.message);
@@ -1005,7 +1030,7 @@ export default function UploadPage() {
               </button>
             </div>
 
-            {/* PAINEL DE CONFIGURAÇÃO DE COLUNAS DO ML (COM SALVAMENTO AUTOMÁTICO) */}
+            {/* PAINEL DE CONFIGURAÇÃO DE COLUNAS DO ML */}
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna MLB:</label>
