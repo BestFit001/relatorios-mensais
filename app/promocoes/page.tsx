@@ -61,7 +61,7 @@ export default function PromocoesPage() {
   const [salvandoBanco, setSalvandoBanco] = useState(false);
   const [margemAlvo, setMargemAlvo] = useState("20");
   const [arquivoUpload, setArquivoUpload] = useState<File | null>(null);
-  const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
+  const [dadosProcessados, setDadosProcessados] = useState<any>(null);
   const [promocoesAtivas, setPromocoesAtivas] = useState<any[]>([]);
   const [termoBusca, setTermoBusca] = useState("");
   const [abaAtiva, setAbaAtiva] = useState<"precificar" | "ativas">("precificar");
@@ -141,21 +141,21 @@ export default function PromocoesPage() {
         const sheetName = wb.SheetNames.includes("Promoções") ? "Promoções" : wb.SheetNames[0];
         const ws = wb.Sheets[sheetName];
         const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-        setDadosProcessados({ rawData, sheetName } as any);
+        setDadosProcessados({ rawData, sheetName });
       };
       reader.readAsBinaryString(file);
     }
   };
 
   const processarPlanilhaCampanha = async () => {
-    if (!dadosProcessados || !(dadosProcessados as any).rawData) {
+    if (!dadosProcessados || !dadosProcessados.rawData) {
       alert("Por favor, selecione uma planilha de campanha do Mercado Livre.");
       return;
     }
 
     setLoading(true);
     try {
-      const { rawData } = dadosProcessados as any;
+      const { rawData, sheetName } = dadosProcessados;
       if (rawData.length < 1) {
         alert("A planilha parece estar vazia.");
         setLoading(false);
@@ -299,7 +299,7 @@ export default function PromocoesPage() {
         });
       }
 
-      setDadosProcessados({ rawData, sheetName, itens: resultados } as any);
+      setDadosProcessados({ rawData, sheetName, itens: resultados });
       alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
@@ -308,12 +308,11 @@ export default function PromocoesPage() {
   };
 
   const salvarPromocoesNoBanco = async () => {
-    const proc = dadosProcessados as any;
-    if (!proc || !proc.itens) {
+    if (!dadosProcessados || !dadosProcessados.itens) {
       alert("Processe a planilha primeiro.");
       return;
     }
-    const itensAptos = proc.itens.filter((r: any) => r.STATUS === "APTO");
+    const itensAptos = dadosProcessados.itens.filter((r: any) => r.STATUS === "APTO");
     if (itensAptos.length === 0) {
       alert("Nenhum item apto para salvar.");
       return;
@@ -359,15 +358,13 @@ export default function PromocoesPage() {
     }
   };
 
-  // DOWNLOAD OTIMIZADO: Contém apenas ITEM_ID (MLB), FINAL_PRICE (Preço Final) e STATUS (Apto/Inapto/Erros)
   const baixarAptosExcel = () => {
-    const proc = dadosProcessados as any;
-    if (!proc || !proc.itens || proc.itens.length === 0) {
+    if (!dadosProcessados || !dadosProcessados.itens || dadosProcessados.itens.length === 0) {
       alert("Processe a planilha primeiro.");
       return;
     }
 
-    const dadosOtimizados = proc.itens.map((item: any) => ({
+    const dadosOtimizados = dadosProcessados.itens.map((item: any) => ({
       ITEM_ID: item.MLB,
       FINAL_PRICE: item.STATUS === "APTO" ? item.FINAL_PRICE : item.ORIGINAL_PRICE,
       STATUS: item.STATUS === "APTO" ? "Elegível" : "Inapto",
@@ -376,13 +373,12 @@ export default function PromocoesPage() {
 
     const newWs = XLSX.utils.json_to_sheet(dadosOtimizados);
     const newWb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(newWb, newWs, proc.sheetName || "Promoções");
+    XLSX.utils.book_append_sheet(newWb, newWs, dadosProcessados.sheetName || "Promoções");
 
     XLSX.writeFile(newWb, "ml_campanha_otimizada_com_status.xlsx");
   };
 
-  const procState = dadosProcessados as any;
-  const listaItens = procState?.itens || [];
+  const listaItens = dadosProcessados?.itens || [];
 
   const promocoesFiltradas = promocoesAtivas.filter((p) => 
     String(p.sku || "").toLowerCase().includes(termoBusca.toLowerCase()) ||
