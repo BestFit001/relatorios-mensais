@@ -31,9 +31,10 @@ export default function CalculadoraPage() {
   const [produtoEncontrado, setProdutoEncontrado] = useState<any>(null);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [mapeamentoMap, setMapeamentoMap] = useState<Map<string, any[]>>(new Map());
-  const [canaisConfig, setCanaisConfig] = useState<any[]>([]);
-
-  // Canais selecionados para exibição (Checkbox filter)
+  
+  // Regras vindas em tempo real do banco
+  const [canaisConfig, setCanaisConfig] = useState<string[]>([]);
+  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
   const [canaisSelecionados, setCanaisSelecionados] = useState<string[]>([]);
 
   useEffect(() => {
@@ -42,10 +43,10 @@ export default function CalculadoraPage() {
       router.push("/login");
       return;
     }
-    carregarBases();
+    carregarBasesEmTempoReal();
   }, []);
 
-  const carregarBases = async () => {
+  const carregarBasesEmTempoReal = async () => {
     setLoading(true);
 
     // 1. Carrega custos dos SKUs
@@ -69,7 +70,7 @@ export default function CalculadoraPage() {
     });
     setCustosMap(mapaCustos);
 
-    // 2. Carrega tabela de mapeamento / anúncios (para verificar se tem MLB e comissões específicas)
+    // 2. Carrega tabela de mapeamento de anúncios (Mercado Livre MLB / Comissões específicas)
     const mapaAnunciosSku = new Map();
     try {
       const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*").limit(2000);
@@ -83,31 +84,27 @@ export default function CalculadoraPage() {
         });
       }
     } catch (err) {
-      console.log("Tabela mapeamento_skus opcional não encontrada ou vazia.");
+      console.log("Mapeamento de SKUs opcional não encontrado.");
     }
     setMapeamentoMap(mapaAnunciosSku);
 
-    // 3. Carrega regras de canais (comissões, tarifas fixas, fretes)
-    const { data: regrasData } = await supabase.from("config_regras_canais").select("*");
-    let listaCanais = [];
-    if (regrasData && regrasData.length > 0) {
-      listaCanais = regrasData;
+    // 3. Carrega canais cadastrados
+    const { data: canaisData } = await supabase.from("config_regras_canais").select("*").order("id");
+    let listaNomesCanais: string[] = [];
+    if (canaisData && canaisData.length > 0) {
+      listaNomesCanais = canaisData.map((c: any) => c.canal);
     } else {
-      listaCanais = [
-        { canal: "Mercado Livre Clássico", comissao: 14, tarifa_fixa: 0, frete: 0 },
-        { canal: "Mercado Livre Premium", comissao: 18, tarifa_fixa: 0, frete: 0 },
-        { canal: "Shopee", comissao: 20, tarifa_fixa: 4.00, frete: 0 },
-        { canal: "Amazon", comissao: 14, tarifa_fixa: 4.00, frete: 21.95 },
-        { canal: "Magalu", comissao: 18, tarifa_fixa: 5.00, frete: 20.45 },
-        { canal: "Netshoes", comissao: 25, tarifa_fixa: 5.00, frete: 0 },
-        { canal: "Shein", comissao: 16, tarifa_fixa: 6.00, frete: 0 },
-        { canal: "TikTok", comissao: 15, tarifa_fixa: 3.00, frete: 0 },
-        { canal: "Centauro", comissao: 21, tarifa_fixa: 0, frete: 0 }
-      ];
+      listaNomesCanais = ["Mercado Livre Clássico", "Mercado Livre Premium", "Amazon", "Shopee", "Magalu", "Netshoes", "Shein", "TikTok Shop", "Centauro", "Site"];
     }
 
-    setCanaisConfig(listaCanais);
-    setCanaisSelecionados(listaCanais.map((c: any) => c.canal));
+    setCanaisConfig(listaNomesCanais);
+    setCanaisSelecionados(listaNomesCanais);
+
+    // 4. Carrega regras de tarifação em tempo real (config_regras_tarifacao)
+    const { data: tarifacaoData } = await supabase.from("config_regras_tarifacao").select("*");
+    if (tarifacaoData) {
+      setRegrasTarifacao(tarifacaoData);
+    }
 
     setLoading(false);
   };
@@ -141,37 +138,88 @@ export default function CalculadoraPage() {
 
   const selecionarTodosCanais = (selecionar: boolean) => {
     if (selecionar) {
-      setCanaisSelecionados(canaisConfig.map((c) => c.canal));
+      setCanaisSelecionados(canaisConfig);
     } else {
       setCanaisSelecionados([]);
     }
+  };
+
+  // Função auxiliar para encontrar a regra de tarifação com base no canal e faixa de preço
+  const obterRegraCanal = (canalNome: string, precoReferencia: number) => {
+    const regrasDoCanal = regrasTarifacao.filter((r) => r.canal.toLowerCase() === canalNome.toLowerCase());
+
+    if (regrasDoCanal.length === 0) {
+      // Regras padrão caso não estejam cadastradas na aba de regras
+      if (canalNome.toLowerCase().includes("clássico")) return { comissao: 14, tarifa_fixa: 0, frete: 0 };
+      if (canalNome.toLowerCase().includes("premium")) return { comissao: 18, tarifa_fixa: 0, frete: 0 };
+      return { comissao: 15, tarifa_fixa: 4.00, frete: 12.99 };
+    }
+
+    // Procura por faixa de preço correspondente (ex: "R$ 0.00 até R$ 78.99" ou "0 até 50")
+    for (const regra of regrasDoCanal) {
+      const faixaStr = String(regra.faixa_preco || "").toLowerCase();
+      if (faixaStr.includes("em diante") || faixaStr.includes("até 99999")) {
+        // Verifica limite inferior se houver
+        const matchNums = faixaStr.match(/[\d.,]+/g);
+        if (matchNums && matchNums.length > 0) {
+          const limiteInf = parseNumero(matchNums[0]);
+          if (precoReferencia >= limiteInf) return regra;
+        } else {
+          return regra;
+        }
+      } else if (faixaStr.includes("até")) {
+        const matchNums = faixaStr.match(/[\d.,]+/g);
+        if (matchNums && matchNums.length >= 2) {
+          const min = parseNumero(matchNums[0]);
+          const max = parseNumero(matchNums[1]);
+          if (precoReferencia >= min && precoReferencia <= max) return regra;
+        }
+      }
+    }
+
+    // Retorna a primeira regra encontrada caso nenhuma faixa exata bata
+    return regrasDoCanal[0];
   };
 
   const calcularResultadosCanais = () => {
     if (!produtoEncontrado) return [];
 
     const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
-    const impostoPercent = 0.09;
+    const impostoPercent = 0.09; // 9% imposto fixo corporativo
     const skuKey = normalizarSku(produtoEncontrado.sku);
 
+    // Mapeamento MLB para Mercado Livre
     const anunciosSku = mapeamentoMap.get(skuKey) || [];
     const temMlbClassico = anunciosSku.some((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("clássico") || Number(a.comissao) <= 14);
     const temMlbPremium = anunciosSku.some((a: any) => String(a.tipo || a.canal || "").toLowerCase().includes("premium") || Number(a.comissao) > 14);
 
     return canaisConfig
-      .filter((c) => canaisSelecionados.includes(c.canal))
-      .map((regra) => {
-        const canalNome = regra.canal;
-        let comissaoPct = Number(regra.comissao || 14) / 100;
+      .filter((canalNome) => canaisSelecionados.includes(canalNome))
+      .map((canalNome) => {
+        let comissaoPct = 0.14;
+        let tarifaFixa = 0;
+        let freteVariavel = 12.99;
 
-        if (canalNome.toLowerCase().includes("clássico") && !temMlbClassico) {
-          comissaoPct = 0.14;
-        } else if (canalNome.toLowerCase().includes("premium") && !temMlbPremium) {
-          comissaoPct = 0.18;
+        const cLower = canalNome.toLowerCase();
+
+        if (cLower.includes("mercado livre")) {
+          if (cLower.includes("clássico")) {
+            comissaoPct = temMlbClassico ? 0.14 : 0.14;
+          } else if (cLower.includes("premium")) {
+            comissaoPct = temMlbPremium ? 0.18 : 0.18;
+          }
+          const regraMl = obterRegraCanal(canalNome, 100);
+          tarifaFixa = Number(regraMl.tarifa_fixa || 0);
+          freteVariavel = Number(regraMl.frete || 0);
+        } else {
+          // Demais canais buscam dinamicamente na aba de regras (config_regras_tarifacao)
+          const precoEstimado = modoCalculo === "pdv_ideal" ? 80.0 : parseNumero(precoFixo);
+          const regraEncontrada = obterRegraCanal(canalNome, precoEstimado);
+
+          comissaoPct = Number(regraEncontrada.comissao || 14) / 100;
+          tarifaFixa = Number(regraEncontrada.tarifa_fixa || 0);
+          freteVariavel = Number(regraEncontrada.frete || 0);
         }
-
-        const tarifaFixa = Number(regra.tarifa_fixa || regra.tarifa || 0);
-        let freteVariavel = Number(regra.frete || 12.99);
 
         if (modoCalculo === "pdv_ideal") {
           const margemAlvoDec = parseFloat(margemAlvo) / 100;
@@ -179,9 +227,14 @@ export default function CalculadoraPage() {
 
           let pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
 
-          if (pdvCalculado <= 78.99 && (canalNome.toLowerCase().includes("amazon") || canalNome.toLowerCase().includes("magalu") || canalNome.toLowerCase().includes("shopee"))) {
-            freteVariavel = 0;
-            pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : pdvCalculado;
+          // Se recalculado o preço cair na faixa <= 78.99, ajusta frete conforme as regras
+          if (pdvCalculado <= 78.99) {
+            const regraFaixaBaixa = obterRegraCanal(canalNome, pdvCalculado);
+            freteVariavel = Number(regraFaixaBaixa.frete || 0);
+            tarifaFixa = Number(regraFaixaBaixa.tarifa_fixa || 0);
+            comissaoPct = Number(regraFaixaBaixa.comissao || (cLower.includes("premium") ? 18 : 14)) / 100;
+            const novoDenominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
+            pdvCalculado = novoDenominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / novoDenominador : pdvCalculado;
           }
 
           const valorComissao = pdvCalculado * comissaoPct;
@@ -202,13 +255,15 @@ export default function CalculadoraPage() {
             margemFinal
           };
         } else {
+          // Margem Reversa
           const pdvBase = parseNumero(precoFixo);
           const valRebate = parseNumero(rebate);
           const pdvEfetivo = Math.max(0, pdvBase - valRebate);
 
-          if (pdvEfetivo <= 78.99 && (canalNome.toLowerCase().includes("amazon") || canalNome.toLowerCase().includes("magalu"))) {
-            freteVariavel = 0;
-          }
+          const regraFaixa = obterRegraCanal(canalNome, pdvEfetivo);
+          comissaoPct = Number(regraFaixa.comissao || (cLower.includes("premium") ? 18 : 14)) / 100;
+          tarifaFixa = Number(regraFaixa.tarifa_fixa || 0);
+          freteVariavel = Number(regraFaixa.frete || 0);
 
           const valorComissao = pdvEfetivo * comissaoPct;
           const valorImposto = pdvEfetivo * impostoPercent;
@@ -254,7 +309,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Simulação de PDV ideal e margem reversa com regras MLB e seleção customizada de canais</p>
+            <p className="text-sm font-medium text-slate-400">Cálculos baseados em tempo real na aba de Regras (Tarifas, Comissões e Fretes)</p>
           </div>
           <Navbar />
         </div>
@@ -362,20 +417,20 @@ export default function CalculadoraPage() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2 pt-1">
-              {canaisConfig.map((c, i) => {
-                const ativo = canaisSelecionados.includes(c.canal);
+              {canaisConfig.map((canalNome, i) => {
+                const ativo = canaisSelecionados.includes(canalNome);
                 return (
                   <button
                     key={i}
                     type="button"
-                    onClick={() => toggleCanalSelecao(c.canal)}
+                    onClick={() => toggleCanalSelecao(canalNome)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
                       ativo
                         ? "bg-purple-600/30 text-purple-300 border-purple-500/60 shadow-sm"
                         : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300"
                     }`}
                   >
-                    {ativo ? "✓ " : "+ "} {c.canal}
+                    {ativo ? "✓ " : "+ "} {canalNome}
                   </button>
                 );
               })}
