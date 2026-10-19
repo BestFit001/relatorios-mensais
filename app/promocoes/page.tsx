@@ -44,7 +44,6 @@ export default function PromocoesPage() {
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
-      // 1. Carrega custos da tabela tabela_custos_skus
       const { data: custos } = await supabase.from("tabela_custos_skus").select("*");
       const cMap = new Map<string, number>();
       const obsSet = new Set<string>();
@@ -63,7 +62,6 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      // 2. Carrega regras do Mercado Livre (ml_anuncios_regras e mapeamento_skus)
       const aMap = new Map<string, any>();
       
       const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
@@ -167,10 +165,7 @@ export default function PromocoesPage() {
         const promoName = r[colIdx["PROMOTION_NAME"]] || "Campanha Geral";
         const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
 
-        // 1. Validação estrita de Custo (> 0)
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
-
-        // 2. Busca Comissão e Frete na Base (por MLB ou SKU)
         const anuncioInfo = anunciosMap.get(mlb.toLowerCase()) || anunciosMap.get(skuKey) || null;
         
         const comissaoVal = anuncioInfo ? Number(anuncioInfo.comissao) : 0;
@@ -180,7 +175,6 @@ export default function PromocoesPage() {
         let statusItem = "APTO";
         let errosList: string[] = [];
 
-        // Validações rigorosas exigidas
         if (custo <= 0) {
           statusItem = "INAPTO";
           errosList.push("base desatualizada");
@@ -198,7 +192,8 @@ export default function PromocoesPage() {
         if (statusItem === "APTO") {
           const comissaoDec = (comissaoVal > 1 ? comissaoVal / 100 : comissaoVal);
           const denominador = 1 - (comissaoDec + imposto + margemDesejada);
-          novoPreco = denominador > 0 ? (custo + tarifaFixa + freteVal) / denominador : originalPrice * 0.9;
+          const freteNum = Number(freteVal ?? 20.75);
+          novoPreco = denominador > 0 ? (custo + tarifaFixa + freteNum) / denominador : originalPrice * 0.9;
           if (originalPrice <= 0 || novoPreco <= 0) {
             statusItem = "INAPTO";
             errosList.push("Preço Inválido");
