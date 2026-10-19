@@ -63,9 +63,25 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      // 2. Mapeamento de anúncios e comissão/frete específicos (mapeamento_skus)
-      const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*");
+      // 2. Carrega de ml_anuncios_regras e mapeamento_skus para abranger todas as fontes de comissão e frete
       const aMap = new Map<string, any>();
+      
+      const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
+      if (mlRegras) {
+        mlRegras.forEach((m: any) => {
+          const mlbKey = String(m.mlb || "").trim().toLowerCase();
+          const skuKey = normalizarSku(m.sku);
+          const info = {
+            comissao: m.comissao !== null && m.comissao !== undefined ? Number(m.comissao) : null,
+            frete: m.frete !== null && m.frete !== undefined ? Number(m.frete) : (m.peso_real ? m.peso_real * 10 : 20.75),
+            tarifa_fixa: 4.00
+          };
+          if (mlbKey) aMap.set(mlbKey, info);
+          if (skuKey) aMap.set(skuKey, info);
+        });
+      }
+
+      const { data: mapAnuncios } = await supabase.from("mapeamento_skus").select("*");
       if (mapAnuncios) {
         mapAnuncios.forEach((m: any) => {
           const mlbKey = String(m.mlb || "").trim().toLowerCase();
@@ -149,11 +165,11 @@ export default function PromocoesPage() {
         const promoName = r[colIdx["PROMOTION_NAME"]] || "Campanha Geral";
         const dateValidity = r[colIdx["DATE_VALIDITY"]] || "Indeterminado";
 
-        // Custo
+        // 1. Validação de Custo
         const temCusto = custosMap.has(skuKey);
         const custo = temCusto ? custosMap.get(skuKey)! : 0;
 
-        // Comissão e Frete específicos na base (busca por MLB ou SKU)
+        // 2. Busca Comissão e Frete na Base (por MLB ou SKU)
         const anuncioInfo = anunciosMap.get(mlb.toLowerCase()) || anunciosMap.get(skuKey) || null;
         
         const comissaoVal = anuncioInfo?.comissao !== null && anuncioInfo?.comissao !== undefined ? anuncioInfo.comissao : null;
@@ -271,7 +287,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Leitura exata de custo, comissão e frete da base com relatórios de inaptidão detalhados</p>
+            <p className="text-sm font-medium text-slate-400">Leitura rigorosa de custos, comissões e fretes da base com exportação no formato original</p>
           </div>
           <Navbar />
         </div>
