@@ -221,21 +221,26 @@ export default function CalculadoraPage() {
         const cLower = canalNome.toLowerCase();
         let comissaoPct = 0.14;
         let anuncMl = null;
+        let tipoComissaoEncontrada = false;
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            anuncMl = anunciosSku.find((a: any) => Number(a.comissao) <= 14);
-            if (anuncMl && Number(anuncMl.comissao) > 0) {
+            // Procura anúncio clássico na base (comissão <= 14%)
+            anuncMl = anunciosSku.find((a: any) => Number(a.comissao) > 0 && Number(a.comissao) <= 14);
+            if (anuncMl) {
               comissaoPct = Number(anuncMl.comissao) / 100;
+              tipoComissaoEncontrada = true;
             } else {
-              comissaoPct = 0.14;
+              comissaoPct = 0.14; // Teto padrão se não houver clássico na base
             }
           } else if (cLower.includes("premium")) {
+            // Procura anúncio premium na base (comissão > 14%)
             anuncMl = anunciosSku.find((a: any) => Number(a.comissao) > 14);
-            if (anuncMl && Number(anuncMl.comissao) > 0) {
+            if (anuncMl) {
               comissaoPct = Number(anuncMl.comissao) / 100;
+              tipoComissaoEncontrada = true;
             } else {
-              comissaoPct = 0.19;
+              comissaoPct = 0.19; // Teto padrão se não houver premium na base
             }
           }
         }
@@ -297,7 +302,7 @@ export default function CalculadoraPage() {
             valorImposto,
             lucroLiquido,
             margemFinal,
-            temMlb: cLower.includes("mercado livre") ? !!anuncMl : true
+            temMlb: cLower.includes("mercado livre") ? (tipoComissaoEncontrada || anunciosSku.length > 0) : true
           };
         } else {
           const pdvBase = parseNumero(precoFixo);
@@ -335,7 +340,7 @@ export default function CalculadoraPage() {
             valorImposto,
             lucroLiquido,
             margemFinal,
-            temMlb: cLower.includes("mercado livre") ? !!anuncMl : true
+            temMlb: cLower.includes("mercado livre") ? (tipoComissaoEncontrada || anunciosSku.length > 0) : true
           };
         }
       });
