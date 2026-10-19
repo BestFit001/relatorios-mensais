@@ -119,7 +119,6 @@ export default function PromocoesPage() {
         });
       }
       setMlRegrasMap(mlMap);
-
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
     }
@@ -190,7 +189,6 @@ export default function PromocoesPage() {
 
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
         
-        // 1. Procura primeiro no mapa em memória
         const mlbKeyNormalizada = mlbRaw.replace(/\s+/g, "").toUpperCase();
         let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada);
 
@@ -203,7 +201,6 @@ export default function PromocoesPage() {
           }
         }
 
-        // 2. BUSCA DIRETA NO SUPABASE: Se ainda não encontrou na memória, consulta diretamente a tabela do banco
         if (!anuncioInfo) {
           const { data: dbMatch } = await supabase
             .from("ml_anuncios_regras")
@@ -296,6 +293,7 @@ export default function PromocoesPage() {
     setLoading(false);
   };
 
+  // Função para salvar os itens APTOS no Supabase passando explicitamente a promoção e o período (date_validity)
   const salvarPromocoesNoBanco = async () => {
     const itensAptos = dadosProcessados.filter(r => r.STATUS === "APTO");
     if (itensAptos.length === 0) {
@@ -314,7 +312,7 @@ export default function PromocoesPage() {
         }]);
       }
       carregarPromocoesAtivasSupabase();
-      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso na base de Promoções Ativas!`);
+      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso, incluindo o período de validade!`);
     } catch (err: any) {
       alert("Erro ao salvar no banco: " + err.message);
     }
@@ -370,7 +368,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação rigorosa com consulta estrita e busca direta por MLB no Supabase</p>
+            <p className="text-sm font-medium text-slate-400">Validação rigorosa com salvamento completo do período de vigência</p>
           </div>
           <Navbar />
         </div>
