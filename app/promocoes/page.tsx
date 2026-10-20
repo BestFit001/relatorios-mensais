@@ -101,47 +101,71 @@ export default function PromocoesPage() {
     carregarPromocoesAtivasSupabase();
   }, []);
 
+  // Carrega 100% dos custos e regras sem limite de 1000 linhas do Supabase
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
-      const { data: custos } = await supabase.from("tabela_custos_skus").select("*");
+      let allCustos: any[] = [];
+      let from = 0;
+      const step = 1000;
+      let keep = true;
+      while (keep) {
+        const { data } = await supabase.from("tabela_custos_skus").select("*").range(from, from + step - 1);
+        if (data && data.length > 0) {
+          allCustos = [...allCustos, ...data];
+          from += step;
+          if (data.length < step) keep = false;
+        } else {
+          keep = false;
+        }
+      }
+
       const cMap = new Map<string, number>();
       const obsSet = new Set<string>();
 
-      if (custos) {
-        custos.forEach((c: any) => {
-          const k = normalizarSku(c.sku);
-          if (k && k.length >= 10) {
-            cMap.set(k, Number(c.custo_unitario || c.custo || 0));
-            if (String(c.status || "").toLowerCase().includes("obsoleto")) {
-              obsSet.add(k);
-            }
+      allCustos.forEach((c: any) => {
+        const k = normalizarSku(c.sku);
+        if (k && k.length >= 10) {
+          cMap.set(k, Number(c.custo_unitario || c.custo || 0));
+          if (String(c.status || "").toLowerCase().includes("obsoleto")) {
+            obsSet.add(k);
           }
-        });
-      }
+        }
+      });
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      const mlMap = new Map<string, any>();
-      const { data: mlRegras } = await supabase.from("ml_anuncios_regras").select("*");
-      if (mlRegras) {
-        mlRegras.forEach((m: any) => {
-          const mlbKey = String(m.mlb || "").trim().toUpperCase();
-          const comissaoNum = parsePorcentagem(m.comissao);
-          const skuVal = skuValido(m.sku) ? normalizarSku(m.sku) : "";
-          const info = {
-            sku: skuVal,
-            comissao: comissaoNum,
-            peso_real: Number(m.peso_real || 2.0),
-            altura: Number(m.altura || 10),
-            largura: Number(m.largura || 10),
-            comprimento: Number(m.comprimento || 10)
-          };
-          if (mlbKey && !mlMap.has(mlbKey)) {
-            mlMap.set(mlbKey, info);
-          }
-        });
+      let allMlRegras: any[] = [];
+      from = 0;
+      keep = true;
+      while (keep) {
+        const { data } = await supabase.from("ml_anuncios_regras").select("*").range(from, from + step - 1);
+        if (data && data.length > 0) {
+          allMlRegras = [...allMlRegras, ...data];
+          from += step;
+          if (data.length < step) keep = false;
+        } else {
+          keep = false;
+        }
       }
+
+      const mlMap = new Map<string, any>();
+      allMlRegras.forEach((m: any) => {
+        const mlbKey = String(m.mlb || "").trim().toUpperCase();
+        const comissaoNum = parsePorcentagem(m.comissao);
+        const skuVal = skuValido(m.sku) ? normalizarSku(m.sku) : "";
+        const info = {
+          sku: skuVal,
+          comissao: comissaoNum,
+          peso_real: Number(m.peso_real || 2.0),
+          altura: Number(m.altura || 10),
+          largura: Number(m.largura || 10),
+          comprimento: Number(m.comprimento || 10)
+        };
+        if (mlbKey && !mlMap.has(mlbKey)) {
+          mlMap.set(mlbKey, info);
+        }
+      });
       setMlRegrasMap(mlMap);
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
@@ -581,7 +605,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação com restrição estrita para SKUs válidos (&gt;= 10 dígitos)</p>
+            <p className="text-sm font-medium text-slate-400">Validação com carregamento completo de bases sem limite de 1000 linhas</p>
           </div>
           <Navbar />
         </div>
