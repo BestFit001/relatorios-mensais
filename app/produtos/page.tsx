@@ -19,6 +19,13 @@ export default function ProdutosPage() {
   const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais">("todos");
   const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
 
+  const [modalAberto, setModalAberto] = useState(false);
+  const [formManual, setFormManual] = useState({
+    sku: "", produto: "", cor: "", tamanho: "", origem: "", ncm: "", cest: "", ean: "",
+    custo: 0, preco_venda: 0, dimensoes_peso: "", marca: "", tabela_medida: "",
+    qtdd_ecom: 0, qtdd_fba: 0, ativo: "Não", data_envio_compras: "", codigo: "", observacoes: ""
+  });
+
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
     if (!usuarioLogado) {
@@ -80,10 +87,23 @@ export default function ProdutosPage() {
 
         const idxSku = getCol(/sku/i);
         const idxNome = getCol(/nome do produto|produto/i);
+        const idxCor = getCol(/cor/i);
+        const idxTam = getCol(/tamanho/i);
+        const idxOrigem = getCol(/origem/i);
+        const idxNcm = getCol(/ncm/i);
+        const idxCest = getCol(/cest/i);
+        const idxEan = getCol(/ean/i);
         const idxCusto = getCol(/custo/i);
         const idxPreco = getCol(/preço venda|preco|venda/i);
+        const idxDimensoes = getCol(/dimensões e peso|dimensoes/i);
         const idxMarca = getCol(/marca/i);
+        const idxTabMedida = getCol(/tabela de medida|medida/i);
+        const idxQtdEcom = getCol(/qtdd ecom|ecom/i);
+        const idxQtdFba = getCol(/qtdd fba|fba/i);
         const idxAtivo = getCol(/ativo/i);
+        const idxDataEnvio = getCol(/data envio compras|envio/i);
+        const idxCodigo = getCol(/código|codigo/i);
+        const idxObs = getCol(/obs|observações/i);
 
         const novosRegistros: any[] = [];
         for (let i = idxHeader + 1; i < json.length; i++) {
@@ -102,9 +122,23 @@ export default function ProdutosPage() {
             sku: skuVal,
             sku_pai: skuPai,
             produto: idxNome !== -1 ? String(row[idxNome] || "").trim() : "Produto sem nome",
-            marca: idxMarca !== -1 ? String(row[idxMarca] || "").trim() : "BEST FIT",
+            cor: idxCor !== -1 ? String(row[idxCor] || "").trim() : "",
+            tamanho: idxTam !== -1 ? String(row[idxTam] || "").trim() : "",
+            origem: idxOrigem !== -1 ? String(row[idxOrigem] || "").trim() : "",
+            ncm: idxNcm !== -1 ? String(row[idxNcm] || "").trim() : "",
+            cest: idxCest !== -1 ? String(row[idxCest] || "").trim() : "",
+            ean: idxEan !== -1 ? String(row[idxEan] || "").trim() : "",
             custo: idxCusto !== -1 ? Number(row[idxCusto]) || 0 : 0,
-            preco_venda: idxPreco !== -1 ? Number(row[idxPreco]) || 0 : 0
+            preco_venda: idxPreco !== -1 ? Number(row[idxPreco]) || 0 : 0,
+            dimensoes_peso: idxDimensoes !== -1 ? String(row[idxDimensoes] || "").trim() : "",
+            marca: idxMarca !== -1 ? String(row[idxMarca] || "").trim() : "BEST FIT",
+            tabela_medida: idxTabMedida !== -1 ? String(row[idxTabMedida] || "").trim() : "",
+            qtdd_ecom: idxQtdEcom !== -1 ? Number(row[idxQtdEcom]) || 0 : 0,
+            qtdd_fba: idxQtdFba !== -1 ? Number(row[idxQtdFba]) || 0 : 0,
+            ativo: "Não",
+            data_envio_compras: idxDataEnvio !== -1 ? String(row[idxDataEnvio] || "").trim() : "",
+            codigo: idxCodigo !== -1 ? String(row[idxCodigo] || "").trim() : "",
+            observacoes: idxObs !== -1 ? String(row[idxObs] || "").trim() : ""
           });
         }
 
@@ -119,6 +153,40 @@ export default function ProdutosPage() {
       setLoading(false);
     };
     reader.readAsArrayBuffer(file);
+  };
+
+  const handleSalvarManual = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formManual.sku || !formManual.produto) {
+      alert("Preencha ao menos o SKU e o Nome do Produto.");
+      return;
+    }
+
+    setLoading(true);
+    const skuPai = formManual.sku.length > 5 ? formManual.sku.substring(0, 5) : formManual.sku;
+    const payload = { ...formManual, sku_pai: skuPai };
+
+    const { error } = await supabase.from("produtos_pendentes").upsert([payload], { onConflict: "sku" });
+    if (error) {
+      alert("Erro ao salvar: " + error.message);
+    } else {
+      alert("✅ Produto adicionado aos Pendentes com sucesso!");
+      setModalAberto(false);
+      carregarPendentesDoBanco();
+    }
+    setLoading(false);
+  };
+
+  const excluirPendenteIndividual = async (sku: string) => {
+    if (!confirm(`Deseja remover o SKU ${sku} dos pendentes?`)) return;
+    await supabase.from("produtos_pendentes").delete().eq("sku", sku);
+    carregarPendentesDoBanco();
+  };
+
+  const limparTodosPendentes = async () => {
+    if (!confirm("Deseja apagar TODOS os produtos pendentes?")) return;
+    await supabase.from("produtos_pendentes").delete().neq("id", 0);
+    setDadosPendentes([]);
   };
 
   const enviarParaRealizados = async (item: any) => {
@@ -139,11 +207,13 @@ export default function ProdutosPage() {
       if (error) throw error;
       await supabase.from("produtos_pendentes").delete().eq("sku", item.sku);
 
+      // Integrar ao Tiny e Base de Custos
       await supabase.from("cadastros_base_tiny").upsert({ sku: item.sku, produto: item.produto, estoque: 0 }, { onConflict: "sku" });
+      await supabase.from("tabela_custos_skus").upsert({ sku: item.sku, produto: item.produto, marca: item.marca || "BEST FIT", custo_unitario: Number(item.custo || 0) }, { onConflict: "sku" });
 
       await carregarPendentesDoBanco();
       await carregarRealizadosDoBanco();
-      alert(`🚀 SKU ${item.sku} cadastrado com sucesso!`);
+      alert(`🚀 SKU ${item.sku} cadastrado com sucesso e enviado para a base!`);
     } catch (err: any) {
       alert("Erro: " + err.message);
     }
@@ -204,7 +274,12 @@ export default function ProdutosPage() {
       const matchPesquisa = 
         String(item.sku || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
         String(item.produto || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.sku_pai || "").toLowerCase().includes(pesquisaGlobal.toLowerCase());
+        String(item.sku_pai || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
+        String(item.cor || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
+        String(item.tamanho || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
+        String(item.marca || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
+        String(item.ncm || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
+        String(item.ean || "").toLowerCase().includes(pesquisaGlobal.toLowerCase());
       
       if (!matchPesquisa) return false;
 
@@ -236,7 +311,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle de cadastros, clipes, canais e relatórios por período</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo de cadastros mantendo todas as informações da planilha</p>
           </div>
           <Navbar />
         </div>
@@ -274,34 +349,48 @@ export default function ProdutosPage() {
               type="text"
               value={pesquisaGlobal}
               onChange={(e) => setPesquisaGlobal(e.target.value)}
-              placeholder="🔍 Pesquisar SKU, Pai ou Nome..."
-              className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white outline-none w-72"
+              placeholder="🔍 Pesquisar SKU, Pai, Nome, Cor, Tam..."
+              className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white outline-none w-80"
             />
           </div>
         </div>
 
         {subAba === "pendentes" && (
           <div className="space-y-6">
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-3">
-              <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos</h3>
-              <input
-                type="file"
-                accept=".xlsx, .xls, .csv"
-                onChange={handleUploadPendentes}
-                className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:bg-purple-600 file:text-white cursor-pointer"
-              />
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
+              <div>
+                <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
+                <p className="text-xs text-slate-400 mt-1">Todos os campos da planilha são preservados e você pode cadastrar ou excluir diretamente.</p>
+              </div>
+              <div className="flex gap-2 flex-wrap items-center">
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleUploadPendentes}
+                  className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:bg-purple-600 file:text-white cursor-pointer"
+                />
+                {dadosPendentes.length > 0 && (
+                  <button onClick={limparTodosPendentes} className="bg-rose-950 hover:bg-rose-900 text-rose-300 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer">🗑️ Limpar Todos</button>
+                )}
+                <button onClick={() => setModalAberto(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer">+ Manual</button>
+              </div>
             </div>
 
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden p-6">
-              <div className="overflow-x-auto max-h-[500px]">
+              <div className="overflow-x-auto max-h-[550px]">
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead className="bg-slate-950 sticky top-0 text-slate-400 font-bold uppercase text-[10px]">
+                  <thead className="bg-slate-950 sticky top-0 text-slate-400 font-bold uppercase text-[10px] z-10">
                     <tr>
-                      <th className="p-3">SKU Pai / Variação</th>
+                      <th className="p-3">SKU / Pai</th>
                       <th className="p-3">Nome do Produto</th>
+                      <th className="p-3">Cor</th>
+                      <th className="p-3">Tam</th>
+                      <th className="p-3">Marca</th>
+                      <th className="p-3">NCM</th>
+                      <th className="p-3">EAN</th>
                       <th className="p-3 text-right">Custo</th>
                       <th className="p-3 text-right">Preço Venda</th>
-                      <th className="p-3 text-center">Ação</th>
+                      <th className="p-3 text-center">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
@@ -312,18 +401,36 @@ export default function ProdutosPage() {
                           <span className="text-indigo-300">Var: {item.sku}</span>
                         </td>
                         <td className="p-3 text-white">{item.produto}</td>
+                        <td className="p-3 text-slate-300">{item.cor || "—"}</td>
+                        <td className="p-3 text-slate-300">{item.tamanho || "—"}</td>
+                        <td className="p-3 text-slate-300">{item.marca || "—"}</td>
+                        <td className="p-3 text-slate-300 font-mono">{item.ncm || "—"}</td>
+                        <td className="p-3 text-slate-300 font-mono">{item.ean || "—"}</td>
                         <td className="p-3 text-right font-mono text-rose-400">R$ {Number(item.custo).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda).toFixed(2)}</td>
-                        <td className="p-3 text-center">
+                        <td className="p-3 text-center flex items-center justify-center gap-2">
                           <button
+                            type="button"
                             onClick={() => enviarParaRealizados(item)}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold cursor-pointer"
                           >
                             Cadastrar
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => excluirPendenteIndividual(item.sku)}
+                            className="bg-rose-950 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded text-xs font-bold cursor-pointer"
+                          >
+                            Excluir
+                          </button>
                         </td>
                       </tr>
                     ))}
+                    {pendentesFiltrados.length === 0 && (
+                      <tr>
+                        <td colSpan={10} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -336,21 +443,12 @@ export default function ProdutosPage() {
             <div className="flex flex-wrap justify-between items-center gap-4 border-b border-slate-800 pb-4">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-xs font-bold text-slate-400 uppercase">Filtros:</span>
-                <select
-                  value={filtroStatusRealizados}
-                  onChange={(e) => setFiltroStatusRealizados(e.target.value as any)}
-                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer"
-                >
+                <select value={filtroStatusRealizados} onChange={(e) => setFiltroStatusRealizados(e.target.value as any)} className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer">
                   <option value="todos">Todos os Status</option>
                   <option value="completos">100% Concluídos</option>
                   <option value="parciais">Parcialmente Concluídos</option>
                 </select>
-
-                <select
-                  value={filtroCanalEspecifico}
-                  onChange={(e) => setFiltroCanalEspecifico(e.target.value)}
-                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer"
-                >
+                <select value={filtroCanalEspecifico} onChange={(e) => setFiltroCanalEspecifico(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer">
                   <option value="todos">Todos os Canais</option>
                   {canaisLista.map((c, i) => <option key={i} value={c}>{c}</option>)}
                 </select>
@@ -358,11 +456,7 @@ export default function ProdutosPage() {
 
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-slate-400">Exibir por página:</span>
-                <select
-                  value={itensPorPagina}
-                  onChange={(e) => setItemsPorPagina(Number(e.target.value))}
-                  className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1 text-white outline-none cursor-pointer"
-                >
+                <select value={itensPorPagina} onChange={(e) => setItemsPorPagina(Number(e.target.value))} className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1 text-white outline-none cursor-pointer">
                   <option value={5}>5 grupos</option>
                   <option value={10}>10 grupos</option>
                   <option value={20}>20 grupos</option>
@@ -392,9 +486,9 @@ export default function ProdutosPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-900/50">
-                          {/* LINHA DO PAI LIMPA PARA MARCAR TODOS OS CANAIS */}
+                          {/* LINHA DO PAI PARA MARCAR TODOS OS CANAIS */}
                           <tr className="bg-purple-950/20 font-bold">
-                            <td className="p-2 text-purple-300 font-mono">📁 {paiKey}</td>
+                            <td className="p-2 text-purple-300 font-mono">Pai: {paiKey}</td>
                             {canaisLista.map((canal, cIdx) => {
                               const todosMarcados = itensDoGrupo.every(i => (i.canais_enviados || {})[canal]);
                               return (
@@ -410,7 +504,6 @@ export default function ProdutosPage() {
                             })}
                           </tr>
 
-                          {/* LINHAS DAS VARIAÇÕES FILHAS COM 2 FILEIRAS (CADASTRO E CLIPES) */}
                           {itensDoGrupo.map((item, vIdx) => (
                             <tr key={vIdx} className="hover:bg-slate-900/40">
                               <td className="p-2">
@@ -420,7 +513,7 @@ export default function ProdutosPage() {
                               {canaisLista.map((canal, cIdx) => (
                                 <td key={cIdx} className="p-2 text-center">
                                   <div className="flex flex-col items-center gap-1">
-                                    <div className="flex items-center gap-1" title="Cadastro no Canal">
+                                    <div className="flex items-center gap-1">
                                       <span className="text-[9px] text-slate-400 w-10 text-right">Cad:</span>
                                       <input
                                         type="checkbox"
@@ -429,7 +522,7 @@ export default function ProdutosPage() {
                                         className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
                                       />
                                     </div>
-                                    <div className="flex items-center gap-1" title="Clipes Upados">
+                                    <div className="flex items-center gap-1">
                                       <span className="text-[9px] text-purple-400 w-10 text-right">Clipe:</span>
                                       <input
                                         type="checkbox"
@@ -449,9 +542,6 @@ export default function ProdutosPage() {
                   </div>
                 );
               })}
-              {chavesGrupos.length === 0 && (
-                <p className="text-center text-slate-500 py-8">Nenhum produto realizado encontrado com os filtros selecionados.</p>
-              )}
             </div>
           </div>
         )}
@@ -459,7 +549,6 @@ export default function ProdutosPage() {
         {subAba === "periodo" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-6">
             <h3 className="text-sm font-bold text-white uppercase tracking-wider">Relatórios e Estatísticas por Período</h3>
-            
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Total Cadastros Realizados</span>
@@ -474,9 +563,42 @@ export default function ProdutosPage() {
                 <p className="text-3xl font-black text-purple-400 mt-2">{Object.keys(agruparPorPai(cadastrosRealizados)).length}</p>
               </div>
             </div>
+          </div>
+        )}
 
-            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 text-center text-slate-400 text-xs">
-              📊 Aqui você pode comparar o volume de cadastros e vídeos upados por data, mês ou período selecionado.
+        {modalAberto && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl p-6 space-y-4">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 className="text-base font-bold text-white">Inserir Produto Manualmente (Pendentes)</h3>
+                <button onClick={() => setModalAberto(false)} className="text-slate-400 hover:text-white font-bold cursor-pointer">✕</button>
+              </div>
+              <form onSubmit={handleSalvarManual} className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU *</label>
+                  <input type="text" required value={formManual.sku} onChange={(e) => setFormManual({...formManual, sku: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nome do Produto *</label>
+                  <input type="text" required value={formManual.produto} onChange={(e) => setFormManual({...formManual, produto: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Custo (R$)</label>
+                  <input type="number" step="0.01" value={formManual.custo} onChange={(e) => setFormManual({...formManual, custo: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Preço Venda (R$)</label>
+                  <input type="number" step="0.01" value={formManual.preco_venda} onChange={(e) => setFormManual({...formManual, preco_venda: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
+                  <input type="text" value={formManual.marca} onChange={(e) => setFormManual({...formManual, marca: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
+                </div>
+                <div className="md:col-span-3 flex justify-end gap-2 pt-3 border-t border-slate-800">
+                  <button type="button" onClick={() => setModalAberto(false)} className="bg-slate-800 px-4 py-2 rounded-xl text-white font-bold cursor-pointer">Cancelar</button>
+                  <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-white font-bold cursor-pointer">Salvar</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
