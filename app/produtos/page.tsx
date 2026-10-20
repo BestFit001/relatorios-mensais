@@ -10,11 +10,9 @@ export default function ProdutosPage() {
   const [subAba, setSubAba] = useState<"pendentes" | "realizados">("pendentes");
   const [loading, setLoading] = useState(false);
 
-  // Estados para Pendentes
   const [dadosPendentes, setDadosPendentes] = useState<any[]>([]);
   const [nomeArquivo, setNomeArquivo] = useState("");
 
-  // Estados para Realizados e Canais
   const [cadastrosRealizados, setCadastrosRealizados] = useState<any[]>([]);
   const [canaisLista, setCanaisLista] = useState<string[]>([]);
   const [pesquisaRealizados, setPesquisaRealizados] = useState("");
@@ -30,7 +28,6 @@ export default function ProdutosPage() {
 
   const carregarDadosIniciais = async () => {
     setLoading(true);
-    // Carregar canais configurados
     const { data: regrasCanais } = await supabase.from("config_regras_canais").select("canal").order("id");
     if (regrasCanais && regrasCanais.length > 0) {
       setCanaisLista(regrasCanais.map((r: any) => r.canal));
@@ -38,19 +35,18 @@ export default function ProdutosPage() {
       setCanaisLista(["Mercado Livre 1", "Mercado Livre 2", "Shopee", "Amazon", "Magalu", "TikTok Shop"]);
     }
 
-    // Carregar cadastros realizados salvos no banco ou mapeados
     carregarRealizadosDoBanco();
     setLoading(false);
   };
 
+  // Carrega apenas os cadastrados inseridos por esta ferramenta (tabela dedicada)
   const carregarRealizadosDoBanco = async () => {
-    const { data } = await supabase.from("cadastros_base_tiny").select("*").order("id", { ascending: false });
+    const { data } = await supabase.from("produtos_novos_cadastrados").select("*").order("id", { ascending: false });
     if (data) {
       setCadastrosRealizados(data);
     }
   };
 
-  // Upload e tratamento da planilha de Pendentes
   const handleUploadPendentes = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -64,7 +60,6 @@ export default function ProdutosPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        // Encontrar a linha de cabeçalho (procura onde tem "SKU" ou "Nome do Produto")
         let idxHeader = -1;
         for (let i = 0; i < Math.min(json.length, 10); i++) {
           const row = json[i];
@@ -74,7 +69,7 @@ export default function ProdutosPage() {
           }
         }
 
-        if (idxHeader === -1) idxHeader = 2; // Padrão baseado na estrutura enviada
+        if (idxHeader === -1) idxHeader = 2;
 
         const headers = json[idxHeader].map((h: any) => String(h || "").trim());
         const getCol = (nameRegex: RegExp) => headers.findIndex((h: string) => nameRegex.test(h));
@@ -104,14 +99,12 @@ export default function ProdutosPage() {
           const skuVal = idxSku !== -1 ? String(row[idxSku] || "").trim() : String(row[0] || "").trim();
           if (!skuVal || skuVal.length < 5 || /sku/i.test(skuVal)) continue;
 
-          // Condição 1: Ignorar se Ativo for "Sim"
           const ativoVal = idxAtivo !== -1 ? String(row[idxAtivo] || "").trim().toLowerCase() : "";
           if (ativoVal === "sim" || ativoVal === "true" || ativoVal === "1") {
             ignoradosAtivoSim++;
             continue;
           }
 
-          // Condição 2: Ignorar duplicados na planilha ou já existentes na base
           const skuLower = skuVal.toLowerCase();
           if (skusExistentesSet.has(skuLower) || mapTemp.has(skuLower)) {
             ignoradosDuplicados++;
@@ -130,7 +123,7 @@ export default function ProdutosPage() {
             custo: idxCusto !== -1 ? Number(row[idxCusto]) || 0 : 0,
             preco_venda: idxPreco !== -1 ? Number(row[idxPreco]) || 0 : 0,
             marca: idxMarca !== -1 ? String(row[idxMarca] || "").trim() : "",
-            estoque: 0
+            canais_enviados: {}
           };
 
           mapTemp.set(skuLower, produtoObj);
@@ -138,7 +131,7 @@ export default function ProdutosPage() {
 
         const listaFinal = Array.from(mapTemp.values());
         setDadosPendentes(listaFinal);
-        alert(`Planilha processada com sucesso!\n- Importados para pendentes: ${listaFinal.length}\n- Ignorados (Ativos = Sim): ${ignoradosAtivoSim}\n- Ignorados (Duplicados): ${ignoradosDuplicados}`);
+        alert(`Planilha processada!\n- Pendentes: ${listaFinal.length}\n- Ignorados (Ativos = Sim): ${ignoradosAtivoSim}\n- Ignorados (Duplicados): ${ignoradosDuplicados}`);
       } catch (err: any) {
         alert("Erro ao ler planilha: " + err.message);
       }
@@ -146,39 +139,46 @@ export default function ProdutosPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Mover Pendente para Realizado e gravar na base do Tiny
+  // Envia para Realizados e também adiciona na base do Tiny (`cadastros_base_tiny`)
   const enviarParaRealizados = async (item: any) => {
     setLoading(true);
     try {
-      // Grava na base do Tiny (cadastros_base_tiny) interligando com a aba Cadastros
-      const { error } = await supabase.from("cadastros_base_tiny").upsert({
+      // 1. Insere na tabela dedicada de novos cadastros realizados
+      const { error: errRealizado } = await supabase.from("produtos_novos_cadastrados").upsert({
+        sku: item.sku,
+        produto: item.produto,
+        marca: item.marca,
+        custo: item.custo,
+        preco_venda: item.preco_venda
+      }, { onConflict: "sku" });
+
+      if (errRealizado) throw errRealizado;
+
+      // 2. Interliga com a base do Tiny ERP
+      await supabase.from("cadastros_base_tiny").upsert({
         sku: item.sku,
         produto: item.produto,
         estoque: 0
       }, { onConflict: "sku" });
 
-      if (error) throw error;
-
-      // Remove da lista de pendentes local
+      // Remove dos pendentes locais
       setDadosPendentes(dadosPendentes.filter((p) => p.sku !== item.sku));
       carregarRealizadosDoBanco();
-      alert(`✅ Produto ${item.sku} cadastrado com sucesso e integrado à base do Tiny!`);
+      alert(`✅ Produto ${item.sku} movido para Cadastros Realizados e integrado ao Tiny!`);
     } catch (err: any) {
       alert("Erro ao cadastrar: " + err.message);
     }
     setLoading(false);
   };
 
-  // Atualizar canais enviados para o SKU
   const toggleCanalRealizado = async (sku: string, canal: string, checked: boolean) => {
-    // Aqui você pode salvar o mapeamento na tabela mapeamento_canais_skus
     try {
+      // Atualiza o estado visual e grava o mapeamento do canal
       if (checked) {
         await supabase.from("mapeamento_canais_skus").insert([{ canal, sku, presente: true }]);
       } else {
         await supabase.from("mapeamento_canais_skus").delete().eq("canal", canal).eq("sku", sku);
       }
-      alert(`Canal "${canal}" atualizado para o SKU ${sku}.`);
     } catch (err: any) {
       console.error("Erro ao atualizar canal:", err);
     }
@@ -196,12 +196,11 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos</h1>
-            <p className="text-sm font-medium text-slate-400">Controle de Cadastros Pendentes, Realizados e Integração com Canais</p>
+            <p className="text-sm font-medium text-slate-400">Controle exclusivo de Cadastros Pendentes, Realizados e Integração com Canais</p>
           </div>
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO DE SUB-ABAS */}
         <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
           <button
             onClick={() => setSubAba("pendentes")}
@@ -225,7 +224,7 @@ export default function ProdutosPage() {
           <div className="space-y-6">
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">Upload de Planilha de Produtos a Cadastrar</h3>
-              <p className="text-xs text-slate-400">O sistema irá importar todos os campos, ignorando automaticamente itens duplicados e itens com Ativo = "Sim".</p>
+              <p className="text-xs text-slate-400">Itens duplicados e com Ativo = "Sim" são descartados automaticamente.</p>
               
               <div className="flex items-center gap-4">
                 <input
@@ -275,7 +274,7 @@ export default function ProdutosPage() {
                               disabled={loading}
                               className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer shadow"
                             >
-                              Cadastrar (Enviar para Realizados)
+                              Cadastrar
                             </button>
                           </td>
                         </tr>
@@ -328,7 +327,7 @@ export default function ProdutosPage() {
                   ))}
                   {realizadosFiltrados.length === 0 && (
                     <tr>
-                      <td colSpan={2 + canaisLista.length} className="p-8 text-center text-slate-500">Nenhum cadastro realizado encontrado.</td>
+                      <td colSpan={2 + canaisLista.length} className="p-8 text-center text-slate-500">Nenhum cadastro realizado via planilha ainda.</td>
                     </tr>
                   )}
                 </tbody>
