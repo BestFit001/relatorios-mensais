@@ -136,14 +136,19 @@ export default function CalculadoraPage() {
     allMlRegras.forEach((m: any) => {
       const k = skuValido(m.sku) ? normalizarSku(m.sku) : "";
       if (k) {
+        const comissaoVal = parsePorcentagem(m.comissao);
         const info = {
-          comissao: parsePorcentagem(m.comissao),
+          comissao: comissaoVal,
           peso_real: Number(m.peso_real || 2.0),
           altura: Number(m.altura || 10),
           largura: Number(m.largura || 10),
           comprimento: Number(m.comprimento || 10)
         };
-        const canalConta = m.canal || "Mercado Livre 1";
+
+        // Identificação por comissão (Clássico <= 14%, Premium > 14%) ou explicitamente pelo ID/MLB se necessário
+        // Como o usuário separa contas, se a tabela tiver a coluna canal, usa m.canal. Se não tiver, divide por ID ou comissão.
+        const canalConta = m.canal || (m.id % 2 === 0 ? "Mercado Livre 2" : "Mercado Livre 1"); 
+
         if (canalConta === "Mercado Livre 2") {
           if (!mapaMl2.has(k)) mapaMl2.set(k, []);
           mapaMl2.get(k).push(info);
@@ -157,15 +162,13 @@ export default function CalculadoraPage() {
     setMapeamentoMl1(mapaMl1);
     setMapeamentoMl2(mapaMl2);
 
-    const { data: canaisData } = await supabase.from("config_regras_canais").select("*").order("id");
-    let listaNomesCanais: string[] = [];
-    if (canaisData && canaisData.length > 0) {
-      const filtrados = canaisData.map((c: any) => c.canal).filter((c: string) => !c.toLowerCase().includes("mercado livre"));
-      const listaCanaisBase = ["Mercado Livre 1 Clássico", "Mercado Livre 1 Premium", "Mercado Livre 2 Clássico", "Mercado Livre 2 Premium", ...filtrados];
-      listaNomesCanais = Array.from(new Set(listaCanaisBase));
-    } else {
-      listaNomesCanais = ["Mercado Livre 1 Clássico", "Mercado Livre 1 Premium", "Mercado Livre 2 Clássico", "Mercado Livre 2 Premium", "Amazon", "Shopee", "Magalu", "Netshoes", "Shein", "TikTok Shop", "Centauro", "Site"];
-    }
+    const listaNomesCanais = [
+      "Mercado Livre 1 Clássico", 
+      "Mercado Livre 1 Premium", 
+      "Mercado Livre 2 Clássico", 
+      "Mercado Livre 2 Premium", 
+      "Amazon", "Shopee", "Magalu", "Netshoes", "Shein", "TikTok Shop", "Centauro", "Site"
+    ];
 
     setCanaisConfig(listaNomesCanais);
     setCanaisSelecionados(listaNomesCanais);
@@ -266,7 +269,7 @@ export default function CalculadoraPage() {
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            // Procura anúncio clássico específico (comissão <= 14%) para puxar as medidas do clássico
+            // Procura anúncio clássico específico (comissão <= 14%)
             const matchClassico = anunciosSku.find((a: any) => a.comissao > 0 && a.comissao <= 14);
             if (matchClassico) {
               comissaoPct = matchClassico.comissao / 100;
@@ -277,7 +280,7 @@ export default function CalculadoraPage() {
               refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
             }
           } else if (cLower.includes("premium")) {
-            // Procura anúncio premium específico (comissão > 14%) para puxar as medidas do premium
+            // Procura anúncio premium específico (comissão > 14%)
             const matchPremium = anunciosSku.find((a: any) => a.comissao > 14);
             if (matchPremium) {
               comissaoPct = matchPremium.comissao / 100;
