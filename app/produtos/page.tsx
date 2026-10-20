@@ -16,7 +16,6 @@ export default function ProdutosPage() {
   const [pesquisaPendentes, setPesquisaPendentes] = useState("");
   const [pesquisaRealizados, setPesquisaRealizados] = useState("");
 
-  // Estado para o Modal de Cadastro Manual
   const [modalAberto, setModalAberto] = useState(false);
   const [formManual, setFormManual] = useState({
     sku: "", produto: "", cor: "", tamanho: "", origem: "", ncm: "", cest: "", ean: "",
@@ -57,7 +56,6 @@ export default function ProdutosPage() {
     if (data) setCadastrosRealizados(data);
   };
 
-  // Upload de planilha com salvamento persistente e aplicação de filtros
   const handleUploadPendentes = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -120,20 +118,18 @@ export default function ProdutosPage() {
           const skuVal = idxSku !== -1 ? String(row[idxSku] || "").trim() : String(row[0] || "").trim();
           if (!skuVal || skuVal.length < 5 || /sku/i.test(skuVal)) continue;
 
-          // Condição: Ignorar se Ativo for "Sim"
           const ativoVal = idxAtivo !== -1 ? String(row[idxAtivo] || "").trim().toLowerCase() : "";
           if (ativoVal === "sim" || ativoVal === "true" || ativoVal === "1") {
             ignoradosAtivoSim++;
             continue;
           }
 
-          // Condição: Ignorar duplicados
           const skuLower = skuVal.toLowerCase();
           if (skusExistentesSet.has(skuLower)) {
             ignoradosDuplicados++;
             continue;
           }
-          skusExistentesSet.add(skuLower); // Evita duplicados no mesmo lote
+          skusExistentesSet.add(skuLower);
 
           novosRegistros.push({
             sku: skuVal,
@@ -172,7 +168,6 @@ export default function ProdutosPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Salvar Cadastro Manual
   const handleSalvarManual = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formManual.sku || !formManual.produto) {
@@ -197,11 +192,36 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  // Mover de Pendentes para Realizados e Tiny ERP
+  // Excluir SKU individual dos pendentes
+  const excluirPendenteIndividual = async (sku: string) => {
+    if (!confirm(`Deseja remover o SKU ${sku} dos pendentes?`)) return;
+    setLoading(true);
+    const { error } = await supabase.from("produtos_pendentes").delete().eq("sku", sku);
+    if (error) {
+      alert("Erro ao excluir: " + error.message);
+    } else {
+      carregarPendentesDoBanco();
+    }
+    setLoading(false);
+  };
+
+  // Limpar toda a base de pendentes
+  const limparTodosPendentes = async () => {
+    if (!confirm("ATENÇÃO: Deseja apagar TODOS os produtos pendentes da base?")) return;
+    setLoading(true);
+    const { error } = await supabase.from("produtos_pendentes").delete().neq("id", 0);
+    if (error) {
+      alert("Erro ao limpar base: " + error.message);
+    } else {
+      setDadosPendentes([]);
+      alert("🗑️ Base de pendentes limpa com sucesso!");
+    }
+    setLoading(false);
+  };
+
   const enviarParaRealizados = async (item: any) => {
     setLoading(true);
     try {
-      // 1. Grava na tabela de realizados
       const { error: errRealizado } = await supabase.from("produtos_novos_cadastrados").upsert([{
         sku: item.sku,
         produto: item.produto,
@@ -225,10 +245,8 @@ export default function ProdutosPage() {
 
       if (errRealizado) throw errRealizado;
 
-      // 2. Apaga da tabela de pendentes
       await supabase.from("produtos_pendentes").delete().eq("sku", item.sku);
 
-      // 3. Insere na base do Tiny ERP para interligar com a aba Cadastros
       await supabase.from("cadastros_base_tiny").upsert({
         sku: item.sku,
         produto: item.produto,
@@ -299,12 +317,22 @@ export default function ProdutosPage() {
           </div>
 
           {subAba === "pendentes" && (
-            <button
-              onClick={() => setModalAberto(true)}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg transition-all"
-            >
-              + Inserir Produto Manualmente
-            </button>
+            <div className="flex gap-2">
+              {dadosPendentes.length > 0 && (
+                <button
+                  onClick={limparTodosPendentes}
+                  className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow"
+                >
+                  🗑️ Limpar Todos
+                </button>
+              )}
+              <button
+                onClick={() => setModalAberto(true)}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg transition-all"
+              >
+                + Inserir Produto Manualmente
+              </button>
+            </div>
           )}
         </div>
 
@@ -349,7 +377,7 @@ export default function ProdutosPage() {
                       <th className="p-3">EAN</th>
                       <th className="p-3 text-right">Custo</th>
                       <th className="p-3 text-right">Preço Venda</th>
-                      <th className="p-3 text-center">Ação</th>
+                      <th className="p-3 text-center">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
@@ -364,14 +392,22 @@ export default function ProdutosPage() {
                         <td className="p-3 text-slate-300 font-mono">{item.ean || "—"}</td>
                         <td className="p-3 text-right font-mono text-rose-400">R$ {Number(item.custo).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda).toFixed(2)}</td>
-                        <td className="p-3 text-center">
+                        <td className="p-3 text-center flex items-center justify-center gap-2">
                           <button
                             type="button"
                             onClick={() => enviarParaRealizados(item)}
                             disabled={loading}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer shadow"
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-lg text-[11px] font-bold cursor-pointer shadow"
                           >
                             Cadastrar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => excluirPendenteIndividual(item.sku)}
+                            disabled={loading}
+                            className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer"
+                          >
+                            Excluir
                           </button>
                         </td>
                       </tr>
@@ -441,7 +477,6 @@ export default function ProdutosPage() {
           </div>
         )}
 
-        {/* MODAL DE CADASTRO MANUAL */}
         {modalAberto && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6 space-y-6 shadow-2xl">
