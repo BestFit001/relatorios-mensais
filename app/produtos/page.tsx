@@ -19,6 +19,9 @@ export default function ProdutosPage() {
   const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais">("todos");
   const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
 
+  // Controle de quais grupos estão expandidos (exibindo as variações)
+  const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
+
   const [modalAberto, setModalAberto] = useState(false);
   const [formManual, setFormManual] = useState({
     sku: "", produto: "", cor: "", tamanho: "", origem: "", ncm: "", cest: "", ean: "",
@@ -207,23 +210,23 @@ export default function ProdutosPage() {
       if (error) throw error;
       await supabase.from("produtos_pendentes").delete().eq("sku", item.sku);
 
-      // Integrar ao Tiny e Base de Custos
       await supabase.from("cadastros_base_tiny").upsert({ sku: item.sku, produto: item.produto, estoque: 0 }, { onConflict: "sku" });
       await supabase.from("tabela_custos_skus").upsert({ sku: item.sku, produto: item.produto, marca: item.marca || "BEST FIT", custo_unitario: Number(item.custo || 0) }, { onConflict: "sku" });
 
       await carregarPendentesDoBanco();
       await carregarRealizadosDoBanco();
-      alert(`🚀 SKU ${item.sku} cadastrado com sucesso e enviado para a base!`);
+      alert(`🚀 SKU ${item.sku} cadastrado com sucesso!`);
     } catch (err: any) {
       alert("Erro: " + err.message);
     }
     setLoading(false);
   };
 
-  const toggleCanal = async (skuOuPai: string, canal: string, checked: boolean, isPai: boolean) => {
+  // Marcar canal para o Pai (aplica em todas as variações do grupo)
+  const toggleCanalPai = async (paiKey: string, canal: string, checked: boolean) => {
     try {
       const atualizados = [...cadastrosRealizados];
-      const alvos = isPai ? atualizados.filter(i => i.sku_pai === skuOuPai) : atualizados.filter(i => i.sku === skuOuPai);
+      const alvos = atualizados.filter(i => (i.sku_pai || i.sku.substring(0, 5)) === paiKey);
 
       for (const alvo of alvos) {
         const canais = alvo.canais_enviados || {};
@@ -238,10 +241,11 @@ export default function ProdutosPage() {
     }
   };
 
-  const toggleClipe = async (skuOuPai: string, canal: string, checked: boolean, isPai: boolean) => {
+  // Marcar Clipes para o Pai (1 por produto/canal)
+  const toggleClipePai = async (paiKey: string, canal: string, checked: boolean) => {
     try {
       const atualizados = [...cadastrosRealizados];
-      const alvos = isPai ? atualizados.filter(i => i.sku_pai === skuOuPai) : atualizados.filter(i => i.sku === skuOuPai);
+      const alvos = atualizados.filter(i => (i.sku_pai || i.sku.substring(0, 5)) === paiKey);
 
       for (const alvo of alvos) {
         const clipes = alvo.clipes_enviados || {};
@@ -275,11 +279,7 @@ export default function ProdutosPage() {
         String(item.sku || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
         String(item.produto || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
         String(item.sku_pai || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.cor || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.tamanho || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.marca || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.ncm || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.ean || "").toLowerCase().includes(pesquisaGlobal.toLowerCase());
+        String(item.marca || "").toLowerCase().includes(pesquisaGlobal.toLowerCase());
       
       if (!matchPesquisa) return false;
 
@@ -304,6 +304,10 @@ export default function ProdutosPage() {
   const gruposRealizados = agruparPorPai(realizadosFiltrados);
   const chavesGrupos = Object.keys(gruposRealizados);
 
+  const toggleExpandirGrupo = (pai: string) => {
+    setGruposExpandidos(prev => ({ ...prev, [pai]: !prev[pai] }));
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -311,7 +315,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo de cadastros mantendo todas as informações da planilha</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com o Pai respondendo pelas variações e clipes unificados</p>
           </div>
           <Navbar />
         </div>
@@ -349,7 +353,7 @@ export default function ProdutosPage() {
               type="text"
               value={pesquisaGlobal}
               onChange={(e) => setPesquisaGlobal(e.target.value)}
-              placeholder="🔍 Pesquisar SKU, Pai, Nome, Cor, Tam..."
+              placeholder="🔍 Pesquisar SKU, Pai ou Nome..."
               className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white outline-none w-80"
             />
           </div>
@@ -360,7 +364,7 @@ export default function ProdutosPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-1">Todos os campos da planilha são preservados e você pode cadastrar ou excluir diretamente.</p>
+                <p className="text-xs text-slate-400 mt-1">Todos os campos são preservados e você pode cadastrar ou excluir diretamente.</p>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
                 <input
@@ -386,8 +390,6 @@ export default function ProdutosPage() {
                       <th className="p-3">Cor</th>
                       <th className="p-3">Tam</th>
                       <th className="p-3">Marca</th>
-                      <th className="p-3">NCM</th>
-                      <th className="p-3">EAN</th>
                       <th className="p-3 text-right">Custo</th>
                       <th className="p-3 text-right">Preço Venda</th>
                       <th className="p-3 text-center">Ações</th>
@@ -404,31 +406,17 @@ export default function ProdutosPage() {
                         <td className="p-3 text-slate-300">{item.cor || "—"}</td>
                         <td className="p-3 text-slate-300">{item.tamanho || "—"}</td>
                         <td className="p-3 text-slate-300">{item.marca || "—"}</td>
-                        <td className="p-3 text-slate-300 font-mono">{item.ncm || "—"}</td>
-                        <td className="p-3 text-slate-300 font-mono">{item.ean || "—"}</td>
                         <td className="p-3 text-right font-mono text-rose-400">R$ {Number(item.custo).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda).toFixed(2)}</td>
                         <td className="p-3 text-center flex items-center justify-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => enviarParaRealizados(item)}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold cursor-pointer"
-                          >
-                            Cadastrar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => excluirPendenteIndividual(item.sku)}
-                            className="bg-rose-950 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded text-xs font-bold cursor-pointer"
-                          >
-                            Excluir
-                          </button>
+                          <button onClick={() => enviarParaRealizados(item)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold cursor-pointer">Cadastrar</button>
+                          <button onClick={() => excluirPendenteIndividual(item.sku)} className="bg-rose-950 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded text-xs font-bold cursor-pointer">Excluir</button>
                         </td>
                       </tr>
                     ))}
                     {pendentesFiltrados.length === 0 && (
                       <tr>
-                        <td colSpan={10} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
+                        <td colSpan={8} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -468,10 +456,18 @@ export default function ProdutosPage() {
             <div className="space-y-6">
               {chavesGrupos.slice(0, itensPorPagina).map((paiKey, gIdx) => {
                 const itensDoGrupo = gruposRealizados[paiKey];
+                const expandido = Boolean(gruposExpandidos[paiKey]);
+
                 return (
                   <div key={gIdx} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
                     <div className="flex justify-between items-center border-b border-slate-900 pb-2">
-                      <span className="text-xs font-mono font-black text-purple-400 uppercase">SKU PAI: {paiKey} ({itensDoGrupo.length} variações)</span>
+                      <button
+                        onClick={() => toggleExpandirGrupo(paiKey)}
+                        className="flex items-center gap-2 text-xs font-mono font-black text-purple-400 uppercase cursor-pointer hover:text-purple-300"
+                      >
+                        <span className={`transform transition-transform ${expandido ? "rotate-180" : ""}`}>▼</span>
+                        SKU PAI: {paiKey} ({itensDoGrupo.length} variações)
+                      </button>
                       <span className="text-[10px] text-slate-500">Cadastrado em: {new Date(itensDoGrupo[0].data_cadastro || Date.now()).toLocaleDateString("pt-BR")}</span>
                     </div>
 
@@ -479,46 +475,29 @@ export default function ProdutosPage() {
                       <table className="w-full text-left text-xs">
                         <thead>
                           <tr className="text-[10px] text-slate-400 uppercase border-b border-slate-900">
-                            <th className="p-2">SKU Variação / Produto</th>
+                            <th className="p-2">SKU / Produto</th>
                             {canaisLista.map((canal, cIdx) => (
                               <th key={cIdx} className="p-2 text-center text-[9px]">{canal}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-900/50">
-                          {/* LINHA DO PAI PARA MARCAR TODOS OS CANAIS */}
+                          {/* LINHA DO PAI RESPONDENDO POR TODAS AS VARIAÇÕES */}
                           <tr className="bg-purple-950/20 font-bold">
                             <td className="p-2 text-purple-300 font-mono">Pai: {paiKey}</td>
                             {canaisLista.map((canal, cIdx) => {
                               const todosMarcados = itensDoGrupo.every(i => (i.canais_enviados || {})[canal]);
-                              return (
-                                <td key={cIdx} className="p-2 text-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={todosMarcados}
-                                    onChange={(e) => toggleCanal(paiKey, canal, e.target.checked, true)}
-                                    className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
-                                  />
-                                </td>
-                              );
-                            })}
-                          </tr>
+                              const clipesMarcados = itensDoGrupo.every(i => (i.clipes_enviados || {})[canal]);
 
-                          {itensDoGrupo.map((item, vIdx) => (
-                            <tr key={vIdx} className="hover:bg-slate-900/40">
-                              <td className="p-2">
-                                <span className="font-mono text-indigo-300 font-bold">↳ {item.sku}</span><br/>
-                                <span className="text-[10px] text-slate-400">{item.produto}</span>
-                              </td>
-                              {canaisLista.map((canal, cIdx) => (
+                              return (
                                 <td key={cIdx} className="p-2 text-center">
                                   <div className="flex flex-col items-center gap-1">
                                     <div className="flex items-center gap-1">
                                       <span className="text-[9px] text-slate-400 w-10 text-right">Cad:</span>
                                       <input
                                         type="checkbox"
-                                        checked={Boolean((item.canais_enviados || {})[canal])}
-                                        onChange={(e) => toggleCanal(item.sku, canal, e.target.checked, false)}
+                                        checked={todosMarcados}
+                                        onChange={(e) => toggleCanalPai(paiKey, canal, e.target.checked)}
                                         className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
                                       />
                                     </div>
@@ -526,14 +505,23 @@ export default function ProdutosPage() {
                                       <span className="text-[9px] text-purple-400 w-10 text-right">Clipe:</span>
                                       <input
                                         type="checkbox"
-                                        checked={Boolean((item.clipes_enviados || {})[canal])}
-                                        onChange={(e) => toggleClipe(item.sku, canal, e.target.checked, false)}
+                                        checked={clipesMarcados}
+                                        onChange={(e) => toggleClipePai(paiKey, canal, e.target.checked)}
                                         className="w-3.5 h-3.5 accent-indigo-600 rounded cursor-pointer"
                                       />
                                     </div>
                                   </div>
                                 </td>
-                              ))}
+                              );
+                            })}
+                          </tr>
+
+                          {/* VARIAÇÕES FILHAS (EXPANSÍVEIS) */}
+                          {expandido && itensDoGrupo.map((item, vIdx) => (
+                            <tr key={vIdx} className="bg-slate-900/20 text-slate-400">
+                              <td className="p-2 pl-6" colSpan={1 + canaisLista.length}>
+                                <span className="font-mono text-indigo-300 font-bold">↳ {item.sku}</span> — {item.produto}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
