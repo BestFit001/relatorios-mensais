@@ -192,7 +192,6 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  // Excluir SKU individual dos pendentes
   const excluirPendenteIndividual = async (sku: string) => {
     if (!confirm(`Deseja remover o SKU ${sku} dos pendentes?`)) return;
     setLoading(true);
@@ -205,7 +204,6 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  // Limpar toda a base de pendentes
   const limparTodosPendentes = async () => {
     if (!confirm("ATENÇÃO: Deseja apagar TODOS os produtos pendentes da base?")) return;
     setLoading(true);
@@ -219,9 +217,11 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
+  // Mover para Realizados, Tiny ERP e atualizar a Base de Custos automaticamente
   const enviarParaRealizados = async (item: any) => {
     setLoading(true);
     try {
+      // 1. Grava na tabela de realizados
       const { error: errRealizado } = await supabase.from("produtos_novos_cadastrados").upsert([{
         sku: item.sku,
         produto: item.produto,
@@ -245,17 +245,27 @@ export default function ProdutosPage() {
 
       if (errRealizado) throw errRealizado;
 
+      // 2. Apaga da tabela de pendentes
       await supabase.from("produtos_pendentes").delete().eq("sku", item.sku);
 
+      // 3. Insere na base do Tiny ERP
       await supabase.from("cadastros_base_tiny").upsert({
         sku: item.sku,
         produto: item.produto,
         estoque: 0
       }, { onConflict: "sku" });
 
+      // 4. Salva automaticamente na Base de Custos (tabela_custos_skus)
+      await supabase.from("tabela_custos_skus").upsert({
+        sku: item.sku,
+        produto: item.produto,
+        marca: item.marca || "BEST FIT",
+        custo_unitario: Number(item.custo || 0)
+      }, { onConflict: "sku" });
+
       await carregarPendentesDoBanco();
       await carregarRealizadosDoBanco();
-      alert(`🚀 Produto ${item.sku} movido para Realizados com sucesso!`);
+      alert(`🚀 Produto ${item.sku} cadastrado, integrado ao Tiny e enviado para a Base de Custos!`);
     } catch (err: any) {
       alert("Erro ao cadastrar: " + err.message);
     }
@@ -442,6 +452,7 @@ export default function ProdutosPage() {
                     <th className="p-3.5">SKU</th>
                     <th className="p-3.5">Nome do Produto</th>
                     <th className="p-3.5">Marca</th>
+                    <th className="p-3.5">Custo</th>
                     <th className="p-3.5">Cor / Tam</th>
                     {canaisLista.map((canal, cIdx) => (
                       <th key={cIdx} className="p-3.5 text-center text-[9px]">{canal}</th>
@@ -454,6 +465,7 @@ export default function ProdutosPage() {
                       <td className="p-3.5 font-mono font-bold text-indigo-400">{item.sku}</td>
                       <td className="p-3.5 font-semibold text-white">{item.produto || "—"}</td>
                       <td className="p-3.5 text-slate-300">{item.marca || "—"}</td>
+                      <td className="p-3.5 text-rose-400 font-mono">R$ {Number(item.custo || 0).toFixed(2)}</td>
                       <td className="p-3.5 text-slate-300">{item.cor} / {item.tamanho}</td>
                       {canaisLista.map((canal, cIdx) => (
                         <td key={cIdx} className="p-3.5 text-center">
@@ -468,7 +480,7 @@ export default function ProdutosPage() {
                   ))}
                   {realizadosFiltrados.length === 0 && (
                     <tr>
-                      <td colSpan={4 + canaisLista.length} className="p-8 text-center text-slate-500">Nenhum cadastro realizado encontrado.</td>
+                      <td colSpan={5 + canaisLista.length} className="p-8 text-center text-slate-500">Nenhum cadastro realizado encontrado.</td>
                     </tr>
                   )}
                 </tbody>
