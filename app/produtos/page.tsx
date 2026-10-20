@@ -14,15 +14,10 @@ export default function ProdutosPage() {
   const [cadastrosRealizados, setCadastrosRealizados] = useState<any[]>([]);
   const [canaisLista, setCanaisLista] = useState<string[]>([]);
   
-  // Filtros e Paginação
   const [pesquisaGlobal, setPesquisaGlobal] = useState("");
   const [itensPorPagina, setItemsPorPagina] = useState(10);
   const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais">("todos");
   const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
-
-  // Filtros da aba Período
-  const [filtroDataInicio, setFiltroDataInicio] = useState("");
-  const [filtroDataFim, setFiltroDataFim] = useState("");
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -101,7 +96,6 @@ export default function ProdutosPage() {
           const ativoVal = idxAtivo !== -1 ? String(row[idxAtivo] || "").trim().toLowerCase() : "";
           if (ativoVal === "sim" || ativoVal === "true" || ativoVal === "1") continue;
 
-          // Extrai o SKU Pai (ex: primeiros 5 ou 6 caracteres ou código raiz)
           const skuPai = skuVal.length > 5 ? skuVal.substring(0, 5) : skuVal;
 
           novosRegistros.push({
@@ -145,7 +139,6 @@ export default function ProdutosPage() {
       if (error) throw error;
       await supabase.from("produtos_pendentes").delete().eq("sku", item.sku);
 
-      // Integrar ao Tiny
       await supabase.from("cadastros_base_tiny").upsert({ sku: item.sku, produto: item.produto, estoque: 0 }, { onConflict: "sku" });
 
       await carregarPendentesDoBanco();
@@ -157,7 +150,6 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  // Marcar canal (Pai marca todos os filhos, ou item individual)
   const toggleCanal = async (skuOuPai: string, canal: string, checked: boolean, isPai: boolean) => {
     try {
       const atualizados = [...cadastrosRealizados];
@@ -176,7 +168,6 @@ export default function ProdutosPage() {
     }
   };
 
-  // Marcar Clipes
   const toggleClipe = async (skuOuPai: string, canal: string, checked: boolean, isPai: boolean) => {
     try {
       const atualizados = [...cadastrosRealizados];
@@ -198,7 +189,6 @@ export default function ProdutosPage() {
     }
   };
 
-  // Agrupamento por Pai
   const agruparPorPai = (lista: any[]) => {
     const grupos: { [pai: string]: any[] } = {};
     lista.forEach(item => {
@@ -209,7 +199,6 @@ export default function ProdutosPage() {
     return grupos;
   };
 
-  // Filtros Globais
   const filtrarLista = (lista: any[]) => {
     return lista.filter(item => {
       const matchPesquisa = 
@@ -252,7 +241,6 @@ export default function ProdutosPage() {
           <Navbar />
         </div>
 
-        {/* BARRA DE PESQUISA GLOBAL E ABAS */}
         <div className="flex flex-wrap justify-between items-center gap-4 bg-slate-900 p-3 rounded-2xl border border-slate-800">
           <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
             <button
@@ -292,7 +280,6 @@ export default function ProdutosPage() {
           </div>
         </div>
 
-        {/* CONTEÚDO DA ABA PENDENTES */}
         {subAba === "pendentes" && (
           <div className="space-y-6">
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-3">
@@ -344,7 +331,6 @@ export default function ProdutosPage() {
           </div>
         )}
 
-        {/* CONTEÚDO DA ABA REALIZADOS */}
         {subAba === "realizados" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
             <div className="flex flex-wrap justify-between items-center gap-4 border-b border-slate-800 pb-4">
@@ -406,9 +392,9 @@ export default function ProdutosPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-900/50">
-                          {/* LINHA DO PAI PARA MARCAR TODOS OS CANAIS */}
+                          {/* LINHA DO PAI LIMPA PARA MARCAR TODOS OS CANAIS */}
                           <tr className="bg-purple-950/20 font-bold">
-                            <td className="p-2 text-purple-300">📁 {paiKey} - (Marcar Todos os Canais)</td>
+                            <td className="p-2 text-purple-300 font-mono">📁 {paiKey}</td>
                             {canaisLista.map((canal, cIdx) => {
                               const todosMarcados = itensDoGrupo.every(i => (i.canais_enviados || {})[canal]);
                               return (
@@ -424,7 +410,7 @@ export default function ProdutosPage() {
                             })}
                           </tr>
 
-                          {/* LINHAS DAS VARIAÇÕES FILHAS COM CLIPS */}
+                          {/* LINHAS DAS VARIAÇÕES FILHAS COM 2 FILEIRAS (CADASTRO E CLIPES) */}
                           {itensDoGrupo.map((item, vIdx) => (
                             <tr key={vIdx} className="hover:bg-slate-900/40">
                               <td className="p-2">
@@ -432,22 +418,26 @@ export default function ProdutosPage() {
                                 <span className="text-[10px] text-slate-400">{item.produto}</span>
                               </td>
                               {canaisLista.map((canal, cIdx) => (
-                                <td key={cIdx} className="p-2 text-center space-y-1">
-                                  <div className="flex flex-col items-center gap-0.5">
-                                    <span className="text-[8px] text-slate-500">Cadastro</span>
-                                    <input
-                                      type="checkbox"
-                                      checked={Boolean((item.canais_enviados || {})[canal])}
-                                      onChange={(e) => toggleCanal(item.sku, canal, e.target.checked, false)}
-                                      className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
-                                    />
-                                    <span className="text-[8px] text-purple-400 mt-1">Clipes</span>
-                                    <input
-                                      type="checkbox"
-                                      checked={Boolean((item.clipes_enviados || {})[canal])}
-                                      onChange={(e) => toggleClipe(item.sku, canal, e.target.checked, false)}
-                                      className="w-3.5 h-3.5 accent-indigo-600 rounded cursor-pointer"
-                                    />
+                                <td key={cIdx} className="p-2 text-center">
+                                  <div className="flex flex-col items-center gap-1">
+                                    <div className="flex items-center gap-1" title="Cadastro no Canal">
+                                      <span className="text-[9px] text-slate-400 w-10 text-right">Cad:</span>
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean((item.canais_enviados || {})[canal])}
+                                        onChange={(e) => toggleCanal(item.sku, canal, e.target.checked, false)}
+                                        className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-1" title="Clipes Upados">
+                                      <span className="text-[9px] text-purple-400 w-10 text-right">Clipe:</span>
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean((item.clipes_enviados || {})[canal])}
+                                        onChange={(e) => toggleClipe(item.sku, canal, e.target.checked, false)}
+                                        className="w-3.5 h-3.5 accent-indigo-600 rounded cursor-pointer"
+                                      />
+                                    </div>
                                   </div>
                                 </td>
                               ))}
@@ -466,7 +456,6 @@ export default function ProdutosPage() {
           </div>
         )}
 
-        {/* CONTEÚDO DA ABA PERÍODO & GRÁFICOS */}
         {subAba === "periodo" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-6">
             <h3 className="text-sm font-bold text-white uppercase tracking-wider">Relatórios e Estatísticas por Período</h3>
