@@ -170,7 +170,6 @@ export default function UploadPage() {
     return s;
   };
 
-  // Trava rígida: SKU válido deve ter pelo menos 10 dígitos (rejeita 5 dígitos ou menos)
   const skuValido = (sku: string): boolean => {
     const limpo = normalizarSku(sku);
     return limpo.length >= 10;
@@ -354,7 +353,6 @@ export default function UploadPage() {
           const sku = normalizarSku(row[indiceSku]);
           const estoque = Number(row[indiceEstoque] || 0);
 
-          // Salva apenas se o SKU tiver 10 dígitos ou mais
           if (sku && sku.length >= 10 && !/sku|código|codigo/i.test(sku)) {
             mapaUnico.set(sku, { sku, estoque: isNaN(estoque) ? 0 : estoque });
           }
@@ -445,6 +443,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // UPLOAD DE CUSTOS COM REMOÇÃO DE DUPLICATAS E TRAVA DE 10 DÍGITOS
   const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -463,7 +462,7 @@ export default function UploadPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        const registros = [];
+        const mapaUnicoCustos = new Map();
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(idxSku, idxCusto)) continue;
@@ -473,11 +472,13 @@ export default function UploadPage() {
           const custo = Number(row[idxCusto] || 0);
           const marca = String(row[idxMarca] || "").trim();
 
-          // Aceita apenas SKUs com 10 dígitos ou mais
+          // Exige SKU >= 10 dígitos para evitar códigos curtos de 5 dígitos
           if (sku && sku.length >= 10 && !isNaN(custo)) {
-            registros.push({ sku, produto, custo_unitario: custo, marca });
+            mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
           }
         }
+
+        const registros = Array.from(mapaUnicoCustos.values());
 
         const tamanhoLote = 500;
         for (let i = 0; i < registros.length; i += tamanhoLote) {
@@ -486,7 +487,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`💰 Custos unitários extraídos e salvos com sucesso! Total de ${registros.length} registos válidos processados.`);
+        alert(`💰 Custos unitários extraídos e salvos com sucesso! Total de ${registros.length} registos únicos válidos processados.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao processar custos: " + err.message);
@@ -496,7 +497,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // UPLOAD DE REGRAS DO ML: Ignora SKUs < 10 dígitos e herda o SKU correto das variações do mesmo MLB
+  // UPLOAD DE REGRAS DO ML COM REMOÇÃO DE DUPLICATAS E HERANÇA DE SKU
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -522,7 +523,6 @@ export default function UploadPage() {
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        // 1ª PASSAGEM: Mapeia o primeiro SKU válido (>= 10 dígitos) encontrado para cada MLB na planilha inteira
         const mapSkuPorMlb = new Map<string, string>();
         for (let i = 4; i < json.length; i++) {
           const row = json[i];
@@ -534,7 +534,6 @@ export default function UploadPage() {
           }
         }
 
-        // 2ª PASSAGEM: Coleta, consolida e aplica a herança de SKU com exclusão estrita de SKUs < 10 dígitos
         const mapaMlPendente = new Map<string, { registro: any, score: number }>();
         const linhaInicio = 4;
 
@@ -547,12 +546,11 @@ export default function UploadPage() {
 
           let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
 
-          // Herança de SKU: 1. Linha atual, 2. Outras linhas do mesmo MLB
           if ((!sku || sku === "-" || sku.length < 10) && mapSkuPorMlb.has(mlb)) {
             sku = mapSkuPorMlb.get(mlb)!;
           }
           if (sku && sku.length < 10) {
-            sku = ""; // Descarta SKU menor que 10 dígitos
+            sku = "";
           }
 
           let rawComissao = row[idxCom];
