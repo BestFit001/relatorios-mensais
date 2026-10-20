@@ -19,7 +19,6 @@ export default function UploadPage() {
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   
-  // Colunas Dinâmicas Configuráveis para o Mercado Livre
   const [regrasColsDinamicas, setRegrasColsDinamicas] = useState({
     custo_sku: 'A', custo_produto: 'B', custo_valor: 'C', custo_marca: 'D',
     ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'AA', ml_peso: 'AF', ml_altura: 'AC', ml_largura: 'AD', ml_comprimento: 'AE'
@@ -27,13 +26,11 @@ export default function UploadPage() {
 
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
 
-  // Estados para Custos
   const [pesquisaCusto, setPesquisaCusto] = useState("");
   const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
   const [editandoCustoId, setEditandoCustoId] = useState<number | null>(null);
   const [dadosEdicaoCusto, setDadosEdicaoCusto] = useState({ sku: "", produto: "", custo_unitario: 0, marca: "" });
 
-  // Estados para Regras ML
   const [pesquisaMl, setPesquisaMl] = useState("");
   const [listaRegrasMlFiltradas, setListaRegrasMlFiltradas] = useState<any[]>([]);
   const [editandoMlId, setEditandoMlId] = useState<number | null>(null);
@@ -162,7 +159,7 @@ export default function UploadPage() {
     return coluna - 1;
   };
 
-  const normalizarSku = (valor: any) => {
+  const normalizarSku = (valor: any): string => {
     if (valor === null || valor === undefined) return "";
     let s = String(valor).trim();
     if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
@@ -171,6 +168,12 @@ export default function UploadPage() {
       try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
     }
     return s;
+  };
+
+  // Trava rígida: SKU válido deve ter pelo menos 10 dígitos (rejeita 5 dígitos ou menos)
+  const skuValido = (sku: string): boolean => {
+    const limpo = normalizarSku(sku);
+    return limpo.length >= 10;
   };
 
   const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
@@ -351,7 +354,8 @@ export default function UploadPage() {
           const sku = normalizarSku(row[indiceSku]);
           const estoque = Number(row[indiceEstoque] || 0);
 
-          if (sku && !/sku|código|codigo/i.test(sku)) {
+          // Salva apenas se o SKU tiver 10 dígitos ou mais
+          if (sku && sku.length >= 10 && !/sku|código|codigo/i.test(sku)) {
             mapaUnico.set(sku, { sku, estoque: isNaN(estoque) ? 0 : estoque });
           }
         }
@@ -364,7 +368,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`Base Tiny atualizada com sucesso! ${registros.length} SKUs processados.`);
+        alert(`Base Tiny atualizada com sucesso! ${registros.length} SKUs válidos processados.`);
         setLoading(false);
         carregarDadosCadastros();
       } catch (err: any) {
@@ -469,7 +473,8 @@ export default function UploadPage() {
           const custo = Number(row[idxCusto] || 0);
           const marca = String(row[idxMarca] || "").trim();
 
-          if (sku && !isNaN(custo)) {
+          // Aceita apenas SKUs com 10 dígitos ou mais
+          if (sku && sku.length >= 10 && !isNaN(custo)) {
             registros.push({ sku, produto, custo_unitario: custo, marca });
           }
         }
@@ -481,7 +486,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`💰 Custos unitários extraídos e salvos com sucesso! Total de ${registros.length} registos processados.`);
+        alert(`💰 Custos unitários extraídos e salvos com sucesso! Total de ${registros.length} registos válidos processados.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao processar custos: " + err.message);
@@ -491,7 +496,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // UPLOAD DE REGRAS DO ML PROTEGIDO E COM HERANÇA DE SKU ENTRE VARIAÇÕES DO MESMO MLB
+  // UPLOAD DE REGRAS DO ML: Ignora SKUs < 10 dígitos e herda o SKU correto das variações do mesmo MLB
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -517,19 +522,19 @@ export default function UploadPage() {
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        // 1ª PASSAGEM: Mapeia o primeiro SKU válido encontrado para cada MLB na planilha inteira
+        // 1ª PASSAGEM: Mapeia o primeiro SKU válido (>= 10 dígitos) encontrado para cada MLB na planilha inteira
         const mapSkuPorMlb = new Map<string, string>();
         for (let i = 4; i < json.length; i++) {
           const row = json[i];
           if (!row) continue;
           const mlbVal = String(row[idxMlb] || "").trim().toUpperCase();
           const skuVal = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-          if (mlbVal && mlbVal.startsWith("MLB") && skuVal && skuVal !== "-" && !mapSkuPorMlb.has(mlbVal)) {
+          if (mlbVal && mlbVal.startsWith("MLB") && skuVal && skuVal !== "-" && skuVal.length >= 10 && !mapSkuPorMlb.has(mlbVal)) {
             mapSkuPorMlb.set(mlbVal, skuVal);
           }
         }
 
-        // 2ª PASSAGEM: Coleta, consolida e aplica a herança de SKU com proteção contra estouro numérico
+        // 2ª PASSAGEM: Coleta, consolida e aplica a herança de SKU com exclusão estrita de SKUs < 10 dígitos
         const mapaMlPendente = new Map<string, { registro: any, score: number }>();
         const linhaInicio = 4;
 
@@ -542,12 +547,16 @@ export default function UploadPage() {
 
           let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
 
-          if ((!sku || sku === "-") && mapSkuPorMlb.has(mlb)) {
+          // Herança de SKU: 1. Linha atual, 2. Outras linhas do mesmo MLB
+          if ((!sku || sku === "-" || sku.length < 10) && mapSkuPorMlb.has(mlb)) {
             sku = mapSkuPorMlb.get(mlb)!;
+          }
+          if (sku && sku.length < 10) {
+            sku = ""; // Descarta SKU menor que 10 dígitos
           }
 
           let rawComissao = row[idxCom];
-          let comissaoNum = 14; // Padrão seguro caso venha inválido ou vazio
+          let comissaoNum = 14;
           if (rawComissao !== undefined && rawComissao !== null && rawComissao !== "") {
             let strCom = String(rawComissao).replace("%", "").trim().replace(",", ".");
             let parsed = parseFloat(strCom);
@@ -560,7 +569,6 @@ export default function UploadPage() {
             }
           }
 
-          // Proteção rigida: se a coluna selecionada for incorreta e vier um número gigante (ex: 16 dígitos), força 14%
           if (comissaoNum > 100) {
             comissaoNum = 14;
           }
@@ -576,7 +584,7 @@ export default function UploadPage() {
           const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
 
           let score = 0;
-          if (sku && sku !== "-") score += 2;
+          if (sku && sku.length >= 10) score += 2;
           if (comissaoNum > 0 && comissaoNum <= 100) score++;
           if (pesoReal !== 2.000) score++;
           if (altura > 0) score++;
@@ -589,7 +597,7 @@ export default function UploadPage() {
             mapaMlPendente.set(mlb, { registro: objReg, score });
           } else {
             const regAtual = mapaMlPendente.get(mlb)!.registro;
-            if ((!regAtual.sku || regAtual.sku === "-") && sku && sku !== "-") {
+            if ((!regAtual.sku || regAtual.sku.length < 10) && sku && sku.length >= 10) {
               regAtual.sku = sku;
             }
           }
@@ -610,7 +618,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`🚀 Planilha de Regras do ML processada com sucesso! Total de ${registros.length} anúncios únicos salvos na base com herança de SKU.`);
+        alert(`🚀 Planilha de Regras do ML processada com sucesso! Total de ${registros.length} anúncios únicos salvos na base (SKUs < 10 dígitos ignorados).`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao processar planilha do ML: " + err.message);
@@ -676,7 +684,7 @@ export default function UploadPage() {
           if (!row || row.length <= indiceColuna) continue;
           
           const skuVal = normalizarSku(row[indiceColuna]);
-          if (skuVal && skusTinySet.has(skuVal)) {
+          if (skuVal && skuVal.length >= 10 && skusTinySet.has(skuVal)) {
             skusEncontradosNoCanal.add(skuVal);
           }
         }
