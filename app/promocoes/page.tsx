@@ -88,7 +88,7 @@ export default function PromocoesPage() {
   const [abaAtiva, setAbaAtiva] = useState<"precificar" | "rebate" | "ativas">("precificar");
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
-  const [mlRegrasMap, setMlRegrasMap] = useState<Map<string, any>>(new Map());
+  const [mlRegrasMap, setMlRegrasMap] = useState<Map<string, any[]>>(new Map());
   const [obsoletosSet, setObsoletosSet] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -101,10 +101,10 @@ export default function PromocoesPage() {
     carregarPromocoesAtivasSupabase();
   }, []);
 
-  // Carrega 100% dos custos e regras sem limite de 1000 linhas do Supabase
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
+      // Carregamento completo de custos sem limite de 1000 linhas
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -115,9 +115,7 @@ export default function PromocoesPage() {
           allCustos = [...allCustos, ...data];
           from += step;
           if (data.length < step) keep = false;
-        } else {
-          keep = false;
-        }
+        } else keep = false;
       }
 
       const cMap = new Map<string, number>();
@@ -135,6 +133,7 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
+      // Carregamento completo das regras do ML sem limite de 1000 linhas
       let allMlRegras: any[] = [];
       from = 0;
       keep = true;
@@ -144,12 +143,10 @@ export default function PromocoesPage() {
           allMlRegras = [...allMlRegras, ...data];
           from += step;
           if (data.length < step) keep = false;
-        } else {
-          keep = false;
-        }
+        } else keep = false;
       }
 
-      const mlMap = new Map<string, any>();
+      const mlMap = new Map<string, any[]>();
       allMlRegras.forEach((m: any) => {
         const mlbKey = String(m.mlb || "").trim().toUpperCase();
         const comissaoNum = parsePorcentagem(m.comissao);
@@ -162,8 +159,9 @@ export default function PromocoesPage() {
           largura: Number(m.largura || 10),
           comprimento: Number(m.comprimento || 10)
         };
-        if (mlbKey && !mlMap.has(mlbKey)) {
-          mlMap.set(mlbKey, info);
+        if (mlbKey) {
+          if (!mlMap.has(mlbKey)) mlMap.set(mlbKey, []);
+          mlMap.get(mlbKey)!.push(info);
         }
       });
       setMlRegrasMap(mlMap);
@@ -264,7 +262,8 @@ export default function PromocoesPage() {
         const promoName = idxPromotionName !== -1 ? (r[idxPromotionName] || "Campanha Geral") : "Campanha Geral";
         const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
 
-        let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada);
+        let anunciosLista = mlRegrasMap.get(mlbKeyNormalizada) || [];
+        let anuncioInfo = anunciosLista.length > 0 ? anunciosLista[0] : null;
 
         if (!anuncioInfo) {
           const { data: dbMatch } = await supabase
@@ -311,16 +310,11 @@ export default function PromocoesPage() {
           statusItem = "INAPTO";
           errosList.push("MLB não cadastrado na base — Atualizar base");
         } else {
-          comissaoVal = Number(anuncioInfo.comissao) || 0;
+          comissaoVal = Number(anuncioInfo.comissao) || 14;
           pesoReal = Number(anuncioInfo.peso_real || 2.0);
           altura = Number(anuncioInfo.altura || 10);
           largura = Number(anuncioInfo.largura || 10);
           comprimento = Number(anuncioInfo.comprimento || 10);
-
-          if (comissaoVal <= 0) {
-            statusItem = "INAPTO";
-            errosList.push("Comissão 0% na base — Atualizar base");
-          }
         }
 
         if (!skuKey || custo <= 0) {
@@ -331,17 +325,18 @@ export default function PromocoesPage() {
         let novoPreco = originalPrice;
         if (statusItem === "APTO") {
           const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
-          let precoEstimado = originalPrice * 0.9;
+          let pdvCalculado = custo * 2;
+
           for (let iter = 0; iter < 5; iter++) {
-            let tarifaFixaItem = precoEstimado < 79.00 ? 6.50 : 0.00;
-            let freteItem = calcularFreteML(precoEstimado, pesoReal, altura, largura, comprimento);
+            let tarifaFixaItem = pdvCalculado < 79.00 ? 6.50 : 0.00;
+            let freteItem = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
             
             const denominador = 1 - (comissaoDec + imposto + margemDesejada);
             if (denominador > 0) {
-              precoEstimado = (custo + tarifaFixaItem + freteItem) / denominador;
+              pdvCalculado = (custo + tarifaFixaItem + freteItem) / denominador;
             }
           }
-          novoPreco = precoEstimado > 0 ? precoEstimado : originalPrice * 0.9;
+          novoPreco = pdvCalculado > 0 ? pdvCalculado : originalPrice * 0.9;
 
           if (originalPrice <= 0 || novoPreco <= 0) {
             statusItem = "INAPTO";
@@ -441,7 +436,9 @@ export default function PromocoesPage() {
         const promoName = idxPromotionName !== -1 ? (r[idxPromotionName] || "Com redução de tarifas") : "Com redução de tarifas";
         const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
 
-        let anuncioInfo = mlRegrasMap.get(mlbKeyNormalizada);
+        let anunciosLista = mlRegrasMap.get(mlbKeyNormalizada) || [];
+        let anuncioInfo = anunciosLista.length > 0 ? anunciosLista[0] : null;
+
         if (!anuncioInfo) {
           const { data: dbMatch } = await supabase
             .from("ml_anuncios_regras")
@@ -605,7 +602,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação com carregamento completo de bases sem limite de 1000 linhas</p>
+            <p className="text-sm font-medium text-slate-400">Validação com recálculo exato de PDV ideal e peso volumétrico</p>
           </div>
           <Navbar />
         </div>
