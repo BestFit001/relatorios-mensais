@@ -19,8 +19,10 @@ export default function ProdutosPage() {
   const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais">("todos");
   const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
 
-  // Controle de quais grupos estão expandidos (exibindo as variações)
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
+
+  // Seleção em massa na aba de pendentes
+  const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
 
   const [modalAberto, setModalAberto] = useState(false);
   const [formManual, setFormManual] = useState({
@@ -190,8 +192,10 @@ export default function ProdutosPage() {
     if (!confirm("Deseja apagar TODOS os produtos pendentes?")) return;
     await supabase.from("produtos_pendentes").delete().neq("id", 0);
     setDadosPendentes([]);
+    setSkusSelecionados([]);
   };
 
+  // Cadastro unitário
   const enviarParaRealizados = async (item: any) => {
     setLoading(true);
     try {
@@ -222,7 +226,60 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  // Marcar canal para o Pai (aplica em todas as variações do grupo)
+  // Cadastro em massa dos selecionados
+  const cadastrarSelecionados = async () => {
+    if (skusSelecionados.length === 0) return;
+    if (!confirm(`Deseja cadastrar os ${skusSelecionados.length} produtos selecionados de uma vez?`)) return;
+
+    setLoading(true);
+    try {
+      const itensParaCadastrar = dadosPendentes.filter(p => skusSelecionados.includes(p.sku));
+
+      for (const item of itensParaCadastrar) {
+        await supabase.from("produtos_novos_cadastrados").upsert([{
+          sku: item.sku,
+          sku_pai: item.sku_pai || item.sku.substring(0, 5),
+          produto: item.produto,
+          marca: item.marca,
+          custo: item.custo,
+          preco_venda: item.preco_venda,
+          data_cadastro: new Date().toISOString(),
+          canais_enviados: {},
+          clipes_enviados: {}
+        }], { onConflict: "sku" });
+
+        await supabase.from("produtos_pendentes").delete().eq("sku", item.sku);
+
+        await supabase.from("cadastros_base_tiny").upsert({ sku: item.sku, produto: item.produto, estoque: 0 }, { onConflict: "sku" });
+        await supabase.from("tabela_custos_skus").upsert({ sku: item.sku, produto: item.produto, marca: item.marca || "BEST FIT", custo_unitario: Number(item.custo || 0) }, { onConflict: "sku" });
+      }
+
+      setSkusSelecionados([]);
+      await carregarPendentesDoBanco();
+      await carregarRealizadosDoBanco();
+      alert(`✅ ${itensParaCadastrar.length} produtos cadastrados com sucesso em massa!`);
+    } catch (err: any) {
+      alert("Erro ao cadastrar em massa: " + err.message);
+    }
+    setLoading(false);
+  };
+
+  const toggleSelecionarTodos = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSkusSelecionados(pendentesFiltrados.map(p => p.sku));
+    } else {
+      setSkusSelecionados([]);
+    }
+  };
+
+  const toggleSelecionarSku = (sku: string) => {
+    if (skusSelecionados.includes(sku)) {
+      setSkusSelecionados(skusSelecionados.filter(s => s !== sku));
+    } else {
+      setSkusSelecionados([...skusSelecionados, sku]);
+    }
+  };
+
   const toggleCanalPai = async (paiKey: string, canal: string, checked: boolean) => {
     try {
       const atualizados = [...cadastrosRealizados];
@@ -241,7 +298,6 @@ export default function ProdutosPage() {
     }
   };
 
-  // Marcar Clipes para o Pai (1 por produto/canal)
   const toggleClipePai = async (paiKey: string, canal: string, checked: boolean) => {
     try {
       const atualizados = [...cadastrosRealizados];
@@ -308,6 +364,15 @@ export default function ProdutosPage() {
     setGruposExpandidos(prev => ({ ...prev, [pai]: !prev[pai] }));
   };
 
+  // Cálculos para a aba Período & Gráficos
+  const totalSkusRealizados = cadastrosRealizados.length;
+  let totalVideosEnviados = 0;
+  cadastrosRealizados.forEach(item => {
+    const clipes = item.clipes_enviados || {};
+    const countClipes = canaisLista.filter(c => clipes[c]).length;
+    totalVideosEnviados += countClipes;
+  });
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -315,7 +380,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com o Pai respondendo pelas variações e clipes unificados</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com seleção em massa e métricas detalhadas de clipes</p>
           </div>
           <Navbar />
         </div>
@@ -364,9 +429,17 @@ export default function ProdutosPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-1">Todos os campos são preservados e você pode cadastrar ou excluir diretamente.</p>
+                <p className="text-xs text-slate-400 mt-1">Selecione os itens desejados para cadastrar em massa ou faça o upload da planilha.</p>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
+                {skusSelecionados.length > 0 && (
+                  <button
+                    onClick={cadastrarSelecionados}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg cursor-pointer animate-pulse"
+                  >
+                    🚀 Cadastrar Selecionados ({skusSelecionados.length})
+                  </button>
+                )}
                 <input
                   type="file"
                   accept=".xlsx, .xls, .csv"
@@ -385,6 +458,14 @@ export default function ProdutosPage() {
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead className="bg-slate-950 sticky top-0 text-slate-400 font-bold uppercase text-[10px] z-10">
                     <tr>
+                      <th className="p-3 text-center w-10">
+                        <input
+                          type="checkbox"
+                          checked={pendentesFiltrados.length > 0 && skusSelecionados.length === pendentesFiltrados.length}
+                          onChange={toggleSelecionarTodos}
+                          className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                        />
+                      </th>
                       <th className="p-3">SKU / Pai</th>
                       <th className="p-3">Nome do Produto</th>
                       <th className="p-3">Cor</th>
@@ -398,6 +479,14 @@ export default function ProdutosPage() {
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                     {pendentesFiltrados.map((item, idx) => (
                       <tr key={idx} className="hover:bg-slate-800/40">
+                        <td className="p-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={skusSelecionados.includes(item.sku)}
+                            onChange={() => toggleSelecionarSku(item.sku)}
+                            className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                          />
+                        </td>
                         <td className="p-3 font-mono">
                           <span className="text-purple-400 font-bold">Pai: {item.sku_pai}</span><br/>
                           <span className="text-indigo-300">Var: {item.sku}</span>
@@ -416,7 +505,7 @@ export default function ProdutosPage() {
                     ))}
                     {pendentesFiltrados.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
+                        <td colSpan={9} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -537,10 +626,16 @@ export default function ProdutosPage() {
         {subAba === "periodo" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-6">
             <h3 className="text-sm font-bold text-white uppercase tracking-wider">Relatórios e Estatísticas por Período</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Total Cadastros Realizados</span>
-                <p className="text-3xl font-black text-emerald-400 mt-2">{cadastrosRealizados.length}</p>
+                <p className="text-3xl font-black text-emerald-400 mt-2">{totalSkusRealizados}</p>
+              </div>
+              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
+                <span className="text-xs font-bold text-slate-400 uppercase">Total Vídeos/Clipes Enviados</span>
+                <p className="text-3xl font-black text-indigo-400 mt-2">{totalVideosEnviados}</p>
+                <span className="text-[10px] text-slate-500 mt-1 block">Soma de clipes por canais</span>
               </div>
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Total Produtos Pendentes</span>
