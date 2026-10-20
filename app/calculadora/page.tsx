@@ -19,10 +19,8 @@ const matrizFretes = [
 
 function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura: number, comprimento: number): number {
   if (pdv < 79.00) return 0.00;
-  // Cálculo estrito do Peso Volumetrico: (A x L x C) / 6000
   const pesoVolumetrico = (altura * largura * comprimento) / 6000;
   const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
-  
   let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
   if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
 
@@ -94,8 +92,43 @@ export default function CalculadoraPage() {
       router.push("/login");
       return;
     }
+
+    const listaNomesCanais = [
+      "Mercado Livre 1 Clássico", 
+      "Mercado Livre 1 Premium", 
+      "Mercado Livre 2 Clássico", 
+      "Mercado Livre 2 Premium", 
+      "Amazon", "Shopee", "Magalu", "Netshoes", "Shein", "TikTok Shop", "Centauro", "Site"
+    ];
+    setCanaisConfig(listaNomesCanais);
+
+    // Restaura os canais salvos especificamente para este usuário logado
+    const canaisSalvosDoUsuario = localStorage.getItem(`canais_selecionados_${usuarioLogado}`);
+    if (canaisSalvosDoUsuario) {
+      try {
+        const parsed = JSON.parse(canaisSalvosDoUsuario);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setCanaisSelecionados(parsed);
+        } else {
+          setCanaisSelecionados(listaNomesCanais);
+        }
+      } catch (e) {
+        setCanaisSelecionados(listaNomesCanais);
+      }
+    } else {
+      setCanaisSelecionados(listaNomesCanais);
+    }
+
     carregarBasesEmTempoReal();
   }, []);
+
+  const salvarCanaisDoUsuario = (novosCanais: string[]) => {
+    setCanaisSelecionados(novosCanais);
+    const usuarioLogado = localStorage.getItem("usuario_logado");
+    if (usuarioLogado) {
+      localStorage.setItem(`canais_selecionados_${usuarioLogado}`, JSON.stringify(novosCanais));
+    }
+  };
 
   const carregarBasesEmTempoReal = async () => {
     setLoading(true);
@@ -147,7 +180,6 @@ export default function CalculadoraPage() {
           comprimento: Number(m.comprimento || 10)
         };
 
-        // Identificação por ID/linha ou divisão para separar ML1 e ML2
         const canalConta = m.canal || (m.id % 2 === 0 ? "Mercado Livre 2" : "Mercado Livre 1");
 
         if (canalConta === "Mercado Livre 2") {
@@ -162,17 +194,6 @@ export default function CalculadoraPage() {
 
     setMapeamentoMl1(mapaMl1);
     setMapeamentoMl2(mapaMl2);
-
-    const listaNomesCanais = [
-      "Mercado Livre 1 Clássico", 
-      "Mercado Livre 1 Premium", 
-      "Mercado Livre 2 Clássico", 
-      "Mercado Livre 2 Premium", 
-      "Amazon", "Shopee", "Magalu", "Netshoes", "Shein", "TikTok Shop", "Centauro", "Site"
-    ];
-
-    setCanaisConfig(listaNomesCanais);
-    setCanaisSelecionados(listaNomesCanais);
 
     const { data: tarifacaoData } = await supabase.from("config_regras_tarifacao").select("*");
     if (tarifacaoData) {
@@ -202,18 +223,20 @@ export default function CalculadoraPage() {
   };
 
   const toggleCanalSelecao = (canalNome: string) => {
+    let atualizados = [];
     if (canaisSelecionados.includes(canalNome)) {
-      setCanaisSelecionados(canaisSelecionados.filter((c) => c !== canalNome));
+      atualizados = canaisSelecionados.filter((c) => c !== canalNome);
     } else {
-      setCanaisSelecionados([...canaisSelecionados, canalNome]);
+      atualizados = [...canaisSelecionados, canalNome];
     }
+    salvarCanaisDoUsuario(atualizados);
   };
 
   const selecionarTodosCanais = (selecionar: boolean) => {
     if (selecionar) {
-      setCanaisSelecionados(canaisConfig);
+      salvarCanaisDoUsuario(canaisConfig);
     } else {
-      setCanaisSelecionados([]);
+      salvarCanaisDoUsuario([]);
     }
   };
 
@@ -458,7 +481,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação com peso volumétrico (A x L x C / 6000) e contas separadas</p>
+            <p className="text-sm font-medium text-slate-400">Precificação com peso volumétrico e preferências salvas por usuário</p>
           </div>
           <Navbar />
         </div>
