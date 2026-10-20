@@ -19,8 +19,10 @@ const matrizFretes = [
 
 function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura: number, comprimento: number): number {
   if (pdv < 79.00) return 0.00;
+  // Cálculo estrito do Peso Volumetrico: (A x L x C) / 6000
   const pesoVolumetrico = (altura * largura * comprimento) / 6000;
   const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
+  
   let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
   if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
 
@@ -145,9 +147,8 @@ export default function CalculadoraPage() {
           comprimento: Number(m.comprimento || 10)
         };
 
-        // Identificação por comissão (Clássico <= 14%, Premium > 14%) ou explicitamente pelo ID/MLB se necessário
-        // Como o usuário separa contas, se a tabela tiver a coluna canal, usa m.canal. Se não tiver, divide por ID ou comissão.
-        const canalConta = m.canal || (m.id % 2 === 0 ? "Mercado Livre 2" : "Mercado Livre 1"); 
+        // Identificação por ID/linha ou divisão para separar ML1 e ML2
+        const canalConta = m.canal || (m.id % 2 === 0 ? "Mercado Livre 2" : "Mercado Livre 1");
 
         if (canalConta === "Mercado Livre 2") {
           if (!mapaMl2.has(k)) mapaMl2.set(k, []);
@@ -269,7 +270,6 @@ export default function CalculadoraPage() {
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
-            // Procura anúncio clássico específico (comissão <= 14%)
             const matchClassico = anunciosSku.find((a: any) => a.comissao > 0 && a.comissao <= 14);
             if (matchClassico) {
               comissaoPct = matchClassico.comissao / 100;
@@ -280,7 +280,6 @@ export default function CalculadoraPage() {
               refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
             }
           } else if (cLower.includes("premium")) {
-            // Procura anúncio premium específico (comissão > 14%)
             const matchPremium = anunciosSku.find((a: any) => a.comissao > 14);
             if (matchPremium) {
               comissaoPct = matchPremium.comissao / 100;
@@ -459,7 +458,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação com medidas e comissões específicas por Clássico e Premium</p>
+            <p className="text-sm font-medium text-slate-400">Precificação com peso volumétrico (A x L x C / 6000) e contas separadas</p>
           </div>
           <Navbar />
         </div>
