@@ -22,7 +22,7 @@ export default function UploadPage() {
   // Colunas Dinâmicas Configuráveis para o Mercado Livre
   const [regrasColsDinamicas, setRegrasColsDinamicas] = useState({
     custo_sku: 'A', custo_produto: 'B', custo_valor: 'C', custo_marca: 'D',
-    ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'W', ml_peso: 'AB', ml_altura: '', ml_largura: '', ml_comprimento: ''
+    ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'AA', ml_peso: 'AF', ml_altura: 'AC', ml_largura: 'AD', ml_comprimento: 'AE'
   });
 
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
@@ -73,8 +73,8 @@ export default function UploadPage() {
       setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
       setRegrasColsDinamicas({
         custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'), custo_marca: getC('custo_marca', 'D'),
-        ml_mlb: getC('ml_mlb', 'B'), ml_sku: getC('ml_sku', 'E'), ml_comissao: getC('ml_comissao', 'W'),
-        ml_peso: getC('ml_peso', 'AB'), ml_altura: getC('ml_altura', ''), ml_largura: getC('ml_largura', ''), ml_comprimento: getC('ml_comprimento', '')
+        ml_mlb: getC('ml_mlb', 'B'), ml_sku: getC('ml_sku', 'E'), ml_comissao: getC('ml_comissao', 'AA'),
+        ml_peso: getC('ml_peso', 'AF'), ml_altura: getC('ml_altura', 'AC'), ml_largura: getC('ml_largura', 'AD'), ml_comprimento: getC('ml_comprimento', 'AE')
       });
     }
 
@@ -491,7 +491,7 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // UPLOAD DE REGRAS DO ML CORRIGIDO COM HERANÇA DE SKU ENTRE VARIAÇÕES DO MESMO MLB
+  // UPLOAD DE REGRAS DO ML PROTEGIDO E COM HERANÇA DE SKU ENTRE VARIAÇÕES DO MESMO MLB
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -529,7 +529,7 @@ export default function UploadPage() {
           }
         }
 
-        // 2ª PASSAGEM: Coleta, consolida e aplica a herança de SKU entre as variações do mesmo MLB
+        // 2ª PASSAGEM: Coleta, consolida e aplica a herança de SKU com proteção contra estouro numérico
         const mapaMlPendente = new Map<string, { registro: any, score: number }>();
         const linhaInicio = 4;
 
@@ -542,17 +542,16 @@ export default function UploadPage() {
 
           let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
 
-          // Herança de SKU: 1. Linha atual, 2. Outras linhas do mesmo MLB na planilha
           if ((!sku || sku === "-") && mapSkuPorMlb.has(mlb)) {
             sku = mapSkuPorMlb.get(mlb)!;
           }
 
           let rawComissao = row[idxCom];
-          let comissaoNum = 0;
+          let comissaoNum = 14; // Padrão seguro caso venha inválido ou vazio
           if (rawComissao !== undefined && rawComissao !== null && rawComissao !== "") {
             let strCom = String(rawComissao).replace("%", "").trim().replace(",", ".");
             let parsed = parseFloat(strCom);
-            if (!isNaN(parsed)) {
+            if (!isNaN(parsed) && parsed > 0) {
               if (parsed > 0 && parsed < 1) {
                 comissaoNum = parsed * 100;
               } else {
@@ -561,10 +560,15 @@ export default function UploadPage() {
             }
           }
 
+          // Proteção rigida: se a coluna selecionada for incorreta e vier um número gigante (ex: 16 dígitos), força 14%
+          if (comissaoNum > 100) {
+            comissaoNum = 14;
+          }
+
           let pesoReal = 2.000;
           if (idxPeso >= 0 && row[idxPeso] !== undefined && row[idxPeso] !== "") {
             const valPeso = Number(String(row[idxPeso]).replace(",", "."));
-            if (!isNaN(valPeso) && valPeso > 0) pesoReal = valPeso;
+            if (!isNaN(valPeso) && valPeso > 0 && valPeso < 100) pesoReal = valPeso;
           }
 
           const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
@@ -573,18 +577,17 @@ export default function UploadPage() {
 
           let score = 0;
           if (sku && sku !== "-") score += 2;
-          if (comissaoNum > 0) score++;
+          if (comissaoNum > 0 && comissaoNum <= 100) score++;
           if (pesoReal !== 2.000) score++;
           if (altura > 0) score++;
           if (largura > 0) score++;
           if (comprimento > 0) score++;
 
-          const objReg = { mlb, sku, comissao: comissaoNum > 0 ? comissaoNum : 14, peso_real: pesoReal, altura, largura, comprimento };
+          const objReg = { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento };
 
           if (!mapaMlPendente.has(mlb) || score > mapaMlPendente.get(mlb)!.score) {
             mapaMlPendente.set(mlb, { registro: objReg, score });
           } else {
-            // Se já existe, complementa o SKU caso o atual esteja vazio
             const regAtual = mapaMlPendente.get(mlb)!.registro;
             if ((!regAtual.sku || regAtual.sku === "-") && sku && sku !== "-") {
               regAtual.sku = sku;
