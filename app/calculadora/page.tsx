@@ -34,12 +34,20 @@ function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura:
   return valorFrete || 0;
 }
 
-function normalizarSku(valor: any) {
+function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
   s = s.replace(/^["']|["']$/g, "").trim();
+  if (/e\+/i.test(s)) {
+    try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
+  }
   return s.toLowerCase();
+}
+
+function skuValido(sku: string): boolean {
+  const limpo = normalizarSku(sku);
+  return limpo.length >= 10;
 }
 
 function parsePorcentagem(valor: any): number {
@@ -70,7 +78,10 @@ export default function CalculadoraPage() {
 
   const [produtoEncontrado, setProdutoEncontrado] = useState<any>(null);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
-  const [mapeamentoMap, setMapeamentoMap] = useState<Map<string, any[]>>(new Map());
+  
+  // Mapeamento separado por conta do Mercado Livre
+  const [mapeamentoMl1, setMapeamentoMl1] = useState<Map<string, any[]>>(new Map());
+  const [mapeamentoMl2, setMapeamentoMl2] = useState<Map<string, any[]>>(new Map());
   
   const [canaisConfig, setCanaisConfig] = useState<string[]>([]);
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
@@ -88,6 +99,7 @@ export default function CalculadoraPage() {
   const carregarBasesEmTempoReal = async () => {
     setLoading(true);
 
+    // Carregamento completo de custos com paginação em lote
     let allCustos: any[] = [];
     let from = 0;
     const step = 1000;
@@ -104,47 +116,58 @@ export default function CalculadoraPage() {
     const mapaCustos = new Map();
     allCustos.forEach((c: any) => {
       const k = normalizarSku(c.sku);
-      if (k) mapaCustos.set(k, c);
+      if (k && k.length >= 10) mapaCustos.set(k, c);
     });
     setCustosMap(mapaCustos);
 
-    const mapaAnunciosSku = new Map();
-    try {
-      let fromAnuncio = 0;
-      let keepAnuncio = true;
-      while (keepAnuncio) {
-        const { data: mapAnuncios } = await supabase.from("ml_anuncios_regras").select("*").range(fromAnuncio, fromAnuncio + step - 1);
-        if (mapAnuncios && mapAnuncios.length > 0) {
-          mapAnuncios.forEach((m: any) => {
-            const k = normalizarSku(m.sku);
-            if (k) {
-              if (!mapaAnunciosSku.has(k)) mapaAnunciosSku.set(k, []);
-              mapaAnunciosSku.get(k).push({
-                comissao: parsePorcentagem(m.comissao),
-                peso_real: Number(m.peso_real || 2.0),
-                altura: Number(m.altura || 10),
-                largura: Number(m.largura || 10),
-                comprimento: Number(m.comprimento || 10)
-              });
-            }
-          });
-          fromAnuncio += step;
-          if (mapAnuncios.length < step) keepAnuncio = false;
-        } else keepAnuncio = false;
-      }
-    } catch (err) {
-      console.log("Regras do ML opcionais não encontradas.");
+    // Carregamento completo das regras do ML divididas por conta (Mercado Livre 1 e Mercado Livre 2)
+    let allMlRegras: any[] = [];
+    from = 0;
+    keep = true;
+    while (keep) {
+      const { data } = await supabase.from("ml_anuncios_regras").select("*").range(from, from + step - 1);
+      if (data && data.length > 0) {
+        allMlRegras = [...allMlRegras, ...data];
+        from += step;
+        if (data.length < step) keep = false;
+      } else keep = false;
     }
-    setMapeamentoMap(mapaAnunciosSku);
+
+    const mapaMl1 = new Map();
+    const mapaMl2 = new Map();
+
+    allMlRegras.forEach((m: any) => {
+      const k = skuValido(m.sku) ? normalizarSku(m.sku) : "";
+      if (k) {
+        const info = {
+          comissao: parsePorcentagem(m.comissao),
+          peso_real: Number(m.peso_real || 2.0),
+          altura: Number(m.altura || 10),
+          largura: Number(m.largura || 10),
+          comprimento: Number(m.comprimento || 10)
+        };
+        const canalConta = m.canal || "Mercado Livre 1";
+        if (canalConta === "Mercado Livre 2") {
+          if (!mapaMl2.has(k)) mapaMl2.set(k, []);
+          mapaMl2.get(k).push(info);
+        } else {
+          if (!mapaMl1.has(k)) mapaMl1.set(k, []);
+          mapaMl1.get(k).push(info);
+        }
+      }
+    });
+
+    setMapeamentoMl1(mapaMl1);
+    setMapeamentoMl2(mapaMl2);
 
     const { data: canaisData } = await supabase.from("config_regras_canais").select("*").order("id");
     let listaNomesCanais: string[] = [];
     if (canaisData && canaisData.length > 0) {
       const filtrados = canaisData.map((c: any) => c.canal).filter((c: string) => !c.toLowerCase().includes("mercado livre"));
-      const listaCanaisBase = ["Mercado Livre Clássico", "Mercado Livre Premium", ...filtrados];
+      const listaCanaisBase = ["Mercado Livre 1 Clássico", "Mercado Livre 1 Premium", "Mercado Livre 2 Clássico", "Mercado Livre 2 Premium", ...filtrados];
       listaNomesCanais = Array.from(new Set(listaCanaisBase));
     } else {
-      listaNomesCanais = ["Mercado Livre Clássico", "Mercado Livre Premium", "Amazon", "Shopee", "Magalu", "Netshoes", "Shein", "TikTok Shop", "Centauro", "Site"];
+      listaNomesCanais = ["Mercado Livre 1 Clássico", "Mercado Livre 1 Premium", "Mercado Livre 2 Clássico", "Mercado Livre 2 Premium", "Amazon", "Shopee", "Magalu", "Netshoes", "Shein", "TikTok Shop", "Centauro", "Site"];
     }
 
     setCanaisConfig(listaNomesCanais);
@@ -160,8 +183,8 @@ export default function CalculadoraPage() {
 
   const handleBuscarProduto = () => {
     const key = normalizarSku(skuBusca);
-    if (!key) {
-      alert("Digite um SKU válido.");
+    if (!key || key.length < 10) {
+      alert("Digite um SKU válido com pelo menos 10 dígitos.");
       return;
     }
     const match = custosMap.get(key);
@@ -230,7 +253,9 @@ export default function CalculadoraPage() {
 
     const impostoPercent = 0.09;
     const skuKey = normalizarSku(produtoEncontrado.sku);
-    const anunciosSku = mapeamentoMap.get(skuKey) || [];
+
+    const anunciosMl1 = mapeamentoMl1.get(skuKey) || [];
+    const anunciosMl2 = mapeamentoMl2.get(skuKey) || [];
 
     return canaisConfig
       .filter((canalNome) => canaisSelecionados.includes(canalNome))
@@ -238,6 +263,7 @@ export default function CalculadoraPage() {
         const cLower = canalNome.toLowerCase();
         let comissaoPct = 0.14;
         let temMlbEncontrado = false;
+        let anunciosSku = cLower.includes("mercado livre 2") ? anunciosMl2 : anunciosMl1;
 
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
@@ -359,7 +385,6 @@ export default function CalculadoraPage() {
             temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
           };
         } else {
-          // MODO CUSTO IDEAL
           const pdvAlvo = parseNumero(precoAlvoCustoIdeal);
           const margemDesejadaDec = parseNumero(margemCustoIdeal) / 100;
 
@@ -379,11 +404,9 @@ export default function CalculadoraPage() {
           const valorComissao = pdvAlvo * comissaoPct;
           const valorImposto = pdvAlvo * impostoPercent;
 
-          // Custo Ideal = PDV * (1 - (Comissao + Imposto + MargemDesejada)) - TarifaFixa - Frete
           const termoMultiplicador = 1 - (comissaoPct + impostoPercent + margemDesejadaDec);
           const custoIdealCalculado = (pdvAlvo * termoMultiplicador) - tarifaFixaFinal - freteFinal;
 
-          const custoProdutoReal = Number(produtoEncontrado.custo_unitario || 0);
           const lucroLiquidoIdeal = pdvAlvo - (custoIdealCalculado + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
           const margemFinalIdeal = pdvAlvo > 0 ? (lucroLiquidoIdeal / pdvAlvo) * 100 : 0;
 
@@ -427,12 +450,11 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação avançada com simulação de Custo Ideal de Aquisição</p>
+            <p className="text-sm font-medium text-slate-400">Precificação avançada separada entre Mercado Livre 1 e Mercado Livre 2</p>
           </div>
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO DE ABAS */}
         <div className="flex flex-wrap gap-2 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
           <button
             onClick={() => setModoCalculo("pdv_ideal")}
@@ -460,18 +482,17 @@ export default function CalculadoraPage() {
           </button>
         </div>
 
-        {/* PAINEL DE ENTRADA */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU(s) — Digite o SKU:</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU(s) — Digite o SKU (&gt;= 10 dig):</label>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={skuBusca}
                   onChange={(e) => setSkuBusca(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleBuscarProduto()}
-                  placeholder="Ex: 18181"
+                  placeholder="Ex: 18181042001"
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-purple-500"
                 />
                 <button
