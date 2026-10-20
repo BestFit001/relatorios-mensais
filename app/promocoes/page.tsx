@@ -46,7 +46,6 @@ function normalizarSku(valor: any): string {
   return s.toLowerCase();
 }
 
-// Valida se o SKU é válido (deve ter pelo menos 10 dígitos/caracteres)
 function skuValido(sku: string): boolean {
   const limpo = normalizarSku(sku);
   return limpo.length >= 10;
@@ -209,7 +208,6 @@ export default function PromocoesPage() {
         return;
       }
 
-      // 1ª PASSAGEM: Mapeia o primeiro SKU válido (>= 10 dígitos) de cada MLB na planilha
       const mapSkuPorMlb = new Map<string, string>();
       for (let i = 1; i < rawData.length; i++) {
         const r = rawData[i];
@@ -264,7 +262,6 @@ export default function PromocoesPage() {
           }
         }
 
-        // Herança e Validação: Ignora SKUs com menos de 10 dígitos e busca nas outras fontes
         if ((!skuRaw || skuRaw.length < 10) && mapSkuPorMlb.has(mlbRaw)) {
           skuRaw = mapSkuPorMlb.get(mlbRaw)!;
         }
@@ -272,7 +269,7 @@ export default function PromocoesPage() {
           skuRaw = anuncioInfo.sku;
         }
         if (skuRaw && skuRaw.length < 10) {
-          skuRaw = ""; // Descarta SKU menor que 10 dígitos
+          skuRaw = "";
         }
 
         const skuKey = normalizarSku(skuRaw);
@@ -503,7 +500,7 @@ export default function PromocoesPage() {
     }
     const itensAptos = dadosProcessados.itens.filter((r: any) => r.STATUS === "APTO" && skuValido(r.SKU));
     if (itensAptos.length === 0) {
-      alert("Nenhum item apto com SKU válido (>= 10 dígitos) para salvar.");
+      alert("Nenhum item apto com SKU válido para salvar.");
       return;
     }
 
@@ -584,7 +581,7 @@ export default function PromocoesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Mercado Livre</h1>
-            <p className="text-sm font-medium text-slate-400">Validação com restrição estrita para SKUs válidos (>= 10 dígitos)</p>
+            <p className="text-sm font-medium text-slate-400">Validação com restrição estrita para SKUs válidos (&gt;= 10 dígitos)</p>
           </div>
           <Navbar />
         </div>
@@ -694,7 +691,7 @@ export default function PromocoesPage() {
                       {listaItens.map((item: any, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                           <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
-                          <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (< 10 dig)</span>}</td>
+                          <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
                           <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
                           <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.ORIGINAL_PRICE)}</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.FINAL_PRICE)}</td>
@@ -792,7 +789,7 @@ export default function PromocoesPage() {
                       {listaItens.map((item: any, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                           <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
-                          <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (< 10 dig)</span>}</td>
+                          <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
                           <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
                           <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.FINAL_PRICE)}</td>
                           <td className="p-3 text-right font-mono text-purple-300 font-bold">{formatarMoeda(item.NEW_RECEIVES)}</td>
