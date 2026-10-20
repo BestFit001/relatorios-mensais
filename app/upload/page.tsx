@@ -19,9 +19,17 @@ export default function UploadPage() {
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   
-  const [regrasColsDinamicas, setRegrasColsDinamicas] = useState({
-    custo_sku: 'A', custo_produto: 'B', custo_valor: 'C', custo_marca: 'D',
-    ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'AA', ml_peso: 'AF', ml_altura: 'AC', ml_largura: 'AD', ml_comprimento: 'AE'
+  // Seleção da Conta de Mercado Livre (Mercado Livre 1 ou Mercado Livre 2)
+  const [contaMlSelecionada, setContaMlSelecionada] = useState<"Mercado Livre 1" | "Mercado Livre 2">("Mercado Livre 1");
+
+  // Configurações de colunas independentes salvas por conta/canal no banco
+  const [colunasPorConta, setColunasPorConta] = useState<{ [key: string]: { ml_mlb: string, ml_sku: string, ml_comissao: string, ml_peso: string, ml_altura: string, ml_largura: string, ml_comprimento: string } }>({
+    "Mercado Livre 1": { ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'AA', ml_peso: 'AF', ml_altura: 'AC', ml_largura: 'AD', ml_comprimento: 'AE' },
+    "Mercado Livre 2": { ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'AA', ml_peso: 'AF', ml_altura: 'AC', ml_largura: 'AD', ml_comprimento: 'AE' }
+  });
+
+  const [regrasColsCusto, setRegrasColsCusto] = useState({
+    custo_sku: 'A', custo_produto: 'B', custo_valor: 'C', custo_marca: 'D'
   });
 
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
@@ -34,7 +42,7 @@ export default function UploadPage() {
   const [pesquisaMl, setPesquisaMl] = useState("");
   const [listaRegrasMlFiltradas, setListaRegrasMlFiltradas] = useState<any[]>([]);
   const [editandoMlId, setEditandoMlId] = useState<number | null>(null);
-  const [dadosEdicaoMl, setDadosEdicaoMl] = useState({ mlb: "", sku: "", comissao: 0, peso_real: 0, altura: 0, largura: 0, comprimento: 0 });
+  const [dadosEdicaoMl, setDadosEdicaoMl] = useState({ mlb: "", sku: "", comissao: 0, peso_real: 0, altura: 0, largura: 0, comprimento: 0, canal: "Mercado Livre 1" });
 
   const mesReferencia = mes && ano ? `${mes}/${ano}` : "";
   const meses = [
@@ -68,10 +76,20 @@ export default function UploadPage() {
     if (tinyConfig) {
       const getC = (k: string, d: string) => tinyConfig.find((t: any) => t.campo === k)?.coluna || d;
       setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
-      setRegrasColsDinamicas({
-        custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'), custo_marca: getC('custo_marca', 'D'),
-        ml_mlb: getC('ml_mlb', 'B'), ml_sku: getC('ml_sku', 'E'), ml_comissao: getC('ml_comissao', 'AA'),
-        ml_peso: getC('ml_peso', 'AF'), ml_altura: getC('ml_altura', 'AC'), ml_largura: getC('ml_largura', 'AD'), ml_comprimento: getC('ml_comprimento', 'AE')
+      setRegrasColsCusto({
+        custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'), custo_marca: getC('custo_marca', 'D')
+      });
+
+      // Carrega colunas específicas salvas para ML 1 e ML 2 se houver
+      setColunasPorConta({
+        "Mercado Livre 1": {
+          ml_mlb: getC('ml_1_mlb', 'B'), ml_sku: getC('ml_1_sku', 'E'), ml_comissao: getC('ml_1_comissao', 'AA'),
+          ml_peso: getC('ml_1_peso', 'AF'), ml_altura: getC('ml_1_altura', 'AC'), ml_largura: getC('ml_1_largura', 'AD'), ml_comprimento: getC('ml_1_comprimento', 'AE')
+        },
+        "Mercado Livre 2": {
+          ml_mlb: getC('ml_2_mlb', 'B'), ml_sku: getC('ml_2_sku', 'E'), ml_comissao: getC('ml_2_comissao', 'AA'),
+          ml_peso: getC('ml_2_peso', 'AF'), ml_altura: getC('ml_2_altura', 'AC'), ml_largura: getC('ml_2_largura', 'AD'), ml_comprimento: getC('ml_2_comprimento', 'AE')
+        }
       });
     }
 
@@ -105,13 +123,22 @@ export default function UploadPage() {
     setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
-  const atualizarColunaConfig = async (campo: string, coluna: string) => {
-    const novasRegras = { ...regrasColsDinamicas, [campo]: coluna };
-    setRegrasColsDinamicas(novasRegras);
+  const atualizarColunaConfigML = async (campo: string, coluna: string) => {
+    const novasColunasConta = {
+      ...colunasPorConta,
+      [contaMlSelecionada]: {
+        ...colunasPorConta[contaMlSelecionada],
+        [campo]: coluna
+      }
+    };
+    setColunasPorConta(novasColunasConta);
+
+    const prefixoDb = contaMlSelecionada === "Mercado Livre 1" ? "ml_1_" : "ml_2_";
+    const chaveDb = prefixoDb + campo.replace("ml_", "");
 
     try {
       await supabase.from('config_regras_tiny').upsert(
-        { campo: campo, coluna: coluna },
+        { campo: chaveDb, coluna: coluna },
         { onConflict: 'campo' }
       );
     } catch (err) {
@@ -320,11 +347,11 @@ export default function UploadPage() {
   };
 
   const limparRegrasMl = async () => {
-    if (!confirm("Tem certeza que deseja apagar todas as regras e medidas do Mercado Livre do Supabase?")) return;
-    const { error } = await supabase.from('ml_anuncios_regras').delete().neq('id', 0);
+    if (!confirm(`Tem certeza que deseja apagar todas as regras de "${contaMlSelecionada}" do Supabase?`)) return;
+    const { error } = await supabase.from('ml_anuncios_regras').delete().eq('canal', contaMlSelecionada);
     if (error) alert("Erro: " + error.message);
     else {
-      alert("🗑️ Regras do ML limpas com sucesso!");
+      alert(`🗑️ Regras de ${contaMlSelecionada} limpas com sucesso!`);
       setListaRegrasMlFiltradas([]);
     }
   };
@@ -443,16 +470,15 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // UPLOAD DE CUSTOS COM REMOÇÃO DE DUPLICATAS E TRAVA DE 10 DÍGITOS
   const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
 
-    const idxSku = letraParaIndice(regrasColsDinamicas.custo_sku);
-    const idxProd = letraParaIndice(regrasColsDinamicas.custo_produto);
-    const idxCusto = letraParaIndice(regrasColsDinamicas.custo_valor);
-    const idxMarca = letraParaIndice(regrasColsDinamicas.custo_marca);
+    const idxSku = letraParaIndice(regrasColsCusto.custo_sku);
+    const idxProd = letraParaIndice(regrasColsCusto.custo_produto);
+    const idxCusto = letraParaIndice(regrasColsCusto.custo_valor);
+    const idxMarca = letraParaIndice(regrasColsCusto.custo_marca);
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -472,7 +498,6 @@ export default function UploadPage() {
           const custo = Number(row[idxCusto] || 0);
           const marca = String(row[idxMarca] || "").trim();
 
-          // Exige SKU >= 10 dígitos para evitar códigos curtos de 5 dígitos
           if (sku && sku.length >= 10 && !isNaN(custo)) {
             mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
           }
@@ -497,19 +522,20 @@ export default function UploadPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // UPLOAD DE REGRAS DO ML COM REMOÇÃO DE DUPLICATAS E HERANÇA DE SKU
+  // UPLOAD DE REGRAS DO ML VINCULADO À CONTA SELECIONADA (COM HERANÇA DE SKU E SEM DUPLICATAS)
   const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
 
-    const idxMlb = letraParaIndice(regrasColsDinamicas.ml_mlb);
-    const idxSku = letraParaIndice(regrasColsDinamicas.ml_sku);
-    const idxCom = letraParaIndice(regrasColsDinamicas.ml_comissao);
-    const idxPeso = regrasColsDinamicas.ml_peso ? letraParaIndice(regrasColsDinamicas.ml_peso) : -1;
-    const idxAlt = regrasColsDinamicas.ml_altura ? letraParaIndice(regrasColsDinamicas.ml_altura) : -1;
-    const idxLarg = regrasColsDinamicas.ml_largura ? letraParaIndice(regrasColsDinamicas.ml_largura) : -1;
-    const idxComp = regrasColsDinamicas.ml_comprimento ? letraParaIndice(regrasColsDinamicas.ml_comprimento) : -1;
+    const cols = colunasPorConta[contaMlSelecionada];
+    const idxMlb = letraParaIndice(cols.ml_mlb);
+    const idxSku = letraParaIndice(cols.ml_sku);
+    const idxCom = letraParaIndice(cols.ml_comissao);
+    const idxPeso = cols.ml_peso ? letraParaIndice(cols.ml_peso) : -1;
+    const idxAlt = cols.ml_altura ? letraParaIndice(cols.ml_altura) : -1;
+    const idxLarg = cols.ml_largura ? letraParaIndice(cols.ml_largura) : -1;
+    const idxComp = cols.ml_comprimento ? letraParaIndice(cols.ml_comprimento) : -1;
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -589,7 +615,7 @@ export default function UploadPage() {
           if (largura > 0) score++;
           if (comprimento > 0) score++;
 
-          const objReg = { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento };
+          const objReg = { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada };
 
           if (!mapaMlPendente.has(mlb) || score > mapaMlPendente.get(mlb)!.score) {
             mapaMlPendente.set(mlb, { registro: objReg, score });
@@ -616,7 +642,7 @@ export default function UploadPage() {
           if (error) throw error;
         }
 
-        alert(`🚀 Planilha de Regras do ML processada com sucesso! Total de ${registros.length} anúncios únicos salvos na base (SKUs < 10 dígitos ignorados).`);
+        alert(`🚀 Regras de ${contaMlSelecionada} processadas com sucesso! Total de ${registros.length} anúncios únicos salvos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao processar planilha do ML: " + err.message);
@@ -741,7 +767,8 @@ export default function UploadPage() {
       peso_real: Number(dadosEdicaoMl.peso_real || 0),
       altura: Number(dadosEdicaoMl.altura || 0),
       largura: Number(dadosEdicaoMl.largura || 0),
-      comprimento: Number(dadosEdicaoMl.comprimento || 0)
+      comprimento: Number(dadosEdicaoMl.comprimento || 0),
+      canal: dadosEdicaoMl.canal
     }).eq('id', id);
 
     if (error) alert("Erro ao atualizar regra ML: " + error.message);
@@ -765,7 +792,7 @@ export default function UploadPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Abastecimento</h1>
-            <p className="text-sm font-medium text-slate-400">Gestão de Relatórios, Custos e Uploads</p>
+            <p className="text-sm font-medium text-slate-400">Gestão de Relatórios, Custos e Uploads por Conta</p>
           </div>
 
           <Navbar />
@@ -930,7 +957,7 @@ export default function UploadPage() {
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
-                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (SKU: <strong>{regrasColsDinamicas.custo_sku}</strong>, Produto: <strong>{regrasColsDinamicas.custo_produto}</strong>, Custo: <strong>{regrasColsDinamicas.custo_valor}</strong>, Marca: <strong>{regrasColsDinamicas.custo_marca}</strong>).</p>
+                <p className="text-xs text-slate-400 mt-1">Faça o upload bruto da planilha configurada nas Regras (SKU: <strong>{regrasColsCusto.custo_sku}</strong>, Produto: <strong>{regrasColsCusto.custo_produto}</strong>, Custo: <strong>{regrasColsCusto.custo_valor}</strong>, Marca: <strong>{regrasColsCusto.custo_marca}</strong>).</p>
               </div>
               <button 
                 onClick={limparTabelaCustos}
@@ -1026,27 +1053,49 @@ export default function UploadPage() {
 
         {abaAtiva === "regras_ml" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400 mt-1">Configure abaixo as colunas exatas da sua planilha de anúncios do Mercado Livre. As alterações são salvas automaticamente.</p>
+                <p className="text-xs text-slate-400 mt-1">Selecione a conta/canal de destino e configure as colunas independentes para o upload.</p>
               </div>
               <button 
                 onClick={limparRegrasMl}
                 className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 border border-rose-900/50 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all"
               >
-                🗑️ Limpar Regras ML
+                🗑️ Limpar Regras ({contaMlSelecionada})
               </button>
             </div>
 
-            {/* PAINEL DE CONFIGURAÇÃO DE COLUNAS DO ML */}
+            {/* SELETOR DE CONTA DE MERCADO LIVRE */}
+            <div className="flex bg-slate-950 p-2 rounded-xl border border-slate-800 w-fit gap-2">
+              <button
+                type="button"
+                onClick={() => setContaMlSelecionada("Mercado Livre 1")}
+                className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
+                  contaMlSelecionada === "Mercado Livre 1" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Mercado Livre 1
+              </button>
+              <button
+                type="button"
+                onClick={() => setContaMlSelecionada("Mercado Livre 2")}
+                className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
+                  contaMlSelecionada === "Mercado Livre 2" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Mercado Livre 2
+              </button>
+            </div>
+
+            {/* PAINEL DE CONFIGURAÇÃO DE COLUNAS ESPECÍFICO DA CONTA SELECIONADA */}
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
               <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna MLB:</label>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna MLB ({contaMlSelecionada}):</label>
                 <input 
                   type="text" 
-                  value={regrasColsDinamicas.ml_mlb} 
-                  onChange={(e) => atualizarColunaConfig('ml_mlb', e.target.value.toUpperCase())} 
+                  value={colunasPorConta[contaMlSelecionada].ml_mlb} 
+                  onChange={(e) => atualizarColunaConfigML('ml_mlb', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1054,8 +1103,8 @@ export default function UploadPage() {
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna SKU:</label>
                 <input 
                   type="text" 
-                  value={regrasColsDinamicas.ml_sku} 
-                  onChange={(e) => atualizarColunaConfig('ml_sku', e.target.value.toUpperCase())} 
+                  value={colunasPorConta[contaMlSelecionada].ml_sku} 
+                  onChange={(e) => atualizarColunaConfigML('ml_sku', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1063,8 +1112,8 @@ export default function UploadPage() {
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Comissão:</label>
                 <input 
                   type="text" 
-                  value={regrasColsDinamicas.ml_comissao} 
-                  onChange={(e) => atualizarColunaConfig('ml_comissao', e.target.value.toUpperCase())} 
+                  value={colunasPorConta[contaMlSelecionada].ml_comissao} 
+                  onChange={(e) => atualizarColunaConfigML('ml_comissao', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1072,8 +1121,8 @@ export default function UploadPage() {
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Peso:</label>
                 <input 
                   type="text" 
-                  value={regrasColsDinamicas.ml_peso} 
-                  onChange={(e) => atualizarColunaConfig('ml_peso', e.target.value.toUpperCase())} 
+                  value={colunasPorConta[contaMlSelecionada].ml_peso} 
+                  onChange={(e) => atualizarColunaConfigML('ml_peso', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1081,8 +1130,8 @@ export default function UploadPage() {
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Altura:</label>
                 <input 
                   type="text" 
-                  value={regrasColsDinamicas.ml_altura} 
-                  onChange={(e) => atualizarColunaConfig('ml_altura', e.target.value.toUpperCase())} 
+                  value={colunasPorConta[contaMlSelecionada].ml_altura} 
+                  onChange={(e) => atualizarColunaConfigML('ml_altura', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1090,8 +1139,8 @@ export default function UploadPage() {
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Largura:</label>
                 <input 
                   type="text" 
-                  value={regrasColsDinamicas.ml_largura} 
-                  onChange={(e) => atualizarColunaConfig('ml_largura', e.target.value.toUpperCase())} 
+                  value={colunasPorConta[contaMlSelecionada].ml_largura} 
+                  onChange={(e) => atualizarColunaConfigML('ml_largura', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
@@ -1099,15 +1148,15 @@ export default function UploadPage() {
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Comp.:</label>
                 <input 
                   type="text" 
-                  value={regrasColsDinamicas.ml_comprimento} 
-                  onChange={(e) => atualizarColunaConfig('ml_comprimento', e.target.value.toUpperCase())} 
+                  value={colunasPorConta[contaMlSelecionada].ml_comprimento} 
+                  onChange={(e) => atualizarColunaConfigML('ml_comprimento', e.target.value.toUpperCase())} 
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" 
                 />
               </div>
             </div>
 
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
-              <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro de Regras ML (.xlsx)</label>
+              <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Ficheiro de Regras para {contaMlSelecionada} (.xlsx)</label>
               <input 
                 type="file" 
                 accept=".xlsx, .xls" 
@@ -1131,6 +1180,7 @@ export default function UploadPage() {
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                     <tr>
+                      <th className="p-3">Conta / Canal</th>
                       <th className="p-3">MLB</th>
                       <th className="p-3">SKU</th>
                       <th className="p-3 text-center">Comissão (%)</th>
@@ -1143,12 +1193,20 @@ export default function UploadPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                     {listaRegrasMlFiltradas.length === 0 ? (
-                      <tr><td colSpan={8} className="p-6 text-center text-slate-500">Nenhum anúncio encontrado para esta pesquisa.</td></tr>
+                      <tr><td colSpan={9} className="p-6 text-center text-slate-500">Nenhum anúncio encontrado para esta pesquisa.</td></tr>
                     ) : (
                       listaRegrasMlFiltradas.map((item) => {
                         const isEditing = editandoMlId === item.id;
                         return (
                           <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="p-3 font-semibold text-purple-300">
+                              {isEditing ? (
+                                <select value={dadosEdicaoMl.canal} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, canal: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 text-white text-xs">
+                                  <option value="Mercado Livre 1">Mercado Livre 1</option>
+                                  <option value="Mercado Livre 2">Mercado Livre 2</option>
+                                </select>
+                              ) : (item.canal || "Mercado Livre 1")}
+                            </td>
                             <td className="p-3 font-mono font-bold text-slate-200">
                               {isEditing ? (
                                 <input type="text" value={dadosEdicaoMl.mlb} onChange={(e) => setDadosEdicaoMl({ ...dadosEdicaoMl, mlb: e.target.value })} className="bg-slate-900 border border-slate-700 rounded p-1 w-28 text-white font-mono" />
@@ -1192,7 +1250,7 @@ export default function UploadPage() {
                                 </>
                               ) : (
                                 <>
-                                  <button onClick={() => { setEditandoMlId(item.id); setDadosEdicaoMl({ mlb: item.mlb, sku: item.sku, comissao: item.comissao, peso_real: item.peso_real, altura: item.altura, largura: item.largura, comprimento: item.comprimento }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
+                                  <button onClick={() => { setEditandoMlId(item.id); setDadosEdicaoMl({ mlb: item.mlb, sku: item.sku, comissao: item.comissao, peso_real: item.peso_real, altura: item.altura, largura: item.largura, comprimento: item.comprimento, canal: item.canal || "Mercado Livre 1" }); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Editar</button>
                                   <button onClick={() => excluirRegraMl(item.id)} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">Remover</button>
                                 </>
                               )}
