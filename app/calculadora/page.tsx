@@ -79,7 +79,6 @@ export default function CalculadoraPage() {
   const [produtoEncontrado, setProdutoEncontrado] = useState<any>(null);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   
-  // Mapeamento separado por conta do Mercado Livre
   const [mapeamentoMl1, setMapeamentoMl1] = useState<Map<string, any[]>>(new Map());
   const [mapeamentoMl2, setMapeamentoMl2] = useState<Map<string, any[]>>(new Map());
   
@@ -99,7 +98,6 @@ export default function CalculadoraPage() {
   const carregarBasesEmTempoReal = async () => {
     setLoading(true);
 
-    // Carregamento completo de custos com paginação em lote
     let allCustos: any[] = [];
     let from = 0;
     const step = 1000;
@@ -120,7 +118,6 @@ export default function CalculadoraPage() {
     });
     setCustosMap(mapaCustos);
 
-    // Carregamento completo das regras do ML divididas por conta (Mercado Livre 1 e Mercado Livre 2)
     let allMlRegras: any[] = [];
     from = 0;
     keep = true;
@@ -265,27 +262,36 @@ export default function CalculadoraPage() {
         let temMlbEncontrado = false;
         let anunciosSku = cLower.includes("mercado livre 2") ? anunciosMl2 : anunciosMl1;
 
+        let refAnuncio = null;
+
         if (cLower.includes("mercado livre")) {
           if (cLower.includes("clássico")) {
+            // Procura anúncio clássico específico (comissão <= 14%) para puxar as medidas do clássico
             const matchClassico = anunciosSku.find((a: any) => a.comissao > 0 && a.comissao <= 14);
             if (matchClassico) {
               comissaoPct = matchClassico.comissao / 100;
+              refAnuncio = matchClassico;
               temMlbEncontrado = true;
             } else {
               comissaoPct = 0.14;
+              refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
             }
           } else if (cLower.includes("premium")) {
+            // Procura anúncio premium específico (comissão > 14%) para puxar as medidas do premium
             const matchPremium = anunciosSku.find((a: any) => a.comissao > 14);
             if (matchPremium) {
               comissaoPct = matchPremium.comissao / 100;
+              refAnuncio = matchPremium;
               temMlbEncontrado = true;
             } else {
               comissaoPct = 0.19;
+              refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
             }
           }
+        } else {
+          refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
         }
 
-        const refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
         const pesoReal = refAnuncio && Number(refAnuncio.peso_real) > 0 ? Number(refAnuncio.peso_real) : 2.0;
         const altura = refAnuncio && Number(refAnuncio.altura) > 0 ? Number(refAnuncio.altura) : 10;
         const largura = refAnuncio && Number(refAnuncio.largura) > 0 ? Number(refAnuncio.largura) : 10;
@@ -450,7 +456,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação avançada separada entre Mercado Livre 1 e Mercado Livre 2</p>
+            <p className="text-sm font-medium text-slate-400">Precificação com medidas e comissões específicas por Clássico e Premium</p>
           </div>
           <Navbar />
         </div>
@@ -492,7 +498,7 @@ export default function CalculadoraPage() {
                   value={skuBusca}
                   onChange={(e) => setSkuBusca(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleBuscarProduto()}
-                  placeholder="Ex: 18181042001"
+                  placeholder="Ex: 20345042233"
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-purple-500"
                 />
                 <button
