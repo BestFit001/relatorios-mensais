@@ -20,8 +20,6 @@ export default function ProdutosPage() {
   const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
 
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
-
-  // Seleção em massa na aba de pendentes
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
 
   const [modalAberto, setModalAberto] = useState(false);
@@ -110,7 +108,15 @@ export default function ProdutosPage() {
         const idxCodigo = getCol(/código|codigo/i);
         const idxObs = getCol(/obs|observações/i);
 
+        const skusExistentesSet = new Set([
+          ...dadosPendentes.map((c: any) => String(c.sku).trim().toLowerCase()),
+          ...cadastrosRealizados.map((c: any) => String(c.sku).trim().toLowerCase())
+        ]);
+
         const novosRegistros: any[] = [];
+        let ignoradosAtivoSim = 0;
+        let ignoradosDuplicados = 0;
+
         for (let i = idxHeader + 1; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
@@ -118,8 +124,19 @@ export default function ProdutosPage() {
           const skuVal = idxSku !== -1 ? String(row[idxSku] || "").trim() : String(row[0] || "").trim();
           if (!skuVal || skuVal.length < 5 || /sku/i.test(skuVal)) continue;
 
+          // Ignorar se Ativo for "Sim"
           const ativoVal = idxAtivo !== -1 ? String(row[idxAtivo] || "").trim().toLowerCase() : "";
-          if (ativoVal === "sim" || ativoVal === "true" || ativoVal === "1") continue;
+          if (ativoVal === "sim" || ativoVal === "true" || ativoVal === "1") {
+            ignoradosAtivoSim++;
+            continue;
+          }
+
+          const skuLower = skuVal.toLowerCase();
+          if (skusExistentesSet.has(skuLower)) {
+            ignoradosDuplicados++;
+            continue;
+          }
+          skusExistentesSet.add(skuLower);
 
           const skuPai = skuVal.length > 5 ? skuVal.substring(0, 5) : skuVal;
 
@@ -151,7 +168,7 @@ export default function ProdutosPage() {
           await supabase.from("produtos_pendentes").upsert(novosRegistros, { onConflict: "sku" });
           await carregarPendentesDoBanco();
         }
-        alert(`Planilha importada com sucesso! ${novosRegistros.length} itens adicionados.`);
+        alert(`Planilha importada com sucesso!\n- Adicionados: ${novosRegistros.length}\n- Ignorados (Ativo=Sim): ${ignoradosAtivoSim}\n- Ignorados (Duplicados): ${ignoradosDuplicados}`);
       } catch (err: any) {
         alert("Erro ao ler planilha: " + err.message);
       }
@@ -195,7 +212,6 @@ export default function ProdutosPage() {
     setSkusSelecionados([]);
   };
 
-  // Cadastro unitário
   const enviarParaRealizados = async (item: any) => {
     setLoading(true);
     try {
@@ -226,7 +242,6 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  // Cadastro em massa dos selecionados
   const cadastrarSelecionados = async () => {
     if (skusSelecionados.length === 0) return;
     if (!confirm(`Deseja cadastrar os ${skusSelecionados.length} produtos selecionados de uma vez?`)) return;
@@ -335,7 +350,11 @@ export default function ProdutosPage() {
         String(item.sku || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
         String(item.produto || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
         String(item.sku_pai || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.marca || "").toLowerCase().includes(pesquisaGlobal.toLowerCase());
+        String(item.marca || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
+        String(item.cor || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
+        String(item.tamanho || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
+        String(item.ncm || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
+        String(item.ean || "").toLowerCase().includes(pesquisaGlobal.toLowerCase());
       
       if (!matchPesquisa) return false;
 
@@ -364,7 +383,6 @@ export default function ProdutosPage() {
     setGruposExpandidos(prev => ({ ...prev, [pai]: !prev[pai] }));
   };
 
-  // Cálculos para a aba Período & Gráficos
   const totalSkusRealizados = cadastrosRealizados.length;
   let totalVideosEnviados = 0;
   cadastrosRealizados.forEach(item => {
@@ -380,7 +398,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com seleção em massa e métricas detalhadas de clipes</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com todas as informações originais da planilha</p>
           </div>
           <Navbar />
         </div>
@@ -418,7 +436,7 @@ export default function ProdutosPage() {
               type="text"
               value={pesquisaGlobal}
               onChange={(e) => setPesquisaGlobal(e.target.value)}
-              placeholder="🔍 Pesquisar SKU, Pai ou Nome..."
+              placeholder="🔍 Pesquisar SKU, Pai, Nome, Cor, Tam, NCM..."
               className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white outline-none w-80"
             />
           </div>
@@ -429,7 +447,7 @@ export default function ProdutosPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-1">Selecione os itens desejados para cadastrar em massa ou faça o upload da planilha.</p>
+                <p className="text-xs text-slate-400 mt-1">Todos os campos originais da planilha preservados.</p>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
                 {skusSelecionados.length > 0 && (
@@ -470,10 +488,21 @@ export default function ProdutosPage() {
                       <th className="p-3">Nome do Produto</th>
                       <th className="p-3">Cor</th>
                       <th className="p-3">Tam</th>
+                      <th className="p-3">Origem</th>
+                      <th className="p-3">NCM</th>
+                      <th className="p-3">CEST</th>
+                      <th className="p-3">EAN</th>
                       <th className="p-3">Marca</th>
+                      <th className="p-3">Dimensões / Peso</th>
+                      <th className="p-3">Tab. Medida</th>
+                      <th className="p-3 text-center">Qtd Ecom</th>
+                      <th className="p-3 text-center">Qtd FBA</th>
+                      <th className="p-3">Data Envio</th>
+                      <th className="p-3">Código</th>
+                      <th className="p-3">Observações</th>
                       <th className="p-3 text-right">Custo</th>
                       <th className="p-3 text-right">Preço Venda</th>
-                      <th className="p-3 text-center">Ações</th>
+                      <th className="p-3 text-center sticky right-0 bg-slate-950 shadow-l">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
@@ -494,10 +523,21 @@ export default function ProdutosPage() {
                         <td className="p-3 text-white">{item.produto}</td>
                         <td className="p-3 text-slate-300">{item.cor || "—"}</td>
                         <td className="p-3 text-slate-300">{item.tamanho || "—"}</td>
+                        <td className="p-3 text-slate-300">{item.origem || "—"}</td>
+                        <td className="p-3 text-slate-300 font-mono">{item.ncm || "—"}</td>
+                        <td className="p-3 text-slate-300 font-mono">{item.cest || "—"}</td>
+                        <td className="p-3 text-slate-300 font-mono">{item.ean || "—"}</td>
                         <td className="p-3 text-slate-300">{item.marca || "—"}</td>
+                        <td className="p-3 text-slate-300">{item.dimensoes_peso || "—"}</td>
+                        <td className="p-3 text-slate-300">{item.tabela_medida || "—"}</td>
+                        <td className="p-3 text-center text-slate-300">{item.qtdd_ecom}</td>
+                        <td className="p-3 text-center text-slate-300">{item.qtdd_fba}</td>
+                        <td className="p-3 text-slate-300">{item.data_envio_compras || "—"}</td>
+                        <td className="p-3 text-slate-300">{item.codigo || "—"}</td>
+                        <td className="p-3 text-slate-400 italic">{item.observacoes || "—"}</td>
                         <td className="p-3 text-right font-mono text-rose-400">R$ {Number(item.custo).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda).toFixed(2)}</td>
-                        <td className="p-3 text-center flex items-center justify-center gap-2">
+                        <td className="p-3 text-center sticky right-0 bg-slate-950 shadow-l flex items-center justify-center gap-2">
                           <button onClick={() => enviarParaRealizados(item)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold cursor-pointer">Cadastrar</button>
                           <button onClick={() => excluirPendenteIndividual(item.sku)} className="bg-rose-950 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded text-xs font-bold cursor-pointer">Excluir</button>
                         </td>
@@ -505,7 +545,7 @@ export default function ProdutosPage() {
                     ))}
                     {pendentesFiltrados.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
+                        <td colSpan={20} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -609,7 +649,7 @@ export default function ProdutosPage() {
                           {expandido && itensDoGrupo.map((item, vIdx) => (
                             <tr key={vIdx} className="bg-slate-900/20 text-slate-400">
                               <td className="p-2 pl-6" colSpan={1 + canaisLista.length}>
-                                <span className="font-mono text-indigo-300 font-bold">↳ {item.sku}</span> — {item.produto}
+                                <span className="font-mono text-indigo-300 font-bold">↳ {item.sku}</span> — {item.produto} (Cor: {item.cor || "—"}, Tam: {item.tamanho || "—"})
                               </td>
                             </tr>
                           ))}
