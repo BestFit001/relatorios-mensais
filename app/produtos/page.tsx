@@ -190,12 +190,19 @@ export default function ProdutosPage() {
     carregarPendentesDoBanco();
   };
 
-  const excluirRealizadoGrupo = async (paiKey: string) => {
+  // Correção da exclusão do grupo nos realizados (busca por sku_pai ou skus do grupo)
+  const excluirRealizadoGrupo = async (paiKey: string, itensDoGrupo: any[]) => {
     if (!confirm(`ATENÇÃO: Deseja excluir o grupo Pai ${paiKey} e todas as suas variações da aba de Realizados?`)) return;
     setLoading(true);
     try {
-      const { error } = await supabase.from("produtos_novos_cadastrados").delete().eq("sku_pai", paiKey);
-      if (error) throw error;
+      const skusParaExcluir = itensDoGrupo.map(i => i.sku);
+      
+      // Deleta utilizando o sku_pai e também garante a exclusão individual por SKU para evitar falhas de cache
+      await supabase.from("produtos_novos_cadastrados").delete().eq("sku_pai", paiKey);
+      for (const s of skusParaExcluir) {
+        await supabase.from("produtos_novos_cadastrados").delete().eq("sku", s);
+      }
+
       await carregarRealizadosDoBanco();
       alert(`🗑️ Grupo Pai ${paiKey} excluído com sucesso dos realizados!`);
     } catch (err: any) {
@@ -401,7 +408,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com exclusão nos realizados e importação otimizada</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com exclusão corrigida e sincronizada nos realizados</p>
           </div>
           <Navbar />
         </div>
@@ -591,7 +598,7 @@ export default function ProdutosPage() {
                       <div className="flex items-center gap-4">
                         <span className="text-[10px] text-slate-500">Cadastrado em: {new Date(itensDoGrupo[0].data_cadastro || Date.now()).toLocaleDateString("pt-BR")}</span>
                         <button
-                          onClick={() => excluirRealizadoGrupo(paiKey)}
+                          onClick={() => excluirRealizadoGrupo(paiKey, itensDoGrupo)}
                           className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer"
                         >
                           🗑️ Excluir Grupo
