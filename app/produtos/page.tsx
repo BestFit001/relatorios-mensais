@@ -138,7 +138,7 @@ export default function ProdutosPage() {
       const { data, error } = await supabase
         .from("historico_descricoes_ia")
         .select("*")
-        .ilike("sku", `%${skuBuscaConfig.trim()}%`)
+        .ilike("sku", `%${skuBuscaConfig.trim()%}`)
         .order("id", { ascending: false })
         .limit(1)
         .single();
@@ -657,15 +657,18 @@ export default function ProdutosPage() {
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
-            <input
-              type="text"
-              value={pesquisaGlobal}
-              onChange={(e) => setPesquisaGlobal(e.target.value)}
-              placeholder="🔍 Pesquisar SKU, Pai, Nome..."
-              className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white outline-none w-80"
-            />
-          </div>
+          {/* A barra de pesquisa só aparece se NÃO estiver na aba de descrições IA */}
+          {subAba !== "descricoes" && (
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                value={pesquisaGlobal}
+                onChange={(e) => setPesquisaGlobal(e.target.value)}
+                placeholder="🔍 Pesquisar SKU, Pai, Nome..."
+                className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white outline-none w-80"
+              />
+            </div>
+          )}
         </div>
 
         {subAba === "pendentes" && (
