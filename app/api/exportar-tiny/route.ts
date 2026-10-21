@@ -70,7 +70,28 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      const descricaoPai = `O ${nomePaiFormatado} é a escolha perfeita para quem busca unir sofisticação, praticidade e a identidade inconfundível da ${marcaPai}. Desenvolvido com materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.\n\nEspecificações:\n- Marca: ${marcaPai}.\n- Modelo: ${nomePaiFormatado}.\n- Categoria: Moda e Vestuário / Acessórios.\n\nBenefícios:\n- Conforto Superior: Toque macio e caimento projetado para o uso diário.\n- Alta Durabilidade: Costuras reforçadas e acabamento premium.\n- Estética Sofisticada: Design autêntico que valoriza o visual em qualquer ocasião.\n\nComposição:\n- Materiais nobres de alta performance e resistência.\n\nCuidados e Conservação:\n- Armazenar em local seco, fresco e arejado.\n- Evitar exposição prolongada direta à luz solar.\n- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.`;
+      // Descrição estruturada com quebras de linha (\n) exatamente como no modelo
+      const descricaoPai = [
+        `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele conta com estrutura reforçada e design focado no desempenho, unindo funcionalidade e autenticidade.`,
+        ``,
+        `Especificações:`,
+        `- Marca: ${marcaPai}.`,
+        `- Modelo: ${nomePaiFormatado}.`,
+        `- Categoria: Vestuário e Acessórios / Performance.`,
+        ``,
+        `Benefícios:`,
+        `- Conforto e Praticidade: Projetado para otimizar o dia a dia com máxima eficiência.`,
+        `- Alta Durabilidade: Materiais nobres e costuras reforçadas.`,
+        `- Estética Sofisticada: Design autêntico que destaca o estilo em qualquer ocasião.`,
+        ``,
+        `Composição:`,
+        `- Matéria-prima de alta performance e acabamento premium.`,
+        ``,
+        `Cuidados e Conservação:`,
+        `- Armazenar em local seco, fresco e arejado.`,
+        `- Evitar exposição prolongada direta à luz solar.`,
+        `- Seguir as orientações de conservação e limpeza do fabricante.`
+      ].join("\n");
 
       // 1. Linha do Pai (Tipo do produto = V)
       linhasExportacao.push({
@@ -125,7 +146,7 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": `Compre ${nomePaiFormatado} na Best Fit. Qualidade superior, conforto e estilo. Garanta já o seu!`,
+        "Descrição SEO": descricaoPai,
         "Palavras chave SEO": palavrasChavePai,
         "Slug": slugPai,
         "Dias para preparação": "0",
@@ -157,11 +178,32 @@ export async function POST(req: Request) {
 
         const corFormatada = p.cor ? toTitleCase(String(p.cor).trim()) : "Padrão";
         const tamFormatado = p.tamanho ? String(p.tamanho).trim() : "Único";
-        const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
+        const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
-        const descricaoPadraoFilho = `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto em qualquer ocasião.\n\nEspecificações:\n- Marca: ${marcaFilho}.\n- Modelo / Variação: ${nomeFilhoFormatado}.\n- Cor: ${corFormatada}.\n- Tamanho: ${tamFormatado}.\n\nBenefícios:\n- Conforto Absoluto: Modelagem anatómica que se ajusta perfeitamente ao corpo.\n- Versatilidade: Perfeito para compor looks modernos com muita elegância.\n- Qualidade Garantida: Tecido resistente que não desbota facilmente.\n\nComposição:\n- Fios de alta tecnologia e acabamento premium.\n\nCuidados e Conservação:\n- Lavar à mão ou em ciclo delicado.\n- Secar à sombra para preservar a cor e a elasticidade.\n- Não utilizar alvejantes à base de cloro.`;
+        const descricaoFilhoArr = [
+          `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
+          ``,
+          `Especificações:`,
+          `- Marca: ${marcaFilho}.`,
+          `- Modelo: ${nomeFilhoFormatado}.`,
+          `- Cor: ${corFormatada}.`,
+          `- Tamanho: ${tamFormatado}.`,
+          ``,
+          `Benefícios:`,
+          `- Conforto Absoluto: Modelagem anatómica que se ajusta perfeitamente ao corpo.`,
+          `- Versatilidade: Perfeito para compor looks modernos com muita elegância.`,
+          `- Qualidade Garantida: Tecido resistente e de alto desempenho.`,
+          ``,
+          `Composição:`,
+          `- Fios de alta tecnologia e acabamento premium.`,
+          ``,
+          `Cuidados e Conservação:`,
+          `- Lavar à mão ou em ciclo delicado.`,
+          `- Secar à sombra para preservar a cor e a elasticidade.`,
+          `- Não utilizar alvejantes à base de cloro.`
+        ];
 
-        const descricaoFinal = hist?.resposta_ia || descricaoPadraoFilho;
+        const descricaoFinal = hist?.resposta_ia || descricaoFilhoArr.join("\n");
 
         linhasExportacao.push({
           "ID": "",
@@ -215,7 +257,7 @@ export async function POST(req: Request) {
           "URL imagem externa 6": "",
           "Link do vídeo": "",
           "Título SEO": nomeFilhoFormatado,
-          "Descrição SEO": `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na Best Fit. Conforto e qualidade garantidos.`,
+          "Descrição SEO": descricaoFinal,
           "Palavras chave SEO": palavrasChaveFilho,
           "Slug": slugFilho,
           "Dias para preparação": "0",
