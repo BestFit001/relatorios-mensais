@@ -7,19 +7,22 @@ import * as XLSX from "xlsx";
 
 export default function ProdutosPage() {
   const router = useRouter();
-  const [subAba, setSubAba] = useState<"pendentes" | "realizados" | "periodo">("pendentes");
+  const [subAba, setSubAba] = useState<"pendentes" | "realizados" | "periodo" | "config">("pendentes");
   const [loading, setLoading] = useState(false);
 
   const [dadosPendentes, setDadosPendentes] = useState<any[]>([]);
   const [cadastrosRealizados, setCadastrosRealizados] = useState<any[]>([]);
   const [canaisLista, setCanaisLista] = useState<string[]>([]);
   
+  // Canais que possuem clipes ativados nas configurações
+  const [canaisComClipesConfig, setCanaisComClipesConfig] = useState<{ [canal: string]: boolean }>({});
+
   const [pesquisaGlobal, setPesquisaGlobal] = useState("");
   const [itensPorPagina, setItemsPorPagina] = useState(10);
-  const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais">("todos");
+  const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais" | "clipes_pendentes">("todos");
   const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
 
-  // Filtros de Período para Comparação
+  // Filtros de Período
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
@@ -44,11 +47,18 @@ export default function ProdutosPage() {
   const carregarDadosIniciais = async () => {
     setLoading(true);
     const { data: regrasCanais } = await supabase.from("config_regras_canais").select("canal").order("id");
+    let listaCanais = ["Site", "Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", "Shopee", "Magazine Luiza", "Netshoes", "Centauro", "Amazon", "Shein", "TikTok"];
     if (regrasCanais && regrasCanais.length > 0) {
-      setCanaisLista(regrasCanais.map((r: any) => r.canal));
-    } else {
-      setCanaisLista(["Mercado Livre 1", "Mercado Livre 2", "Shopee", "Amazon", "Magalu", "TikTok Shop"]);
+      listaCanais = regrasCanais.map((r: any) => r.canal);
     }
+    setCanaisLista(listaCanais);
+
+    // Inicializa canais com clipes ativados por padrão (ex: Shopee, TikTok, etc.)
+    const configIniciada: { [c: string]: boolean } = {};
+    listaCanais.forEach(c => {
+      configIniciada[c] = ["Shopee", "TikTok", "Mercado Livre 1", "Shein"].includes(c);
+    });
+    setCanaisComClipesConfig(configIniciada);
 
     await carregarPendentesDoBanco();
     await carregarRealizadosDoBanco();
@@ -370,12 +380,19 @@ export default function ProdutosPage() {
 
       if (subAba === "realizados") {
         const canais = item.canais_enviados || {};
+        const clipes = item.clipes_enviados || {};
         const totalCanais = canaisLista.length;
         const marcados = canaisLista.filter(c => canais[c]).length;
         const isCompleto = totalCanais > 0 && marcados === totalCanais;
 
         if (filtroStatusRealizados === "completos" && !isCompleto) return false;
         if (filtroStatusRealizados === "parciais" && (isCompleto || marcados === 0)) return false;
+        
+        // Filtro de Clipes Pendentes: item cadastrado no canal mas sem clipe upado
+        if (filtroStatusRealizados === "clipes_pendentes") {
+          const temClipePendente = canaisLista.some(c => canais[c] && !clipes[c]);
+          if (!temClipePendente) return false;
+        }
 
         if (filtroCanalEspecifico !== "todos" && !canais[filtroCanalEspecifico]) return false;
       }
@@ -393,7 +410,6 @@ export default function ProdutosPage() {
     setGruposExpandidos(prev => ({ ...prev, [pai]: !prev[pai] }));
   };
 
-  // Filtragem de realizados por período para os gráficos e comparativos
   const realizadosFiltradosPorPeriodo = cadastrosRealizados.filter(item => {
     if (!dataInicio && !dataFim) return true;
     const dataItem = new Date(item.data_cadastro || Date.now());
@@ -403,16 +419,12 @@ export default function ProdutosPage() {
   });
 
   const totalSkusRealizados = realizadosFiltradosPorPeriodo.length;
-  
-  // Contagem de vídeos: 
-  // - Produtos com vídeo (quantos SKUs/itens possuem pelo menos 1 clipe upado)
-  // - Total de vídeos postados (soma de todas as marcações de clipes em todos os canais)
   let produtosComVideo = 0;
   let totalVideosPostados = 0;
 
   realizadosFiltradosPorPeriodo.forEach(item => {
     const clipes = item.clipes_enviados || {};
-    const canaisComClipes = canaisLista.filter(c => clipes[c]);
+    const canaisComClipes = canaisLista.filter(c => clipes[c] && canaisComClipesConfig[c]);
     if (canaisComClipes.length > 0) {
       produtosComVideo += 1;
       totalVideosPostados += canaisComClipes.length;
@@ -428,13 +440,13 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com gráficos visuais e comparador de períodos</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com configuração de canais com clipes e filtro de pendências</p>
           </div>
           <Navbar />
         </div>
 
         <div className="flex flex-wrap justify-between items-center gap-4 bg-slate-900 p-3 rounded-2xl border border-slate-800">
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 flex-wrap gap-1">
             <button
               onClick={() => setSubAba("pendentes")}
               className={`px-5 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
@@ -458,6 +470,14 @@ export default function ProdutosPage() {
               }`}
             >
               Período & Gráficos
+            </button>
+            <button
+              onClick={() => setSubAba("config")}
+              className={`px-5 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
+                subAba === "config" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              ⚙️ Configurações
             </button>
           </div>
 
@@ -582,6 +602,7 @@ export default function ProdutosPage() {
                   <option value="todos">Todos os Status</option>
                   <option value="completos">100% Concluídos</option>
                   <option value="parciais">Parcialmente Concluídos</option>
+                  <option value="clipes_pendentes">⚠️ Clipes Pendentes</option>
                 </select>
                 <select value={filtroCanalEspecifico} onChange={(e) => setFiltroCanalEspecifico(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer">
                   <option value="todos">Todos os Canais</option>
@@ -643,6 +664,7 @@ export default function ProdutosPage() {
                             {canaisLista.map((canal, cIdx) => {
                               const todosMarcados = itensDoGrupo.every(i => (i.canais_enviados || {})[canal]);
                               const clipesMarcados = itensDoGrupo.every(i => (i.clipes_enviados || {})[canal]);
+                              const temClipeAtivo = canaisComClipesConfig[canal];
 
                               return (
                                 <td key={cIdx} className="p-2 text-center">
@@ -656,15 +678,19 @@ export default function ProdutosPage() {
                                         className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
                                       />
                                     </div>
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-[9px] text-purple-400 w-10 text-right">Clipe:</span>
-                                      <input
-                                        type="checkbox"
-                                        checked={clipesMarcados}
-                                        onChange={(e) => toggleClipePai(paiKey, canal, e.target.checked)}
-                                        className="w-3.5 h-3.5 accent-indigo-600 rounded cursor-pointer"
-                                      />
-                                    </div>
+                                    {temClipeAtivo ? (
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[9px] text-purple-400 w-10 text-right">Clipe:</span>
+                                        <input
+                                          type="checkbox"
+                                          checked={clipesMarcados}
+                                          onChange={(e) => toggleClipePai(paiKey, canal, e.target.checked)}
+                                          className="w-3.5 h-3.5 accent-indigo-600 rounded cursor-pointer"
+                                        />
+                                      </div>
+                                    ) : (
+                                      <span className="text-[8px] text-slate-600 italic">sem clipe</span>
+                                    )}
                                   </div>
                                 </td>
                               );
@@ -685,6 +711,29 @@ export default function ProdutosPage() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {subAba === "config" && (
+          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-6">
+            <div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Configuração de Canais com Clipes</h3>
+              <p className="text-xs text-slate-400 mt-1">Marque abaixo quais canais devem exibir a opção de controle de clipes (vídeos) na aba de realizados.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {canaisLista.map((canal, cIdx) => (
+                <label key={cIdx} className="flex items-center gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800 cursor-pointer hover:border-purple-600 transition-all">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(canaisComClipesConfig[canal])}
+                    onChange={(e) => setCanaisComClipesConfig({...canaisComClipesConfig, [canal]: e.target.checked})}
+                    className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                  />
+                  <span className="text-xs font-bold text-white">{canal}</span>
+                </label>
+              ))}
             </div>
           </div>
         )}
@@ -725,7 +774,7 @@ export default function ProdutosPage() {
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Total Vídeos Postados</span>
                 <p className="text-3xl font-black text-indigo-400 mt-2">{totalVideosPostados}</p>
-                <span className="text-[10px] text-slate-500 mt-1 block">Soma de posts em todos canais</span>
+                <span className="text-[10px] text-slate-500 mt-1 block">Soma de posts em canais com clipe</span>
               </div>
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Produtos Pendentes</span>
