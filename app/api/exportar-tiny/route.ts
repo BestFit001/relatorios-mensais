@@ -23,11 +23,11 @@ function toTitleCase(str: string) {
     .join(" ");
 }
 
-// Remove totalmente quebras de linha, tabulações, blocos ert{}, tags \vert e códigos de escape
+// Limpeza estricta para remover resíduos da base de dados sem afetar a estrutura dos textos normais
 function limparTextoEstrito(str: string) {
   if (!str) return "";
   return String(str)
-    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
+    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v\x000b_]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -82,7 +82,28 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      const descricaoPai = `Confira ${nomePaiFormatado}, desenvolvido para garantir máximo conforto, estilo e alta durabilidade no seu dia a dia. Produto original ${marcaPai} com excelente acabamento.`;
+      // Descrição estruturada padrão Pai com quebras de linha reais (\n)
+      const descricaoPai = [
+        `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
+        ``,
+        `Especificações:`,
+        `- Marca: ${marcaPai}.`,
+        `- Modelo: ${nomePaiFormatado}.`,
+        `- Categoria: Moda e Vestuário / Acessórios.`,
+        ``,
+        `Benefícios:`,
+        `- Conforto Superior: Toque macio e caimento projetado para o uso diário.`,
+        `- Alta Durabilidade: Costuras reforçadas e acabamento premium.`,
+        `- Estética Sofisticada: Design autêntico que valoriza o visual em qualquer ocasião.`,
+        ``,
+        `Composição:`,
+        `- Materiais nobres de alta performance e resistência.`,
+        ``,
+        `Cuidados e Conservação:`,
+        `- Armazenar em local seco, fresco e arejado.`,
+        `- Evitar exposição prolongada direta à luz solar.`,
+        `- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.`
+      ].join("\n");
 
       // 1. Linha do Pai (Tipo do produto = V)
       linhasExportacao.push({
@@ -137,7 +158,7 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
+        "Descrição SEO": descricaoPai,
         "Palavras chave SEO": palavrasChavePai,
         "Slug": slugPai,
         "Dias para preparação": "0",
@@ -168,15 +189,36 @@ export async function POST(req: Request) {
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
-        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
-        
-        // Variação formatada corretamente e limpa
-        const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
+        // Variação estritamente limpa e em linha única (Cor:X||Tamanho:Y||)
+        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "Padrão";
+        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "Único";
+        const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
-        const descricaoPadrao = `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto em qualquer ocasião.\n\n• Cor: ${corFormatada}\n• Tamanho: ${tamFormatado}\n• Marca: ${marcaFilho}`;
-        
-        const descricaoFinal = hist?.resposta_ia || descricaoPadrao;
+        // Descrição estruturada padrão Filho com quebras de linha reais (\n)
+        const descricaoFilhoArr = [
+          `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
+          ``,
+          `Especificações:`,
+          `- Marca: ${marcaFilho}.`,
+          `- Modelo / Variação: ${nomeFilhoFormatado}.`,
+          `- Cor: ${corFormatada}.`,
+          `- Tamanho: ${tamFormatado}.`,
+          ``,
+          `Benefícios:`,
+          `- Conforto Absoluto: Modelagem anatómica que se ajusta perfeitamente ao corpo.`,
+          `- Versatilidade: Perfeito para compor looks modernos com muita elegância.`,
+          `- Qualidade Garantida: Tecido resistente e de alto desempenho.`,
+          ``,
+          `Composição:`,
+          `- Fios de alta tecnologia e acabamento premium.`,
+          ``,
+          `Cuidados e Conservação:`,
+          `- Lavar à mão ou em ciclo delicado.`,
+          `- Secar à sombra para preservar a cor e a elasticidade.`,
+          `- Não utilizar alvejantes à base de cloro.`
+        ];
+
+        const descricaoFinal = hist?.resposta_ia || descricaoFilhoArr.join("\n");
 
         linhasExportacao.push({
           "ID": "",
@@ -230,7 +272,7 @@ export async function POST(req: Request) {
           "URL imagem externa 6": "",
           "Link do vídeo": "",
           "Título SEO": nomeFilhoFormatado,
-          "Descrição SEO": `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na ${marcaFilho}. Conforto e qualidade garantidos.`,
+          "Descrição SEO": descricaoFinal,
           "Palavras chave SEO": palavrasChaveFilho,
           "Slug": slugFilho,
           "Dias para preparação": "0",
