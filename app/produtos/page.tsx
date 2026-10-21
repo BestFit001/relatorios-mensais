@@ -51,15 +51,36 @@ export default function ProdutosPage() {
     }
     setCanaisLista(listaCanais);
 
+    // Carrega configuração salva no localStorage ou define padrão
+    const configSalva = localStorage.getItem("bestfit_canais_clipes_config");
+    if (configSalva) {
+      try {
+        setCanaisComClipesConfig(JSON.parse(configSalva));
+      } catch {
+        inicializarConfigPadrao(listaCanais);
+      }
+    } else {
+      inicializarConfigPadrao(listaCanais);
+    }
+
+    await carregarPendentesDoBanco();
+    await carregarRealizadosDoBanco();
+    setLoading(false);
+  };
+
+  const inicializarConfigPadrao = (listaCanais: string[]) => {
     const configIniciada: { [c: string]: boolean } = {};
     listaCanais.forEach(c => {
       configIniciada[c] = ["Shopee", "TikTok", "Mercado Livre 1", "Shein"].includes(c);
     });
     setCanaisComClipesConfig(configIniciada);
+    localStorage.setItem("bestfit_canais_clipes_config", JSON.stringify(configIniciada));
+  };
 
-    await carregarPendentesDoBanco();
-    await carregarRealizadosDoBanco();
-    setLoading(false);
+  const atualizarConfigCanal = (canal: string, checked: boolean) => {
+    const novaConfig = { ...canaisComClipesConfig, [canal]: checked };
+    setCanaisComClipesConfig(novaConfig);
+    localStorage.setItem("bestfit_canais_clipes_config", JSON.stringify(novaConfig));
   };
 
   const carregarPendentesDoBanco = async () => {
@@ -434,7 +455,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com exclusão corrigida e sincronizada nos realizados</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com configuração persistente de canais com clipes</p>
           </div>
           <Navbar />
         </div>
@@ -711,7 +732,7 @@ export default function ProdutosPage() {
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-6">
             <div>
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">Configuração de Canais com Clipes</h3>
-              <p className="text-xs text-slate-400 mt-1">Marque abaixo quais canais devem exibir a opção de controle de clipes (vídeos) na aba de realizados.</p>
+              <p className="text-xs text-slate-400 mt-1">Marque abaixo quais canais devem exibir a opção de controle de clipes (vídeos) na aba de realizados. Suas escolhas são salvas automaticamente.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -720,7 +741,7 @@ export default function ProdutosPage() {
                   <input
                     type="checkbox"
                     checked={Boolean(canaisComClipesConfig[canal])}
-                    onChange={(e) => setCanaisComClipesConfig({...canaisComClipesConfig, [canal]: e.target.checked})}
+                    onChange={(e) => atualizarConfigCanal(canal, e.target.checked)}
                     className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
                   />
                   <span className="text-xs font-bold text-white">{canal}</span>
