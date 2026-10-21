@@ -27,7 +27,7 @@ export default function ProdutosPage() {
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
 
-  // Estados para a IA de Descrições (Com SKU Alvo e Referência restaurados)
+  // Estados para a IA de Descrições
   const [chatMensagens, setChatMensagens] = useState<any[]>([]);
   const [inputPrompt, setInputPrompt] = useState("");
   const [skuAlvo, setSkuAlvo] = useState("");
@@ -175,9 +175,10 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
+  // Função para baixar a planilha para o Tiny com todos os dados dos produtos selecionados
   const baixarPlanilhaTinySelecionados = async () => {
     if (skusSelecionados.length === 0) {
-      alert("Selecione ao menos um produto na tabela de pendentes para baixar a planilha do Tiny.");
+      alert("Selecione ao menos um produto na tabela para baixar a planilha do Tiny.");
       return;
     }
 
@@ -194,7 +195,7 @@ export default function ProdutosPage() {
         const worksheet = XLSX.utils.json_to_sheet(data.dados);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Produtos Tiny");
-        XLSX.writeFile(workbook, `produtos_importacao_tiny_${Date.now()}.xlsx`);
+        XLSX.writeFile(workbook, `produtos_tiny_${Date.now()}.xlsx`);
       } else {
         alert("Erro ao exportar: " + (data.error || "Desconhecido"));
       }
@@ -202,33 +203,6 @@ export default function ProdutosPage() {
       alert("Erro na requisição: " + err.message);
     }
     setLoading(false);
-  };
-
-  const baixarPlanilhaTinyAlvo = async () => {
-    if (!skuAlvo) {
-      alert("Por favor, informe o SKU Alvo para exportar a planilha do Tiny.");
-      return;
-    }
-
-    try {
-      const res = await fetch("/api/exportar-tiny", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skus: [skuAlvo] })
-      });
-      const data = await res.json();
-
-      if (res.ok && data.dados) {
-        const worksheet = XLSX.utils.json_to_sheet(data.dados);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Produtos Tiny");
-        XLSX.writeFile(workbook, `produto_tiny_${skuAlvo}.xlsx`);
-      } else {
-        alert("Erro ao exportar: " + (data.error || "Desconhecido"));
-      }
-    } catch (err: any) {
-      alert("Erro na requisição: " + err.message);
-    }
   };
 
   const handleUploadPendentes = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -704,7 +678,7 @@ export default function ProdutosPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-1">Dados essenciais preservados com seleção em massa.</p>
+                <p className="text-xs text-slate-400 mt-1">Selecione os produtos abaixo e baixe a planilha pronta para o Tiny ou cadastre em massa.</p>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
                 {skusSelecionados.length > 0 && (
@@ -931,7 +905,7 @@ export default function ProdutosPage() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-800 pb-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Construtor de Descrições Padronizado com IA</h3>
-                <p className="text-xs text-slate-400 mt-1">Gere descrições exatas, analise imagens e baixe a planilha pronta para o Tiny.</p>
+                <p className="text-xs text-slate-400 mt-1">Gere descrições exatas e analise imagens usando SKU Alvo e Referência.</p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <input
@@ -948,12 +922,6 @@ export default function ProdutosPage() {
                   placeholder="SKU Referência..."
                   className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-32"
                 />
-                <button
-                  onClick={baixarPlanilhaTinyAlvo}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl text-xs uppercase cursor-pointer transition-all shadow-lg flex items-center gap-1"
-                >
-                  📥 Baixar Planilha Tiny
-                </button>
               </div>
             </div>
 
@@ -976,7 +944,7 @@ export default function ProdutosPage() {
               )}
               {chatMensagens.length === 0 && (
                 <div className="text-center text-slate-500 py-20 text-xs">
-                  Informe o SKU Alvo, anexe uma imagem se desejar, e clique em Gerar Copy ou baixe direto a planilha do Tiny.
+                  Informe o SKU Alvo e Referência acima, anexe uma foto se desejar, e digite sua solicitação para gerar a copy.
                 </div>
               )}
             </div>
