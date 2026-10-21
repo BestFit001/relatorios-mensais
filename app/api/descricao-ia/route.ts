@@ -6,32 +6,42 @@ export async function POST(req: Request) {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return NextResponse.json({ error: "GEMINI_API_KEY não configurada na Vercel/Ambiente." }, { status: 500 });
+      return NextResponse.json({ error: "Erro crítico: GEMINI_API_KEY não encontrada nas variáveis de ambiente da Vercel." }, { status: 500 });
     }
 
     const systemInstruction = "Você é um especialista em e-commerce e copywriter sênior para a Best Fit (moda fitness e athletic wear). Crie descrições altamente persuasivas, técnicas e focadas em performance de vendas para marketplaces, focando em benefícios visuais e texturais, sem termos negativos.";
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    
+    const apiResponse = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [
-          { role: "user", parts: [{ text: `${systemInstruction}\n\nContexto SKU: ${skuProduto || "Geral"}\n\nSolicitação: ${prompt}` }] }
+          {
+            parts: [
+              { text: `${systemInstruction}\n\nSKU Alvo: ${skuProduto || "Nenhum"}\n\nSolicitação do Usuário: ${prompt}` }
+            ]
+          }
         ]
       })
     });
 
-    const data = await response.json();
+    const data = await apiResponse.json();
 
-    if (!response.ok) {
-      throw new Error(data.error?.message || "Erro na API do Google Gemini");
+    if (!apiResponse.ok) {
+      const errorMessage = data.error?.message || JSON.stringify(data);
+      return NextResponse.json({ error: `Google API Error: ${errorMessage}` }, { status: apiResponse.status });
     }
 
-    const textoGerado = data.candidates?.[0]?.content?.parts?.[0]?.text || "Não foi possível gerar a resposta.";
+    const textoGerado = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!textoGerado) {
+      return NextResponse.json({ error: "A IA não retornou nenhum conteúdo válido." }, { status: 500 });
+    }
 
     return NextResponse.json({ resposta: textoGerado });
   } catch (error: any) {
-    console.error("Erro detalhado:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: `Erro interno no servidor: ${error.message}` }, { status: 500 });
   }
 }
