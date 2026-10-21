@@ -73,7 +73,7 @@ export async function POST(req: Request) {
       linhasExportacao.push({
         "ID": "",
         "Código (SKU)": paiKey,
-        "Descrição": nomePaiFormatado,
+        "Descrição": `Confira ${nomePaiFormatado}, desenvolvido para garantir máximo conforto, estilo e alta durabilidade no seu dia a dia. Produto original Best Fit com excelente acabamento.`,
         "Unidade": "UN",
         "Classificação fiscal": produtoBase.ncm || "",
         "Origem": produtoBase.origem || "0",
@@ -122,7 +122,7 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": `Descrição padrão para ${nomePaiFormatado}`,
+        "Descrição SEO": `Compre ${nomePaiFormatado} na Best Fit. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
         "Palavras chave SEO": palavrasChavePai,
         "Slug": slugPai,
         "Dias para preparação": "0",
@@ -150,17 +150,19 @@ export async function POST(req: Request) {
         const nomeFilhoFormatado = toTitleCase(p.produto);
         const slugFilho = gerarSlug(nomeFilhoFormatado);
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
-        const descricaoFinal = hist?.resposta_ia || `Descrição detalhada para ${nomeFilhoFormatado} - Cor: ${p.cor}, Tam: ${p.tamanho}`;
 
-        // Formato exato exigido: Cor:Nome||Tamanho:Valor||
         const corFormatada = p.cor ? toTitleCase(String(p.cor).trim()) : "";
         const tamFormatado = p.tamanho ? String(p.tamanho).trim() : "";
         const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
+        const descricaoPadrao = `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto em qualquer ocasião.\n\n• Cor: ${corFormatada}\n• Tamanho: ${tamFormatado}\n• Marca: ${p.marca || "Best Fit"}`;
+        
+        const descricaoFinal = hist?.resposta_ia || descricaoPadrao;
+
         linhasExportacao.push({
           "ID": "",
           "Código (SKU)": p.sku,
-          "Descrição": nomeFilhoFormatado,
+          "Descrição": descricaoFinal,
           "Unidade": "UN",
           "Classificação fiscal": p.ncm || "",
           "Origem": p.origem || "0",
@@ -209,7 +211,7 @@ export async function POST(req: Request) {
           "URL imagem externa 6": "",
           "Link do vídeo": "",
           "Título SEO": nomeFilhoFormatado,
-          "Descrição SEO": descricaoFinal,
+          "Descrição SEO": `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na Best Fit. Conforto e qualidade garantidos.`,
           "Palavras chave SEO": palavrasChaveFilho,
           "Slug": slugFilho,
           "Dias para preparação": "0",
