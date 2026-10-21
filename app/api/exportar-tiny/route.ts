@@ -10,9 +10,6 @@ function toTitleCase(str: string) {
   const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
   return str
     .toLowerCase()
-    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
     .split(" ")
     .map((word, index) => {
       if (index > 0 && lowercaseWords.includes(word)) {
@@ -21,15 +18,6 @@ function toTitleCase(str: string) {
       return word.charAt(0).toUpperCase() + word.slice(1);
     })
     .join(" ");
-}
-
-// Remove totalmente quebras de linha, tabulações, blocos ert{}, tags \vert e códigos de escape
-function limparTextoEstrito(str: string) {
-  if (!str) return "";
-  return String(str)
-    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function gerarSlug(str: string) {
@@ -76,39 +64,16 @@ export async function POST(req: Request) {
       if (itensDoPai.length === 0) continue;
 
       const produtoBase = itensDoPai[0];
-      const nomePaiRaw = limparTextoEstrito(produtoBase.produto.split("-")[0]);
+      const nomePaiRaw = produtoBase.produto.split("-")[0].trim();
       const nomePaiFormatado = toTitleCase(nomePaiRaw);
       const slugPai = gerarSlug(nomePaiFormatado);
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
-      const marcaPai = produtoBase.marca || "Best Fit";
-
-      const descricaoPai = [
-        `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
-        ``,
-        `Especificações:`,
-        `- Marca: ${marcaPai}.`,
-        `- Modelo: ${nomePaiFormatado}.`,
-        `- Categoria: Moda e Vestuário / Acessórios.`,
-        ``,
-        `Benefícios:`,
-        `- Conforto Superior: Toque macio e caimento projetado para o uso diário.`,
-        `- Alta Durabilidade: Costuras reforçadas e acabamento premium.`,
-        `- Estética Sofisticada: Design autêntico que valoriza o visual em qualquer ocasião.`,
-        ``,
-        `Composição:`,
-        `- Materiais nobres de alta performance e resistência.`,
-        ``,
-        `Cuidados e Conservação:`,
-        `- Armazenar em local seco, fresco e arejado.`,
-        `- Evitar exposição prolongada direta à luz solar.`,
-        `- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.`
-      ].join("\n");
 
       // 1. Linha do Pai (Tipo do produto = V)
       linhasExportacao.push({
         "ID": "",
         "Código (SKU)": paiKey,
-        "Descrição": descricaoPai,
+        "Descrição": `Confira ${nomePaiFormatado}, desenvolvido para garantir máximo conforto, estilo e alta durabilidade no seu dia a dia. Produto original Best Fit com excelente acabamento.`,
         "Unidade": "UN",
         "Classificação fiscal": produtoBase.ncm || "",
         "Origem": produtoBase.origem || "0",
@@ -145,7 +110,7 @@ export async function POST(req: Request) {
         "Categoria": "",
         "Código do pai": "",
         "Variações": "",
-        "Marca": marcaPai,
+        "Marca": produtoBase.marca || "BEST FIT",
         "Garantia": "30 dias",
         "Sob encomenda": "Não",
         "Preço promocional": "",
@@ -157,7 +122,7 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": descricaoPai,
+        "Descrição SEO": `Compre ${nomePaiFormatado} na Best Fit. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
         "Palavras chave SEO": palavrasChavePai,
         "Slug": slugPai,
         "Dias para preparação": "0",
@@ -182,43 +147,17 @@ export async function POST(req: Request) {
           .limit(1)
           .single();
 
-        const nomeFilhoRaw = limparTextoEstrito(p.produto);
-        const nomeFilhoFormatado = toTitleCase(nomeFilhoRaw);
+        const nomeFilhoFormatado = toTitleCase(p.produto);
         const slugFilho = gerarSlug(nomeFilhoFormatado);
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
-        const marcaFilho = p.marca || "Best Fit";
 
-        // Limpeza profunda garantindo que cor e tamanho fiquem limpos de qualquer resquício de \vert ou ert
-        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "Padrão";
-        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "Único";
+        const corFormatada = p.cor ? toTitleCase(String(p.cor).trim()) : "";
+        const tamFormatado = p.tamanho ? String(p.tamanho).trim() : "";
+        const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
+
+        const descricaoPadrao = `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto em qualquer ocasião.\n\n• Cor: ${corFormatada}\n• Tamanho: ${tamFormatado}\n• Marca: ${p.marca || "Best Fit"}`;
         
-        // Formato blindado final exato: Cor:Branco / Preto||Tamanho:UNICO||
-        const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
-
-        const descricaoFilhoArr = [
-          `O ${nomeFilhoFormatado} é a escolha perfeita para quem busca unir sofisticação, praticidade e a identidade inconfundível da ${marcaFilho}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
-          ``,
-          `Especificações:`,
-          `- Marca: ${marcaFilho}.`,
-          `- Modelo / Variação: ${nomeFilhoFormatado}.`,
-          `- Cor: ${corFormatada}.`,
-          `- Tamanho: ${tamFormatado}.`,
-          ``,
-          `Benefícios:`,
-          `- Conforto Absoluto: Modelagem anatómica que se ajusta perfeitamente ao corpo.`,
-          `- Versatilidade: Perfeito para compor looks modernos com muita elegância.`,
-          `- Qualidade Garantida: Tecido resistente e de alto desempenho.`,
-          ``,
-          `Composição:`,
-          `- Fios de alta tecnologia e acabamento premium.`,
-          ``,
-          `Cuidados e Conservação:`,
-          `- Lavar à mão ou em ciclo delicado.`,
-          `- Secar à sombra para preservar a cor e a elasticidade.`,
-          `- Não utilizar alvejantes à base de cloro.`
-        ];
-
-        const descricaoFinal = hist?.resposta_ia || descricaoFilhoArr.join("\n");
+        const descricaoFinal = hist?.resposta_ia || descricaoPadrao;
 
         linhasExportacao.push({
           "ID": "",
@@ -260,7 +199,7 @@ export async function POST(req: Request) {
           "Categoria": "",
           "Código do pai": paiKey,
           "Variações": variacaoFormatada,
-          "Marca": marcaFilho,
+          "Marca": p.marca || "BEST FIT",
           "Garantia": "30 dias",
           "Sob encomenda": "Não",
           "Preço promocional": "",
@@ -272,7 +211,7 @@ export async function POST(req: Request) {
           "URL imagem externa 6": "",
           "Link do vídeo": "",
           "Título SEO": nomeFilhoFormatado,
-          "Descrição SEO": descricaoFinal,
+          "Descrição SEO": `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na Best Fit. Conforto e qualidade garantidos.`,
           "Palavras chave SEO": palavrasChaveFilho,
           "Slug": slugFilho,
           "Dias para preparação": "0",
