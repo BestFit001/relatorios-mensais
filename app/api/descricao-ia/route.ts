@@ -7,7 +7,7 @@ export async function POST(req: Request) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: "GEMINI_API_KEY não configurada nas variáveis de ambiente." }, { status: 500 });
+      return NextResponse.json({ error: "Chave GEMINI_API_KEY não encontrada nas variáveis de ambiente." }, { status: 500 });
     }
 
     const ai = new GoogleGenAI({ apiKey });
@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     SKU de referência / Contexto: ${skuProduto || "Geral"}`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-1.5-flash",
       contents: prompt,
       config: {
         systemInstruction: systemInstruction,
@@ -31,6 +31,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ resposta: response.text });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Erro na API do Gemini:", error);
+    return NextResponse.json({ error: error.message || "Erro desconhecido ao comunicar com a IA." }, { status: 500 });
   }
 }
