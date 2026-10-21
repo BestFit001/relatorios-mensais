@@ -71,25 +71,25 @@ export async function POST(req: Request) {
       const marcaPai = produtoBase.marca || "Best Fit";
 
       const descricaoPai = [
-        `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele conta com estrutura reforçada e design focado no desempenho e organização, unindo funcionalidade e autenticidade.`,
+        `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
         ``,
         `Especificações:`,
         `- Marca: ${marcaPai}.`,
         `- Modelo: ${nomePaiFormatado}.`,
-        `- Categoria: Vestuário e Acessórios / Performance.`,
+        `- Categoria: Moda e Vestuário / Acessórios.`,
         ``,
         `Benefícios:`,
-        `- Conforto e Praticidade: Projetado para otimizar o dia a dia com máxima eficiência.`,
-        `- Alta Durabilidade: Materiais nobres e costuras reforçadas.`,
-        `- Estética Sofisticada: Design autêntico que destaca o estilo em qualquer ocasião.`,
+        `- Conforto Superior: Toque macio e caimento projetado para o uso diário.`,
+        `- Alta Durabilidade: Costuras reforçadas e acabamento premium.`,
+        `- Estética Sofisticada: Design autêntico que valoriza o visual em qualquer ocasião.`,
         ``,
         `Composição:`,
-        `- Matéria-prima de alta performance e acabamento premium.`,
+        `- Materiais nobres de alta performance e resistência.`,
         ``,
         `Cuidados e Conservação:`,
         `- Armazenar em local seco, fresco e arejado.`,
         `- Evitar exposição prolongada direta à luz solar.`,
-        `- Seguir as orientações de conservação e limpeza do fabricante.`
+        `- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.`
       ].join("\n");
 
       // 1. Linha do Pai (Tipo do produto = V)
@@ -180,11 +180,11 @@ export async function POST(req: Request) {
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
-          `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
+          `O ${nomeFilhoFormatado} é a escolha perfeita para quem busca unir sofisticação, praticidade e a identidade inconfundível da ${marcaFilho}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
           ``,
           `Especificações:`,
           `- Marca: ${marcaFilho}.`,
-          `- Modelo: ${nomeFilhoFormatado}.`,
+          `- Modelo / Variação: ${nomeFilhoFormatado}.`,
           `- Cor: ${corFormatada}.`,
           `- Tamanho: ${tamFormatado}.`,
           ``,
