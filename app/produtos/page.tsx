@@ -35,7 +35,7 @@ export default function ProdutosPage() {
   const [imagemAnexada, setImagemAnexada] = useState<{ base64: string; mimeType: string; nome: string } | null>(null);
   const [carregandoIA, setCarregandoIA] = useState(false);
 
-  // Estados para Configuração / Busca por SKU no Histórico
+  // Estados para Configuração / Busca por SKU no Histórico de itens
   const [skuBuscaConfig, setSkuBuscaConfig] = useState("");
   const [resultadoBuscaConfig, setResultadoBuscaConfig] = useState<any>(null);
   const [buscandoConfig, setBuscandoConfig] = useState(false);
