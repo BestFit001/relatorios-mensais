@@ -23,6 +23,7 @@ function toTitleCase(str: string) {
     .join(" ");
 }
 
+// Remove totalmente quebras de linha, tabulações, blocos ert{}, tags \vert e códigos de escape
 function limparTextoEstrito(str: string) {
   if (!str) return "";
   return String(str)
@@ -126,7 +127,7 @@ export async function POST(req: Request) {
         "Peso bruto (Kg)": "0.500",
         "GTIN/EAN": "",
         "GTIN/EAN tributável": "",
-        "Descrição complementar": descricaoComplementarPai, // Descrição complementar recebe o template estruturado
+        "Descrição complementar": descricaoComplementarPai, // Descrição complementar com blocos estruturados
         "CEST": produtoBase.cest || "",
         "Código de Enquadramento IPI": "",
         "Formato embalagem": "",
@@ -156,7 +157,7 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": `Compre ${nomePaiFormatado} na${marcaPai}. Qualidade superior, conforto e estilo.`,
+        "Descrição SEO": `Compre ${nomePaiFormatado} na${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
         "Palavras chave SEO": palavrasChavePai,
         "Slug": slugPai,
         "Dias para preparação": "0",
@@ -187,8 +188,9 @@ export async function POST(req: Request) {
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "Padrão";
-        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "Único";
+        // Variação perfeitamente limpa e em linha única (Cor:X||Tamanho:Y||)
+        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
+        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
@@ -238,7 +240,7 @@ export async function POST(req: Request) {
           "Peso bruto (Kg)": "0.500",
           "GTIN/EAN": p.ean || "",
           "GTIN/EAN tributável": p.ean || "",
-          "Descrição complementar": descricaoComplementarFinal, // Descrição complementar recebe o template estruturado
+          "Descrição complementar": descricaoComplementarFinal, // Descrição complementar com blocos estruturados
           "CEST": p.cest || "",
           "Código de Enquadramento IPI": "",
           "Formato embalagem": "",
@@ -255,7 +257,7 @@ export async function POST(req: Request) {
           "URL imagem 6": "",
           "Categoria": "",
           "Código do pai": paiKey,
-          "Variações": variacaoFormatada, // Variação limpa em linha única
+          "Variações": variacaoFormatada, // Variação limpa e em linha única
           "Marca": marcaFilho,
           "Garantia": "30 dias",
           "Sob encomenda": "Não",
@@ -268,7 +270,7 @@ export async function POST(req: Request) {
           "URL imagem externa 6": "",
           "Link do vídeo": "",
           "Título SEO": nomeFilhoFormatado,
-          "Descrição SEO": `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na ${marcaFilho}.`,
+          "Descrição SEO": `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na ${marcaFilho}. Conforto e qualidade garantidos.`,
           "Palavras chave SEO": palavrasChaveFilho,
           "Slug": slugFilho,
           "Dias para preparação": "0",
