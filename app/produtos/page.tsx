@@ -35,7 +35,7 @@ export default function ProdutosPage() {
   const [imagemAnexada, setImagemAnexada] = useState<{ base64: string; mimeType: string; nome: string } | null>(null);
   const [carregandoIA, setCarregandoIA] = useState(false);
 
-  // Estados para Configuração / Busca por SKU
+  // Estados para Configuração / Busca por SKU no Histórico
   const [skuBuscaConfig, setSkuBuscaConfig] = useState("");
   const [resultadoBuscaConfig, setResultadoBuscaConfig] = useState<any>(null);
   const [buscandoConfig, setBuscandoConfig] = useState(false);
@@ -152,6 +152,27 @@ export default function ProdutosPage() {
       setResultadoBuscaConfig({ naoEncontrado: true });
     }
     setBuscandoConfig(false);
+  };
+
+  const excluirDescricaoHistorico = async (id: number, sku: string) => {
+    if (!confirm(`Deseja realmente excluir a descrição do histórico para o SKU ${sku}?`)) return;
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from("historico_descricoes_ia")
+        .delete()
+        .eq("id", id);
+
+      if (error) throw error;
+
+      alert(`✅ Descrição do SKU ${sku} excluída com sucesso do Supabase!`);
+      setResultadoBuscaConfig(null);
+      setSkuBuscaConfig("");
+    } catch (err: any) {
+      alert("Erro ao excluir: " + err.message);
+    }
+    setLoading(false);
   };
 
   const baixarPlanilhaTiny = async () => {
@@ -964,11 +985,11 @@ export default function ProdutosPage() {
               ))}
             </div>
 
-            {/* SEÇÃO: PROCURAR DESCRIÇÃO PELO SKU */}
+            {/* SEÇÃO: PROCURAR E EXCLUIR DESCRIÇÃO PELO SKU */}
             <div className="border-t border-slate-800 pt-6 space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Procurar Descrição Gerada por SKU</h3>
-                <p className="text-xs text-slate-400 mt-1">Consulte rapidamente a última descrição salva no histórico para qualquer SKU.</p>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerenciar Histórico de Descrições IA por SKU</h3>
+                <p className="text-xs text-slate-400 mt-1">Consulte ou remova descrições salvas no Supabase para qualquer SKU.</p>
               </div>
 
               <form onSubmit={buscarDescricaoPorSkuConfig} className="flex gap-2 max-w-xl">
@@ -985,18 +1006,26 @@ export default function ProdutosPage() {
               </form>
 
               {resultadoBuscaConfig && (
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 mt-4">
+                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 mt-4">
                   {resultadoBuscaConfig.naoEncontrado ? (
                     <p className="text-xs text-rose-400">Nenhuma descrição encontrada para este SKU no histórico.</p>
                   ) : (
-                    <div>
-                      <div className="flex justify-between items-center text-[10px] text-slate-400 border-b border-slate-900 pb-2 mb-2">
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center text-[10px] text-slate-400 border-b border-slate-900 pb-2">
                         <span>SKU: <strong className="text-purple-400">{resultadoBuscaConfig.sku}</strong></span>
                         <span>Gerado em: {new Date(resultadoBuscaConfig.created_at || Date.now()).toLocaleString("pt-BR")}</span>
                       </div>
-                      <pre className="text-xs text-slate-200 whitespace-pre-wrap font-mono leading-relaxed bg-slate-900/60 p-3 rounded-lg">
+                      <pre className="text-xs text-slate-200 whitespace-pre-wrap font-mono leading-relaxed bg-slate-900/60 p-3 rounded-lg max-h-60 overflow-y-auto">
                         {resultadoBuscaConfig.resposta_ia}
                       </pre>
+                      <div className="flex justify-end pt-2">
+                        <button
+                          onClick={() => excluirDescricaoHistorico(resultadoBuscaConfig.id, resultadoBuscaConfig.sku)}
+                          className="bg-rose-950 hover:bg-rose-900 text-rose-300 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5"
+                        >
+                          🗑️ Excluir Descrição do Supabase
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
