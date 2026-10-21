@@ -14,7 +14,6 @@ export default function ProdutosPage() {
   const [cadastrosRealizados, setCadastrosRealizados] = useState<any[]>([]);
   const [canaisLista, setCanaisLista] = useState<string[]>([]);
   
-  // Canais que possuem clipes ativados nas configurações
   const [canaisComClipesConfig, setCanaisComClipesConfig] = useState<{ [canal: string]: boolean }>({});
 
   const [pesquisaGlobal, setPesquisaGlobal] = useState("");
@@ -22,7 +21,6 @@ export default function ProdutosPage() {
   const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais" | "clipes_pendentes">("todos");
   const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
 
-  // Filtros de Período
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
@@ -32,7 +30,7 @@ export default function ProdutosPage() {
   const [modalAberto, setModalAberto] = useState(false);
   const [formManual, setFormManual] = useState({
     sku: "", produto: "", cor: "", tamanho: "", ncm: "", cest: "", ean: "",
-    custo: 0, preco_venda: 0, marca: "BEST FIT", qtdd_ecom: 0, qtdd_fba: 0
+    custo: 0, preco_venda: 0, marca: "BEST FIT", qtdd_ecom: 0
   });
 
   useEffect(() => {
@@ -53,7 +51,6 @@ export default function ProdutosPage() {
     }
     setCanaisLista(listaCanais);
 
-    // Inicializa canais com clipes ativados por padrão (ex: Shopee, TikTok, etc.)
     const configIniciada: { [c: string]: boolean } = {};
     listaCanais.forEach(c => {
       configIniciada[c] = ["Shopee", "TikTok", "Mercado Livre 1", "Shein"].includes(c);
@@ -112,7 +109,6 @@ export default function ProdutosPage() {
         const idxPreco = getCol(/preço venda|preco|venda/i);
         const idxMarca = getCol(/marca/i);
         const idxQtdEcom = getCol(/qtdd ecom|ecom/i);
-        const idxQtdFba = getCol(/qtdd fba|fba/i);
         const idxAtivo = getCol(/ativo/i);
 
         const skusExistentesSet = new Set([
@@ -158,8 +154,7 @@ export default function ProdutosPage() {
             custo: idxCusto !== -1 ? Number(row[idxCusto]) || 0 : 0,
             preco_venda: idxPreco !== -1 ? Number(row[idxPreco]) || 0 : 0,
             marca: idxMarca !== -1 ? String(row[idxMarca] || "").trim() : "BEST FIT",
-            qtdd_ecom: idxQtdEcom !== -1 ? Number(row[idxQtdEcom]) || 0 : 0,
-            qtdd_fba: idxQtdFba !== -1 ? Number(row[idxQtdFba]) || 0 : 0
+            qtdd_ecom: idxQtdEcom !== -1 ? Number(row[idxQtdEcom]) || 0 : 0
           });
         }
 
@@ -388,9 +383,8 @@ export default function ProdutosPage() {
         if (filtroStatusRealizados === "completos" && !isCompleto) return false;
         if (filtroStatusRealizados === "parciais" && (isCompleto || marcados === 0)) return false;
         
-        // Filtro de Clipes Pendentes: item cadastrado no canal mas sem clipe upado
         if (filtroStatusRealizados === "clipes_pendentes") {
-          const temClipePendente = canaisLista.some(c => canais[c] && !clipes[c]);
+          const temClipePendente = canaisLista.some(c => canais[c] && !clipes[c] && canaisComClipesConfig[c]);
           if (!temClipePendente) return false;
         }
 
@@ -440,7 +434,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com configuração de canais com clipes e filtro de pendências</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com exclusão corrigida e sincronizada nos realizados</p>
           </div>
           <Navbar />
         </div>
@@ -497,7 +491,7 @@ export default function ProdutosPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-1">Campos irrelevantes ignorados; dados essenciais preservados com seleção em massa.</p>
+                <p className="text-xs text-slate-400 mt-1">Qtd FBA removida; dados essenciais preservados com seleção em massa.</p>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
                 {skusSelecionados.length > 0 && (
@@ -543,7 +537,6 @@ export default function ProdutosPage() {
                       <th className="p-3">EAN</th>
                       <th className="p-3">Marca</th>
                       <th className="p-3 text-center">Qtd Ecom</th>
-                      <th className="p-3 text-center">Qtd FBA</th>
                       <th className="p-3 text-right">Custo</th>
                       <th className="p-3 text-right">Preço Venda</th>
                       <th className="p-3 text-center sticky right-0 bg-slate-950 shadow-l">Ações</th>
@@ -572,7 +565,6 @@ export default function ProdutosPage() {
                         <td className="p-3 text-slate-300 font-mono">{item.ean || "—"}</td>
                         <td className="p-3 text-slate-300">{item.marca || "—"}</td>
                         <td className="p-3 text-center text-slate-300">{item.qtdd_ecom}</td>
-                        <td className="p-3 text-center text-slate-300">{item.qtdd_fba}</td>
                         <td className="p-3 text-right font-mono text-rose-400">R$ {Number(item.custo).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda).toFixed(2)}</td>
                         <td className="p-3 text-center sticky right-0 bg-slate-950 shadow-l flex items-center justify-center gap-2">
@@ -583,7 +575,7 @@ export default function ProdutosPage() {
                     ))}
                     {pendentesFiltrados.length === 0 && (
                       <tr>
-                        <td colSpan={14} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
+                        <td colSpan={13} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
                       </tr>
                     )}
                   </tbody>
