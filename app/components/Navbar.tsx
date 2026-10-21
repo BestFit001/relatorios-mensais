@@ -74,7 +74,7 @@ export default function Navbar() {
           </div>
         </div>
 
-        {/* Ferramentas (Dropdown com Calculadora, Promoções, Produtos e PLPs) */}
+        {/* Ferramentas (Dropdown) */}
         <div className="relative group">
           <button className="px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-all flex items-center gap-1 cursor-pointer">
             Ferramentas ▾
@@ -103,6 +103,14 @@ export default function Navbar() {
               }`}
             >
               Produtos
+            </Link>
+            <Link
+              href="/padronizacao"
+              className={`block px-4 py-2 transition-all ${
+                pathname?.includes("/padronizacao") ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-purple-600 hover:text-white"
+              }`}
+            >
+              Padronização
             </Link>
             <Link
               href="/plp"
