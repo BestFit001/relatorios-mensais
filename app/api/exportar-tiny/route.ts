@@ -7,26 +7,26 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 export async function POST(req: Request) {
   try {
-    const { skus } = await req.json(); // Lista de SKUs selecionados para exportar
+    const { skus } = await req.json();
 
     if (!skus || skus.length === 0) {
       return NextResponse.json({ error: "Nenhum SKU selecionado para exportação." }, { status: 400 });
     }
 
-    // Busca os produtos na tabela de pendentes ou cadastrados
+    // Busca os produtos na tabela de pendentes
     const { data: produtos } = await supabase
       .from("produtos_pendentes")
       .select("*")
       .in("sku", skus);
 
     if (!produtos || produtos.length === 0) {
-      return NextResponse.json({ error: "Produtos não encontrados." }, { status: 404 });
+      return NextResponse.json({ error: "Produtos pendentes não encontrados." }, { status: 404 });
     }
 
-    // Para cada produto, busca a última descrição gerada pela IA no histórico
     const linhasExportacao = [];
 
     for (const p of produtos) {
+      // Busca a descrição gerada pela IA para este SKU no histórico
       const { data: hist } = await supabase
         .from("historico_descricoes_ia")
         .select("resposta_ia")

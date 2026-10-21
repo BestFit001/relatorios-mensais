@@ -138,7 +138,7 @@ export default function ProdutosPage() {
       const { data, error } = await supabase
         .from("historico_descricoes_ia")
         .select("*")
-        .ilike("sku", `%${skuBuscaConfig.trim()%}`)
+        .ilike("sku", `%${skuBuscaConfig.trim()}%`)
         .order("id", { ascending: false })
         .limit(1)
         .single();
@@ -175,17 +175,19 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  const baixarPlanilhaTiny = async () => {
-    if (!skuAlvo) {
-      alert("Por favor, informe o SKU Alvo para exportar a planilha do Tiny.");
+  // Função para baixar a planilha formatada para o Tiny com base nos SKUs selecionados
+  const baixarPlanilhaTinySelecionados = async () => {
+    if (skusSelecionados.length === 0) {
+      alert("Selecione ao menos um produto na tabela de pendentes para baixar a planilha do Tiny.");
       return;
     }
 
     try {
+      setLoading(true);
       const res = await fetch("/api/exportar-tiny", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skus: [skuAlvo] })
+        body: JSON.stringify({ skus: skusSelecionados })
       });
       const data = await res.json();
 
@@ -193,13 +195,14 @@ export default function ProdutosPage() {
         const worksheet = XLSX.utils.json_to_sheet(data.dados);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Produtos Tiny");
-        XLSX.writeFile(workbook, `produto_tiny_${skuAlvo}.xlsx`);
+        XLSX.writeFile(workbook, `produtos_importacao_tiny_${Date.now()}.xlsx`);
       } else {
         alert("Erro ao exportar: " + (data.error || "Desconhecido"));
       }
     } catch (err: any) {
       alert("Erro na requisição: " + err.message);
     }
+    setLoading(false);
   };
 
   const handleUploadPendentes = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -292,7 +295,7 @@ export default function ProdutosPage() {
           await supabase.from("produtos_pendentes").upsert(novosRegistros, { onConflict: "sku" });
           await carregarPendentesDoBanco();
         }
-        alert(`Planilha importada com sucesso!\n- Adicionados: ${novosRegistros.length}\n- Ignorados (Ativo=Sim): ${ignoradosAtivoSim}\n- Ignorados (Duplicados): ${ignoradosDuplicados}`);
+        alert(`Planilha importada com sucesso!\n- Adicionados: ${novosRegistros.length}\n- Ignorados (Ativo=Sim): ${ignoradosAtivoSim}\n- Ignorados (Duplicados):${ignoradosDuplicados}`);
       } catch (err: any) {
         alert("Erro ao ler planilha: " + err.message);
       }
@@ -328,7 +331,7 @@ export default function ProdutosPage() {
     if (!inputPrompt.trim() && !skuAlvo && !imagemAnexada) return;
 
     const textoUsuario = inputPrompt || `Gerar descrição padronizada para o SKU Alvo: ${skuAlvo}`;
-    const novaMsgUsuario = { remetente: "usuario", texto: `${textoUsuario} ${imagemAnexada ? `[📷 Imagem Anexada: ${imagemAnexada.nome}]` : ""}` };
+    const novaMsgUsuario = { remetente: "usuario", texto: `${textoUsuario}${imagemAnexada ? `[📷 Imagem Anexada: ${imagemAnexada.nome}]` : ""}` };
     
     setChatMensagens(prev => [...prev, novaMsgUsuario]);
     setInputPrompt("");
@@ -657,7 +660,6 @@ export default function ProdutosPage() {
             </button>
           </div>
 
-          {/* A barra de pesquisa só aparece se NÃO estiver na aba de descrições IA */}
           {subAba !== "descricoes" && (
             <div className="flex items-center gap-3">
               <input
@@ -676,16 +678,24 @@ export default function ProdutosPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-1">Dados essenciais preservados com seleção em massa.</p>
+                <p className="text-xs text-slate-400 mt-1">Selecione os produtos abaixo e baixe a planilha pronta para o Tiny ou cadastre em massa.</p>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
                 {skusSelecionados.length > 0 && (
-                  <button
-                    onClick={cadastrarSelecionados}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg cursor-pointer animate-pulse"
-                  >
-                    🚀 Cadastrar Selecionados ({skusSelecionados.length})
-                  </button>
+                  <>
+                    <button
+                      onClick={baixarPlanilhaTinySelecionados}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg cursor-pointer flex items-center gap-1.5"
+                    >
+                      📥 Baixar Planilha Tiny ({skusSelecionados.length})
+                    </button>
+                    <button
+                      onClick={cadastrarSelecionados}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg cursor-pointer"
+                    >
+                      🚀 Cadastrar Selecionados ({skusSelecionados.length})
+                    </button>
+                  </>
                 )}
                 <input
                   type="file"
@@ -895,29 +905,7 @@ export default function ProdutosPage() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-800 pb-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Construtor de Descrições Padronizado com IA</h3>
-                <p className="text-xs text-slate-400 mt-1">Gere descrições exatas, analise imagens e baixe a planilha pronta para o Tiny.</p>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <input
-                  type="text"
-                  value={skuAlvo}
-                  onChange={(e) => setSkuAlvo(e.target.value)}
-                  placeholder="SKU Alvo..."
-                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-32"
-                />
-                <input
-                  type="text"
-                  value={skuReferencia}
-                  onChange={(e) => setSkuReferencia(e.target.value)}
-                  placeholder="SKU Referência..."
-                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-32"
-                />
-                <button
-                  onClick={baixarPlanilhaTiny}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl text-xs uppercase cursor-pointer transition-all shadow-lg flex items-center gap-1"
-                >
-                  📥 Baixar Planilha Tiny
-                </button>
+                <p className="text-xs text-slate-400 mt-1">Gere descrições exatas e analise imagens.</p>
               </div>
             </div>
 
@@ -940,7 +928,7 @@ export default function ProdutosPage() {
               )}
               {chatMensagens.length === 0 && (
                 <div className="text-center text-slate-500 py-20 text-xs">
-                  Informe o SKU Alvo, anexe uma imagem se desejar, e clique em Gerar Copy ou baixe direto a planilha do Tiny.
+                  Digite sua solicitação ou anexe uma foto para gerar a copy padronizada.
                 </div>
               )}
             </div>
@@ -1154,11 +1142,11 @@ export default function ProdutosPage() {
                   <input type="number" step="0.01" value={formManual.preco_venda} onChange={(e) => setFormManual({...formManual, preco_venda: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
+                  <label className="block z-10 block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
                   <input type="text" value={formManual.marca} onChange={(e) => setFormManual({...formManual, marca: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
                 </div>
                 <div className="md:col-span-3 flex justify-end gap-2 pt-3 border-t border-slate-800">
-                  <button type="button" onClick={() => setModalAberto(false)} className="bg-slate-800 px-4 py-2 rounded-xl text-white font-bold cursor-pointer">Cancelar</button>
+                  <button type="button" onClick={() => setModalAberto(false)} className="bg-slate-800 px-4 py-2 rounded-xl text-white font-bold cursor-pointer">Cancelar`</button>
                   <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-white font-bold cursor-pointer">Salvar</button>
                 </div>
               </form>
