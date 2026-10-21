@@ -22,10 +22,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Produtos pendentes não encontrados." }, { status: 404 });
     }
 
-    // Agrupa por SKU Pai para estruturar Pai -> Filhos
+    // Agrupa por SKU Pai (5 primeiros dígitos ou sku_pai)
     const agrupadosPorPai: { [pai: string]: any[] } = {};
     produtos.forEach((p) => {
-      const pai = p.sku_pai || p.sku.substring(0, 5);
+      const pai = p.sku_pai || (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku);
       if (!agrupadosPorPai[pai]) agrupadosPorPai[pai] = [];
       agrupadosPorPai[pai].push(p);
     });
@@ -33,26 +33,29 @@ export async function POST(req: Request) {
     const linhasExportacao = [];
 
     for (const [paiKey, itens] of Object.entries(agrupadosPorPai)) {
-      // 1. Linha do Pai
+      const produtoBase = itens[0];
+      const nomePai = produtoBase.produto.split("-")[0].trim();
+
+      // 1. Linha do Pai (Estrutura exata para o Tiny)
       linhasExportacao.push({
-        "": "", // Primeira coluna em branco
+        "": "", // Coluna A estritamente em branco
         SKU: paiKey,
-        "Nome do Produto": itens[0].produto.split("-")[0].trim(),
-        "Tipo": "P", // Produto Pai
+        "Nome do Produto": nomePai,
+        "Tipo": "P", // Pai
         "Unidade": "UN",
-        "NCM": itens[0].ncm || "",
-        "CEST": itens[0].cest || "",
+        "NCM": produtoBase.ncm || "",
+        "CEST": produtoBase.cest || "",
         "Origem": "0",
-        "Preço": itens[0].preco_venda || 0,
-        "Custo": itens[0].custo || 0,
+        "Preço": produtoBase.preco_venda || 0,
+        "Custo": produtoBase.custo || 0,
         "Peso Líquido": "0,500",
         "Peso Bruto": "0,500",
         "Largura": "20",
         "Altura": "20",
         "Comprimento": "20",
         "Situação": "Ativo",
-        "EAN": "", // Pai sem EAN
-        "Descrição": `Descrição padrão para ${itens[0].produto}`
+        "EAN": "", // EAN em branco no Pai
+        "Descrição": `Descrição padrão para ${nomePai}`
       });
 
       // 2. Linhas dos Filhos (Variações)
@@ -68,10 +71,10 @@ export async function POST(req: Request) {
         const descricaoFinal = hist?.resposta_ia || `Descrição detalhada para ${p.produto} - Cor: ${p.cor}, Tam: ${p.tamanho}`;
 
         linhasExportacao.push({
-          "": "", // Primeira coluna em branco
-          SKU: p.sku,
+          "": "", // Coluna A estritamente em branco
+          SKU: p.sku, // SKU original completo do filho
           "Nome do Produto": `${p.produto} ${p.cor ? `- ${p.cor}` : ""} ${p.tamanho ? `- ${p.tamanho}` : ""}`,
-          "Tipo": "V", // Variação / Filho
+          "Tipo": "V", // Variação (Filho)
           "Unidade": "UN",
           "NCM": p.ncm || "",
           "CEST": p.cest || "",
@@ -84,7 +87,7 @@ export async function POST(req: Request) {
           "Altura": "20",
           "Comprimento": "20",
           "Situação": "Ativo",
-          "EAN": p.ean || "", // EAN apenas no filho
+          "EAN": p.ean || "", // EAN preenchido apenas no filho
           "Descrição": descricaoFinal
         });
       }
