@@ -138,7 +138,7 @@ export default function ProdutosPage() {
       const { data, error } = await supabase
         .from("historico_descricoes_ia")
         .select("*")
-        .ilike("sku", `%${skuBuscaConfig.trim()%}`)
+        .ilike("sku", `%${skuBuscaConfig.trim()}%`)
         .order("id", { ascending: false })
         .limit(1)
         .single();
