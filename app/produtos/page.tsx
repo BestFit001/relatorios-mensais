@@ -35,7 +35,7 @@ export default function ProdutosPage() {
   const [imagemAnexada, setImagemAnexada] = useState<{ base64: string; mimeType: string; nome: string } | null>(null);
   const [carregandoIA, setCarregandoIA] = useState(false);
 
-  // Estados para Configuração / Busca por SKU no Histórico de itens
+  // Estados para Configuração / Busca por SKU no Histórico
   const [skuBuscaConfig, setSkuBuscaConfig] = useState("");
   const [resultadoBuscaConfig, setResultadoBuscaConfig] = useState<any>(null);
   const [buscandoConfig, setBuscandoConfig] = useState(false);
@@ -175,7 +175,6 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  // Função para baixar a planilha formatada para o Tiny com base nos SKUs selecionados
   const baixarPlanilhaTinySelecionados = async () => {
     if (skusSelecionados.length === 0) {
       alert("Selecione ao menos um produto na tabela de pendentes para baixar a planilha do Tiny.");
@@ -295,7 +294,7 @@ export default function ProdutosPage() {
           await supabase.from("produtos_pendentes").upsert(novosRegistros, { onConflict: "sku" });
           await carregarPendentesDoBanco();
         }
-        alert(`Planilha importada com sucesso!\n- Adicionados: ${novosRegistros.length}\n- Ignorados (Ativo=Sim): ${ignoradosAtivoSim}\n- Ignorados (Duplicados):${ignoradosDuplicados}`);
+        alert(`Planilha importada com sucesso!\n- Adicionados: ${novosRegistros.length}\n- Ignorados (Ativo=Sim): ${ignoradosAtivoSim}\n- Ignorados (Duplicados): ${ignoradosDuplicados}`);
       } catch (err: any) {
         alert("Erro ao ler planilha: " + err.message);
       }
@@ -331,7 +330,7 @@ export default function ProdutosPage() {
     if (!inputPrompt.trim() && !skuAlvo && !imagemAnexada) return;
 
     const textoUsuario = inputPrompt || `Gerar descrição padronizada para o SKU Alvo: ${skuAlvo}`;
-    const novaMsgUsuario = { remetente: "usuario", texto: `${textoUsuario}${imagemAnexada ? `[📷 Imagem Anexada: ${imagemAnexada.nome}]` : ""}` };
+    const novaMsgUsuario = { remetente: "usuario", texto: `${textoUsuario} ${imagemAnexada ? `[📷 Imagem Anexada: ${imagemAnexada.nome}]` : ""}` };
     
     setChatMensagens(prev => [...prev, novaMsgUsuario]);
     setInputPrompt("");
@@ -1142,11 +1141,11 @@ export default function ProdutosPage() {
                   <input type="number" step="0.01" value={formManual.preco_venda} onChange={(e) => setFormManual({...formManual, preco_venda: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
                 </div>
                 <div>
-                  <label className="block z-10 block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
                   <input type="text" value={formManual.marca} onChange={(e) => setFormManual({...formManual, marca: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
                 </div>
                 <div className="md:col-span-3 flex justify-end gap-2 pt-3 border-t border-slate-800">
-                  <button type="button" onClick={() => setModalAberto(false)} className="bg-slate-800 px-4 py-2 rounded-xl text-white font-bold cursor-pointer">Cancelar`</button>
+                  <button type="button" onClick={() => setModalAberto(false)} className="bg-slate-800 px-4 py-2 rounded-xl text-white font-bold cursor-pointer">Cancelar</button>
                   <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-white font-bold cursor-pointer">Salvar</button>
                 </div>
               </form>
