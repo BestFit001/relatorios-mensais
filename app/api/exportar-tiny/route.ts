@@ -10,7 +10,7 @@ function toTitleCase(str: string) {
   const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
   return str
     .toLowerCase()
-    .replace(/ert\{[^}]*\}|[\r\n\t\v]+/g, " ")
+    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .split(" ")
@@ -23,11 +23,11 @@ function toTitleCase(str: string) {
     .join(" ");
 }
 
-// Remove totalmente quebras de linha, tabulações verticais, códigos ert{} e caracteres de escape
+// Remove totalmente quebras de linha, tabulações, blocos ert{}, tags \vert e códigos de escape
 function limparTextoEstrito(str: string) {
   if (!str) return "";
   return String(str)
-    .replace(/ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
+    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -188,11 +188,11 @@ export async function POST(req: Request) {
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        // Limpeza rigorosa para garantir que cor e tamanho fiquem limpos em uma única linha plana
+        // Limpeza profunda garantindo que cor e tamanho fiquem limpos de qualquer resquício de \vert ou ert
         const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "Padrão";
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "Único";
         
-        // Formato blindado exatamente no padrão exigido: Cor:Cinza||Tamanho:GG||
+        // Formato blindado final exato: Cor:Branco / Preto||Tamanho:UNICO||
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
