@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
+import Navbar from "../components/Navbar"; // Ajusta o caminho se a tua Navbar estiver noutra pasta (ex: "@/components/Navbar")
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -79,7 +80,11 @@ export default function PadronizacaoPage() {
 
   return (
     <div className="min-h-screen bg-[#0d0f18] text-white p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
+      
+      {/* Navbar adicionada aqui */}
+      <Navbar />
+
+      <div className="max-w-7xl mx-auto space-y-6 mt-6">
         {/* Cabeçalho */}
         <div className="flex justify-between items-center bg-[#131625] p-6 rounded-xl border border-gray-800">
           <div>
