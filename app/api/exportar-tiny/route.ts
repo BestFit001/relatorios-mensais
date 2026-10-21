@@ -153,6 +153,8 @@ export async function POST(req: Request) {
 
         const corFormatada = p.cor ? toTitleCase(String(p.cor).trim()) : "";
         const tamFormatado = p.tamanho ? String(p.tamanho).trim() : "";
+        
+        // Variação formatada exatamente no padrão correto exigido
         const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
         const descricaoPadrao = `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto em qualquer ocasião.\n\n• Cor: ${corFormatada}\n• Tamanho: ${tamFormatado}\n• Marca: ${p.marca || "Best Fit"}`;
