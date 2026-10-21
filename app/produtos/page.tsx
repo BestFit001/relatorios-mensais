@@ -24,9 +24,8 @@ export default function ProdutosPage() {
 
   const [modalAberto, setModalAberto] = useState(false);
   const [formManual, setFormManual] = useState({
-    sku: "", produto: "", cor: "", tamanho: "", origem: "", ncm: "", cest: "", ean: "",
-    custo: 0, preco_venda: 0, dimensoes_peso: "", marca: "", tabela_medida: "",
-    qtdd_ecom: 0, qtdd_fba: 0, ativo: "Não", data_envio_compras: "", codigo: "", observacoes: ""
+    sku: "", produto: "", cor: "", tamanho: "", ncm: "", cest: "", ean: "",
+    custo: 0, preco_venda: 0, marca: "BEST FIT", qtdd_ecom: 0, qtdd_fba: 0
   });
 
   useEffect(() => {
@@ -92,21 +91,15 @@ export default function ProdutosPage() {
         const idxNome = getCol(/nome do produto|produto/i);
         const idxCor = getCol(/cor/i);
         const idxTam = getCol(/tamanho/i);
-        const idxOrigem = getCol(/origem/i);
         const idxNcm = getCol(/ncm/i);
         const idxCest = getCol(/cest/i);
         const idxEan = getCol(/ean/i);
         const idxCusto = getCol(/custo/i);
         const idxPreco = getCol(/preço venda|preco|venda/i);
-        const idxDimensoes = getCol(/dimensões e peso|dimensoes/i);
         const idxMarca = getCol(/marca/i);
-        const idxTabMedida = getCol(/tabela de medida|medida/i);
         const idxQtdEcom = getCol(/qtdd ecom|ecom/i);
         const idxQtdFba = getCol(/qtdd fba|fba/i);
         const idxAtivo = getCol(/ativo/i);
-        const idxDataEnvio = getCol(/data envio compras|envio/i);
-        const idxCodigo = getCol(/código|codigo/i);
-        const idxObs = getCol(/obs|observações/i);
 
         const skusExistentesSet = new Set([
           ...dadosPendentes.map((c: any) => String(c.sku).trim().toLowerCase()),
@@ -124,7 +117,6 @@ export default function ProdutosPage() {
           const skuVal = idxSku !== -1 ? String(row[idxSku] || "").trim() : String(row[0] || "").trim();
           if (!skuVal || skuVal.length < 5 || /sku/i.test(skuVal)) continue;
 
-          // Ignorar se Ativo for "Sim"
           const ativoVal = idxAtivo !== -1 ? String(row[idxAtivo] || "").trim().toLowerCase() : "";
           if (ativoVal === "sim" || ativoVal === "true" || ativoVal === "1") {
             ignoradosAtivoSim++;
@@ -146,21 +138,14 @@ export default function ProdutosPage() {
             produto: idxNome !== -1 ? String(row[idxNome] || "").trim() : "Produto sem nome",
             cor: idxCor !== -1 ? String(row[idxCor] || "").trim() : "",
             tamanho: idxTam !== -1 ? String(row[idxTam] || "").trim() : "",
-            origem: idxOrigem !== -1 ? String(row[idxOrigem] || "").trim() : "",
             ncm: idxNcm !== -1 ? String(row[idxNcm] || "").trim() : "",
             cest: idxCest !== -1 ? String(row[idxCest] || "").trim() : "",
             ean: idxEan !== -1 ? String(row[idxEan] || "").trim() : "",
             custo: idxCusto !== -1 ? Number(row[idxCusto]) || 0 : 0,
             preco_venda: idxPreco !== -1 ? Number(row[idxPreco]) || 0 : 0,
-            dimensoes_peso: idxDimensoes !== -1 ? String(row[idxDimensoes] || "").trim() : "",
             marca: idxMarca !== -1 ? String(row[idxMarca] || "").trim() : "BEST FIT",
-            tabela_medida: idxTabMedida !== -1 ? String(row[idxTabMedida] || "").trim() : "",
             qtdd_ecom: idxQtdEcom !== -1 ? Number(row[idxQtdEcom]) || 0 : 0,
-            qtdd_fba: idxQtdFba !== -1 ? Number(row[idxQtdFba]) || 0 : 0,
-            ativo: "Não",
-            data_envio_compras: idxDataEnvio !== -1 ? String(row[idxDataEnvio] || "").trim() : "",
-            codigo: idxCodigo !== -1 ? String(row[idxCodigo] || "").trim() : "",
-            observacoes: idxObs !== -1 ? String(row[idxObs] || "").trim() : ""
+            qtdd_fba: idxQtdFba !== -1 ? Number(row[idxQtdFba]) || 0 : 0
           });
         }
 
@@ -205,6 +190,20 @@ export default function ProdutosPage() {
     carregarPendentesDoBanco();
   };
 
+  const excluirRealizadoGrupo = async (paiKey: string) => {
+    if (!confirm(`ATENÇÃO: Deseja excluir o grupo Pai ${paiKey} e todas as suas variações da aba de Realizados?`)) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase.from("produtos_novos_cadastrados").delete().eq("sku_pai", paiKey);
+      if (error) throw error;
+      await carregarRealizadosDoBanco();
+      alert(`🗑️ Grupo Pai ${paiKey} excluído com sucesso dos realizados!`);
+    } catch (err: any) {
+      alert("Erro ao excluir realizado: " + err.message);
+    }
+    setLoading(false);
+  };
+
   const limparTodosPendentes = async () => {
     if (!confirm("Deseja apagar TODOS os produtos pendentes?")) return;
     await supabase.from("produtos_pendentes").delete().neq("id", 0);
@@ -222,6 +221,8 @@ export default function ProdutosPage() {
         marca: item.marca,
         custo: item.custo,
         preco_venda: item.preco_venda,
+        cor: item.cor,
+        tamanho: item.tamanho,
         data_cadastro: new Date().toISOString(),
         canais_enviados: {},
         clipes_enviados: {}
@@ -258,6 +259,8 @@ export default function ProdutosPage() {
           marca: item.marca,
           custo: item.custo,
           preco_venda: item.preco_venda,
+          cor: item.cor,
+          tamanho: item.tamanho,
           data_cadastro: new Date().toISOString(),
           canais_enviados: {},
           clipes_enviados: {}
@@ -398,7 +401,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com todas as informações originais da planilha</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com exclusão nos realizados e importação otimizada</p>
           </div>
           <Navbar />
         </div>
@@ -436,7 +439,7 @@ export default function ProdutosPage() {
               type="text"
               value={pesquisaGlobal}
               onChange={(e) => setPesquisaGlobal(e.target.value)}
-              placeholder="🔍 Pesquisar SKU, Pai, Nome, Cor, Tam, NCM..."
+              placeholder="🔍 Pesquisar SKU, Pai, Nome, Cor, Tam..."
               className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white outline-none w-80"
             />
           </div>
@@ -447,7 +450,7 @@ export default function ProdutosPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-1">Todos os campos originais da planilha preservados.</p>
+                <p className="text-xs text-slate-400 mt-1">Campos irrelevantes ignorados; dados essenciais preservados com seleção em massa.</p>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
                 {skusSelecionados.length > 0 && (
@@ -488,18 +491,12 @@ export default function ProdutosPage() {
                       <th className="p-3">Nome do Produto</th>
                       <th className="p-3">Cor</th>
                       <th className="p-3">Tam</th>
-                      <th className="p-3">Origem</th>
                       <th className="p-3">NCM</th>
                       <th className="p-3">CEST</th>
                       <th className="p-3">EAN</th>
                       <th className="p-3">Marca</th>
-                      <th className="p-3">Dimensões / Peso</th>
-                      <th className="p-3">Tab. Medida</th>
                       <th className="p-3 text-center">Qtd Ecom</th>
                       <th className="p-3 text-center">Qtd FBA</th>
-                      <th className="p-3">Data Envio</th>
-                      <th className="p-3">Código</th>
-                      <th className="p-3">Observações</th>
                       <th className="p-3 text-right">Custo</th>
                       <th className="p-3 text-right">Preço Venda</th>
                       <th className="p-3 text-center sticky right-0 bg-slate-950 shadow-l">Ações</th>
@@ -523,18 +520,12 @@ export default function ProdutosPage() {
                         <td className="p-3 text-white">{item.produto}</td>
                         <td className="p-3 text-slate-300">{item.cor || "—"}</td>
                         <td className="p-3 text-slate-300">{item.tamanho || "—"}</td>
-                        <td className="p-3 text-slate-300">{item.origem || "—"}</td>
                         <td className="p-3 text-slate-300 font-mono">{item.ncm || "—"}</td>
                         <td className="p-3 text-slate-300 font-mono">{item.cest || "—"}</td>
                         <td className="p-3 text-slate-300 font-mono">{item.ean || "—"}</td>
                         <td className="p-3 text-slate-300">{item.marca || "—"}</td>
-                        <td className="p-3 text-slate-300">{item.dimensoes_peso || "—"}</td>
-                        <td className="p-3 text-slate-300">{item.tabela_medida || "—"}</td>
                         <td className="p-3 text-center text-slate-300">{item.qtdd_ecom}</td>
                         <td className="p-3 text-center text-slate-300">{item.qtdd_fba}</td>
-                        <td className="p-3 text-slate-300">{item.data_envio_compras || "—"}</td>
-                        <td className="p-3 text-slate-300">{item.codigo || "—"}</td>
-                        <td className="p-3 text-slate-400 italic">{item.observacoes || "—"}</td>
                         <td className="p-3 text-right font-mono text-rose-400">R$ {Number(item.custo).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda).toFixed(2)}</td>
                         <td className="p-3 text-center sticky right-0 bg-slate-950 shadow-l flex items-center justify-center gap-2">
@@ -545,7 +536,7 @@ export default function ProdutosPage() {
                     ))}
                     {pendentesFiltrados.length === 0 && (
                       <tr>
-                        <td colSpan={20} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
+                        <td colSpan={14} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -597,7 +588,15 @@ export default function ProdutosPage() {
                         <span className={`transform transition-transform ${expandido ? "rotate-180" : ""}`}>▼</span>
                         SKU PAI: {paiKey} ({itensDoGrupo.length} variações)
                       </button>
-                      <span className="text-[10px] text-slate-500">Cadastrado em: {new Date(itensDoGrupo[0].data_cadastro || Date.now()).toLocaleDateString("pt-BR")}</span>
+                      <div className="flex items-center gap-4">
+                        <span className="text-[10px] text-slate-500">Cadastrado em: {new Date(itensDoGrupo[0].data_cadastro || Date.now()).toLocaleDateString("pt-BR")}</span>
+                        <button
+                          onClick={() => excluirRealizadoGrupo(paiKey)}
+                          className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer"
+                        >
+                          🗑️ Excluir Grupo
+                        </button>
+                      </div>
                     </div>
 
                     <div className="overflow-x-auto">
