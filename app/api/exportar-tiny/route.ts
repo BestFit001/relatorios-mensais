@@ -105,7 +105,7 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      // Busca padrão na tabela de padronização
+      // Busca na aba de Padronização de Anúncios o modelo correspondente à marca
       const { data: padroes } = await supabase
         .from("padroes_anuncios")
         .select("*")
@@ -114,6 +114,7 @@ export async function POST(req: Request) {
 
       const padraoEncontrado = padroes && padroes.length > 0 ? padroes[0] : null;
 
+      // Monta a descrição complementar do Pai respeitando rigorosamente o padrão cadastrado ou o template limpo oficial
       let descricaoComplementarPai = "";
       if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
         descricaoComplementarPai = padraoEncontrado.descricao_complementar;
@@ -249,15 +250,13 @@ export async function POST(req: Request) {
         const variacaoFormatada =
           `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
+        // Para os filhos, usa o padrão da aba ou gera o bloco limpo oficial sem inventar campos indesejados
         let descricaoComplementarFilho = "";
         if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
           descricaoComplementarFilho = padraoEncontrado.descricao_complementar;
           if (padraoEncontrado.titulo) {
             descricaoComplementarFilho = descricaoComplementarFilho.replaceAll(padraoEncontrado.titulo, nomeFilhoFormatado);
           }
-          descricaoComplementarFilho = descricaoComplementarFilho
-            .replace(/- Cor: .*/g, `- Cor: ${corFormatada}.`)
-            .replace(/- Tamanho: .*/g, `- Tamanho: ${tamFormatado}.`);
         } else {
           descricaoComplementarFilho = [
             `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
