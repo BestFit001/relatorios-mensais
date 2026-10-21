@@ -47,18 +47,6 @@ function gerarPalavrasChave(titulo: string) {
   return `${base},${base} Confortável,${base} Original Best Fit,Moda Fitness e Casual`;
 }
 
-// Função para adaptar o texto do padrão de referência para o novo produto de forma inteligente
-function adaptarTemplatePadrao(templateOriginal: string, nomeProduto: string, marca: string, cor: string, tamanho: string) {
-  if (!templateOriginal) return "";
-
-  // Remove eventuais referências cruzadas indesejadas e substitui as ocorrências principais
-  let textoAdaptado = templateOriginal;
-
-  // Substitui dinamicamente termos genéricos ou títulos antigos se necessário, 
-  // garantindo que o nome do produto novo esteja presente nos blocos estruturados.
-  return textoAdaptado;
-}
-
 export async function POST(req: Request) {
   try {
     const { skus } = await req.json();
@@ -126,17 +114,9 @@ export async function POST(req: Request) {
 
       const padraoEncontrado = padroes && padroes.length > 0 ? padroes[0] : null;
 
-      // Se houver um padrão, pegamos na estrutura dele mas garantimos que o nome do produto Pai atual seja aplicado
       let descricaoComplementarPai = "";
       if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
-        descricaoComplementarPai = padraoEncontrado.descricao_complementar
-          .replace(/Lancheira Farm Ziriguidum|[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+/g, (match) => {
-            // Se encontrar títulos genéricos antigos no template, substitui pelo produto novo se fizer sentido, 
-            // ou mantemos a estrutura de blocos e trocamos o nome principal:
-            return match;
-          });
-        
-        // Forma limpa: Substitui o título do modelo pelo título do produto atual no texto base se necessário
+        descricaoComplementarPai = padraoEncontrado.descricao_complementar;
         if (padraoEncontrado.titulo) {
           descricaoComplementarPai = descricaoComplementarPai.replaceAll(padraoEncontrado.titulo, nomePaiFormatado);
         }
@@ -259,7 +239,7 @@ export async function POST(req: Request) {
         const marcaFilho = p.marca || "Best Fit";
 
         const corFormatada = p.cor
-          ? toTitleCase(limparTextoCorrigida(limparTextoEstrito(p.cor)))
+          ? toTitleCase(limparTextoEstrito(p.cor))
           : "";
 
         const tamFormatado = p.tamanho
@@ -269,14 +249,12 @@ export async function POST(req: Request) {
         const variacaoFormatada =
           `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
-        // Para os filhos, geramos os blocos injetando explicitamente a cor e o tamanho corretos daquela variação específica
         let descricaoComplementarFilho = "";
         if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
           descricaoComplementarFilho = padraoEncontrado.descricao_complementar;
           if (padraoEncontrado.titulo) {
             descricaoComplementarFilho = descricaoComplementarFilho.replaceAll(padraoEncontrado.titulo, nomeFilhoFormatado);
           }
-          // Garante que a linha de cor e tamanho do filho fiquem exatas dentro da descrição complementar se o molde as possuir
           descricaoComplementarFilho = descricaoComplementarFilho
             .replace(/- Cor: .*/g, `- Cor: ${corFormatada}.`)
             .replace(/- Tamanho: .*/g, `- Tamanho: ${tamFormatado}.`);
@@ -311,7 +289,7 @@ export async function POST(req: Request) {
         linhasExportacao.push({
           "ID": "",
           "Código (SKU)": p.sku,
-          "Descrição": nomeFilhoFormatado, // Nome específico do filho/variação (ex: Lancheira Sorvete - Cor/Tam)
+          "Descrição": nomeFilhoFormatado,
           "Unidade": "UN",
           "Classificação fiscal": p.ncm || "",
           "Origem": p.origem || "0",
@@ -394,8 +372,4 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-}
-
-function limparTextoCorrigida(str: string) {
-  return str;
 }
