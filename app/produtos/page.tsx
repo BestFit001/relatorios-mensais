@@ -27,10 +27,11 @@ export default function ProdutosPage() {
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
 
-  // Estados para a IA de Descrições
+  // Estados para a IA de Descrições com SKU Alvo e Referência
   const [chatMensagens, setChatMensagens] = useState<any[]>([]);
   const [inputPrompt, setInputPrompt] = useState("");
-  const [skuAlvoDescricao, setSkuAlvoDescricao] = useState("");
+  const [skuAlvo, setSkuAlvo] = useState("");
+  const [skuReferencia, setSkuReferencia] = useState("");
   const [carregandoIA, setCarregandoIA] = useState(false);
 
   const [modalAberto, setModalAberto] = useState(false);
@@ -221,11 +222,11 @@ export default function ProdutosPage() {
 
   const enviarParaIA = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputPrompt.trim()) return;
+    if (!inputPrompt.trim() && !skuAlvo) return;
 
-    const novaMsgUsuario = { remetente: "usuario", texto: inputPrompt };
+    const textoUsuario = inputPrompt || `Gerar descrição padronizada para o SKU Alvo: ${skuAlvo}`;
+    const novaMsgUsuario = { remetente: "usuario", texto: textoUsuario };
     setChatMensagens(prev => [...prev, novaMsgUsuario]);
-    const promptAtual = inputPrompt;
     setInputPrompt("");
     setCarregandoIA(true);
 
@@ -233,7 +234,7 @@ export default function ProdutosPage() {
       const res = await fetch("/api/descricao-ia", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: promptAtual, skuProduto: skuAlvoDescricao })
+        body: JSON.stringify({ prompt: textoUsuario, skuAlvo, skuReferencia })
       });
       const data = await res.json();
 
@@ -241,8 +242,8 @@ export default function ProdutosPage() {
         setChatMensagens(prev => [...prev, { remetente: "ia", texto: data.resposta }]);
         
         await supabase.from("historico_descricoes_ia").insert([{
-          sku: skuAlvoDescricao || "GERAL",
-          prompt_usuario: promptAtual,
+          sku: skuAlvo || skuReferencia || "GERAL",
+          prompt_usuario: textoUsuario,
           resposta_ia: data.resposta
         }]);
       } else {
@@ -495,7 +496,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições via Inteligência Artificial</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições padronizado por IA</p>
           </div>
           <Navbar />
         </div>
@@ -776,25 +777,34 @@ export default function ProdutosPage() {
 
         {subAba === "descricoes" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
-            <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-800 pb-4">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Construtor de Descrições com Inteligência Artificial</h3>
-                <p className="text-xs text-slate-400 mt-1">Converse nativamente para otimizar copys de vendas. As interações são armazenadas para aprendizado.</p>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Construtor de Descrições Padronizado com IA</h3>
+                <p className="text-xs text-slate-400 mt-1">Gere descrições exatas para copiar e colar, com suporte a SKU Alvo e SKU de Referência.</p>
               </div>
-              <input
-                type="text"
-                value={skuAlvoDescricao}
-                onChange={(e) => setSkuAlvoDescricao(e.target.value)}
-                placeholder="SKU Alvo (Opcional)..."
-                className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-48"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={skuAlvo}
+                  onChange={(e) => setSkuAlvo(e.target.value)}
+                  placeholder="SKU Alvo..."
+                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-36"
+                />
+                <input
+                  type="text"
+                  value={skuReferencia}
+                  onChange={(e) => setSkuReferencia(e.target.value)}
+                  placeholder="SKU Referência..."
+                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-36"
+                />
+              </div>
             </div>
 
             <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 h-[400px] overflow-y-auto space-y-4">
               {chatMensagens.map((msg, idx) => (
                 <div key={idx} className={`flex ${msg.remetente === "usuario" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[80%] p-3.5 rounded-2xl text-xs leading-relaxed ${
-                    msg.remetente === "usuario" ? "bg-purple-600 text-white rounded-br-none" : "bg-slate-900 text-slate-200 border border-slate-800 rounded-bl-none whitespace-pre-wrap"
+                  <div className={`max-w-[85%] p-4 rounded-2xl text-xs leading-relaxed ${
+                    msg.remetente === "usuario" ? "bg-purple-600 text-white rounded-br-none" : "bg-slate-900 text-slate-200 border border-slate-800 rounded-bl-none whitespace-pre-wrap font-mono"
                   }`}>
                     {msg.texto}
                   </div>
@@ -803,13 +813,13 @@ export default function ProdutosPage() {
               {carregandoIA && (
                 <div className="flex justify-start">
                   <div className="bg-slate-900 text-slate-400 p-3 rounded-2xl text-xs animate-pulse">
-                    Analisando e gerando copy otimizada...
+                    Buscando dados e gerando descrição padronizada...
                   </div>
                 </div>
               )}
               {chatMensagens.length === 0 && (
                 <div className="text-center text-slate-500 py-20 text-xs">
-                  Nenhuma mensagem ainda. Digite abaixo o produto ou características para gerar sua primeira descrição de alta performance.
+                  Informe o SKU Alvo (ou SKU Referência) e digite sua solicitação abaixo para gerar a copy no padrão exato.
                 </div>
               )}
             </div>
@@ -819,7 +829,7 @@ export default function ProdutosPage() {
                 type="text"
                 value={inputPrompt}
                 onChange={(e) => setInputPrompt(e.target.value)}
-                placeholder="Ex: Crie uma descrição para a Calça Legging Fitness com foco no conforto e zero transparência..."
+                placeholder="Ex: Gere a descrição padrão para este SKU Alvo..."
                 className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-xs text-white outline-none"
               />
               <button type="submit" disabled={carregandoIA} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase cursor-pointer transition-all shadow-lg">
