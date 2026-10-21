@@ -7,7 +7,7 @@ import * as XLSX from "xlsx";
 
 export default function ProdutosPage() {
   const router = useRouter();
-  const [subAba, setSubAba] = useState<"pendentes" | "realizados" | "periodo" | "config">("pendentes");
+  const [subAba, setSubAba] = useState<"pendentes" | "realizados" | "periodo" | "config" | "descricoes">("pendentes");
   const [loading, setLoading] = useState(false);
 
   const [dadosPendentes, setDadosPendentes] = useState<any[]>([]);
@@ -26,6 +26,12 @@ export default function ProdutosPage() {
 
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
+
+  // Estados para a IA de Descrições
+  const [chatMensagens, setChatMensagens] = useState<any[]>([]);
+  const [inputPrompt, setInputPrompt] = useState("");
+  const [skuAlvoDescricao, setSkuAlvoDescricao] = useState("");
+  const [carregandoIA, setCarregandoIA] = useState(false);
 
   const [modalAberto, setModalAberto] = useState(false);
   const [formManual, setFormManual] = useState({
@@ -51,7 +57,6 @@ export default function ProdutosPage() {
     }
     setCanaisLista(listaCanais);
 
-    // Carrega configuração salva no localStorage ou define padrão
     const configSalva = localStorage.getItem("bestfit_canais_clipes_config");
     if (configSalva) {
       try {
@@ -212,6 +217,41 @@ export default function ProdutosPage() {
       carregarPendentesDoBanco();
     }
     setLoading(false);
+  };
+
+  const enviarParaIA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputPrompt.trim()) return;
+
+    const novaMsgUsuario = { remetente: "usuario", texto: inputPrompt };
+    setChatMensagens(prev => [...prev, novaMsgUsuario]);
+    const promptAtual = inputPrompt;
+    setInputPrompt("");
+    setCarregandoIA(true);
+
+    try {
+      const res = await fetch("/api/descricao-ia", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: promptAtual, skuProduto: skuAlvoDescricao })
+      });
+      const data = await res.json();
+
+      if (data.resposta) {
+        setChatMensagens(prev => [...prev, { remetente: "ia", texto: data.resposta }]);
+        
+        await supabase.from("historico_descricoes_ia").insert([{
+          sku: skuAlvoDescricao || "GERAL",
+          prompt_usuario: promptAtual,
+          resposta_ia: data.resposta
+        }]);
+      } else {
+        setChatMensagens(prev => [...prev, { remetente: "ia", texto: "Erro ao gerar resposta da IA." }]);
+      }
+    } catch (err: any) {
+      setChatMensagens(prev => [...prev, { remetente: "ia", texto: "Erro de conexão: " + err.message }]);
+    }
+    setCarregandoIA(false);
   };
 
   const excluirPendenteIndividual = async (sku: string) => {
@@ -455,7 +495,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com configuração persistente de canais com clipes</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições via Inteligência Artificial</p>
           </div>
           <Navbar />
         </div>
@@ -464,7 +504,7 @@ export default function ProdutosPage() {
           <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 flex-wrap gap-1">
             <button
               onClick={() => setSubAba("pendentes")}
-              className={`px-5 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
+              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
                 subAba === "pendentes" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
               }`}
             >
@@ -472,7 +512,7 @@ export default function ProdutosPage() {
             </button>
             <button
               onClick={() => setSubAba("realizados")}
-              className={`px-5 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
+              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
                 subAba === "realizados" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
               }`}
             >
@@ -480,15 +520,23 @@ export default function ProdutosPage() {
             </button>
             <button
               onClick={() => setSubAba("periodo")}
-              className={`px-5 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
+              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
                 subAba === "periodo" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
               }`}
             >
               Período & Gráficos
             </button>
             <button
+              onClick={() => setSubAba("descricoes")}
+              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
+                subAba === "descricoes" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              ✨ Descrições IA
+            </button>
+            <button
               onClick={() => setSubAba("config")}
-              className={`px-5 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
+              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
                 subAba === "config" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
               }`}
             >
@@ -512,7 +560,7 @@ export default function ProdutosPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-1">Qtd FBA removida; dados essenciais preservados com seleção em massa.</p>
+                <p className="text-xs text-slate-400 mt-1">Dados essenciais preservados com seleção em massa.</p>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
                 {skusSelecionados.length > 0 && (
@@ -671,7 +719,6 @@ export default function ProdutosPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-900/50">
-                          {/* LINHA DO PAI RESPONDENDO POR TODAS AS VARIAÇÕES */}
                           <tr className="bg-purple-950/20 font-bold">
                             <td className="p-2 text-purple-300 font-mono">Pai: {paiKey}</td>
                             {canaisLista.map((canal, cIdx) => {
@@ -710,7 +757,6 @@ export default function ProdutosPage() {
                             })}
                           </tr>
 
-                          {/* VARIAÇÕES FILHAS (EXPANSÍVEIS) */}
                           {expandido && itensDoGrupo.map((item, vIdx) => (
                             <tr key={vIdx} className="bg-slate-900/20 text-slate-400">
                               <td className="p-2 pl-6" colSpan={1 + canaisLista.length}>
@@ -725,6 +771,61 @@ export default function ProdutosPage() {
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {subAba === "descricoes" && (
+          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Construtor de Descrições com Inteligência Artificial</h3>
+                <p className="text-xs text-slate-400 mt-1">Converse nativamente para otimizar copys de vendas. As interações são armazenadas para aprendizado.</p>
+              </div>
+              <input
+                type="text"
+                value={skuAlvoDescricao}
+                onChange={(e) => setSkuAlvoDescricao(e.target.value)}
+                placeholder="SKU Alvo (Opcional)..."
+                className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-48"
+              />
+            </div>
+
+            <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 h-[400px] overflow-y-auto space-y-4">
+              {chatMensagens.map((msg, idx) => (
+                <div key={idx} className={`flex ${msg.remetente === "usuario" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[80%] p-3.5 rounded-2xl text-xs leading-relaxed ${
+                    msg.remetente === "usuario" ? "bg-purple-600 text-white rounded-br-none" : "bg-slate-900 text-slate-200 border border-slate-800 rounded-bl-none whitespace-pre-wrap"
+                  }`}>
+                    {msg.texto}
+                  </div>
+                </div>
+              ))}
+              {carregandoIA && (
+                <div className="flex justify-start">
+                  <div className="bg-slate-900 text-slate-400 p-3 rounded-2xl text-xs animate-pulse">
+                    Analisando e gerando copy otimizada...
+                  </div>
+                </div>
+              )}
+              {chatMensagens.length === 0 && (
+                <div className="text-center text-slate-500 py-20 text-xs">
+                  Nenhuma mensagem ainda. Digite abaixo o produto ou características para gerar sua primeira descrição de alta performance.
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={enviarParaIA} className="flex gap-2">
+              <input
+                type="text"
+                value={inputPrompt}
+                onChange={(e) => setInputPrompt(e.target.value)}
+                placeholder="Ex: Crie uma descrição para a Calça Legging Fitness com foco no conforto e zero transparência..."
+                className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-xs text-white outline-none"
+              />
+              <button type="submit" disabled={carregandoIA} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase cursor-pointer transition-all shadow-lg">
+                Gerar Copy
+              </button>
+            </form>
           </div>
         )}
 
@@ -773,7 +874,6 @@ export default function ProdutosPage() {
               </div>
             </div>
 
-            {/* CARDS DE RESUMO */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Cadastros Realizados</span>
@@ -796,7 +896,6 @@ export default function ProdutosPage() {
               </div>
             </div>
 
-            {/* GRÁFICOS VISUAIS EM BARRAS */}
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 space-y-6">
               <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Gráfico Comparativo de Produção</h4>
               
@@ -842,7 +941,6 @@ export default function ProdutosPage() {
                 </div>
               </div>
             </div>
-
           </div>
         )}
 
