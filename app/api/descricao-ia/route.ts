@@ -11,7 +11,8 @@ export async function POST(req: Request) {
 
     const systemInstruction = "Você é um especialista em e-commerce e copywriter sênior para a Best Fit (moda fitness e athletic wear). Crie descrições altamente persuasivas, técnicas e focadas em performance de vendas para marketplaces, focando em benefícios visuais e texturais, sem termos negativos.";
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // Atualizado para o modelo correto gemini-2.5-flash
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     
     const apiResponse = await fetch(url, {
       method: "POST",
