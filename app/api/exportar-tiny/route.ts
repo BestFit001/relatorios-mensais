@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -7,7 +8,12 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 function toTitleCase(str: string) {
   if (!str) return "";
-  const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
+
+  const lowercaseWords = [
+    "de", "do", "da", "dos", "das", "e", "em",
+    "por", "com", "para", "a", "o",
+  ];
+
   return str
     .toLowerCase()
     .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v]+/g, " ")
@@ -18,14 +24,16 @@ function toTitleCase(str: string) {
       if (index > 0 && lowercaseWords.includes(word)) {
         return word;
       }
+
       return word.charAt(0).toUpperCase() + word.slice(1);
     })
     .join(" ");
 }
 
-// Lógica EXATA do seu IA 2.0_3.txt para limpar as variações
+// Limpa os marcadores indesejados do texto
 function limparTextoEstrito(str: string) {
   if (!str) return "";
+
   return String(str)
     .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
     .replace(/\s+/g, " ")
@@ -34,6 +42,7 @@ function limparTextoEstrito(str: string) {
 
 function gerarSlug(str: string) {
   if (!str) return "";
+
   return str
     .toLowerCase()
     .normalize("NFD")
@@ -44,7 +53,9 @@ function gerarSlug(str: string) {
 
 function gerarPalavrasChave(titulo: string) {
   if (!titulo) return "";
+
   const base = toTitleCase(titulo);
+
   return `${base},${base} Confortável,${base} Original Best Fit,Moda Fitness e Casual`;
 }
 
@@ -53,30 +64,54 @@ export async function POST(req: Request) {
     const { skus } = await req.json();
 
     if (!skus || skus.length === 0) {
-      return NextResponse.json({ error: "Nenhum SKU selecionado para exportação." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Nenhum SKU selecionado para exportação." },
+        { status: 400 }
+      );
     }
 
-    const { data: produtos } = await supabase
+    const { data: produtos, error: erroProdutos } = await supabase
       .from("produtos_pendentes")
       .select("*")
       .in("sku", skus);
 
+    if (erroProdutos) {
+      throw erroProdutos;
+    }
+
     if (!produtos || produtos.length === 0) {
-      return NextResponse.json({ error: "Produtos pendentes não encontrados." }, { status: 404 });
+      return NextResponse.json(
+        { error: "Produtos pendentes não encontrados." },
+        { status: 404 }
+      );
     }
 
     const paisUnicos = Array.from(
-      new Set(produtos.map((p) => p.sku_pai || (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku)))
+      new Set(
+        produtos.map((p) =>
+          p.sku_pai ||
+          (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku)
+        )
+      )
     );
 
-    const linhasExportacao = [];
+    const linhasExportacao: Record<string, string | number>[] = [];
 
     for (const paiKey of paisUnicos) {
-      const itensDoPai = produtos.filter((p) => (p.sku_pai || p.sku.substring(0, 5)) === paiKey);
+      const itensDoPai = produtos.filter(
+        (p) =>
+          (p.sku_pai ||
+            (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku)) === paiKey
+      );
+
       if (itensDoPai.length === 0) continue;
 
       const produtoBase = itensDoPai[0];
-      const nomePaiRaw = limparTextoEstrito(produtoBase.produto.split("-")[0]);
+
+      const nomePaiRaw = limparTextoEstrito(
+        String(produtoBase.produto || "").split("-")[0]
+      );
+
       const nomePaiFormatado = toTitleCase(nomePaiRaw);
       const slugPai = gerarSlug(nomePaiFormatado);
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
@@ -84,31 +119,31 @@ export async function POST(req: Request) {
 
       const descricaoComplementarPai = [
         `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
-        ``,
-        `Especificações:`,
+        "",
+        "Especificações:",
         `- Marca: ${marcaPai}.`,
         `- Modelo: ${nomePaiFormatado}.`,
-        `- Categoria: Moda e Vestuário / Acessórios.`,
-        ``,
-        `Benefícios:`,
-        `- Conforto Superior: Toque macio e caimento projetado para o uso diário.`,
-        `- Alta Durabilidade: Costuras reforçadas e acabamento premium.`,
-        `- Estética Sofisticada: Design autêntico que valoriza o visual em qualquer ocasião.`,
-        ``,
-        `Composição:`,
-        `- Materiais nobres de alta performance e resistência.`,
-        ``,
-        `Cuidados e Conservação:`,
-        `- Armazenar em local seco, fresco e arejado.`,
-        `- Evitar exposição prolongada direta à luz solar.`,
-        `- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.`
+        "- Categoria: Moda e Vestuário / Acessórios.",
+        "",
+        "Benefícios:",
+        "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
+        "- Alta Durabilidade: Costuras reforçadas e acabamento premium.",
+        "- Estética Sofisticada: Design autêntico que valoriza o visual em qualquer ocasião.",
+        "",
+        "Composição:",
+        "- Materiais nobres de alta performance e resistência.",
+        "",
+        "Cuidados e Conservação:",
+        "- Armazenar em local seco, fresco e arejado.",
+        "- Evitar exposição prolongada direta à luz solar.",
+        "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.",
       ].join("\n");
 
-      // 1. Linha do Pai (Tipo do produto = V)
+      // 1. Produto Pai (Tipo do produto = V)
       linhasExportacao.push({
         "ID": "",
         "Código (SKU)": paiKey,
-        "Descrição": nomePaiFormatado, // Apenas Título
+        "Descrição": nomePaiFormatado,
         "Unidade": "UN",
         "Classificação fiscal": produtoBase.ncm || "",
         "Origem": produtoBase.origem || "0",
@@ -127,7 +162,7 @@ export async function POST(req: Request) {
         "Peso bruto (Kg)": "0.500",
         "GTIN/EAN": "",
         "GTIN/EAN tributável": "",
-        "Descrição complementar": descricaoComplementarPai, // Template Estruturado
+        "Descrição complementar": descricaoComplementarPai,
         "CEST": produtoBase.cest || "",
         "Código de Enquadramento IPI": "",
         "Formato embalagem": "",
@@ -157,7 +192,7 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": `Compre ${nomePaiFormatado} na${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
+        "Descrição SEO": `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
         "Palavras chave SEO": palavrasChavePai,
         "Slug": slugPai,
         "Dias para preparação": "0",
@@ -169,59 +204,72 @@ export async function POST(req: Request) {
         "URL imagem externa 10": "",
         "Markup": "",
         "Permitir inclusão nas vendas": "Sim",
-        "EX TIPI": ""
+        "EX TIPI": "",
       });
 
-      // 2. Linhas dos Filhos / Variações (Tipo do produto = S)
+      // 2. Produtos Filhos / Variações (Tipo do produto = S)
       for (const p of itensDoPai) {
-        const { data: hist } = await supabase
+        const { data: hist, error: erroHistorico } = await supabase
           .from("historico_descricoes_ia")
           .select("resposta_ia")
           .eq("sku", p.sku)
           .order("id", { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
-        const nomeFilhoRaw = limparTextoEstrito(p.produto);
+        if (erroHistorico) {
+          throw erroHistorico;
+        }
+
+        const nomeFilhoRaw = limparTextoEstrito(p.produto || "");
         const nomeFilhoFormatado = toTitleCase(nomeFilhoRaw);
         const slugFilho = gerarSlug(nomeFilhoFormatado);
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        // Lógica EXATA do IA 2.0_3.txt que gera: Cor:Branco / Preto||Tamanho:UNICO||
-        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
-        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
-        const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
+        const corFormatada = p.cor
+          ? toTitleCase(limparTextoEstrito(p.cor))
+          : "";
+
+        const tamFormatado = p.tamanho
+          ? limparTextoEstrito(String(p.tamanho))
+          : "";
+
+        // CORREÇÃO: separadores literais ||, sem \vert{}.
+        // Exemplo: Cor:Cinza||Tamanho:GG||
+        const variacaoFormatada =
+          `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
           `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
-          ``,
-          `Especificações:`,
+          "",
+          "Especificações:",
           `- Marca: ${marcaFilho}.`,
           `- Modelo / Variação: ${nomeFilhoFormatado}.`,
           `- Cor: ${corFormatada}.`,
           `- Tamanho: ${tamFormatado}.`,
-          ``,
-          `Benefícios:`,
-          `- Conforto Absoluto: Modelagem anatómica que se ajusta perfeitamente ao corpo.`,
-          `- Versatilidade: Perfeito para compor looks modernos com muita elegância.`,
-          `- Qualidade Garantida: Tecido resistente e de alto desempenho.`,
-          ``,
-          `Composição:`,
-          `- Fios de alta tecnologia e acabamento premium.`,
-          ``,
-          `Cuidados e Conservação:`,
-          `- Lavar à mão ou em ciclo delicado.`,
-          `- Secar à sombra para preservar a cor e a elasticidade.`,
-          `- Não utilizar alvejantes à base de cloro.`
+          "",
+          "Benefícios:",
+          "- Conforto Absoluto: Modelagem anatómica que se ajusta perfeitamente ao corpo.",
+          "- Versatilidade: Perfeito para compor looks modernos com muita elegância.",
+          "- Qualidade Garantida: Tecido resistente e de alto desempenho.",
+          "",
+          "Composição:",
+          "- Fios de alta tecnologia e acabamento premium.",
+          "",
+          "Cuidados e Conservação:",
+          "- Lavar à mão ou em ciclo delicado.",
+          "- Secar à sombra para preservar a cor e a elasticidade.",
+          "- Não utilizar alvejantes à base de cloro.",
         ];
 
-        const descricaoComplementarFinal = hist?.resposta_ia || descricaoFilhoArr.join("\n");
+        const descricaoComplementarFinal =
+          hist?.resposta_ia || descricaoFilhoArr.join("\n");
 
         linhasExportacao.push({
           "ID": "",
           "Código (SKU)": p.sku,
-          "Descrição": nomeFilhoFormatado, // Apenas Título
+          "Descrição": nomeFilhoFormatado,
           "Unidade": "UN",
           "Classificação fiscal": p.ncm || "",
           "Origem": p.origem || "0",
@@ -240,7 +288,7 @@ export async function POST(req: Request) {
           "Peso bruto (Kg)": "0.500",
           "GTIN/EAN": p.ean || "",
           "GTIN/EAN tributável": p.ean || "",
-          "Descrição complementar": descricaoComplementarFinal, // Template Estruturado
+          "Descrição complementar": descricaoComplementarFinal,
           "CEST": p.cest || "",
           "Código de Enquadramento IPI": "",
           "Formato embalagem": "",
@@ -257,7 +305,7 @@ export async function POST(req: Request) {
           "URL imagem 6": "",
           "Categoria": "",
           "Código do pai": paiKey,
-          "Variações": variacaoFormatada, // Variação limpa
+          "Variações": variacaoFormatada,
           "Marca": marcaFilho,
           "Garantia": "30 dias",
           "Sob encomenda": "Não",
@@ -282,13 +330,26 @@ export async function POST(req: Request) {
           "URL imagem externa 10": "",
           "Markup": "",
           "Permitir inclusão nas vendas": "Sim",
-          "EX TIPI": ""
+          "EX TIPI": "",
         });
       }
     }
 
-    return NextResponse.json({ sucesso: true, dados: linhasExportacao });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({
+      sucesso: true,
+      dados: linhasExportacao,
+    });
+  } catch (error: unknown) {
+    console.error("Erro ao exportar produtos:", error);
+
+    const mensagem =
+      error instanceof Error
+        ? error.message
+        : "Erro interno ao exportar os produtos.";
+
+    return NextResponse.json(
+      { error: mensagem },
+      { status: 500 }
+    );
   }
 }
