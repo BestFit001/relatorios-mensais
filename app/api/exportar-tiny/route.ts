@@ -26,7 +26,7 @@ function toTitleCase(str: string) {
 function limparTextoEstrito(str: string) {
   if (!str) return "";
   return String(str)
-    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
+    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v\x000b_]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -105,40 +105,61 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      // BUSCA INTELIGENTE DE PADRÕES (PROCURA NA ABA DE PADRONIZAÇÃO)
-      const { data: padroes } = await supabase
+      // BUSCA MELHORADA NA ABA DE PADRONIZAÇÃO:
+      // 1. Tenta buscar por correspondência exata ou parcial da marca/título
+      let padraoEncontrado = null;
+      const { data: padroesMarca } = await supabase
         .from("padroes_anuncios")
         .select("*")
-        .or(`marca.ilike.%${marcaPai}%,titulo.ilike.%${nomePaiFormatado.split(" ")[0]}%`)
+        .ilike("marca", `%${marcaPai}%`)
         .limit(1);
 
-      const padraoEncontrado = padroes && padroes.length > 0 ? padroes[0] : null;
+      if (padroesMarca && padroesMarca.length > 0) {
+        padraoEncontrado = padroesMarca[0];
+      } else {
+        // Se não achar por marca, busca o último padrão cadastrado na tabela para servir de modelo universal
+        const { data: padroesRecentes } = await supabase
+          .from("padroes_anuncios")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(1);
 
-      // Define a descrição complementar baseada no padrão encontrado ou no fallback padrão
-      const descricaoComplementarPai = padraoEncontrado?.descricao_complementar || [
-        `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
-        "",
-        "Especificações:",
-        `- Marca: ${marcaPai}.`,
-        `- Modelo: ${nomePaiFormatado}.`,
-        "- Categoria: Moda e Vestuário / Acessórios.",
-        "",
-        "Benefícios:",
-        "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
-        "- Alta Durabilidade: Costuras reforçadas e acabamento premium.",
-        "- Estética Sofisticada: Design autêntico que valoriza o visual em qualquer ocasião.",
-        "",
-        "Composição:",
-        "- Materiais nobres de alta performance e resistência.",
-        "",
-        "Cuidados e Conservação:",
-        "- Armazenar em local seco, fresco e arejado.",
-        "- Evitar exposição prolongada direta à luz solar.",
-        "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.",
-      ].join("\n");
+        if (padroesRecentes && padroesRecentes.length > 0) {
+          padraoEncontrado = padroesRecentes[0];
+        }
+      }
 
-      const slugFinalPai = padraoEncontrado?.slug || slugPai;
-      const palavrasChaveFinalPai = padraoEncontrado?.palavras_chave_seo || palavrasChavePai;
+      // Se encontrou um padrão, substitui as variáveis genéricas pelo nome do produto atual mantendo a estrutura exata (medidas, blocos, etc)
+      let descricaoComplementarPai = "";
+      if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
+        // Opcional: Se quiser que o template do padrão adapte o nome do produto automaticamente:
+        descricaoComplementarPai = padraoEncontrado.descricao_complementar;
+      } else {
+        descricaoComplementarPai = [
+          `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
+          "",
+          "Especificações:",
+          `- Marca: ${marcaPai}.`,
+          `- Modelo: ${nomePaiFormatado}.`,
+          "- Categoria: Moda e Vestuário / Acessórios.",
+          "",
+          "Benefícios:",
+          "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
+          "- Alta Durabilidade: Costuras reforçadas e acabamento premium.",
+          "- Estética Sofisticada: Design autêntico que valoriza o visual em qualquer ocasião.",
+          "",
+          "Composição:",
+          "- Materiais nobres de alta performance e resistência.",
+          "",
+          "Cuidados e Conservação:",
+          "- Armazenar em local seco, fresco e arejado.",
+          "- Evitar exposição prolongada direta à luz solar.",
+          "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.",
+        ].join("\n");
+      }
+
+      const slugFinalPai = padraoEncontrado?.slug ? gerarSlug(nomePaiFormatado) : slugPai;
+      const palavrasChaveFinalPai = padraoEncontrado?.palavras_chave_seo ? gerarPalavrasChave(nomePaiFormatado) : palavrasChavePai;
       const descricaoSeoFinalPai = padraoEncontrado?.descricao_seo || `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`;
 
       // 1. Produto Pai (Tipo do produto = V)
@@ -237,7 +258,6 @@ export async function POST(req: Request) {
           ? limparTextoEstrito(String(p.tamanho))
           : "";
 
-        // Formato estrito exigido para as variações em linha única
         const variacaoFormatada =
           `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
