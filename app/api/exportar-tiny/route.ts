@@ -152,6 +152,11 @@ export async function POST(req: Request) {
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const descricaoFinal = hist?.resposta_ia || `Descrição detalhada para ${nomeFilhoFormatado} - Cor: ${p.cor}, Tam: ${p.tamanho}`;
 
+        // Formato exato exigido: Cor:Nome||Tamanho:Valor||
+        const corFormatada = p.cor ? toTitleCase(String(p.cor).trim()) : "";
+        const tamFormatado = p.tamanho ? String(p.tamanho).trim() : "";
+        const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
+
         linhasExportacao.push({
           "ID": "",
           "Código (SKU)": p.sku,
@@ -191,7 +196,7 @@ export async function POST(req: Request) {
           "URL imagem 6": "",
           "Categoria": "",
           "Código do pai": paiKey,
-          "Variações": "",
+          "Variações": variacaoFormatada,
           "Marca": p.marca || "BEST FIT",
           "Garantia": "30 dias",
           "Sob encomenda": "Não",
