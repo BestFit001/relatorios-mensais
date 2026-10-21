@@ -10,7 +10,7 @@ function toTitleCase(str: string) {
   const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
   return str
     .toLowerCase()
-    .replace(/ert\{[^}]*\}|[\r\n]+/g, " ")
+    .replace(/ert\{[^}]*\}|[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .split(" ")
@@ -23,10 +23,11 @@ function toTitleCase(str: string) {
     .join(" ");
 }
 
-function limparTexto(str: string) {
+// Remove totalmente quebras de linha e blocos ert{} para evitar qualquer quebra
+function limparTextoEstrito(str: string) {
   if (!str) return "";
   return String(str)
-    .replace(/ert\{[^}]*\}|[\r\n]+/g, " ")
+    .replace(/ert\{[^}]*\}|[\r\n\t]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -75,7 +76,7 @@ export async function POST(req: Request) {
       if (itensDoPai.length === 0) continue;
 
       const produtoBase = itensDoPai[0];
-      const nomePaiRaw = limparTexto(produtoBase.produto.split("-")[0]);
+      const nomePaiRaw = limparTextoEstrito(produtoBase.produto.split("-")[0]);
       const nomePaiFormatado = toTitleCase(nomePaiRaw);
       const slugPai = gerarSlug(nomePaiFormatado);
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
@@ -181,16 +182,16 @@ export async function POST(req: Request) {
           .limit(1)
           .single();
 
-        const nomeFilhoRaw = limparTexto(p.produto);
+        const nomeFilhoRaw = limparTextoEstrito(p.produto);
         const nomeFilhoFormatado = toTitleCase(nomeFilhoRaw);
         const slugFilho = gerarSlug(nomeFilhoFormatado);
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        const corFormatada = p.cor ? toTitleCase(limparTexto(p.cor)) : "Padrão";
-        const tamFormatado = p.tamanho ? limparTexto(String(p.tamanho)) : "Único";
+        // Limpeza rigorosa para garantir que cor e tamanho fiquem limpos em uma única linha
+        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "Padrão";
+        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "Único";
         
-        // Garante estritamente uma única linha limpa sem quebras
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
