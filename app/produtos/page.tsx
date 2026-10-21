@@ -34,6 +34,11 @@ export default function ProdutosPage() {
   const [skuReferencia, setSkuReferencia] = useState("");
   const [carregandoIA, setCarregandoIA] = useState(false);
 
+  // Estados para a Consulta de Descrições na aba Configurações
+  const [skuBuscaConfig, setSkuBuscaConfig] = useState("");
+  const [resultadoBuscaConfig, setResultadoBuscaConfig] = useState<any>(null);
+  const [buscandoConfig, setBuscandoConfig] = useState(false);
+
   const [modalAberto, setModalAberto] = useState(false);
   const [formManual, setFormManual] = useState({
     sku: "", produto: "", cor: "", tamanho: "", ncm: "", cest: "", ean: "",
@@ -97,6 +102,32 @@ export default function ProdutosPage() {
   const carregarRealizadosDoBanco = async () => {
     const { data } = await supabase.from("produtos_novos_cadastrados").select("*").order("id", { ascending: false });
     if (data) setCadastrosRealizados(data);
+  };
+
+  const buscarDescricaoPorSkuConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!skuBuscaConfig.trim()) return;
+    setBuscandoConfig(true);
+    setResultadoBuscaConfig(null);
+
+    try {
+      const { data, error } = await supabase
+        .from("historico_descricoes_ia")
+        .select("*")
+        .ilike("sku", `%${skuBuscaConfig.trim()}%`)
+        .order("id", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error || !data) {
+        setResultadoBuscaConfig({ naoEncontrado: true });
+      } else {
+        setResultadoBuscaConfig(data);
+      }
+    } catch (err) {
+      setResultadoBuscaConfig({ naoEncontrado: true });
+    }
+    setBuscandoConfig(false);
   };
 
   const handleUploadPendentes = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -859,6 +890,45 @@ export default function ProdutosPage() {
                 </label>
               ))}
             </div>
+
+            {/* NOVA SEÇÃO: PROCURAR DESCRIÇÃO PELO SKU */}
+            <div className="border-t border-slate-800 pt-6 space-y-4">
+              <div>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Procurar Descrição Gerada por SKU</h3>
+                <p className="text-xs text-slate-400 mt-1">Consulte rapidamente a última descrição salva no histórico para qualquer SKU.</p>
+              </div>
+
+              <form onSubmit={buscarDescricaoPorSkuConfig} className="flex gap-2 max-w-xl">
+                <input
+                  type="text"
+                  value={skuBuscaConfig}
+                  onChange={(e) => setSkuBuscaConfig(e.target.value)}
+                  placeholder="Digite o SKU (ex: 22191)..."
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white outline-none"
+                />
+                <button type="submit" disabled={buscandoConfig} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-5 py-2.5 rounded-xl text-xs uppercase cursor-pointer transition-all">
+                  {buscandoConfig ? "Buscando..." : "Pesquisar"}
+                </button>
+              </form>
+
+              {resultadoBuscaConfig && (
+                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 mt-4">
+                  {resultadoBuscaConfig.naoEncontrado ? (
+                    <p className="text-xs text-rose-400">Nenhuma descrição encontrada para este SKU no histórico.</p>
+                  ) : (
+                    <div>
+                      <div className="flex justify-between items-center text-[10px] text-slate-400 border-b border-slate-900 pb-2 mb-2">
+                        <span>SKU: <strong className="text-purple-400">{resultadoBuscaConfig.sku}</strong></span>
+                        <span>Gerado em: {new Date(resultadoBuscaConfig.created_at || Date.now()).toLocaleString("pt-BR")}</span>
+                      </div>
+                      <pre className="text-xs text-slate-200 whitespace-pre-wrap font-mono leading-relaxed bg-slate-900/60 p-3 rounded-lg">
+                        {resultadoBuscaConfig.resposta_ia}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -979,7 +1049,7 @@ export default function ProdutosPage() {
                   <input type="number" step="0.01" value={formManual.preco_venda} onChange={(e) => setFormManual({...formManual, preco_venda: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mm-1">Marca</label>
                   <input type="text" value={formManual.marca} onChange={(e) => setFormManual({...formManual, marca: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
                 </div>
                 <div className="md:col-span-3 flex justify-end gap-2 pt-3 border-t border-slate-800">
