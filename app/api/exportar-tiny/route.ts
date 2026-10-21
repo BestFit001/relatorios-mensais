@@ -23,11 +23,10 @@ function toTitleCase(str: string) {
     .join(" ");
 }
 
-// Remove totalmente quebras de linha, tabulações, blocos ert{}, tags \vert e códigos de escape
 function limparTextoEstrito(str: string) {
   if (!str) return "";
   return String(str)
-    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v\x000b_]+/g, "")
+    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -108,7 +107,7 @@ export async function POST(req: Request) {
       linhasExportacao.push({
         "ID": "",
         "Código (SKU)": paiKey,
-        "Descrição": nomePaiFormatado, // Coluna Descrição = Apenas o Título do Produto
+        "Descrição": nomePaiFormatado,
         "Unidade": "UN",
         "Classificação fiscal": produtoBase.ncm || "",
         "Origem": produtoBase.origem || "0",
@@ -127,7 +126,7 @@ export async function POST(req: Request) {
         "Peso bruto (Kg)": "0.500",
         "GTIN/EAN": "",
         "GTIN/EAN tributável": "",
-        "Descrição complementar": descricaoComplementarPai, // Descrição complementar com blocos estruturados
+        "Descrição complementar": descricaoComplementarPai,
         "CEST": produtoBase.cest || "",
         "Código de Enquadramento IPI": "",
         "Formato embalagem": "",
@@ -188,9 +187,10 @@ export async function POST(req: Request) {
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        // Variação perfeitamente limpa e em linha única (Cor:X||Tamanho:Y||)
         const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
+        
+        // Formato exato e limpo em linha única
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
@@ -221,7 +221,7 @@ export async function POST(req: Request) {
         linhasExportacao.push({
           "ID": "",
           "Código (SKU)": p.sku,
-          "Descrição": nomeFilhoFormatado, // Coluna Descrição = Apenas o Título do Produto da variação
+          "Descrição": nomeFilhoFormatado,
           "Unidade": "UN",
           "Classificação fiscal": p.ncm || "",
           "Origem": p.origem || "0",
@@ -240,7 +240,7 @@ export async function POST(req: Request) {
           "Peso bruto (Kg)": "0.500",
           "GTIN/EAN": p.ean || "",
           "GTIN/EAN tributável": p.ean || "",
-          "Descrição complementar": descricaoComplementarFinal, // Descrição complementar com blocos estruturados
+          "Descrição complementar": descricaoComplementarFinal,
           "CEST": p.cest || "",
           "Código de Enquadramento IPI": "",
           "Formato embalagem": "",
@@ -257,7 +257,7 @@ export async function POST(req: Request) {
           "URL imagem 6": "",
           "Categoria": "",
           "Código do pai": paiKey,
-          "Variações": variacaoFormatada, // Variação limpa e em linha única
+          "Variações": variacaoFormatada,
           "Marca": marcaFilho,
           "Garantia": "30 dias",
           "Sob encomenda": "Não",
