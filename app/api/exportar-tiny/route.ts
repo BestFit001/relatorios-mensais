@@ -10,9 +10,6 @@ function toTitleCase(str: string) {
   const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
   return str
     .toLowerCase()
-    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
     .split(" ")
     .map((word, index) => {
       if (index > 0 && lowercaseWords.includes(word)) {
@@ -23,10 +20,14 @@ function toTitleCase(str: string) {
     .join(" ");
 }
 
+// Limpeza cirúrgica e agressiva para remover qualquer vestígio de ert{}, \n, \r ou literais
 function limparTextoEstrito(str: string) {
   if (!str) return "";
   return String(str)
-    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
+    .replace(/\\?vert(\{[^}]*\})?/g, "")
+    .replace(/ert\{[^}]*\}/g, "")
+    .replace(/\\n|\\r/g, "")
+    .replace(/[\r\n\t\v\x000b_]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -187,10 +188,14 @@ export async function POST(req: Request) {
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
-        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
+        // Aplicação da limpeza total antes de montar a string da variação
+        const corLimpa = limparTextoEstrito(p.cor);
+        const tamLimpo = limparTextoEstrito(String(p.tamanho || ""));
         
-        // Formato exato e limpo em linha única
+        const corFormatada = corLimpa ? toTitleCase(corLimpa) : "";
+        const tamFormatado = tamLimpo;
+
+        // Variação 100% em linha única garantida
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
