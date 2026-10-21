@@ -13,7 +13,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Nenhum SKU selecionado para exportação." }, { status: 400 });
     }
 
-    // Busca os produtos na tabela de pendentes
     const { data: produtos } = await supabase
       .from("produtos_pendentes")
       .select("*")
@@ -23,37 +22,72 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Produtos pendentes não encontrados." }, { status: 404 });
     }
 
+    // Agrupa por SKU Pai para estruturar Pai -> Filhos
+    const agrupadosPorPai: { [pai: string]: any[] } = {};
+    produtos.forEach((p) => {
+      const pai = p.sku_pai || p.sku.substring(0, 5);
+      if (!agrupadosPorPai[pai]) agrupadosPorPai[pai] = [];
+      agrupadosPorPai[pai].push(p);
+    });
+
     const linhasExportacao = [];
 
-    for (const p of produtos) {
-      // Busca a descrição gerada pela IA para este SKU no histórico
-      const { data: hist } = await supabase
-        .from("historico_descricoes_ia")
-        .select("resposta_ia")
-        .eq("sku", p.sku)
-        .order("id", { ascending: false })
-        .limit(1)
-        .single();
-
-      const descricaoFinal = hist?.resposta_ia || `Descrição padrão para ${p.produto}`;
-
+    for (const [paiKey, itens] of Object.entries(agrupadosPorPai)) {
+      // 1. Linha do Pai
       linhasExportacao.push({
-        SKU: p.sku,
-        "Nome do Produto": p.produto,
+        "": "", // Primeira coluna em branco
+        SKU: paiKey,
+        "Nome do Produto": itens[0].produto.split("-")[0].trim(),
+        "Tipo": "P", // Produto Pai
         "Unidade": "UN",
-        "NCM": p.ncm || "",
-        "CEST": p.cest || "",
+        "NCM": itens[0].ncm || "",
+        "CEST": itens[0].cest || "",
         "Origem": "0",
-        "Preço": p.preco_venda || 0,
-        "Custo": p.custo || 0,
+        "Preço": itens[0].preco_venda || 0,
+        "Custo": itens[0].custo || 0,
         "Peso Líquido": "0,500",
         "Peso Bruto": "0,500",
         "Largura": "20",
         "Altura": "20",
         "Comprimento": "20",
         "Situação": "Ativo",
-        "Descrição": descricaoFinal
+        "EAN": "", // Pai sem EAN
+        "Descrição": `Descrição padrão para ${itens[0].produto}`
       });
+
+      // 2. Linhas dos Filhos (Variações)
+      for (const p of itens) {
+        const { data: hist } = await supabase
+          .from("historico_descricoes_ia")
+          .select("resposta_ia")
+          .eq("sku", p.sku)
+          .order("id", { ascending: false })
+          .limit(1)
+          .single();
+
+        const descricaoFinal = hist?.resposta_ia || `Descrição detalhada para ${p.produto} - Cor: ${p.cor}, Tam: ${p.tamanho}`;
+
+        linhasExportacao.push({
+          "": "", // Primeira coluna em branco
+          SKU: p.sku,
+          "Nome do Produto": `${p.produto} ${p.cor ? `- ${p.cor}` : ""} ${p.tamanho ? `- ${p.tamanho}` : ""}`,
+          "Tipo": "V", // Variação / Filho
+          "Unidade": "UN",
+          "NCM": p.ncm || "",
+          "CEST": p.cest || "",
+          "Origem": "0",
+          "Preço": p.preco_venda || 0,
+          "Custo": p.custo || 0,
+          "Peso Líquido": "0,500",
+          "Peso Bruto": "0,500",
+          "Largura": "20",
+          "Altura": "20",
+          "Comprimento": "20",
+          "Situação": "Ativo",
+          "EAN": p.ean || "", // EAN apenas no filho
+          "Descrição": descricaoFinal
+        });
+      }
     }
 
     return NextResponse.json({ sucesso: true, dados: linhasExportacao });
