@@ -10,6 +10,9 @@ function toTitleCase(str: string) {
   const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
   return str
     .toLowerCase()
+    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
     .split(" ")
     .map((word, index) => {
       if (index > 0 && lowercaseWords.includes(word)) {
@@ -20,14 +23,11 @@ function toTitleCase(str: string) {
     .join(" ");
 }
 
-// Limpeza cirúrgica e agressiva para remover qualquer vestígio de ert{}, \n, \r ou literais
+// Lógica EXATA do seu IA 2.0_3.txt para limpar as variações
 function limparTextoEstrito(str: string) {
   if (!str) return "";
   return String(str)
-    .replace(/\\?vert(\{[^}]*\})?/g, "")
-    .replace(/ert\{[^}]*\}/g, "")
-    .replace(/\\n|\\r/g, "")
-    .replace(/[\r\n\t\v\x000b_]+/g, "")
+    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -108,7 +108,7 @@ export async function POST(req: Request) {
       linhasExportacao.push({
         "ID": "",
         "Código (SKU)": paiKey,
-        "Descrição": nomePaiFormatado,
+        "Descrição": nomePaiFormatado, // Apenas Título
         "Unidade": "UN",
         "Classificação fiscal": produtoBase.ncm || "",
         "Origem": produtoBase.origem || "0",
@@ -127,7 +127,7 @@ export async function POST(req: Request) {
         "Peso bruto (Kg)": "0.500",
         "GTIN/EAN": "",
         "GTIN/EAN tributável": "",
-        "Descrição complementar": descricaoComplementarPai,
+        "Descrição complementar": descricaoComplementarPai, // Template Estruturado
         "CEST": produtoBase.cest || "",
         "Código de Enquadramento IPI": "",
         "Formato embalagem": "",
@@ -188,14 +188,9 @@ export async function POST(req: Request) {
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        // Aplicação da limpeza total antes de montar a string da variação
-        const corLimpa = limparTextoEstrito(p.cor);
-        const tamLimpo = limparTextoEstrito(String(p.tamanho || ""));
-        
-        const corFormatada = corLimpa ? toTitleCase(corLimpa) : "";
-        const tamFormatado = tamLimpo;
-
-        // Variação 100% em linha única garantida
+        // Lógica EXATA do IA 2.0_3.txt que gera: Cor:Branco / Preto||Tamanho:UNICO||
+        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
+        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
@@ -226,7 +221,7 @@ export async function POST(req: Request) {
         linhasExportacao.push({
           "ID": "",
           "Código (SKU)": p.sku,
-          "Descrição": nomeFilhoFormatado,
+          "Descrição": nomeFilhoFormatado, // Apenas Título
           "Unidade": "UN",
           "Classificação fiscal": p.ncm || "",
           "Origem": p.origem || "0",
@@ -245,7 +240,7 @@ export async function POST(req: Request) {
           "Peso bruto (Kg)": "0.500",
           "GTIN/EAN": p.ean || "",
           "GTIN/EAN tributável": p.ean || "",
-          "Descrição complementar": descricaoComplementarFinal,
+          "Descrição complementar": descricaoComplementarFinal, // Template Estruturado
           "CEST": p.cest || "",
           "Código de Enquadramento IPI": "",
           "Formato embalagem": "",
@@ -262,7 +257,7 @@ export async function POST(req: Request) {
           "URL imagem 6": "",
           "Categoria": "",
           "Código do pai": paiKey,
-          "Variações": variacaoFormatada,
+          "Variações": variacaoFormatada, // Variação limpa
           "Marca": marcaFilho,
           "Garantia": "30 dias",
           "Sob encomenda": "Não",
