@@ -192,6 +192,7 @@ export async function POST(req: Request) {
         const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "Padrão";
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "Único";
         
+        // Corrigido para utilizar delimitadores limpos sem caracteres de escape de tabulação/retorno
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
