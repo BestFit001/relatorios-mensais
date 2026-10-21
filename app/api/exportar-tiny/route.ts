@@ -23,23 +23,23 @@ export async function POST(req: Request) {
     }
 
     // Agrupa por SKU Pai (5 primeiros dígitos)
-    const agrupadosPorPai: { [pai: string]: any[] } = {};
-    produtos.forEach((p) => {
-      const pai = p.sku_pai || (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku);
-      if (!agrupadosPorPai[pai]) agrupadosPorPai[pai] = [];
-      agrupadosPorPai[pai].push(p);
-    });
+    const paisUnicos = Array.from(
+      new Set(produtos.map((p) => p.sku_pai || (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku)))
+    );
 
     const linhasExportacao = [];
 
-    for (const [paiKey, itens] of Object.entries(agrupadosPorPai)) {
-      const produtoBase = itens[0];
+    for (const paiKey of paisUnicos) {
+      const itensDoPai = produtos.filter((p) => (p.sku_pai || p.sku.substring(0, 5)) === paiKey);
+      if (itensDoPai.length === 0) continue;
+
+      const produtoBase = itensDoPai[0];
       const nomePai = produtoBase.produto.split("-")[0].trim();
 
-      // 1. Linha do Pai com TODAS as colunas do Tiny preenchidas até a estrutura completa
+      // 1. Linha do Pai com todas as colunas até EX TIPI (BK)
       linhasExportacao.push({
-        "": "", // Coluna A estritamente em branco
-        SKU: paiKey,
+        "": "", // Coluna A em branco
+        "SKU": paiKey,
         "ID": "",
         "Código Pai": "",
         "Nome do Produto": nomePai,
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
         "Unidade": "UN",
         "NCM": produtoBase.ncm || "",
         "CEST": produtoBase.cest || "",
-        "Origem": "0",
+        "Origem": produtoBase.origem || "0",
         "Preço": produtoBase.preco_venda || 0,
         "Preço Promocional": "",
         "Custo": produtoBase.custo || 0,
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
         "Estoque Máximo": "",
         "Localização": "Geral",
         "Situação": "Ativo",
-        "EAN": "", // EAN em branco no pai
+        "EAN": "", // EAN em branco no Pai
         "GTIN": "",
         "GTIN Embalagem": "",
         "Marca": produtoBase.marca || "BEST FIT",
@@ -80,11 +80,40 @@ export async function POST(req: Request) {
         "Exibir E-commerce": "Sim",
         "Produto Composto": "Não",
         "Free": "",
+        "Unidade de medida": "UN",
+        "Altura embalagem": "20",
+        "Largura embalagem": "20",
+        "Comprimento embalagem": "20",
+        "Diametro": "",
+        "Garantia descrição": "",
+        "Vídeo": "",
+        "Cross-docking": "0",
+        "Sob encomenda": "Não",
+        "Localização física": "",
+        "Estoque máximo": "",
+        "Estoque mínimo": "",
+        "controlar por lote": "Não",
+        "Classe de enquadramento IPI": "",
+        "Código da lista de serviços": "",
+        "Código de enquadramento do IPI": "",
+        "Código do gênero": "",
+        "Código do serviço": "",
+        "Código IBPT": "",
+        "Código origem": "",
+        "Código pai do serviço": "",
+        "Condição do produto": "Não especificado",
+        "Controlar estoque": "Não",
+        "Custo unitário": produtoBase.custo || 0,
+        "Dias preparação": "0",
+        "Estoque atual": "",
+        "Exibir no e-commerce": "Sim",
+        "Frete grátis": "Não",
+        "Permitir inclusão de observações no pedido": "Sim",
         "EX TIPI": ""
       });
 
-      // 2. Linhas dos Filhos (Variações)
-      for (const p of itens) {
+      // 2. Linhas dos Filhos (Variações) com todas as colunas até EX TIPI (BK)
+      for (const p of itensDoPai) {
         const { data: hist } = await supabase
           .from("historico_descricoes_ia")
           .select("resposta_ia")
@@ -96,16 +125,16 @@ export async function POST(req: Request) {
         const descricaoFinal = hist?.resposta_ia || `Descrição detalhada para ${p.produto} - Cor: ${p.cor}, Tam: ${p.tamanho}`;
 
         linhasExportacao.push({
-          "": "", // Coluna A estritamente em branco
-          SKU: p.sku,
+          "": "", // Coluna A em branco
+          "SKU": p.sku,
           "ID": "",
-          "Código Pai": paiKey, // Vinculado ao Pai
-          "Nome do Produto": `${p.produto} ${p.cor ? `- ${p.cor}` : ""} ${p.tamanho ? `- ${p.tamanho}` : ""}`,
+          "Código Pai": paiKey,
+          "Nome do Produto": p.produto,
           "Tipo": "V",
           "Unidade": "UN",
           "NCM": p.ncm || "",
           "CEST": p.cest || "",
-          "Origem": "0",
+          "Origem": p.origem || "0",
           "Preço": p.preco_venda || 0,
           "Preço Promocional": "",
           "Custo": p.custo || 0,
@@ -121,7 +150,7 @@ export async function POST(req: Request) {
           "Estoque Máximo": "",
           "Localização": "Geral",
           "Situação": "Ativo",
-          "EAN": p.ean || "", // EAN apenas no filho
+          "EAN": p.ean || "", // EAN preenchido apenas no filho
           "GTIN": p.ean || "",
           "GTIN Embalagem": "",
           "Marca": p.marca || "BEST FIT",
@@ -138,6 +167,35 @@ export async function POST(req: Request) {
           "Exibir E-commerce": "Sim",
           "Produto Composto": "Não",
           "Free": "",
+          "Unidade de medida": "UN",
+          "Altura embalagem": "20",
+          "Largura embalagem": "20",
+          "Comprimento embalagem": "20",
+          "Diametro": "",
+          "Garantia descrição": "",
+          "Vídeo": "",
+          "Cross-docking": "0",
+          "Sob encomenda": "Não",
+          "Localização física": "",
+          "Estoque máximo": "",
+          "Estoque mínimo": "",
+          "controlar por lote": "Não",
+          "Classe de enquadramento IPI": "",
+          "Código da lista de serviços": "",
+          "Código de enquadramento do IPI": "",
+          "Código do gênero": "",
+          "Código do serviço": "",
+          "Código IBPT": "",
+          "Código origem": "",
+          "Código pai do serviço": "",
+          "Condição do produto": "Não especificado",
+          "Controlar estoque": "Não",
+          "Custo unitário": p.custo || 0,
+          "Dias preparação": "0",
+          "Estoque atual": "",
+          "Exibir no e-commerce": "Sim",
+          "Frete grátis": "Não",
+          "Permitir inclusão de observações no pedido": "Sim",
           "EX TIPI": ""
         });
       }
