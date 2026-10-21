@@ -27,11 +27,12 @@ export default function ProdutosPage() {
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
 
-  // Estados para a IA de Descrições com SKU Alvo e Referência
+  // Estados para a IA de Descrições com SKU Alvo, Referência e Anexo de Imagem
   const [chatMensagens, setChatMensagens] = useState<any[]>([]);
   const [inputPrompt, setInputPrompt] = useState("");
   const [skuAlvo, setSkuAlvo] = useState("");
   const [skuReferencia, setSkuReferencia] = useState("");
+  const [imagemAnexada, setImagemAnexada] = useState<{ base64: string; mimeType: string; nome: string } | null>(null);
   const [carregandoIA, setCarregandoIA] = useState(false);
 
   // Estados para a Consulta de Descrições na aba Configurações
@@ -102,6 +103,30 @@ export default function ProdutosPage() {
   const carregarRealizadosDoBanco = async () => {
     const { data } = await supabase.from("produtos_novos_cadastrados").select("*").order("id", { ascending: false });
     if (data) setCadastrosRealizados(data);
+  };
+
+  const handleAnexarImagem = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const result = evt.target?.result as string;
+      if (result) {
+        // Separa o base64 puro do mimeType
+        const parts = result.split(",");
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
+        const base64Data = parts[1];
+
+        setImagemAnexada({
+          base64: base64Data,
+          mimeType: mimeType,
+          nome: file.name
+        });
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const buscarDescricaoPorSkuConfig = async (e: React.FormEvent) => {
@@ -253,19 +278,28 @@ export default function ProdutosPage() {
 
   const enviarParaIA = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputPrompt.trim() && !skuAlvo) return;
+    if (!inputPrompt.trim() && !skuAlvo && !imagemAnexada) return;
 
     const textoUsuario = inputPrompt || `Gerar descrição padronizada para o SKU Alvo: ${skuAlvo}`;
-    const novaMsgUsuario = { remetente: "usuario", texto: textoUsuario };
+    const novaMsgUsuario = { remetente: "usuario", texto: `${textoUsuario} ${imagemAnexada ? `[📷 Imagem Anexada: ${imagemAnexada.nome}]` : ""}` };
+    
     setChatMensagens(prev => [...prev, novaMsgUsuario]);
     setInputPrompt("");
+    const imgParaEnviar = imagemAnexada;
+    setImagemAnexada(null); // Descarta a imagem da UI para manter apenas a base limpa
     setCarregandoIA(true);
 
     try {
       const res = await fetch("/api/descricao-ia", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: textoUsuario, skuAlvo, skuReferencia })
+        body: JSON.stringify({ 
+          prompt: textoUsuario, 
+          skuAlvo, 
+          skuReferencia,
+          imagemBase64: imgParaEnviar?.base64,
+          mimeType: imgParaEnviar?.mimeType
+        })
       });
       const data = await res.json();
 
@@ -527,7 +561,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições padronizado por IA</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições padronizado por IA e Análise de Imagens</p>
           </div>
           <Navbar />
         </div>
@@ -811,7 +845,7 @@ export default function ProdutosPage() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-800 pb-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Construtor de Descrições Padronizado com IA</h3>
-                <p className="text-xs text-slate-400 mt-1">Gere descrições exatas para copiar e colar, com suporte a SKU Alvo e SKU de Referência.</p>
+                <p className="text-xs text-slate-400 mt-1">Gere descrições exatas para copiar e colar, com suporte a SKU Alvo, SKU de Referência e Imagens.</p>
               </div>
               <div className="flex items-center gap-2">
                 <input
@@ -844,23 +878,30 @@ export default function ProdutosPage() {
               {carregandoIA && (
                 <div className="flex justify-start">
                   <div className="bg-slate-900 text-slate-400 p-3 rounded-2xl text-xs animate-pulse">
-                    Buscando dados e gerando descrição padronizada...
+                    Analisando dados/imagem e gerando descrição padronizada...
                   </div>
                 </div>
               )}
               {chatMensagens.length === 0 && (
                 <div className="text-center text-slate-500 py-20 text-xs">
-                  Informe o SKU Alvo (ou SKU Referência) e digite sua solicitação abaixo para gerar a copy no padrão exato.
+                  Informe o SKU Alvo (ou anexe uma imagem) e digite sua solicitação abaixo para gerar a copy no padrão exato.
                 </div>
               )}
             </div>
 
-            <form onSubmit={enviarParaIA} className="flex gap-2">
+            <form onSubmit={enviarParaIA} className="flex gap-2 items-center flex-wrap">
+              <label className="bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 px-4 py-3 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2">
+                📷 {imagemAnexada ? "Imagem anexada (1)" : "Anexar Foto"}
+                <input type="file" accept="image/*" onChange={handleAnexarImagem} className="hidden" />
+              </label>
+              {imagemAnexada && (
+                <span className="text-[11px] text-purple-400 truncate max-w-[200px]">✓ {imagemAnexada.nome}</span>
+              )}
               <input
                 type="text"
                 value={inputPrompt}
                 onChange={(e) => setInputPrompt(e.target.value)}
-                placeholder="Ex: Gere a descrição padrão para este SKU Alvo..."
+                placeholder="Ex: Gere a descrição padrão para este produto..."
                 className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-xs text-white outline-none"
               />
               <button type="submit" disabled={carregandoIA} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase cursor-pointer transition-all shadow-lg">
@@ -891,7 +932,7 @@ export default function ProdutosPage() {
               ))}
             </div>
 
-            {/* NOVA SEÇÃO: PROCURAR DESCRIÇÃO PELO SKU */}
+            {/* SEÇÃO: PROCURAR DESCRIÇÃO PELO SKU */}
             <div className="border-t border-slate-800 pt-6 space-y-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Procurar Descrição Gerada por SKU</h3>
@@ -1049,7 +1090,7 @@ export default function ProdutosPage() {
                   <input type="number" step="0.01" value={formManual.preco_venda} onChange={(e) => setFormManual({...formManual, preco_venda: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mm-1">Marca</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
                   <input type="text" value={formManual.marca} onChange={(e) => setFormManual({...formManual, marca: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
                 </div>
                 <div className="md:col-span-3 flex justify-end gap-2 pt-3 border-t border-slate-800">

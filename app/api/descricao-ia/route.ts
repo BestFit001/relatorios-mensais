@@ -7,7 +7,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 export async function POST(req: Request) {
   try {
-    const { prompt, skuAlvo, skuReferencia } = await req.json();
+    const { prompt, skuAlvo, skuReferencia, imagemBase64, mimeType } = await req.json();
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -17,7 +17,6 @@ export async function POST(req: Request) {
     let dadosProdutoAlvo: any = null;
     let textoReferencia: string = "";
 
-    // 1. Busca dados do SKU Alvo na tabela produtos_pendentes
     if (skuAlvo) {
       const { data } = await supabase
         .from("produtos_pendentes")
@@ -27,7 +26,6 @@ export async function POST(req: Request) {
       if (data) dadosProdutoAlvo = data;
     }
 
-    // 2. Busca histórico do SKU de Referência, se houver
     if (skuReferencia) {
       const { data } = await supabase
         .from("historico_descricoes_ia")
@@ -42,7 +40,7 @@ export async function POST(req: Request) {
     const padraoEstrutura = `
 Siga estritamente esta estrutura de quebras de linha e seções, SEM USAR NENHUMA FORMATAÇÃO (sem negrito, sem itálico, sem asteriscos):
 
-[Breve descrição fluida e vendedora do produto, focando em benefícios visuais e texturais, sem termos negativos]
+[Breve descrição fluida e vendedora do produto analisado, focando em benefícios visuais e texturais, sem termos negativos]
 
 Especificações:
 - Marca: [Marca]
@@ -71,24 +69,32 @@ Cuidados e Conservação:
       contextoExtra += `\nDados do Produto Alvo no Banco (Use obrigatoriamente):\n- Nome: ${dadosProdutoAlvo.produto}\n- Cor: ${dadosProdutoAlvo.cor}\n- Tamanho: ${dadosProdutoAlvo.tamanho}\n- Marca: ${dadosProdutoAlvo.marca}\n`;
     }
     if (textoReferencia) {
-      contextoExtra += `\nDescrição de Referência (Baseie-se rigorosamente nesta estrutura e estilo, adaptando apenas para o novo produto):\n${textoReferencia}\n`;
+      contextoExtra += `\nDescrição de Referência (Baseie-se rigorosamente nesta estrutura e estilo):\n${textoReferencia}\n`;
     }
 
     const systemInstruction = `Você é um copywriter sênior para e-commerce (Best Fit). Seu objetivo é gerar descrições de produtos limpas, exatamente no padrão solicitado, prontas para copiar e colar. PROIBIDO usar formatação Markdown (* ou **).`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
     
+    // Monta os conteúdos da requisição (suportando texto e imagem opcional)
+    const parts: any[] = [
+      { text: `${systemInstruction}\n\n${padraoEstrutura}\n\n${contextoExtra}\n\nSolicitação do usuário: ${prompt || "Gere a descrição com base na imagem e dados do SKU."}` }
+    ];
+
+    if (imagemBase64 && mimeType) {
+      parts.push({
+        inline_data: {
+          mime_type: mimeType,
+          data: imagemBase64
+        }
+      });
+    }
+
     const apiResponse = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: `${systemInstruction}\n\n${padraoEstrutura}\n\n${contextoExtra}\n\nSolicitação adicional do usuário: ${prompt}` }
-            ]
-          }
-        ]
+        contents: [{ parts }]
       })
     });
 
