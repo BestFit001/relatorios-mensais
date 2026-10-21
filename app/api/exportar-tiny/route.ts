@@ -36,9 +36,9 @@ export async function POST(req: Request) {
       const produtoBase = itensDoPai[0];
       const nomePai = produtoBase.produto.split("-")[0].trim();
 
-      // 1. Linha do Pai com TODAS as 72 colunas exatas até EX TIPI (BK)
+      // 1. Linha do Pai com as colunas exatas até EX TIPI (Coluna BK)
       linhasExportacao.push({
-        "": "",
+        "": "", // Coluna A em branco
         "SKU": paiKey,
         "ID": "",
         "Código Pai": "",
@@ -112,7 +112,7 @@ export async function POST(req: Request) {
         "EX TIPI": ""
       });
 
-      // 2. Linhas de cada Filho (Variação) com TODAS as 72 colunas exatas até EX TIPI (BK)
+      // 2. Linhas de cada Filho (Variação) com as colunas exatas até EX TIPI (Coluna BK)
       for (const p of itensDoPai) {
         const { data: hist } = await supabase
           .from("historico_descricoes_ia")
@@ -125,7 +125,7 @@ export async function POST(req: Request) {
         const descricaoFinal = hist?.resposta_ia || `Descrição detalhada para ${p.produto} - Cor: ${p.cor}, Tam: ${p.tamanho}`;
 
         linhasExportacao.push({
-          "": "",
+          "": "", // Coluna A em branco
           "SKU": p.sku,
           "ID": "",
           "Código Pai": paiKey,
