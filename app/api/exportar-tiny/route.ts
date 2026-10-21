@@ -70,9 +70,8 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      // Descrição estruturada com quebras de linha (\n) exatamente como no modelo
       const descricaoPai = [
-        `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele conta com estrutura reforçada e design focado no desempenho, unindo funcionalidade e autenticidade.`,
+        `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele conta com estrutura reforçada e design focado no desempenho e organização, unindo funcionalidade e autenticidade.`,
         ``,
         `Especificações:`,
         `- Marca: ${marcaPai}.`,
