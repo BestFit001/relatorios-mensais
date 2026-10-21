@@ -10,7 +10,7 @@ function toTitleCase(str: string) {
   const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
   return str
     .toLowerCase()
-    .replace(/ert\{[^}]*\}|[\r\n]+/g, " ") // Remove resíduos como ert{} e quebras de linha
+    .replace(/ert\{[^}]*\}|[\r\n]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .split(" ")
@@ -25,7 +25,7 @@ function toTitleCase(str: string) {
 
 function limparTexto(str: string) {
   if (!str) return "";
-  return str
+  return String(str)
     .replace(/ert\{[^}]*\}|[\r\n]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -189,10 +189,12 @@ export async function POST(req: Request) {
 
         const corFormatada = p.cor ? toTitleCase(limparTexto(p.cor)) : "Padrão";
         const tamFormatado = p.tamanho ? limparTexto(String(p.tamanho)) : "Único";
+        
+        // Formato estrito sem quebras de linha
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
-          `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
+          `O ${nomeFilhoFormatado} é a escolha perfeita para quem busca unir sofisticação, praticidade e a identidade inconfundível da ${marcaFilho}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
           ``,
           `Especificações:`,
           `- Marca: ${marcaFilho}.`,
