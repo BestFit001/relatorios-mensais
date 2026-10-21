@@ -10,6 +10,9 @@ function toTitleCase(str: string) {
   const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
   return str
     .toLowerCase()
+    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
     .split(" ")
     .map((word, index) => {
       if (index > 0 && lowercaseWords.includes(word)) {
@@ -18,6 +21,15 @@ function toTitleCase(str: string) {
       return word.charAt(0).toUpperCase() + word.slice(1);
     })
     .join(" ");
+}
+
+// Remove totalmente quebras de linha, tabulações, blocos ert{}, tags \vert e códigos de escape
+function limparTextoEstrito(str: string) {
+  if (!str) return "";
+  return String(str)
+    .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function gerarSlug(str: string) {
@@ -64,16 +76,19 @@ export async function POST(req: Request) {
       if (itensDoPai.length === 0) continue;
 
       const produtoBase = itensDoPai[0];
-      const nomePaiRaw = produtoBase.produto.split("-")[0].trim();
+      const nomePaiRaw = limparTextoEstrito(produtoBase.produto.split("-")[0]);
       const nomePaiFormatado = toTitleCase(nomePaiRaw);
       const slugPai = gerarSlug(nomePaiFormatado);
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
+      const marcaPai = produtoBase.marca || "Best Fit";
+
+      const descricaoPai = `Confira ${nomePaiFormatado}, desenvolvido para garantir máximo conforto, estilo e alta durabilidade no seu dia a dia. Produto original ${marcaPai} com excelente acabamento.`;
 
       // 1. Linha do Pai (Tipo do produto = V)
       linhasExportacao.push({
         "ID": "",
         "Código (SKU)": paiKey,
-        "Descrição": `Confira ${nomePaiFormatado}, desenvolvido para garantir máximo conforto, estilo e alta durabilidade no seu dia a dia. Produto original Best Fit com excelente acabamento.`,
+        "Descrição": descricaoPai,
         "Unidade": "UN",
         "Classificação fiscal": produtoBase.ncm || "",
         "Origem": produtoBase.origem || "0",
@@ -110,7 +125,7 @@ export async function POST(req: Request) {
         "Categoria": "",
         "Código do pai": "",
         "Variações": "",
-        "Marca": produtoBase.marca || "BEST FIT",
+        "Marca": marcaPai,
         "Garantia": "30 dias",
         "Sob encomenda": "Não",
         "Preço promocional": "",
@@ -122,7 +137,7 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": `Compre ${nomePaiFormatado} na Best Fit. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
+        "Descrição SEO": `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
         "Palavras chave SEO": palavrasChavePai,
         "Slug": slugPai,
         "Dias para preparação": "0",
@@ -147,17 +162,19 @@ export async function POST(req: Request) {
           .limit(1)
           .single();
 
-        const nomeFilhoFormatado = toTitleCase(p.produto);
+        const nomeFilhoRaw = limparTextoEstrito(p.produto);
+        const nomeFilhoFormatado = toTitleCase(nomeFilhoRaw);
         const slugFilho = gerarSlug(nomeFilhoFormatado);
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
+        const marcaFilho = p.marca || "Best Fit";
 
-        const corFormatada = p.cor ? toTitleCase(String(p.cor).trim()) : "";
-        const tamFormatado = p.tamanho ? String(p.tamanho).trim() : "";
+        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
+        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
         
-        // Variação formatada exatamente no padrão correto exigido
+        // Variação formatada corretamente e limpa
         const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
-        const descricaoPadrao = `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto em qualquer ocasião.\n\n• Cor: ${corFormatada}\n• Tamanho: ${tamFormatado}\n• Marca: ${p.marca || "Best Fit"}`;
+        const descricaoPadrao = `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto em qualquer ocasião.\n\n• Cor: ${corFormatada}\n• Tamanho: ${tamFormatado}\n• Marca: ${marcaFilho}`;
         
         const descricaoFinal = hist?.resposta_ia || descricaoPadrao;
 
@@ -201,7 +218,7 @@ export async function POST(req: Request) {
           "Categoria": "",
           "Código do pai": paiKey,
           "Variações": variacaoFormatada,
-          "Marca": p.marca || "BEST FIT",
+          "Marca": marcaFilho,
           "Garantia": "30 dias",
           "Sob encomenda": "Não",
           "Preço promocional": "",
@@ -213,7 +230,7 @@ export async function POST(req: Request) {
           "URL imagem externa 6": "",
           "Link do vídeo": "",
           "Título SEO": nomeFilhoFormatado,
-          "Descrição SEO": `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na Best Fit. Conforto e qualidade garantidos.`,
+          "Descrição SEO": `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na ${marcaFilho}. Conforto e qualidade garantidos.`,
           "Palavras chave SEO": palavrasChaveFilho,
           "Slug": slugFilho,
           "Dias para preparação": "0",
