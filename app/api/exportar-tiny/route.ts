@@ -5,6 +5,37 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+function toTitleCase(str: string) {
+  if (!str) return "";
+  const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
+  return str
+    .toLowerCase()
+    .split(" ")
+    .map((word, index) => {
+      if (index > 0 && lowercaseWords.includes(word)) {
+        return word;
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
+}
+
+function gerarSlug(str: string) {
+  if (!str) return "";
+  return str
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function gerarPalavrasChave(titulo: string) {
+  if (!titulo) return "";
+  const base = toTitleCase(titulo);
+  return `${base},${base} Confortável,${base} Original Best Fit,Moda Fitness e Casual`;
+}
+
 export async function POST(req: Request) {
   try {
     const { skus } = await req.json();
@@ -22,7 +53,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Produtos pendentes não encontrados." }, { status: 404 });
     }
 
-    // Agrupa por SKU Pai (5 primeiros dígitos)
     const paisUnicos = Array.from(
       new Set(produtos.map((p) => p.sku_pai || (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku)))
     );
@@ -34,85 +64,80 @@ export async function POST(req: Request) {
       if (itensDoPai.length === 0) continue;
 
       const produtoBase = itensDoPai[0];
-      const nomePai = produtoBase.produto.split("-")[0].trim();
+      const nomePaiRaw = produtoBase.produto.split("-")[0].trim();
+      const nomePaiFormatado = toTitleCase(nomePaiRaw);
+      const slugPai = gerarSlug(nomePaiFormatado);
+      const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
 
-      // 1. Linha do Pai com as colunas exatas até EX TIPI (Coluna BK)
+      // 1. Linha do Pai (Tipo do produto = V)
       linhasExportacao.push({
-        "": "", // Coluna A em branco
-        "SKU": paiKey,
         "ID": "",
-        "Código Pai": "",
-        "Nome do Produto": nomePai,
-        "Tipo": "P",
+        "Código (SKU)": paiKey,
+        "Descrição": nomePaiFormatado,
         "Unidade": "UN",
-        "NCM": produtoBase.ncm || "",
-        "CEST": produtoBase.cest || "",
+        "Classificação fiscal": produtoBase.ncm || "",
         "Origem": produtoBase.origem || "0",
         "Preço": produtoBase.preco_venda || 0,
-        "Preço Promocional": "",
-        "Custo": produtoBase.custo || 0,
-        "Custo Médio": "",
-        "Peso Líquido": "0,500",
-        "Peso Bruto": "0,500",
-        "Largura": "20",
-        "Altura": "20",
-        "Comprimento": "20",
-        "Volume": "",
-        "Estoque Atual": "",
-        "Estoque Mínimo": "",
-        "Estoque Máximo": "",
-        "Localização": "Geral",
-        "Situação": "Ativo",
-        "EAN": "", // EAN em branco no Pai
-        "GTIN": "",
-        "GTIN Embalagem": "",
-        "Marca": produtoBase.marca || "BEST FIT",
-        "Categoria": "",
-        "Garantia": "",
+        "Valor IPI fixo": 0,
         "Observações": "",
-        "Descrição": `Descrição padrão para ${nomePai}`,
-        "SEO - Título": "",
-        "SEO - Descrição": "",
-        "SEO - Palavras-chave": "",
-        "SEO - Slug": "",
-        "Dias Preparação": "0",
-        "Controlar Estoque": "Não",
-        "Exibir E-commerce": "Sim",
-        "Produto Composto": "Não",
-        "Free": "",
-        "Unidade de medida": "UN",
-        "Altura embalagem": "20",
-        "Largura embalagem": "20",
-        "Comprimento embalagem": "20",
-        "Diametro": "",
-        "Garantia descrição": "",
-        "Vídeo": "",
-        "Cross-docking": "0",
-        "Sob encomenda": "Não",
-        "Localização física": "",
+        "Situação": "Ativo",
+        "Estoque": "",
+        "Preço de custo": produtoBase.custo || 0,
+        "Cód do Fornecedor": "",
+        "Fornecedor": "",
+        "Localização": "",
         "Estoque máximo": "",
         "Estoque mínimo": "",
-        "controlar por lote": "Não",
-        "Classe de enquadramento IPI": "",
-        "Código da lista de serviços": "",
-        "Código de enquadramento do IPI": "",
-        "Código do gênero": "",
-        "Código do serviço": "",
-        "Código IBPT": "",
-        "Código origem": "",
-        "Código pai do serviço": "",
-        "Condição do produto": "Não especificado",
-        "Controlar estoque": "Não",
-        "Custo unitário": produtoBase.custo || 0,
-        "Dias preparação": "0",
-        "Estoque atual": "",
-        "Exibir no e-commerce": "Sim",
-        "Frete grátis": "Não",
-        "Permitir inclusão de observações no pedido": "Sim",
+        "Peso líquido (Kg)": "0.500",
+        "Peso bruto (Kg)": "0.500",
+        "GTIN/EAN": "",
+        "GTIN/EAN tributável": "",
+        "Descrição complementar": "",
+        "CEST": produtoBase.cest || "",
+        "Código de Enquadramento IPI": "",
+        "Formato embalagem": "",
+        "Largura embalagem": "20",
+        "Altura embalagem": "20",
+        "Comprimento embalagem": "20",
+        "Diâmetro embalagem": "",
+        "Tipo do produto": "V",
+        "URL imagem 1": "",
+        "URL imagem 2": "",
+        "URL imagem 3": "",
+        "URL imagem 4": "",
+        "URL imagem 5": "",
+        "URL imagem 6": "",
+        "Categoria": "",
+        "Código do pai": "",
+        "Variações": "",
+        "Marca": produtoBase.marca || "BEST FIT",
+        "Garantia": "30 dias",
+        "Sob encomenda": "Não",
+        "Preço promocional": "",
+        "URL imagem externa 1": "",
+        "URL imagem externa 2": "",
+        "URL imagem externa 3": "",
+        "URL imagem externa 4": "",
+        "URL imagem externa 5": "",
+        "URL imagem externa 6": "",
+        "Link do vídeo": "",
+        "Título SEO": nomePaiFormatado,
+        "Descrição SEO": `Descrição padrão para ${nomePaiFormatado}`,
+        "Palavras chave SEO": palavrasChavePai,
+        "Slug": slugPai,
+        "Dias para preparação": "0",
+        "Controlar lotes": "Não",
+        "Unidade por caixa": "",
+        "URL imagem externa 7": "",
+        "URL imagem externa 8": "",
+        "URL imagem externa 9": "",
+        "URL imagem externa 10": "",
+        "Markup": "",
+        "Permitir inclusão nas vendas": "Sim",
         "EX TIPI": ""
       });
 
-      // 2. Linhas de cada Filho (Variação) com as colunas exatas até EX TIPI (Coluna BK)
+      // 2. Linhas dos Filhos / Variações (Tipo do produto = S)
       for (const p of itensDoPai) {
         const { data: hist } = await supabase
           .from("historico_descricoes_ia")
@@ -122,80 +147,75 @@ export async function POST(req: Request) {
           .limit(1)
           .single();
 
-        const descricaoFinal = hist?.resposta_ia || `Descrição detalhada para ${p.produto} - Cor: ${p.cor}, Tam: ${p.tamanho}`;
+        const nomeFilhoFormatado = toTitleCase(p.produto);
+        const slugFilho = gerarSlug(nomeFilhoFormatado);
+        const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
+        const descricaoFinal = hist?.resposta_ia || `Descrição detalhada para ${nomeFilhoFormatado} - Cor: ${p.cor}, Tam: ${p.tamanho}`;
 
         linhasExportacao.push({
-          "": "", // Coluna A em branco
-          "SKU": p.sku,
           "ID": "",
-          "Código Pai": paiKey,
-          "Nome do Produto": p.produto,
-          "Tipo": "V",
+          "Código (SKU)": p.sku,
+          "Descrição": nomeFilhoFormatado,
           "Unidade": "UN",
-          "NCM": p.ncm || "",
-          "CEST": p.cest || "",
+          "Classificação fiscal": p.ncm || "",
           "Origem": p.origem || "0",
           "Preço": p.preco_venda || 0,
-          "Preço Promocional": "",
-          "Custo": p.custo || 0,
-          "Custo Médio": "",
-          "Peso Líquido": "0,500",
-          "Peso Bruto": "0,500",
-          "Largura": "20",
-          "Altura": "20",
-          "Comprimento": "20",
-          "Volume": "",
-          "Estoque Atual": "",
-          "Estoque Mínimo": "",
-          "Estoque Máximo": "",
-          "Localização": "Geral",
-          "Situação": "Ativo",
-          "EAN": p.ean || "", // EAN preenchido apenas no filho
-          "GTIN": p.ean || "",
-          "GTIN Embalagem": "",
-          "Marca": p.marca || "BEST FIT",
-          "Categoria": "",
-          "Garantia": "",
+          "Valor IPI fixo": 0,
           "Observações": "",
-          "Descrição": descricaoFinal,
-          "SEO - Título": "",
-          "SEO - Descrição": "",
-          "SEO - Palavras-chave": "",
-          "SEO - Slug": "",
-          "Dias Preparação": "0",
-          "Controlar Estoque": "Não",
-          "Exibir E-commerce": "Sim",
-          "Produto Composto": "Não",
-          "Free": "",
-          "Unidade de medida": "UN",
-          "Altura embalagem": "20",
-          "Largura embalagem": "20",
-          "Comprimento embalagem": "20",
-          "Diametro": "",
-          "Garantia descrição": "",
-          "Vídeo": "",
-          "Cross-docking": "0",
-          "Sob encomenda": "Não",
-          "Localização física": "",
+          "Situação": "Ativo",
+          "Estoque": "",
+          "Preço de custo": p.custo || 0,
+          "Cód do Fornecedor": "",
+          "Fornecedor": "",
+          "Localização": "",
           "Estoque máximo": "",
           "Estoque mínimo": "",
-          "controlar por lote": "Não",
-          "Classe de enquadramento IPI": "",
-          "Código da lista de serviços": "",
-          "Código de enquadramento do IPI": "",
-          "Código do gênero": "",
-          "Código do serviço": "",
-          "Código IBPT": "",
-          "Código origem": "",
-          "Código pai do serviço": "",
-          "Condição do produto": "Não especificado",
-          "Controlar estoque": "Não",
-          "Custo unitário": p.custo || 0,
-          "Dias preparação": "0",
-          "Estoque atual": "",
-          "Exibir no e-commerce": "Sim",
-          "Frete grátis": "Não",
-          "Permitir inclusão de observações no pedido": "Sim",
+          "Peso líquido (Kg)": "0.500",
+          "Peso bruto (Kg)": "0.500",
+          "GTIN/EAN": p.ean || "",
+          "GTIN/EAN tributável": p.ean || "",
+          "Descrição complementar": "",
+          "CEST": p.cest || "",
+          "Código de Enquadramento IPI": "",
+          "Formato embalagem": "",
+          "Largura embalagem": "20",
+          "Altura embalagem": "20",
+          "Comprimento embalagem": "20",
+          "Diâmetro embalagem": "",
+          "Tipo do produto": "S",
+          "URL imagem 1": "",
+          "URL imagem 2": "",
+          "URL imagem 3": "",
+          "URL imagem 4": "",
+          "URL imagem 5": "",
+          "URL imagem 6": "",
+          "Categoria": "",
+          "Código do pai": paiKey,
+          "Variações": "",
+          "Marca": p.marca || "BEST FIT",
+          "Garantia": "30 dias",
+          "Sob encomenda": "Não",
+          "Preço promocional": "",
+          "URL imagem externa 1": "",
+          "URL imagem externa 2": "",
+          "URL imagem externa 3": "",
+          "URL imagem externa 4": "",
+          "URL imagem externa 5": "",
+          "URL imagem externa 6": "",
+          "Link do vídeo": "",
+          "Título SEO": nomeFilhoFormatado,
+          "Descrição SEO": descricaoFinal,
+          "Palavras chave SEO": palavrasChaveFilho,
+          "Slug": slugFilho,
+          "Dias para preparação": "0",
+          "Controlar lotes": "Não",
+          "Unidade por caixa": "",
+          "URL imagem externa 7": "",
+          "URL imagem externa 8": "",
+          "URL imagem externa 9": "",
+          "URL imagem externa 10": "",
+          "Markup": "",
+          "Permitir inclusão nas vendas": "Sim",
           "EX TIPI": ""
         });
       }
