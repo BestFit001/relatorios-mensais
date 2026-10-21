@@ -237,7 +237,7 @@ export default function ProdutosPage() {
       });
       const data = await res.json();
 
-      if (data.resposta) {
+      if (res.ok && data.resposta) {
         setChatMensagens(prev => [...prev, { remetente: "ia", texto: data.resposta }]);
         
         await supabase.from("historico_descricoes_ia").insert([{
@@ -246,7 +246,7 @@ export default function ProdutosPage() {
           resposta_ia: data.resposta
         }]);
       } else {
-        setChatMensagens(prev => [...prev, { remetente: "ia", texto: "Erro ao gerar resposta da IA." }]);
+        setChatMensagens(prev => [...prev, { remetente: "ia", texto: `Erro detalhado: ${data.error || "Falha desconhecida"}` }]);
       }
     } catch (err: any) {
       setChatMensagens(prev => [...prev, { remetente: "ia", texto: "Erro de conexão: " + err.message }]);
