@@ -19,6 +19,10 @@ export default function ProdutosPage() {
   const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais">("todos");
   const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
 
+  // Filtros de Período para Comparação
+  const [dataInicio, setDataInicio] = useState("");
+  const [dataFim, setDataFim] = useState("");
+
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
 
@@ -190,23 +194,19 @@ export default function ProdutosPage() {
     carregarPendentesDoBanco();
   };
 
-  // Correção da exclusão do grupo nos realizados (busca por sku_pai ou skus do grupo)
   const excluirRealizadoGrupo = async (paiKey: string, itensDoGrupo: any[]) => {
     if (!confirm(`ATENÇÃO: Deseja excluir o grupo Pai ${paiKey} e todas as suas variações da aba de Realizados?`)) return;
     setLoading(true);
     try {
       const skusParaExcluir = itensDoGrupo.map(i => i.sku);
-      
-      // Deleta utilizando o sku_pai e também garante a exclusão individual por SKU para evitar falhas de cache
       await supabase.from("produtos_novos_cadastrados").delete().eq("sku_pai", paiKey);
       for (const s of skusParaExcluir) {
         await supabase.from("produtos_novos_cadastrados").delete().eq("sku", s);
       }
-
       await carregarRealizadosDoBanco();
-      alert(`🗑️ Grupo Pai ${paiKey} excluído com sucesso dos realizados!`);
+      alert(`🗑️ Grupo Pai ${paiKey} excluído com sucesso!`);
     } catch (err: any) {
-      alert("Erro ao excluir realizado: " + err.message);
+      alert("Erro: " + err.message);
     }
     setLoading(false);
   };
@@ -393,13 +393,33 @@ export default function ProdutosPage() {
     setGruposExpandidos(prev => ({ ...prev, [pai]: !prev[pai] }));
   };
 
-  const totalSkusRealizados = cadastrosRealizados.length;
-  let totalVideosEnviados = 0;
-  cadastrosRealizados.forEach(item => {
-    const clipes = item.clipes_enviados || {};
-    const countClipes = canaisLista.filter(c => clipes[c]).length;
-    totalVideosEnviados += countClipes;
+  // Filtragem de realizados por período para os gráficos e comparativos
+  const realizadosFiltradosPorPeriodo = cadastrosRealizados.filter(item => {
+    if (!dataInicio && !dataFim) return true;
+    const dataItem = new Date(item.data_cadastro || Date.now());
+    if (dataInicio && dataItem < new Date(dataInicio)) return false;
+    if (dataFim && dataItem > new Date(dataFim + "T23:59:59")) return false;
+    return true;
   });
+
+  const totalSkusRealizados = realizadosFiltradosPorPeriodo.length;
+  
+  // Contagem de vídeos: 
+  // - Produtos com vídeo (quantos SKUs/itens possuem pelo menos 1 clipe upado)
+  // - Total de vídeos postados (soma de todas as marcações de clipes em todos os canais)
+  let produtosComVideo = 0;
+  let totalVideosPostados = 0;
+
+  realizadosFiltradosPorPeriodo.forEach(item => {
+    const clipes = item.clipes_enviados || {};
+    const canaisComClipes = canaisLista.filter(c => clipes[c]);
+    if (canaisComClipes.length > 0) {
+      produtosComVideo += 1;
+      totalVideosPostados += canaisComClipes.length;
+    }
+  });
+
+  const maxGrafico = Math.max(totalSkusRealizados, produtosComVideo, totalVideosPostados, dadosPendentes.length, 1);
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -408,7 +428,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com exclusão corrigida e sincronizada nos realizados</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com gráficos visuais e comparador de períodos</p>
           </div>
           <Navbar />
         </div>
@@ -446,7 +466,7 @@ export default function ProdutosPage() {
               type="text"
               value={pesquisaGlobal}
               onChange={(e) => setPesquisaGlobal(e.target.value)}
-              placeholder="🔍 Pesquisar SKU, Pai, Nome, Cor, Tam..."
+              placeholder="🔍 Pesquisar SKU, Pai, Nome..."
               className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white outline-none w-80"
             />
           </div>
@@ -671,27 +691,96 @@ export default function ProdutosPage() {
 
         {subAba === "periodo" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-6">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Relatórios e Estatísticas por Período</h3>
-            
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Comparador de Períodos & Gráficos de Produção</h3>
+                <p className="text-xs text-slate-400 mt-1">Filtre por período para comparar volumes de cadastros e vídeos produzidos.</p>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 mr-2">De:</span>
+                  <input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-white outline-none" />
+                </div>
+                <div>
+                  <span className="text-slate-400 mr-2">Até:</span>
+                  <input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-white outline-none" />
+                </div>
+                {(dataInicio || dataFim) && (
+                  <button onClick={() => { setDataInicio(""); setDataFim(""); }} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-xl font-bold cursor-pointer">Limpar</button>
+                )}
+              </div>
+            </div>
+
+            {/* CARDS DE RESUMO */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
-                <span className="text-xs font-bold text-slate-400 uppercase">Total Cadastros Realizados</span>
+                <span className="text-xs font-bold text-slate-400 uppercase">Cadastros Realizados</span>
                 <p className="text-3xl font-black text-emerald-400 mt-2">{totalSkusRealizados}</p>
               </div>
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
-                <span className="text-xs font-bold text-slate-400 uppercase">Total Vídeos/Clipes Enviados</span>
-                <p className="text-3xl font-black text-indigo-400 mt-2">{totalVideosEnviados}</p>
-                <span className="text-[10px] text-slate-500 mt-1 block">Soma de clipes por canais</span>
+                <span className="text-xs font-bold text-slate-400 uppercase">Produtos com Vídeo</span>
+                <p className="text-3xl font-black text-purple-400 mt-2">{produtosComVideo}</p>
+                <span className="text-[10px] text-slate-500 mt-1 block">Vídeos produzidos únicos</span>
               </div>
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
-                <span className="text-xs font-bold text-slate-400 uppercase">Total Produtos Pendentes</span>
+                <span className="text-xs font-bold text-slate-400 uppercase">Total Vídeos Postados</span>
+                <p className="text-3xl font-black text-indigo-400 mt-2">{totalVideosPostados}</p>
+                <span className="text-[10px] text-slate-500 mt-1 block">Soma de posts em todos canais</span>
+              </div>
+              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
+                <span className="text-xs font-bold text-slate-400 uppercase">Produtos Pendentes</span>
                 <p className="text-3xl font-black text-amber-400 mt-2">{dadosPendentes.length}</p>
-              </div>
-              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
-                <span className="text-xs font-bold text-slate-400 uppercase">Grupos de SKUs Pai</span>
-                <p className="text-3xl font-black text-purple-400 mt-2">{Object.keys(agruparPorPai(cadastrosRealizados)).length}</p>
+                <span className="text-[10px] text-slate-500 mt-1 block">Faltam cadastrar</span>
               </div>
             </div>
+
+            {/* GRÁFICOS VISUAIS EM BARRAS */}
+            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 space-y-6">
+              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Gráfico Comparativo de Produção</h4>
+              
+              <div className="space-y-4">
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-400 font-semibold">Cadastros Realizados</span>
+                    <span className="text-emerald-400 font-bold">{totalSkusRealizados}</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-4 rounded-full overflow-hidden border border-slate-800">
+                    <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (totalSkusRealizados / maxGrafico) * 100)}%` }}></div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-400 font-semibold">Produtos com Vídeo (Produzidos)</span>
+                    <span className="text-purple-400 font-bold">{produtosComVideo}</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-4 rounded-full overflow-hidden border border-slate-800">
+                    <div className="bg-purple-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (produtosComVideo / maxGrafico) * 100)}%` }}></div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-400 font-semibold">Total Vídeos Postados (Canais)</span>
+                    <span className="text-indigo-400 font-bold">{totalVideosPostados}</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-4 rounded-full overflow-hidden border border-slate-800">
+                    <div className="bg-indigo-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (totalVideosPostados / maxGrafico) * 100)}%` }}></div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-400 font-semibold">Produtos Pendentes (Faltam)</span>
+                    <span className="text-amber-400 font-bold">{dadosPendentes.length}</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-4 rounded-full overflow-hidden border border-slate-800">
+                    <div className="bg-amber-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (dadosPendentes.length / maxGrafico) * 100)}%` }}></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
           </div>
         )}
 
