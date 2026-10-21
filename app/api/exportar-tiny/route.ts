@@ -1,4 +1,3 @@
-
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -8,12 +7,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 function toTitleCase(str: string) {
   if (!str) return "";
-
-  const lowercaseWords = [
-    "de", "do", "da", "dos", "das", "e", "em",
-    "por", "com", "para", "a", "o",
-  ];
-
+  const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
   return str
     .toLowerCase()
     .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v]+/g, " ")
@@ -24,16 +18,13 @@ function toTitleCase(str: string) {
       if (index > 0 && lowercaseWords.includes(word)) {
         return word;
       }
-
       return word.charAt(0).toUpperCase() + word.slice(1);
     })
     .join(" ");
 }
 
-// Limpa os marcadores indesejados do texto
 function limparTextoEstrito(str: string) {
   if (!str) return "";
-
   return String(str)
     .replace(/\\?vert(\{[^}]*\})?|ert\{[^}]*\}|[\r\n\t\v_x000b_]+/g, "")
     .replace(/\s+/g, " ")
@@ -42,7 +33,6 @@ function limparTextoEstrito(str: string) {
 
 function gerarSlug(str: string) {
   if (!str) return "";
-
   return str
     .toLowerCase()
     .normalize("NFD")
@@ -53,9 +43,7 @@ function gerarSlug(str: string) {
 
 function gerarPalavrasChave(titulo: string) {
   if (!titulo) return "";
-
   const base = toTitleCase(titulo);
-
   return `${base},${base} Confortável,${base} Original Best Fit,Moda Fitness e Casual`;
 }
 
@@ -117,7 +105,17 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      const descricaoComplementarPai = [
+      // BUSCA INTELIGENTE DE PADRÕES (PROCURA NA ABA DE PADRONIZAÇÃO)
+      const { data: padroes } = await supabase
+        .from("padroes_anuncios")
+        .select("*")
+        .or(`marca.ilike.%${marcaPai}%,titulo.ilike.%${nomePaiFormatado.split(" ")[0]}%`)
+        .limit(1);
+
+      const padraoEncontrado = padroes && padroes.length > 0 ? padroes[0] : null;
+
+      // Define a descrição complementar baseada no padrão encontrado ou no fallback padrão
+      const descricaoComplementarPai = padraoEncontrado?.descricao_complementar || [
         `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
         "",
         "Especificações:",
@@ -138,6 +136,10 @@ export async function POST(req: Request) {
         "- Evitar exposição prolongada direta à luz solar.",
         "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.",
       ].join("\n");
+
+      const slugFinalPai = padraoEncontrado?.slug || slugPai;
+      const palavrasChaveFinalPai = padraoEncontrado?.palavras_chave_seo || palavrasChavePai;
+      const descricaoSeoFinalPai = padraoEncontrado?.descricao_seo || `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`;
 
       // 1. Produto Pai (Tipo do produto = V)
       linhasExportacao.push({
@@ -192,9 +194,9 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
-        "Palavras chave SEO": palavrasChavePai,
-        "Slug": slugPai,
+        "Descrição SEO": descricaoSeoFinalPai,
+        "Palavras chave SEO": palavrasChaveFinalPai,
+        "Slug": slugFinalPai,
         "Dias para preparação": "0",
         "Controlar lotes": "Não",
         "Unidade por caixa": "",
@@ -235,8 +237,7 @@ export async function POST(req: Request) {
           ? limparTextoEstrito(String(p.tamanho))
           : "";
 
-        // CORREÇÃO: separadores literais ||, sem \vert{}.
-        // Exemplo: Cor:Cinza||Tamanho:GG||
+        // Formato estrito exigido para as variações em linha única
         const variacaoFormatada =
           `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
@@ -264,7 +265,7 @@ export async function POST(req: Request) {
         ];
 
         const descricaoComplementarFinal =
-          hist?.resposta_ia || descricaoFilhoArr.join("\n");
+          hist?.resposta_ia || padraoEncontrado?.descricao_complementar || descricaoFilhoArr.join("\n");
 
         linhasExportacao.push({
           "ID": "",
