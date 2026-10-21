@@ -10,6 +10,9 @@ function toTitleCase(str: string) {
   const lowercaseWords = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
   return str
     .toLowerCase()
+    .replace(/ert\{[^}]*\}|[\r\n]+/g, " ") // Remove resíduos como ert{} e quebras de linha
+    .replace(/\s+/g, " ")
+    .trim()
     .split(" ")
     .map((word, index) => {
       if (index > 0 && lowercaseWords.includes(word)) {
@@ -18,6 +21,14 @@ function toTitleCase(str: string) {
       return word.charAt(0).toUpperCase() + word.slice(1);
     })
     .join(" ");
+}
+
+function limparTexto(str: string) {
+  if (!str) return "";
+  return str
+    .replace(/ert\{[^}]*\}|[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function gerarSlug(str: string) {
@@ -64,7 +75,7 @@ export async function POST(req: Request) {
       if (itensDoPai.length === 0) continue;
 
       const produtoBase = itensDoPai[0];
-      const nomePaiRaw = produtoBase.produto.split("-")[0].trim();
+      const nomePaiRaw = limparTexto(produtoBase.produto.split("-")[0]);
       const nomePaiFormatado = toTitleCase(nomePaiRaw);
       const slugPai = gerarSlug(nomePaiFormatado);
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
@@ -170,17 +181,18 @@ export async function POST(req: Request) {
           .limit(1)
           .single();
 
-        const nomeFilhoFormatado = toTitleCase(p.produto);
+        const nomeFilhoRaw = limparTexto(p.produto);
+        const nomeFilhoFormatado = toTitleCase(nomeFilhoRaw);
         const slugFilho = gerarSlug(nomeFilhoFormatado);
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        const corFormatada = p.cor ? toTitleCase(String(p.cor).trim()) : "Padrão";
-        const tamFormatado = p.tamanho ? String(p.tamanho).trim() : "Único";
+        const corFormatada = p.cor ? toTitleCase(limparTexto(p.cor)) : "Padrão";
+        const tamFormatado = p.tamanho ? limparTexto(String(p.tamanho)) : "Único";
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
-          `O ${nomeFilhoFormatado} é a escolha perfeita para quem busca unir sofisticação, praticidade e a identidade inconfundível da ${marcaFilho}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
+          `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
           ``,
           `Especificações:`,
           `- Marca: ${marcaFilho}.`,
