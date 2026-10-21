@@ -23,7 +23,6 @@ function toTitleCase(str: string) {
     .join(" ");
 }
 
-// Limpeza estricta para remover resíduos da base de dados sem afetar a estrutura dos textos normais
 function limparTextoEstrito(str: string) {
   if (!str) return "";
   return String(str)
@@ -82,8 +81,7 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      // Descrição estruturada padrão Pai com quebras de linha reais (\n)
-      const descricaoPai = [
+      const descricaoComplementarPai = [
         `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
         ``,
         `Especificações:`,
@@ -109,7 +107,7 @@ export async function POST(req: Request) {
       linhasExportacao.push({
         "ID": "",
         "Código (SKU)": paiKey,
-        "Descrição": descricaoPai,
+        "Descrição": nomePaiFormatado, // Coluna Descrição = Apenas o Título do Produto
         "Unidade": "UN",
         "Classificação fiscal": produtoBase.ncm || "",
         "Origem": produtoBase.origem || "0",
@@ -128,7 +126,7 @@ export async function POST(req: Request) {
         "Peso bruto (Kg)": "0.500",
         "GTIN/EAN": "",
         "GTIN/EAN tributável": "",
-        "Descrição complementar": "",
+        "Descrição complementar": descricaoComplementarPai, // Descrição complementar recebe o template estruturado
         "CEST": produtoBase.cest || "",
         "Código de Enquadramento IPI": "",
         "Formato embalagem": "",
@@ -158,7 +156,7 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": descricaoPai,
+        "Descrição SEO": `Compre ${nomePaiFormatado} na${marcaPai}. Qualidade superior, conforto e estilo.`,
         "Palavras chave SEO": palavrasChavePai,
         "Slug": slugPai,
         "Dias para preparação": "0",
@@ -189,12 +187,10 @@ export async function POST(req: Request) {
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        // Variação estritamente limpa e em linha única (Cor:X||Tamanho:Y||)
         const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "Padrão";
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "Único";
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
-        // Descrição estruturada padrão Filho com quebras de linha reais (\n)
         const descricaoFilhoArr = [
           `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
           ``,
@@ -218,12 +214,12 @@ export async function POST(req: Request) {
           `- Não utilizar alvejantes à base de cloro.`
         ];
 
-        const descricaoFinal = hist?.resposta_ia || descricaoFilhoArr.join("\n");
+        const descricaoComplementarFinal = hist?.resposta_ia || descricaoFilhoArr.join("\n");
 
         linhasExportacao.push({
           "ID": "",
           "Código (SKU)": p.sku,
-          "Descrição": descricaoFinal,
+          "Descrição": nomeFilhoFormatado, // Coluna Descrição = Apenas o Título do Produto da variação
           "Unidade": "UN",
           "Classificação fiscal": p.ncm || "",
           "Origem": p.origem || "0",
@@ -242,7 +238,7 @@ export async function POST(req: Request) {
           "Peso bruto (Kg)": "0.500",
           "GTIN/EAN": p.ean || "",
           "GTIN/EAN tributável": p.ean || "",
-          "Descrição complementar": "",
+          "Descrição complementar": descricaoComplementarFinal, // Descrição complementar recebe o template estruturado
           "CEST": p.cest || "",
           "Código de Enquadramento IPI": "",
           "Formato embalagem": "",
@@ -259,7 +255,7 @@ export async function POST(req: Request) {
           "URL imagem 6": "",
           "Categoria": "",
           "Código do pai": paiKey,
-          "Variações": variacaoFormatada,
+          "Variações": variacaoFormatada, // Variação limpa em linha única
           "Marca": marcaFilho,
           "Garantia": "30 dias",
           "Sob encomenda": "Não",
@@ -272,7 +268,7 @@ export async function POST(req: Request) {
           "URL imagem externa 6": "",
           "Link do vídeo": "",
           "Título SEO": nomeFilhoFormatado,
-          "Descrição SEO": descricaoFinal,
+          "Descrição SEO": `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na ${marcaFilho}.`,
           "Palavras chave SEO": palavrasChaveFilho,
           "Slug": slugFilho,
           "Dias para preparação": "0",
