@@ -190,7 +190,7 @@ export async function POST(req: Request) {
         const corFormatada = p.cor ? toTitleCase(limparTexto(p.cor)) : "Padrão";
         const tamFormatado = p.tamanho ? limparTexto(String(p.tamanho)) : "Único";
         
-        // Formato estrito sem quebras de linha
+        // Garante estritamente uma única linha limpa sem quebras
         const variacaoFormatada = `Cor:${corFormatada}\vert{}\vert{}Tamanho:${tamFormatado}||`;
 
         const descricaoFilhoArr = [
