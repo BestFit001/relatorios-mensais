@@ -1,12 +1,20 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 export async function POST(req: Request) {
   try {
+    const apiKey = process.env.OPENAI_API_KEY;
+
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "A variável de ambiente OPENAI_API_KEY não está configurada no servidor." },
+        { status: 500 }
+      );
+    }
+
+    // Inicializa o cliente apenas no momento da chamada (evita erro no build)
+    const openai = new OpenAI({ apiKey });
+
     const { prompt } = await req.json();
 
     if (!prompt) {
@@ -21,7 +29,6 @@ export async function POST(req: Request) {
       response_format: "url",
     });
 
-    // Verificação de segurança para satisfazer o TypeScript estrito
     const imageUrl = response.data?.[0]?.url;
 
     if (!imageUrl) {
