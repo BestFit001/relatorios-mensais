@@ -131,29 +131,28 @@ export async function POST(req: Request) {
 
         if (ai) {
           try {
-            const promptRigido = `Você é um especialista em e-commerce da Best Fit e Tip Top. 
-Gere a descrição comercial do produto seguindo EXATAMENTE a estrutura rica e detalhada do modelo abaixo, adaptando o tema para o produto atual.
+            const promptRigido = `Você é um analista sênior de e-commerce da Best Fit especializado em moda praia infantil. 
+Analise o nome do produto com raciocínio lógico rigoroso.
 
-REGRAS DE FORMATAÇÃO OBRIGATÓRIAS:
-1. NUNCA cite o tamanho e a cor na seção de especificações ou no texto descritivo complementar (pois essas informações já vão em campos próprios de variação do Tiny).
-2. Substitua completamente qualquer referência a temas antigos (como cavalo marinho) pelo tema real deste produto ("${nomeItem}").
-3. Mantenha os blocos de benefícios, composição, proteção UV50+ e cuidados detalhados.
+REGRAS DE ANÁLISE OBRIGATÓRIAS:
+1. ENTENDIMENTO DO TEMA: Nomes de produtos como "Lancheira Farm Ziriguidum..." indicam o NOME DA ESTAMPA / COLEÇÃO (ex: estampa "Lancheira"), e NÃO o objeto físico lancheira. Trata-se de um Conjunto Biquíni Infantil. Nunca confunda ou trate a estampa como se fosse um acessório escolar/alimentar.
+2. LIMPEZA DO TÍTULO: Evite repetições exaustivas de palavras no texto. Se o nome for longo, extrai a essência com elegância.
+3. PROIBIÇÃO DE ESPECIFICAÇÕES DE VARIAÇÃO: NUNCA inclua tamanho ou cor na seção de especificações.
+4. PADRÃO TÉCNICO: Mantenha os blocos de segurança (UV50+), benefícios, composição e cuidados detalhados.
 
-EXEMPLO DE FORMATO OBRIGATÓRIO A SEGUIR:
-O Conjunto Biquíni Infantil ${nomeItem} Tip Top foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa vibrante de ${nomeItem} que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
+EXEMPLO DE ESTRUTURA ESPERADA:
+O Conjunto Biquíni Infantil [Nome limpo do produto] foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
 
 Especificações:
 - Marca: ${marcaPai}
 - Modelo: ${nomeItem}
-- Top: Estampa colorida com tema de ${nomeItem}
-- Calcinha: Cintura elástica para ajuste seguro
 - Proteção: Solar UV50+ permanente no tecido
 
 Benefícios:
 - Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.
 - Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.
-- Estilo: Design com babados e estampas lúdicas que estimulam a imaginação.
-- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar, ideal para o uso prolongado.
+- Estilo: Design com acabamentos e estampas lúdicas que estimulam a imaginação.
+- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar.
 
 Composição:
 - Tecido Externo: 84% Poliéster / 16% Elastano
@@ -166,8 +165,8 @@ Não deixar de molho e não utilizar alvejantes à base de cloro.
 Secar à sombra e evitar o uso de secadoras.
 Não passar a ferro para não danificar as fibras de elastano e a estampa.
 
-DADOS DO PRODUTO ATUAL A SER GERADO:
-- Nome/Tema: ${nomeItem}
+DADOS DO PRODUTO ATUAL:
+- Título Completo: ${nomeItem}
 - Marca: ${marcaPai}`;
 
             const response = await ai.models.generateContent({
@@ -181,9 +180,8 @@ DADOS DO PRODUTO ATUAL A SER GERADO:
           }
         }
 
-        // Fallback enriquecido caso a IA falhe (sem citar cor e tamanho)
         return [
-          `O Conjunto Biquíni Infantil ${nomeItem} ${marcaPai} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
+          `O Conjunto Biquíni Infantil ${nomeItem} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
           "",
           "Especificações:",
           `- Marca: ${marcaPai}`,
@@ -193,7 +191,7 @@ DADOS DO PRODUTO ATUAL A SER GERADO:
           "Benefícios:",
           "- Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.",
           "- Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.",
-          "- Estilo: Design com babados e estampas lúdicas que estimulam a imaginação.",
+          "- Estilo: Design com acabamentos e estampas lúdicas que estimulam a imaginação.",
           "- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar.",
           "",
           "Composição:",
