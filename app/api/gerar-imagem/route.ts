@@ -13,8 +13,7 @@ export async function POST(req: Request) {
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    const body = await req.json();
-    const { prompt, modeloBase64, produtoBase64 } = body;
+    const { prompt, modeloBase64, produtoBase64 } = await req.json();
 
     if (!prompt) {
       return NextResponse.json({ error: "O prompt descritivo é obrigatório." }, { status: 400 });
@@ -22,6 +21,7 @@ export async function POST(req: Request) {
 
     const contents: any[] = [];
     
+    // Adiciona a foto da modelo como referência visual, se fornecida
     if (modeloBase64) {
       contents.push({
         inlineData: {
@@ -31,6 +31,7 @@ export async function POST(req: Request) {
       });
     }
 
+    // Adiciona a foto do produto como referência visual, se fornecida
     if (produtoBase64) {
       contents.push({
         inlineData: {
@@ -40,26 +41,43 @@ export async function POST(req: Request) {
       });
     }
 
-    contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
+    contents.push(`Gera uma imagem realista de e-commerce e as diretrizes baseadas nisto: ${prompt}`);
 
+    // Chamada à API utilizando o modelo compatível com multimodal e configuração de modalidades
     const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+      model: "gemini-2.0-flash-exp",
       contents: contents,
+      config: {
+        responseModalities: ["TEXT", "IMAGE"],
+      },
     });
 
-    const respostaTexto = response.text || "Diretriz gerada com sucesso.";
+    let imagemUrl = "";
+    let textoGerado = "";
+
+    // Varre as partes da resposta para extrair o texto e/ou a imagem gerada em base64
+    if (response.candidates?.[0]?.content?.parts) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.text) {
+          textoGerado += part.text;
+        } else if (part.inlineData) {
+          const base64Data = part.inlineData.data;
+          const mimeType = part.inlineData.mimeType || "image/png";
+          imagemUrl = `data:${mimeType};base64,${base64Data}`;
+        }
+      }
+    }
 
     return NextResponse.json({ 
       sucesso: true, 
-      imagemUrl: "", 
-      descricaoGerada: respostaTexto,
-      mensagem: "Instrução visual gerada com sucesso pelo Gemini!" 
+      imagemUrl: imagemUrl, 
+      descricaoGerada: textoGerado || response.text || "",
+      mensagem: "Processado com sucesso pelo Gemini!" 
     });
   } catch (error: any) {
-    console.error("Erro completo na API gerar-imagem:", error);
-    // Retorna a mensagem exata do erro para o frontend exibir no alerta
+    console.error("Erro na API do Gemini:", error);
     return NextResponse.json(
-      { error: error?.message || JSON.stringify(error) || "Erro interno desconhecido" },
+      { error: error?.message || "Erro interno ao processar a imagem com o Gemini." },
       { status: 500 }
     );
   }
