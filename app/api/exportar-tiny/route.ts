@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { GoogleGenAI } from "@google/genai";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -73,8 +72,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-    const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+    // Busca os padrões homologados na base de dados
+    const { data: padroesOficiais } = await supabase
+      .from("padroes_anuncios")
+      .select("*");
 
     const paisUnicos = Array.from(
       new Set(
@@ -118,52 +119,75 @@ export async function POST(req: Request) {
 
       if (histSku?.resposta_ia) {
         descricaoComplementarPai = histSku.resposta_ia;
-      } else if (ai) {
-        // 2. IA analisa o produto real com raciocínio lógico contextual estrito
-        try {
-          const promptContextual = `Você é um analista de e-commerce sênior da Best Fit. Sua tarefa é ler o título exato do produto abaixo e criar uma descrição comercial altamente precisa, adaptada estritamente à categoria real do item.
+      } else {
+        // 2. Procura padrão correspondente na base de dados
+        let padraoEncontrado: any = null;
+        if (padroesOficiais && padroesOficiais.length > 0) {
+          padraoEncontrado = padroesOficiais.find(
+            (p) => p.marca && p.marca.toLowerCase().includes(marcaPai.toLowerCase())
+          ) || padroesOficiais[0];
+        }
 
-REGRAS DE OURO OBRIGATÓRIAS:
-1. IDENTIFICAÇÃO REAL DO PRODUTO: Analise o título. Se for um biquíni/conjunto de praia, descreva as características de moda praia (proteção UV50+, tecido flexível, etc.). Se for uma lancheira, bolsa, acessório ou outro tipo de item, descreva as características reais desse item (espaço interno, praticidade, material resistente, zíper, etc.). NUNCA misture categorias (ex: nunca descreva uma lancheira como se fosse um biquíni).
-2. Respeite a marca original (${marcaPai}).
-3. NUNCA inclua tamanho ou cor na seção de especificações.
-4. Estruture a resposta de forma profissional: Parágrafo descritivo inicial, Especificações, Benefícios, Composição e Cuidados.
-
-DADOS DO PRODUTO A ANALISAR:
-- Título Exato: ${nomePaiFormatado}
-- Marca: ${marcaPai}`;
-
-          const response = await ai.models.generateContent({
-            model: "gemini-3.8-flash",
-            contents: [promptContextual],
-          });
-
-          if (response.text) {
-            descricaoComplementarPai = response.text.trim();
+        if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
+          // Usa o padrão homologado e substitui o título antigo pelo nome real do produto atual
+          let textoBase = padraoEncontrado.descricao_complementar;
+          if (padraoEncontrado.titulo) {
+            const regexTitulo = new RegExp(padraoEncontrado.titulo, "gi");
+            textoBase = textoBase.replace(regexTitulo, nomePaiFormatado);
           }
-        } catch (e) {
-          console.error("Erro ao gerar descrição contextual via IA:", e);
+          descricaoComplementarPai = textoBase;
         }
       }
 
+      // 3. Fallback inteligente e detalhado caso não exista padrão na base
       if (!descricaoComplementarPai) {
-        descricaoComplementarPai = [
-          `O ${nomePaiFormatado} da ${marcaPai} foi desenvolvido para unir praticidade, estilo e alta qualidade no seu dia a dia.`,
-          "",
-          "Especificações:",
-          `- Marca: ${marcaPai}`,
-          `- Modelo: ${nomePaiFormatado}`,
-          "",
-          "Benefícios:",
-          "- Praticidade: Design funcional pensado para o uso diário.",
-          "- Alta Durabilidade: Acabamento premium e materiais resistentes.",
-          "",
-          "Composição:",
-          "- Materiais nobres de alta performance.",
-          "",
-          "Cuidados:",
-          "- Seguir rigorosamente as instruções de conservação indicadas pelo fabricante."
-        ].join("\n");
+        const isBiquini = nomePaiFormatado.toLowerCase().includes("biquini") || nomePaiFormatado.toLowerCase().includes("conjunto");
+        
+        if (isBiquini) {
+          descricaoComplementarPai = [
+            `O Conjunto Biquíni Infantil ${nomePaiFormatado} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
+            "",
+            "Especificações:",
+            `- Marca: ${marcaPai}`,
+            `- Modelo: ${nomePaiFormatado}`,
+            "- Proteção: Solar UV50+ permanente no tecido",
+            "",
+            "Benefícios:",
+            "- Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.",
+            "- Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.",
+            "- Estilo: Design com acabamentos e estampas lúdicas que estimulam a imaginação.",
+            "- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar.",
+            "",
+            "Composição:",
+            "- Tecido Externo: 84% Poliéster / 16% Elastano",
+            "- Forro: 100% Poliamida (proporciona toque macio e secagem rápida)",
+            "",
+            "Cuidados:",
+            "Lavar preferencialmente à mão ou em ciclo delicado na máquina.",
+            "Utilizar água fria ou morna e sabão neutro.",
+            "Não deixar de molho e não utilizar alvejantes à base de cloro.",
+            "Secar à sombra e evitar o uso de secadoras.",
+            "Não passar a ferro para não danificar as fibras de elastano e a estampa."
+          ].join("\n");
+        } else {
+          descricaoComplementarPai = [
+            `O ${nomePaiFormatado} da ${marcaPai} foi desenvolvido para unir praticidade, estilo e alta qualidade no seu dia a dia.`,
+            "",
+            "Especificações:",
+            `- Marca: ${marcaPai}`,
+            `- Modelo: ${nomePaiFormatado}`,
+            "",
+            "Benefícios:",
+            "- Praticidade: Design funcional pensado para o uso diário.",
+            "- Alta Durabilidade: Acabamento premium e materiais resistentes.",
+            "",
+            "Composição:",
+            "- Materiais nobres de alta performance.",
+            "",
+            "Cuidados:",
+            "- Seguir rigorosamente as instruções de conservação indicadas pelo fabricante."
+          ].join("\n");
+        }
       }
 
       // 1. Produto Pai (Tipo do produto = V)
