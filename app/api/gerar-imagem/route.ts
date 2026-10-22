@@ -7,7 +7,7 @@ export async function POST(req: Request) {
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "A chave da API do Gemini não está configurada nas variáveis de ambiente." },
+        { error: "API key do Gemini ausente nas variáveis de ambiente." },
         { status: 500 }
       );
     }
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     const { prompt, modeloBase64, produtoBase64 } = await req.json();
 
     if (!prompt) {
-      return NextResponse.json({ error: "O prompt descritivo é obrigatório." }, { status: 400 });
+      return NextResponse.json({ error: "O prompt é obrigatório." }, { status: 400 });
     }
 
     const contents: any[] = [];
@@ -39,40 +39,29 @@ export async function POST(req: Request) {
       });
     }
 
-    contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
+    contents.push(`Gera uma diretriz de imagem profissional para e-commerce baseada nisto: ${prompt}`);
 
-    let response;
-    let tentativas = 3;
-    let sucesso = false;
+    // Testando com o gemini-2.0-flash que é o padrão da v1
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: contents,
+    });
 
-    // Loop de tentativas automáticas para contornar picos de alta demanda (503)
-    while (tentativas > 0 && !sucesso) {
-      try {
-        response = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: contents,
-        });
-        sucesso = true;
-      } catch (err: any) {
-        tentativas--;
-        if (tentativas === 0) throw err;
-        // Aguarda 1.5 segundos antes de tentar novamente
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-      }
-    }
-
-    const respostaTexto = response?.text || "Diretriz gerada com sucesso.";
+    const respostaTexto = response.text || "Sucesso";
 
     return NextResponse.json({ 
       sucesso: true, 
       imagemUrl: "", 
       descricaoGerada: respostaTexto,
-      mensagem: "Instrução visual gerada com sucesso pelo Gemini!" 
+      mensagem: "Processado com sucesso!" 
     });
   } catch (error: any) {
-    console.error("Erro na API do Gemini:", error);
+    console.error("ERRO DETALHADO:", error);
+    
+    // Retorna a mensagem técnica exata para vermos na tela
+    const mensagemErro = error?.message || JSON.stringify(error) || "Erro desconhecido";
     return NextResponse.json(
-      { error: "Os servidores da IA estão com alta demanda no momento. Por favor, tente novamente em alguns segundos." },
+      { error: `Erro técnico: ${mensagemErro}` },
       { status: 500 }
     );
   }
