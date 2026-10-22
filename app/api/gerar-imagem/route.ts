@@ -41,28 +41,47 @@ export async function POST(req: Request) {
       text: `Gera uma diretriz de imagem profissional para e-commerce baseada nisto: ${prompt}`,
     });
 
-    // Chamada direta via REST utilizando o modelo exigido pela Google (gemini-3.8-flash)
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: parts,
-            },
-          ],
-        }),
+    let response: Response | null = null;
+    let data: any = null;
+    let tentativas = 4;
+    let sucesso = false;
+
+    // Loop de tentativas para contornar o pico de alta demanda (503) da Google
+    while (tentativas > 0 && !sucesso) {
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: parts,
+              },
+            ],
+          }),
+        }
+      );
+
+      data = await response.json();
+
+      if (response.ok) {
+        sucesso = true;
+      } else if (response.status === 503 || data?.error?.code === 503) {
+        tentativas--;
+        if (tentativas === 0) break;
+        // Aguarda 2 segundos antes de tentar novamente
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      } else {
+        // Se for outro tipo de erro (ex: chave inválida), sai imediatamente
+        break;
       }
-    );
+    }
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data?.error?.message || `Erro HTTP ${response.status}`);
+    if (!response || !response.ok) {
+      throw new Error(data?.error?.message || `Erro HTTP ${response?.status || 500}`);
     }
 
     const respostaTexto =
