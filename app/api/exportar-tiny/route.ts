@@ -116,7 +116,6 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      // Função com raciocínio lógico avançado para a IA analisar o produto real
       async function gerarDescricaoComLogica(nomeItem: string, corItem: string, tamItem: string) {
         const { data: histSku } = await supabase
           .from("historico_descricoes_ia")
@@ -306,7 +305,6 @@ REGRAS DE RACIOCÍNIO OBRIGATÓRIAS:
           "URL imagem 1": "",
           "URL imagem 2": "",
           "URL imagem 3": "",
-          "URL imagem>",
           "URL imagem 4": "",
           "URL imagem 5": "",
           "URL imagem 6": "",
