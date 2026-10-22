@@ -131,60 +131,83 @@ export async function POST(req: Request) {
 
         if (ai) {
           try {
-            let contexto = `Você é um analista de e-commerce sênior da Best Fit. Sua tarefa é ler o padrão existente na base, cruzar com o produto real que está a ser cadastrado e aplicar LÓGICA CRÍTICA.
-REGRAS DE RACIOCÍNIO OBRIGATÓRIAS:
-1. Identifique o nome real e a estampa/tema do produto atual (ex: se o título diz "Sorvete", substitua qualquer menção a estampas antigas como "cavalo marinho" ou "florido" pelo tema correto do Sorvete).
-2. Adapte o contexto visual de forma coerente (ex: se o produto é de sorvete, ajuste os detalhes visuais da descrição para refletir essa temática, mantendo a essência comercial).
-3. Preserve os pilares técnicos de qualidade que vierem do padrão (ex: proteção solar UV50+, toque macio, conforto e instruções de lavagem).
-4. Nunca traga nomes cruzados ou errados de outros produtos. A descrição tem de pertencer exclusivamente ao produto atual.
-\n\n`;
+            const promptRigido = `Você é um especialista em e-commerce da Best Fit e Tip Top. 
+Gere a descrição comercial do produto seguindo EXATAMENTE a estrutura rica e detalhada do modelo abaixo, adaptando o tema para o produto atual.
 
-            if (padroesOficiais && padroesOficiais.length > 0) {
-              contexto += "Padrão de Referência da Base:\n";
-              padroesOficiais.forEach(p => {
-                contexto += `- ${p.descricao_complementar}\n`;
-              });
-            }
+EXEMPLO DE FORMATO OBRIGATÓRIO A SEGUIR:
+O Conjunto Biquíni Infantil [Tema/Nome do Produto] Tip Top foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa vibrante de [descrever tema, ex: sorvetinhos] que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
 
-            if (historicoTreinamentos && historicoTreinamentos.length > 0) {
-              contexto += "\nHistórico de Correções e Aprendizados do Chat:\n";
-              historicoTreinamentos.forEach(h => {
-                contexto += `- ${h.prompt_usuario}\n`;
-              });
-            }
+Especificações:
+- Marca: ${marcaPai}
+- Modelo: [Nome Curto]
+- Top: Estampa colorida com tema de [Tema]
+- Calcinha: Cintura elástica para ajuste seguro
+- Proteção: Solar UV50+ permanente no tecido
 
-            const promptFinal = `${contexto}\n\nAplique a lógica analítica e gere a descrição complementar perfeita para:\n- Nome / Tema Real: ${nomeItem}\n- Marca: ${marcaPai}\n- Cor: ${corItem || "Não informada"}\n- Tamanho: ${tamItem || "Não informado"}`;
+Benefícios:
+- Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.
+- Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.
+- Estilo: Design com babados e estampas lúdicas que estimulam a imaginação.
+- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar, ideal para o uso prolomgado.
+
+Composição:
+- Tecido Externo: 84% Poliéster / 16% Elastano
+- Forro: 100% Poliamida (proporciona toque macio e secagem rápida)
+
+Cuidados:
+Lavar preferencialmente à mão ou em ciclo delicado na máquina.
+Utilizar água fria ou morna e sabão neutro.
+Não deixar de molho e não utilizar alvejantes à base de cloro.
+Secar à sombra e evitar o uso de secadoras.
+Não passar a ferro para não danificar as fibras de elastano e a estampa.
+
+DADOS DO PRODUTO ATUAL A SER GERADO:
+- Nome/Tema: ${nomeItem}
+- Marca: ${marcaPai}
+- Cor: ${corItem || "Não informada"}
+- Tamanho: ${tamItem || "Não informado"}
+
+ATENÇÃO: Substitua completamente qualquer referência a temas antigos (como cavalo marinho) pelo tema real deste produto ("${nomeItem}").`;
 
             const response = await ai.models.generateContent({
               model: "gemini-3.8-flash",
-              contents: [promptFinal],
+              contents: [promptRigido],
             });
 
             if (response.text) return response.text;
           } catch (err) {
-            console.error("Erro na lógica da IA:", err);
+            console.error("Erro na IA:", err);
           }
         }
 
+        // Fallback enriquecido caso a IA falhe
         return [
-          `O ${nomeItem} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança e estilo.`,
+          `O Conjunto Biquíni Infantil ${nomeItem} ${marcaPai} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
           "",
           "Especificações:",
-          `- Marca: ${marcaPai}.`,
-          `- Modelo: ${nomeItem}.`,
-          corItem ? `- Cor: ${corItem}.` : "",
-          tamItem ? `- Tamanho: ${tamItem}.` : "",
+          `- Marca: ${marcaPai}`,
+          `- Modelo: ${nomeItem}`,
+          `- Cor: ${corItem || "Variada"}`,
+          `- Tamanho: ${tamItem || "Variado"}`,
+          "- Proteção: Solar UV50+ permanente no tecido",
           "",
           "Benefícios:",
-          "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
-          "- Alta Durabilidade: Costuras reforçadas e acabamento premium.",
+          "- Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.",
+          "- Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.",
+          "- Estilo: Design com babados e estampas lúdicas que estimulam a imaginação.",
+          "- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar.",
           "",
           "Composição:",
-          "- Materiais nobres de alta performance e resistência.",
+          "- Tecido Externo: 84% Poliéster / 16% Elastano",
+          "- Forro: 100% Poliamida (proporciona toque macio e secagem rápida)",
           "",
-          "Cuidados e Conservação:",
-          "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante."
-        ].filter(Boolean).join("\n");
+          "Cuidados:",
+          "Lavar preferencialmente à mão ou em ciclo delicado na máquina.",
+          "Utilizar água fria ou morna e sabão neutro.",
+          "Não deixar de molho e não utilizar alvejantes à base de cloro.",
+          "Secar à sombra e evitar o uso de secadoras.",
+          "Não passar a ferro para não danificar as fibras de elastano e a estampa."
+        ].join("\n");
       }
 
       const descricaoComplementarPai = await gerarDescricaoComLogica(nomePaiFormatado, "", "");
