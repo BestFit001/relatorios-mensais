@@ -41,28 +41,11 @@ export async function POST(req: Request) {
 
     contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
 
-    let response;
-    let erroDetalhado = "";
-
-    // Tenta primeiro o modelo gemini-2.0-flash
-    try {
-      response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: contents,
-      });
-    } catch (err: any) {
-      erroDetalhado += ` [2.0-flash: ${err.message}]`;
-      // Tenta o modelo de fallback gemini-1.5-flash
-      try {
-        response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
-          contents: contents,
-        });
-      } catch (err2: any) {
-        erroDetalhado += ` [1.5-flash: ${err2.message}]`;
-        throw new Error(`Falha em ambos os modelos: ${erroDetalhado}`);
-      }
-    }
+    // Utilizando o modelo oficial indicado pela Google
+    const response = await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      contents: contents,
+    });
 
     const respostaTexto = response.text || "Diretriz gerada com sucesso.";
 
