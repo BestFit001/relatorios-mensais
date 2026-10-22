@@ -132,20 +132,20 @@ export async function POST(req: Request) {
         if (ai) {
           try {
             const promptRigido = `Você é um analista sênior de e-commerce da Best Fit especializado em moda praia infantil. 
-Analise o nome do produto com raciocínio lógico rigoroso.
+Analise o título completo do produto com rigor lógico e inteligência editorial.
 
-REGRAS DE ANÁLISE OBRIGATÓRIAS:
-1. ENTENDIMENTO DO TEMA: Nomes de produtos como "Lancheira Farm Ziriguidum..." indicam o NOME DA ESTAMPA / COLEÇÃO (ex: estampa "Lancheira"), e NÃO o objeto físico lancheira. Trata-se de um Conjunto Biquíni Infantil. Nunca confunda ou trate a estampa como se fosse um acessório escolar/alimentar.
-2. LIMPEZA DO TÍTULO: Evite repetições exaustivas de palavras no texto. Se o nome for longo, extrai a essência com elegância.
-3. PROIBIÇÃO DE ESPECIFICAÇÕES DE VARIAÇÃO: NUNCA inclua tamanho ou cor na seção de especificações.
-4. PADRÃO TÉCNICO: Mantenha os blocos de segurança (UV50+), benefícios, composição e cuidados detalhados.
+REGRAS CRÍTICAS DE FORMATAÇÃO E ANÁLISE:
+1. TRATAMENTO DO TÍTULO: Nomes complexos (ex: "Lancheira Farm Ziriguidum Max Copatucano") contêm a marca, o tema ou a estampa da coleção. Extraia apenas o tema principal e limpo para a descrição (ex: "Ziriguidum Max Copatucano" ou o nome da estampa real), garantindo que o texto flua de forma natural e elegante (ex: "O Conjunto Biquíni Infantil Ziriguidum Max Copatucano..."), sem repetir palavras de forma absurda.
+2. CAMPO MODELO NAS ESPECIFICAÇÕES: No campo "Modelo:" dentro de Especificações, coloque um nome limpo e curto (ex: "Ziriguidum Max" ou o tema principal), NUNCA repita o título comercial gigantesto inteiro.
+3. PROIBIÇÃO DE TAMANHO E COR: NUNCA inclua tamanho ou cor na seção de especificações.
+4. PADRÃO TÉCNICO: Mantenha os blocos de segurança (Proteção UV50+), benefícios, composição (84% Poliéster / 16% Elastano, Forro 100% Poliamida) e cuidados detalhados.
 
 EXEMPLO DE ESTRUTURA ESPERADA:
-O Conjunto Biquíni Infantil [Nome limpo do produto] foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
+O Conjunto Biquíni Infantil [Tema Limpo] foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
 
 Especificações:
 - Marca: ${marcaPai}
-- Modelo: ${nomeItem}
+- Modelo: [Nome Curto da Estampa/Tema]
 - Proteção: Solar UV50+ permanente no tecido
 
 Benefícios:
@@ -166,7 +166,7 @@ Secar à sombra e evitar o uso de secadoras.
 Não passar a ferro para não danificar as fibras de elastano e a estampa.
 
 DADOS DO PRODUTO ATUAL:
-- Título Completo: ${nomeItem}
+- Título Bruto: ${nomeItem}
 - Marca: ${marcaPai}`;
 
             const response = await ai.models.generateContent({
