@@ -73,17 +73,6 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data: padroesOficiais } = await supabase
-      .from("padroes_anuncios")
-      .select("titulo, descricao_complementar")
-      .limit(3);
-
-    const { data: historicoTreinamentos } = await supabase
-      .from("historico_descricoes_ia")
-      .select("prompt_usuario, resposta_ia")
-      .order("id", { ascending: false })
-      .limit(4);
-
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
@@ -116,36 +105,36 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      async function gerarDescricaoComLogica(nomeItem: string) {
-        const { data: histSku } = await supabase
-          .from("historico_descricoes_ia")
-          .select("resposta_ia")
-          .eq("sku", produtoBase.sku)
-          .order("id", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+      let descricaoComplementarPai = "";
 
-        if (histSku?.resposta_ia) {
-          return histSku.resposta_ia;
-        }
+      // 1. Tenta buscar histórico recente na base de dados
+      const { data: histSku } = await supabase
+        .from("historico_descricoes_ia")
+        .select("resposta_ia")
+        .eq("sku", produtoBase.sku)
+        .order("id", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-        if (ai) {
-          try {
-            const promptRigido = `Você é um analista sênior de e-commerce da Best Fit especializado em moda praia infantil. 
-Analise o título completo do produto com rigor lógico e inteligência editorial.
+      if (histSku?.resposta_ia) {
+        descricaoComplementarPai = histSku.resposta_ia;
+      } else if (ai) {
+        // 2. Se não tem histórico, chama a IA de forma estrita e síncrona
+        try {
+          const promptDireto = `Você é um especialista em e-commerce sênior da Best Fit. Escreva uma descrição comercial otimizada para o seguinte produto de moda praia infantil.
 
-REGRAS CRÍTICAS DE FORMATAÇÃO E ANÁLISE:
-1. TRATAMENTO DO TÍTULO: Nomes complexos (ex: "Lancheira Farm Ziriguidum Max Copatucano") contêm a marca, o tema ou a estampa da coleção. Extraia apenas o tema principal e limpo para a descrição (ex: "Ziriguidum Max Copatucano" ou o nome da estampa real), garantindo que o texto flua de forma natural e elegante (ex: "O Conjunto Biquíni Infantil Ziriguidum Max Copatucano..."), sem repetir palavras de forma absurda.
-2. CAMPO MODELO NAS ESPECIFICAÇÕES: No campo "Modelo:" dentro de Especificações, coloque um nome limpo e curto (ex: "Ziriguidum Max" ou o tema principal), NUNCA repita o título comercial gigantesto inteiro.
-3. PROIBIÇÃO DE TAMANHO E COR: NUNCA inclua tamanho ou cor na seção de especificações.
-4. PADRÃO TÉCNICO: Mantenha os blocos de segurança (Proteção UV50+), benefícios, composição (84% Poliéster / 16% Elastano, Forro 100% Poliamida) e cuidados detalhados.
+REGRAS DE OURO OBRIGATÓRIAS:
+1. Analise o título e entenda o tema/estampa (ex: se o título contiver "Lancheira", entenda que é uma estampa/tema de biquíni infantil, e nunca um objeto físico).
+2. NUNCA repita o nome do produto de forma poluída ou redundante (ex: evite "O Conjunto Biquíni Infantil Biquíni...").
+3. NUNCA inclua tamanho ou cor na seção de especificações.
+4. Siga rigidamente a estrutura profissional abaixo:
 
-EXEMPLO DE ESTRUTURA ESPERADA:
-O Conjunto Biquíni Infantil [Tema Limpo] foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
+ESTRUTURA EXATA A SER GERADA:
+O Conjunto Biquíni Infantil [Nome limpo e tema do produto] foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
 
 Especificações:
 - Marca: ${marcaPai}
-- Modelo: [Nome Curto da Estampa/Tema]
+- Modelo: [Nome Curto / Tema]
 - Proteção: Solar UV50+ permanente no tecido
 
 Benefícios:
@@ -165,27 +154,30 @@ Não deixar de molho e não utilizar alvejantes à base de cloro.
 Secar à sombra e evitar o uso de secadoras.
 Não passar a ferro para não danificar as fibras de elastano e a estampa.
 
-DADOS DO PRODUTO ATUAL:
-- Título Bruto: ${nomeItem}
+DADOS DO PRODUTO:
+- Título: ${nomePaiFormatado}
 - Marca: ${marcaPai}`;
 
-            const response = await ai.models.generateContent({
-              model: "gemini-3.8-flash",
-              contents: [promptRigido],
-            });
+          const response = await ai.models.generateContent({
+            model: "gemini-3.8-flash",
+            contents: [promptDireto],
+          });
 
-            if (response.text) return response.text;
-          } catch (err) {
-            console.error("Erro na IA:", err);
+          if (response.text) {
+            descricaoComplementarPai = response.text.trim();
           }
+        } catch (e) {
+          console.error("Erro ao chamar Gemini no Tiny:", e);
         }
+      }
 
-        return [
-          `O Conjunto Biquíni Infantil ${nomeItem} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
+      if (!descricaoComplementarPai) {
+        descricaoComplementarPai = [
+          `O Conjunto Biquíni Infantil ${nomePaiFormatado} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
           "",
           "Especificações:",
           `- Marca: ${marcaPai}`,
-          `- Modelo: ${nomeItem}`,
+          `- Modelo: ${nomePaiFormatado}`,
           "- Proteção: Solar UV50+ permanente no tecido",
           "",
           "Benefícios:",
@@ -206,8 +198,6 @@ DADOS DO PRODUTO ATUAL:
           "Não passar a ferro para não danificar as fibras de elastano e a estampa."
         ].join("\n");
       }
-
-      const descricaoComplementarPai = await gerarDescricaoComLogica(nomePaiFormatado);
 
       // 1. Produto Pai (Tipo do produto = V)
       linhasExportacao.push({
