@@ -88,13 +88,11 @@ export async function POST(req: Request) {
     const linhasExportacao: Record<string, string | number>[] = [];
 
     for (const paiKey of paisUnicos) {
-      const itensDoPai = produtos.path
-        ? []
-        : produtos.filter(
-            (p) =>
-              (p.sku_pai ||
-                (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku)) === paiKey
-          );
+      const itensDoPai = produtos.filter(
+        (p) =>
+          (p.sku_pai ||
+            (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku)) === paiKey
+      );
 
       if (itensDoPai.length === 0) continue;
 
