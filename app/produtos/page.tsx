@@ -7,7 +7,7 @@ import * as XLSX from "xlsx";
 
 export default function ProdutosPage() {
   const router = useRouter();
-  const [subAba, setSubAba] = useState<"pendentes" | "realizados" | "periodo" | "config" | "descricoes">("pendentes");
+  const [subAba, setSubAba] = useState<"pendentes" | "realizados" | "periodo" | "config" | "descricoes" | "imagens">("pendentes");
   const [loading, setLoading] = useState(false);
 
   const [dadosPendentes, setDadosPendentes] = useState<any[]>([]);
@@ -37,6 +37,11 @@ export default function ProdutosPage() {
   const [carregandoIA, setCarregandoIA] = useState(false);
   const [ultimaDescricaoGerada, setUltimaDescricaoGerada] = useState("");
   const [salvandoPadraoOficial, setSalvandoPadraoOficial] = useState(false);
+
+  // Estados para o Gerador de Imagens por IA
+  const [promptImagem, setPromptImagem] = useState("");
+  const [imagemGeradaUrl, setImagemGeradaUrl] = useState("");
+  const [carregandoImagem, setCarregandoImagem] = useState(false);
 
   // Estados para Configuração / Busca por SKU no Histórico
   const [skuBuscaConfig, setSkuBuscaConfig] = useState("");
@@ -328,7 +333,6 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  // Envio para IA respeitando o modo (Geração vs Treinamento) e sem salvamento automático no banco
   const enviarParaIA = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputPrompt.trim() && !skuAlvo && !imagemAnexada) return;
@@ -363,7 +367,6 @@ export default function ProdutosPage() {
       if (res.ok && data.resposta) {
         setChatMensagens(prev => [...prev, { remetente: "ia", texto: data.resposta }]);
         setUltimaDescricaoGerada(data.resposta);
-        // NADA é salvo automaticamente no banco aqui. Fica apenas visível para pré-visualização.
       } else {
         setChatMensagens(prev => [...prev, { remetente: "ia", texto: `Erro detalhado: ${data.error || "Falha desconhecida"}` }]);
       }
@@ -373,7 +376,6 @@ export default function ProdutosPage() {
     setCarregandoIA(false);
   };
 
-  // Botão de Salvamento Manual Explícito na Base de Padronização
   const salvarComoPadraoOficial = async () => {
     if (!ultimaDescricaoGerada) {
       alert("Nenhuma descrição gerada para salvar.");
@@ -396,6 +398,35 @@ export default function ProdutosPage() {
       alert("Erro ao salvar padrão: " + err.message);
     }
     setSalvandoPadraoOficial(false);
+  };
+
+  const handleGerarImagem = async () => {
+    if (!promptImagem.trim()) {
+      alert("Por favor, digite um prompt para a imagem.");
+      return;
+    }
+
+    setCarregandoImagem(true);
+    setImagemGeradaUrl("");
+
+    try {
+      const res = await fetch("/api/gerar-imagem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: promptImagem }),
+      });
+
+      const data = await res.json();
+
+      if (data.sucesso && data.imagemUrl) {
+        setImagemGeradaUrl(data.imagemUrl);
+      } else {
+        alert("Erro ao gerar imagem: " + (data.error || "Erro desconhecido"));
+      }
+    } catch (err: any) {
+      alert("Erro de conexão: " + err.message);
+    }
+    setCarregandoImagem(false);
   };
 
   const excluirPendenteIndividual = async (sku: string) => {
@@ -639,7 +670,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições padronizado por IA</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições padronizado por IA e Gerador de Imagens</p>
           </div>
           <Navbar />
         </div>
@@ -679,6 +710,14 @@ export default function ProdutosPage() {
               ✨ Descrições IA
             </button>
             <button
+              onClick={() => setSubAba("imagens")}
+              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
+                subAba === "imagens" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              🎨 Gerador de Imagens
+            </button>
+            <button
               onClick={() => setSubAba("config")}
               className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
                 subAba === "config" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
@@ -688,7 +727,7 @@ export default function ProdutosPage() {
             </button>
           </div>
 
-          {subAba !== "descricoes" && (
+          {subAba !== "descricoes" && subAba !== "imagens" && (
             <div className="flex items-center gap-3">
               <input
                 type="text"
@@ -937,7 +976,6 @@ export default function ProdutosPage() {
               </div>
 
               <div className="flex items-center gap-3 flex-wrap">
-                {/* Seletor de Modo: Geração vs Treinamento */}
                 <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-700">
                   <button
                     onClick={() => setModoIA("gerar")}
@@ -1016,7 +1054,6 @@ export default function ProdutosPage() {
               </button>
             </form>
 
-            {/* BOTÃO DE APROVAÇÃO E SALVAMENTO MANUAL EXPLÍCITO NA BASE DE PADRONIZAÇÃO */}
             {ultimaDescricaoGerada && (
               <div className="pt-3 border-t border-slate-800 flex justify-between items-center bg-slate-950/60 p-4 rounded-xl border border-slate-800">
                 <span className="text-xs text-slate-400">Resultado pré-visualizado (não salvo automaticamente).</span>
@@ -1028,6 +1065,57 @@ export default function ProdutosPage() {
                 >
                   {salvandoPadraoOficial ? "Salvando..." : "✅ Aprovar e Salvar na Base de Padronização"}
                 </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {subAba === "imagens" && (
+          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
+            <div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerador de Imagens por IA (DALL-E 3)</h3>
+              <p className="text-xs text-slate-400 mt-1">Crie imagens realistas e de estúdio para os produtos Best Fit a partir de texto descritivo.</p>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-xs text-slate-300">Descreva a imagem que pretende gerar:</label>
+              <textarea
+                value={promptImagem}
+                onChange={(e) => setPromptImagem(e.target.value)}
+                placeholder="Ex: Lancheira térmica Best Fit preta com alça cinza em fundo minimalista lilás, iluminação de estúdio profissional, alta qualidade..."
+                className="w-full bg-slate-950 text-xs text-white p-3 rounded-xl border border-slate-700 outline-none h-24"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGerarImagem}
+              disabled={carregandoImagem}
+              className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
+            >
+              {carregandoImagem ? "A gerar imagem com IA..." : "Gerar Imagem"}
+            </button>
+
+            {imagemGeradaUrl && (
+              <div className="mt-6 space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
+                <p className="text-xs text-slate-400">Imagem Gerada com Sucesso:</p>
+                <img
+                  src={imagemGeradaUrl}
+                  alt="Imagem gerada pela IA"
+                  className="rounded-xl border border-slate-700 max-w-md mx-auto shadow-2xl h-auto"
+                />
+                <div>
+                  <a
+                    href={imagemGeradaUrl}
+                    download={`bestfit_produto_${Date.now()}.png`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block bg-emerald-600 hover:bg-emerald-500 text-white py-2 px-6 rounded-xl text-xs font-bold transition cursor-pointer shadow-md mt-2"
+                  >
+                    ⬇️ Baixar Imagem (PNG)
+                  </a>
+                  <p className="text-[10px] text-slate-500 mt-1">Nota: A URL da imagem temporária expira após algumas horas. Faça o download para salvá-la permanentemente.</p>
+                </div>
               </div>
             )}
           </div>
