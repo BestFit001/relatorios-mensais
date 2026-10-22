@@ -73,7 +73,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Busca os padrões oficiais e o histórico de treinos do chat para contexto da IA
     const { data: padroesOficiais } = await supabase
       .from("padroes_anuncios")
       .select("titulo, descricao_complementar")
@@ -117,9 +116,8 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      // Função para gerar a descrição via IA analisando rigorosamente o título atual
-      async function gerarDescricaoInteligente(nomeItem: string, corItem: string, tamItem: string) {
-        // Se houver histórico salvo especificamente para este SKU, prioriza-o
+      // Função com raciocínio lógico avançado para a IA analisar o produto real
+      async function gerarDescricaoComLogica(nomeItem: string, corItem: string, tamItem: string) {
         const { data: histSku } = await supabase
           .from("historico_descricoes_ia")
           .select("resposta_ia")
@@ -134,23 +132,29 @@ export async function POST(req: Request) {
 
         if (ai) {
           try {
-            let contexto = "Você é um assistente especialista em e-commerce da Best Fit. Sua tarefa é analisar o nome do produto novo e redigir uma descrição comercial limpa, técnica e padronizada, sem manter nomes de produtos antigos.\n\n";
-            
+            let contexto = `Você é um analista de e-commerce sênior da Best Fit. Sua tarefa é ler o padrão existente na base, cruzar com o produto real que está a ser cadastrado e aplicar LÓGICA CRÍTICA.
+REGRAS DE RACIOCÍNIO OBRIGATÓRIAS:
+1. Identifique o nome real e a estampa/tema do produto atual (ex: se o título diz "Sorvete", substitua qualquer menção a estampas antigas como "cavalo marinho" ou "florido" pelo tema correto do Sorvete).
+2. Adapte o contexto visual de forma coerente (ex: se o produto é de sorvete, ajuste os detalhes visuais da descrição para refletir essa temática, mantendo a essência comercial).
+3. Preserve os pilares técnicos de qualidade que vierem do padrão (ex: proteção solar UV50+, toque macio, conforto e instruções de lavagem).
+4. Nunca traga nomes cruzados ou errados de outros produtos. A descrição tem de pertencer exclusivamente ao produto atual.
+\n\n`;
+
             if (padroesOficiais && padroesOficiais.length > 0) {
-              contexto += "Padrões de referência aprovados:\n";
+              contexto += "Padrão de Referência da Base:\n";
               padroesOficiais.forEach(p => {
                 contexto += `- ${p.descricao_complementar}\n`;
               });
             }
 
             if (historicoTreinamentos && historicoTreinamentos.length > 0) {
-              contexto += "\nÚltimas correções e ensinamentos aplicados pelo usuário:\n";
+              contexto += "\nHistórico de Correções e Aprendizados do Chat:\n";
               historicoTreinamentos.forEach(h => {
                 contexto += `- ${h.prompt_usuario}\n`;
               });
             }
 
-            const promptFinal = `${contexto}\n\nGere a descrição exata e otimizada para este novo produto:\n- Nome: ${nomeItem}\n- Marca: ${marcaPai}\n- Cor: ${corItem || "N/A"}\n- Tamanho: ${tamItem || "N/A"}\n\nIMPORTANTE: Substitua qualquer menção a nomes de produtos antigos pelo nome atual ("${nomeItem}").`;
+            const promptFinal = `${contexto}\n\nAplique a lógica analítica e gere a descrição complementar perfeita para:\n- Nome / Tema Real: ${nomeItem}\n- Marca: ${marcaPai}\n- Cor: ${corItem || "Não informada"}\n- Tamanho: ${tamItem || "Não informado"}`;
 
             const response = await ai.models.generateContent({
               model: "gemini-3.8-flash",
@@ -159,11 +163,10 @@ export async function POST(req: Request) {
 
             if (response.text) return response.text;
           } catch (err) {
-            console.error("Erro na IA durante exportação:", err);
+            console.error("Erro na lógica da IA:", err);
           }
         }
 
-        // Fallback robusto caso a IA falhe
         return [
           `O ${nomeItem} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança e estilo.`,
           "",
@@ -185,7 +188,7 @@ export async function POST(req: Request) {
         ].filter(Boolean).join("\n");
       }
 
-      const descricaoComplementarPai = await gerarDescricaoInteligente(nomePaiFormatado, "", "");
+      const descricaoComplementarPai = await gerarDescricaoComLogica(nomePaiFormatado, "", "");
 
       // 1. Produto Pai (Tipo do produto = V)
       linhasExportacao.push({
@@ -267,7 +270,7 @@ export async function POST(req: Request) {
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
         const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
-        const descricaoComplementarFinal = await gerarDescricaoInteligente(nomeFilhoFormatado, corFormatada, tamFormatado);
+        const descricaoComplementarFinal = await gerarDescricaoComLogica(nomeFilhoFormatado, corFormatada, tamFormatado);
 
         linhasExportacao.push({
           "ID": "",
@@ -303,6 +306,7 @@ export async function POST(req: Request) {
           "URL imagem 1": "",
           "URL imagem 2": "",
           "URL imagem 3": "",
+          "URL imagem>",
           "URL imagem 4": "",
           "URL imagem 5": "",
           "URL imagem 6": "",
