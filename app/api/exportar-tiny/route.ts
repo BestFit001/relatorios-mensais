@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { GoogleGenAI } from "@google/genai";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -72,10 +73,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // Busca os padrões homologados na base de dados
     const { data: padroesOficiais } = await supabase
       .from("padroes_anuncios")
       .select("*");
+
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
     const paisUnicos = Array.from(
       new Set(
@@ -120,28 +123,60 @@ export async function POST(req: Request) {
       if (histSku?.resposta_ia) {
         descricaoComplementarPai = histSku.resposta_ia;
       } else {
-        // 2. Procura padrão correspondente na base de dados
+        // 2. Procura padrão na base APENAS se a marca e o contexto baterem de verdade
         let padraoEncontrado: any = null;
         if (padroesOficiais && padroesOficiais.length > 0) {
           padraoEncontrado = padroesOficiais.find(
-            (p) => p.marca && p.marca.toLowerCase().includes(marcaPai.toLowerCase())
-          ) || padroesOficiais[0];
+            (p) => 
+              p.marca && 
+              p.marca.toLowerCase().includes(marcaPai.toLowerCase()) &&
+              p.titulo && 
+              nomePaiFormatado.toLowerCase().includes(p.titulo.toLowerCase().split(" ")[0])
+          );
         }
 
         if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
-          // Usa o padrão homologado e substitui o título antigo pelo nome real do produto atual
           let textoBase = padraoEncontrado.descricao_complementar;
           if (padraoEncontrado.titulo) {
             const regexTitulo = new RegExp(padraoEncontrado.titulo, "gi");
             textoBase = textoBase.replace(regexTitulo, nomePaiFormatado);
           }
           descricaoComplementarPai = textoBase;
+        } else if (ai) {
+          // 3. Se não há padrão idêntico, usa a IA com rigor absoluto para analisar o que o produto REALMENTE é
+          try {
+            const promptEquilibrado = `Você é um analista sênior de e-commerce da Best Fit. Elabore uma descrição comercial impecável e 100% fiel ao produto abaixo.
+
+DIRETRIZES CRÍTICAS:
+1. LEITURA REAL DO ITEM: Identifique o que o produto é pelo título ("${nomePaiFormatado}"). 
+   - Se for um biquíni/conjunto infantil, mencione proteção UV50+, conforto térmico, tecido próprio para praia/piscina, composição de elastano/poliéster e cuidados de lavagem.
+   - Se for uma lancheira, bolsa ou acessório, mencione espaço interno, material resistente, praticidade para o dia a dia e facilidade de limpeza. 
+   - NUNCA misture categorias! Uma lancheira jamais é um biquíni.
+2. Respeite rigorosamente a marca original (${marcaPai}).
+3. NUNCA inclua tamanho ou cor na seção de especificações.
+4. Estruture o texto limpo com parágrafo introdutório, Especificações, Benefícios, Composição e Cuidados.
+
+DADOS DO PRODUTO:
+- Nome/Título: ${nomePaiFormatado}
+- Marca: ${marcaPai}`;
+
+            const response = await ai.models.generateContent({
+              model: "gemini-3.8-flash",
+              contents: [promptEquilibrado],
+            });
+
+            if (response.text) {
+              descricaoComplementarPai = response.text.trim();
+            }
+          } catch (e) {
+            console.error("Erro na IA:", e);
+          }
         }
       }
 
-      // 3. Fallback inteligente e detalhado caso não exista padrão na base
+      // 4. Fallback contextual se tudo o mais falhar
       if (!descricaoComplementarPai) {
-        const isBiquini = nomePaiFormatado.toLowerCase().includes("biquini") || nomePaiFormatado.toLowerCase().includes("conjunto");
+        const isBiquini = nomePaiFormatado.toLowerCase().includes("biquíni") || nomePaiFormatado.toLowerCase().includes("biquini") || nomePaiFormatado.toLowerCase().includes("conjunto");
         
         if (isBiquini) {
           descricaoComplementarPai = [
@@ -171,21 +206,23 @@ export async function POST(req: Request) {
           ].join("\n");
         } else {
           descricaoComplementarPai = [
-            `O ${nomePaiFormatado} da ${marcaPai} foi desenvolvido para unir praticidade, estilo e alta qualidade no seu dia a dia.`,
+            `A ${nomePaiFormatado} da ${marcaPai} foi desenvolvida para unir praticidade, estilo e alta qualidade no transporte das refeições ou pertences do dia a dia. Com um design moderno e funcional, oferece excelente espaço interno e facilidade de limpeza.`,
             "",
             "Especificações:",
             `- Marca: ${marcaPai}`,
             `- Modelo: ${nomePaiFormatado}`,
             "",
             "Benefícios:",
-            "- Praticidade: Design funcional pensado para o uso diário.",
-            "- Alta Durabilidade: Acabamento premium e materiais resistentes.",
+            "- Praticidade: Estrutura funcional e fácil de transportar para a escola ou passeios.",
+            "- Alta Durabilidade: Materiais resistentes de excelente acabamento.",
+            "- Estilo: Estampa exclusiva e autêntica da marca.",
             "",
             "Composição:",
-            "- Materiais nobres de alta performance.",
+            "- Materiais de alta performance e fácil higienização.",
             "",
             "Cuidados:",
-            "- Seguir rigorosamente as instruções de conservação indicadas pelo fabricante."
+            "- Limpar com pano úmido e sabão neutro.",
+            "- Não lavar na máquina e secar à sombra."
           ].join("\n");
         }
       }
