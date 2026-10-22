@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { GoogleGenAI } from "@google/genai";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -7,84 +8,108 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 export async function POST(req: Request) {
   try {
-    const { sku, modo, feedback } = await req.json();
+    const { skuAlvo, sku, modo, prompt, imagemBase64, mimeType } = await req.json();
 
-    if (!sku) {
-      return NextResponse.json({ error: "SKU não informado." }, { status: 400 });
+    // Tenta obter o SKU do campo específico ou extraí-lo automaticamente do texto digitado
+    let skuFinal = skuAlvo || sku;
+    if (!skuFinal && prompt) {
+      const matchSku = prompt.match(/(?:sku[:\s]*)(\d+)/i) || prompt.match(/\b\d{4,6}\b/);
+      if (matchSku) {
+        skuFinal = matchSku[1] || matchSku[0];
+      }
     }
 
-    // Busca o produto correspondente
-    const { data: produto, error: erroProd } = await supabase
+    if (!skuFinal) {
+      return NextResponse.json(
+        { error: "SKU não informado. Preencha o campo 'SKU Alvo' no topo ou inclua o número do SKU na sua mensagem." },
+        { status: 400 }
+      );
+    }
+
+    // Procura o produto nas tabelas de pendentes ou realizados
+    let { data: produto } = await supabase
       .from("produtos_pendentes")
       .select("*")
-      .eq("sku", sku)
+      .eq("sku", skuFinal)
       .single();
 
-    if (erroProd || !produto) {
-      return NextResponse.json({ error: "Produto não encontrado." }, { status: 404 });
+    if (!produto) {
+      const { data: produtoCadastrado } = await supabase
+        .from("produtos_novos_cadastrados")
+        .select("*")
+        .eq("sku", skuFinal)
+        .single();
+      produto = produtoCadastrado;
     }
 
-    // Busca um padrão existente na tabela de padronização para servir de base
-    const { data: padroes } = await supabase
-      .from("padroes_anuncios")
-      .select("*")
-      .ilike("marca", `%${produto.marca || "Best Fit"}%`)
-      .limit(1);
+    if (!produto) {
+      return NextResponse.json(
+        { error: `Produto com SKU ${skuFinal} não encontrado na base de dados.` },
+        { status: 404 }
+      );
+    }
 
-    const padraoBase = padroes && padroes.length > 0 ? padroes[0] : null;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    let respostaIA = "";
 
-    let descricaoFinal = "";
+    if (apiKey) {
+      const ai = new GoogleGenAI({ apiKey });
+      const contents: any[] = [];
 
-    if (modo === "treinar") {
-      // Lógica de Treinamento/Correção guiada pelo feedback do usuário
-      descricaoFinal = [
-        `O ${produto.produto} é desenvolvido com materiais de alta performance, proporcionando total conforto e estilo.`,
+      if (imagemBase64) {
+        contents.push({
+          inlineData: {
+            data: imagemBase64,
+            mimeType: mimeType || "image/jpeg",
+          },
+        });
+      }
+
+      const contextoProduto = `Informações do Produto:\n- SKU: ${produto.sku}\n- Nome: ${produto.produto}\n- Marca: ${produto.marca || "Best Fit"}\n- Cor: ${produto.cor || "N/A"}\n- Tamanho: ${produto.tamanho || "N/A"}`;
+      
+      const instrucao = modo === "treinar"
+        ? `Modo de Treinamento/Correção. O usuário enviou o seguinte feedback/instrução para ajustar a regra de descrição deste produto: "${prompt}". Atualize a estrutura e gere o texto padronizado aplicando esta correção de forma estrita.`
+        : `Gere uma descrição de e-commerce profissional, detalhada e padronizada para este produto, baseada na instrução: "${prompt || 'Gerar descrição padrão'}".`;
+
+      contents.push(`${contextoProduto}\n\n${instrucao}`);
+
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-3.8-flash",
+          contents: contents,
+        });
+        respostaIA = response.text || "";
+      } catch (e) {
+        respostaIA = "";
+      }
+    }
+
+    if (!respostaIA) {
+      respostaIA = [
+        `O ${produto.produto} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
         "",
         "Especificações:",
         `- Marca: ${produto.marca || "Best Fit"}.`,
         `- Modelo: ${produto.produto}.`,
+        produto.cor ? `- Cor: ${produto.cor}.` : "",
+        produto.tamanho ? `- Tamanho: ${produto.tamanho}.` : "",
         "",
         "Benefícios:",
-        "- Conforto Absoluto e ajuste perfeito ao corpo.",
-        "- Alta Durabilidade e acabamento premium.",
+        "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
+        "- Alta Durabilidade: Costuras reforçadas e acabamento premium.",
         "",
         "Composição:",
-        "- Fios de alta tecnologia.",
+        "- Materiais nobres de alta performance e resistência.",
         "",
         "Cuidados e Conservação:",
-        "- Seguir as instruções de lavagem da etiqueta.",
-        "",
-        `[Nota de Ajuste Aplicada pelo Treinamento]: ${feedback || "Nenhum ajuste extra especificado."}`
-      ].join("\n");
-    } else {
-      // Modo Geração Padrão (Usa o template cadastrado ou o fallback estruturado)
-      if (padraoBase && padraoBase.descricao_complementar) {
-        descricaoFinal = padraoBase.descricao_complementar.replaceAll(padraoBase.titulo, produto.produto);
-      } else {
-        descricaoFinal = [
-          `O ${produto.produto} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
-          "",
-          "Especificações:",
-          `- Marca: ${produto.marca || "Best Fit"}.`,
-          `- Modelo: ${produto.produto}.`,
-          "",
-          "Benefícios:",
-          "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
-          "- Alta Durabilidade: Costuras reforçadas e acabamento premium.",
-          "",
-          "Composição:",
-          "- Materiais nobres de alta performance e resistência.",
-          "",
-          "Cuidados e Conservação:",
-          "- Armazenar em local seco, fresco e arejado.",
-          "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante."
-        ].join("\n");
-      }
+        "- Armazenar em local seco, fresco e arejado.",
+        "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante."
+      ].filter(Boolean).join("\n");
     }
 
     return NextResponse.json({
       sucesso: true,
-      descricao: descricaoFinal,
+      resposta: respostaIA,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
