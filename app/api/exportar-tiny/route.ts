@@ -74,7 +74,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Busca todos os padrões oficiais homologados para cruzamento inteligente
     const { data: padroesOficiais } = await supabase
       .from("padroes_anuncios")
       .select("*");
@@ -109,7 +108,6 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      // Seleção inteligente do padrão base por palavras-chave do nome do produto
       let padraoEncontrado: any = null;
       if (padroesOficiais && padroesOficiais.length > 0) {
         const nomeLower = nomePaiFormatado.toLowerCase();
@@ -132,19 +130,32 @@ export async function POST(req: Request) {
         padraoEncontrado = maiorPontuacao > 0 ? melhorMatch : padroesOficiais[0];
       }
 
-      let descricaoComplementarPai = "";
-      if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
-        descricaoComplementarPai = padraoEncontrado.descricao_complementar;
-        if (padraoEncontrado.titulo) {
-          descricaoComplementarPai = descricaoComplementarPai.replaceAll(padraoEncontrado.titulo, nomePaiFormatado);
+      // Função robusta para limpar e aplicar o nome correto sem deixar resíduos de produtos antigos
+      const construirDescricaoDinamica = (nomeProduto: string, cor: string, tam: string) => {
+        if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
+          let texto = padraoEncontrado.descricao_complementar;
+          
+          // Remove nomes de coleções/produtos anteriores que possam estar hardcoded no texto base
+          if (padraoEncontrado.titulo && padraoEncontrado.titulo.length > 3) {
+            const regexTituloAntigo = new RegExp(padraoEncontrado.titulo, "gi");
+            texto = texto.replace(regexTituloAntigo, nomeProduto);
+          }
+          
+          // Garante substituição de menções genéricas ou títulos mal formatados no início da frase
+          texto = texto.replace(/^O\s+[^f]+?\s+Tip Top/i, `O ${nomeProduto} Tip Top`);
+          texto = texto.replace(/^O\s+[^f]+?\s+foi desenvolvido/i, `O ${nomeProduto} foi desenvolvido`);
+          
+          return texto;
         }
-      } else {
-        descricaoComplementarPai = [
-          `O ${nomePaiFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
+
+        return [
+          `O ${nomeProduto} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança.`,
           "",
           "Especificações:",
           `- Marca: ${marcaPai}.`,
-          `- Modelo: ${nomePaiFormatado}.`,
+          `- Modelo: ${nomeProduto}.`,
+          cor ? `- Cor: ${cor}.` : "",
+          tam ? `- Tamanho: ${tam}.` : "",
           "",
           "Benefícios:",
           "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
@@ -154,15 +165,16 @@ export async function POST(req: Request) {
           "- Materiais nobres de alta performance e resistência.",
           "",
           "Cuidados e Conservação:",
-          "- Armazenar em local seco, fresco e arejado.",
-          "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.",
-        ].join("\n");
-      }
+          "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante."
+        ].filter(Boolean).join("\n");
+      };
+
+      const descricaoComplementarPai = construirDescricaoDinamica(nomePaiFormatado, "", "");
 
       const slugFinalPai = padraoEncontrado?.slug ? gerarSlug(nomePaiFormatado) : slugPai;
       const palavrasChaveFinalPai = padraoEncontrado?.palavras_chave_seo ? gerarPalavrasChave(nomePaiFormatado) : palavrasChavePai;
       const descricaoSeoFinalPai = padraoEncontrado?.descricao_seo 
-        ? padraoEncontrado.descricao_seo.replaceAll(padraoEncontrado.titulo, nomePaiFormatado)
+        ? padraoEncontrado.descricao_seo.replace(new RegExp(padraoEncontrado.titulo || "", "gi"), nomePaiFormatado)
         : `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`;
 
       // 1. Produto Pai (Tipo do produto = V)
@@ -235,7 +247,6 @@ export async function POST(req: Request) {
 
       // 2. Produtos Filhos / Variações (Tipo do produto = S)
       for (const p of itensDoPai) {
-        // Tenta buscar no histórico específico do SKU gerado/treinado recentemente
         const { data: hist } = await supabase
           .from("historico_descricoes_ia")
           .select("resposta_ia")
@@ -254,38 +265,8 @@ export async function POST(req: Request) {
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
         const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
-        let descricaoComplementarFilho = "";
-        if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
-          descricaoComplementarFilho = padraoEncontrado.descricao_complementar;
-          if (padraoEncontrado.titulo) {
-            descricaoComplementarFilho = descricaoComplementarFilho.replaceAll(padraoEncontrado.titulo, nomeFilhoFormatado);
-          }
-        } else {
-          descricaoComplementarFilho = [
-            `O ${nomeFilhoFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
-            "",
-            "Especificações:",
-            `- Marca: ${marcaFilho}.`,
-            `- Modelo / Variação: ${nomeFilhoFormatado}.`,
-            corFormatada ? `- Cor: ${corFormatada}.` : "",
-            tamFormatado ? `- Tamanho: ${tamFormatado}.` : "",
-            "",
-            "Benefícios:",
-            "- Conforto Absoluto: Modelagem anatómica que se ajusta perfeitamente ao corpo.",
-            "- Versatilidade: Perfeito para compor looks modernos com muita elegância.",
-            "- Qualidade Garantida: Tecido resistente e de alto desempenho.",
-            "",
-            "Composição:",
-            "- Fios de alta tecnologia e acabamento premium.",
-            "",
-            "Cuidados e Conservação:",
-            "- Lavar à mão ou em ciclo delicado.",
-            "- Secar à sombra para preservar a cor e a elasticidade.",
-            "- Não utilizar alvejantes à base de cloro.",
-          ].filter(Boolean).join("\n");
-        }
+        const descricaoComplementarFilho = construirDescricaoDinamica(nomeFilhoFormatado, corFormatada, tamFormatado);
 
-        // Prioriza o histórico refinado do chat/IA, depois o padrão inteligente homologado
         const descricaoComplementarFinal =
           hist?.resposta_ia || descricaoComplementarFilho;
 
