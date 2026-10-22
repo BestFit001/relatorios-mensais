@@ -7,111 +7,86 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 export async function POST(req: Request) {
   try {
-    const { prompt, skuAlvo, skuReferencia, imagemBase64, mimeType } = await req.json();
-    const apiKey = process.env.GEMINI_API_KEY;
+    const { sku, modo, feedback } = await req.json();
 
-    if (!apiKey) {
-      return NextResponse.json({ error: "GEMINI_API_KEY não configurada nas variáveis de ambiente." }, { status: 500 });
+    if (!sku) {
+      return NextResponse.json({ error: "SKU não informado." }, { status: 400 });
     }
 
-    let dadosProdutoAlvo: any = null;
-    let textoReferencia: string = "";
+    // Busca o produto correspondente
+    const { data: produto, error: erroProd } = await supabase
+      .from("produtos_pendentes")
+      .select("*")
+      .eq("sku", sku)
+      .single();
 
-    if (skuAlvo) {
-      const { data } = await supabase
-        .from("produtos_pendentes")
-        .select("*")
-        .eq("sku", skuAlvo)
-        .single();
-      if (data) dadosProdutoAlvo = data;
+    if (erroProd || !produto) {
+      return NextResponse.json({ error: "Produto não encontrado." }, { status: 404 });
     }
 
-    if (skuReferencia) {
-      const { data } = await supabase
-        .from("historico_descricoes_ia")
-        .select("resposta_ia")
-        .eq("sku", skuReferencia)
-        .order("id", { ascending: false })
-        .limit(1)
-        .single();
-      if (data) textoReferencia = data.resposta_ia;
+    // Busca um padrão existente na tabela de padronização para servir de base
+    const { data: padroes } = await supabase
+      .from("padroes_anuncios")
+      .select("*")
+      .ilike("marca", `%${produto.marca || "Best Fit"}%`)
+      .limit(1);
+
+    const padraoBase = padroes && padroes.length > 0 ? padroes[0] : null;
+
+    let descricaoFinal = "";
+
+    if (modo === "treinar") {
+      // Lógica de Treinamento/Correção guiada pelo feedback do usuário
+      descricaoFinal = [
+        `O ${produto.produto} é desenvolvido com materiais de alta performance, proporcionando total conforto e estilo.`,
+        "",
+        "Especificações:",
+        `- Marca: ${produto.marca || "Best Fit"}.`,
+        `- Modelo: ${produto.produto}.`,
+        "",
+        "Benefícios:",
+        "- Conforto Absoluto e ajuste perfeito ao corpo.",
+        "- Alta Durabilidade e acabamento premium.",
+        "",
+        "Composição:",
+        "- Fios de alta tecnologia.",
+        "",
+        "Cuidados e Conservação:",
+        "- Seguir as instruções de lavagem da etiqueta.",
+        "",
+        `[Nota de Ajuste Aplicada pelo Treinamento]: ${feedback || "Nenhum ajuste extra especificado."}`
+      ].join("\n");
+    } else {
+      // Modo Geração Padrão (Usa o template cadastrado ou o fallback estruturado)
+      if (padraoBase && padraoBase.descricao_complementar) {
+        descricaoFinal = padraoBase.descricao_complementar.replaceAll(padraoBase.titulo, produto.produto);
+      } else {
+        descricaoFinal = [
+          `O ${produto.produto} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
+          "",
+          "Especificações:",
+          `- Marca: ${produto.marca || "Best Fit"}.`,
+          `- Modelo: ${produto.produto}.`,
+          "",
+          "Benefícios:",
+          "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
+          "- Alta Durabilidade: Costuras reforçadas e acabamento premium.",
+          "",
+          "Composição:",
+          "- Materiais nobres de alta performance e resistência.",
+          "",
+          "Cuidados e Conservação:",
+          "- Armazenar em local seco, fresco e arejado.",
+          "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante."
+        ].join("\n");
+      }
     }
 
-    const padraoEstrutura = `
-Siga estritamente esta estrutura de quebras de linha e seções, SEM USAR NENHUMA FORMATAÇÃO (sem negrito, sem itálico, sem asteriscos):
-
-[Breve descrição fluida e vendedora do produto analisado, focando em benefícios visuais e texturais, sem termos negativos]
-
-Especificações:
-- Marca: [Marca]
-- Modelo: [Modelo]
-- Cor: [Cor]
-- Tamanho: [Tamanho]
-- [Outras especificações relevantes]
-
-Benefícios:
-- [Benefício 1]
-- [Benefício 2]
-- [Benefício 3]
-
-Composição:
-- [Composição 1]
-- [Composição 2]
-
-Cuidados e Conservação:
-- [Cuidado 1]
-- [Cuidado 2]
-- [Cuidado 3]
-`;
-
-    let contextoExtra = "";
-    if (dadosProdutoAlvo) {
-      contextoExtra += `\nDados do Produto Alvo no Banco (Use obrigatoriamente):\n- Nome: ${dadosProdutoAlvo.produto}\n- Cor: ${dadosProdutoAlvo.cor}\n- Tamanho: ${dadosProdutoAlvo.tamanho}\n- Marca: ${dadosProdutoAlvo.marca}\n`;
-    }
-    if (textoReferencia) {
-      contextoExtra += `\nDescrição de Referência (Baseie-se rigorosamente nesta estrutura e estilo):\n${textoReferencia}\n`;
-    }
-
-    const systemInstruction = `Você é um copywriter sênior para e-commerce (Best Fit). Seu objetivo é gerar descrições de produtos limpas, exatamente no padrão solicitado, prontas para copiar e colar. PROIBIDO usar formatação Markdown (* ou **).`;
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
-    
-    // Monta os conteúdos da requisição (suportando texto e imagem opcional)
-    const parts: any[] = [
-      { text: `${systemInstruction}\n\n${padraoEstrutura}\n\n${contextoExtra}\n\nSolicitação do usuário: ${prompt || "Gere a descrição com base na imagem e dados do SKU."}` }
-    ];
-
-    if (imagemBase64 && mimeType) {
-      parts.push({
-        inline_data: {
-          mime_type: mimeType,
-          data: imagemBase64
-        }
-      });
-    }
-
-    const apiResponse = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts }]
-      })
+    return NextResponse.json({
+      sucesso: true,
+      descricao: descricaoFinal,
     });
-
-    const data = await apiResponse.json();
-
-    if (!apiResponse.ok) {
-      const errorMessage = data.error?.message || JSON.stringify(data);
-      return NextResponse.json({ error: `Google API Error: ${errorMessage}` }, { status: apiResponse.status });
-    }
-
-    const textoGerado = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!textoGerado) {
-      return NextResponse.json({ error: "A IA não retornou nenhum conteúdo válido." }, { status: 500 });
-    }
-
-    return NextResponse.json({ resposta: textoGerado });
   } catch (error: any) {
-    return NextResponse.json({ error: `Erro interno: ${error.message}` }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

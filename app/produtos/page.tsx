@@ -27,13 +27,16 @@ export default function ProdutosPage() {
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
 
-  // Estados para a IA de Descrições
+  // Estados para a IA de Descrições (Com Modo Treinamento e Salvamento Manual)
+  const [modoIA, setModoIA] = useState<"gerar" | "treinar">("gerar");
   const [chatMensagens, setChatMensagens] = useState<any[]>([]);
   const [inputPrompt, setInputPrompt] = useState("");
   const [skuAlvo, setSkuAlvo] = useState("");
   const [skuReferencia, setSkuReferencia] = useState("");
   const [imagemAnexada, setImagemAnexada] = useState<{ base64: string; mimeType: string; nome: string } | null>(null);
   const [carregandoIA, setCarregandoIA] = useState(false);
+  const [ultimaDescricaoGerada, setUltimaDescricaoGerada] = useState("");
+  const [salvandoPadraoOficial, setSalvandoPadraoOficial] = useState(false);
 
   // Estados para Configuração / Busca por SKU no Histórico
   const [skuBuscaConfig, setSkuBuscaConfig] = useState("");
@@ -175,7 +178,6 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  // Função para baixar a planilha para o Tiny com todos os dados dos produtos selecionados
   const baixarPlanilhaTinySelecionados = async () => {
     if (skusSelecionados.length === 0) {
       alert("Selecione ao menos um produto na tabela para baixar a planilha do Tiny.");
@@ -326,11 +328,15 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
+  // Envio para IA respeitando o modo (Geração vs Treinamento) e sem salvamento automático no banco
   const enviarParaIA = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputPrompt.trim() && !skuAlvo && !imagemAnexada) return;
 
-    const textoUsuario = inputPrompt || `Gerar descrição padronizada para o SKU Alvo: ${skuAlvo}`;
+    const textoUsuario = modoIA === "treinar" 
+      ? `[MODO TREINAMENTO / CORREÇÃO] ${inputPrompt}` 
+      : (inputPrompt || `Gerar descrição padronizada para o SKU Alvo: ${skuAlvo}`);
+
     const novaMsgUsuario = { remetente: "usuario", texto: `${textoUsuario} ${imagemAnexada ? `[📷 Imagem Anexada: ${imagemAnexada.nome}]` : ""}` };
     
     setChatMensagens(prev => [...prev, novaMsgUsuario]);
@@ -347,6 +353,7 @@ export default function ProdutosPage() {
           prompt: textoUsuario, 
           skuAlvo, 
           skuReferencia,
+          modo: modoIA,
           imagemBase64: imgParaEnviar?.base64,
           mimeType: imgParaEnviar?.mimeType
         })
@@ -355,12 +362,8 @@ export default function ProdutosPage() {
 
       if (res.ok && data.resposta) {
         setChatMensagens(prev => [...prev, { remetente: "ia", texto: data.resposta }]);
-        
-        await supabase.from("historico_descricoes_ia").insert([{
-          sku: skuAlvo || skuReferencia || "GERAL",
-          prompt_usuario: textoUsuario,
-          resposta_ia: data.resposta
-        }]);
+        setUltimaDescricaoGerada(data.resposta);
+        // NADA é salvo automaticamente no banco aqui. Fica apenas visível para pré-visualização.
       } else {
         setChatMensagens(prev => [...prev, { remetente: "ia", texto: `Erro detalhado: ${data.error || "Falha desconhecida"}` }]);
       }
@@ -368,6 +371,31 @@ export default function ProdutosPage() {
       setChatMensagens(prev => [...prev, { remetente: "ia", texto: "Erro de conexão: " + err.message }]);
     }
     setCarregandoIA(false);
+  };
+
+  // Botão de Salvamento Manual Explícito na Base de Padronização
+  const salvarComoPadraoOficial = async () => {
+    if (!ultimaDescricaoGerada) {
+      alert("Nenhuma descrição gerada para salvar.");
+      return;
+    }
+
+    setSalvandoPadraoOficial(true);
+    try {
+      const { error } = await supabase.from("padroes_anuncios").insert([
+        {
+          titulo: skuAlvo ? `Produto SKU ${skuAlvo}` : "Modelo Padrão IA",
+          marca: "BEST FIT",
+          descricao_complementar: ultimaDescricaoGerada,
+        },
+      ]);
+
+      if (error) throw error;
+      alert("✅ Sucesso! O texto gerado foi salvo explicitamente como padrão oficial na base de dados.");
+    } catch (err: any) {
+      alert("Erro ao salvar padrão: " + err.message);
+    }
+    setSalvandoPadraoOficial(false);
   };
 
   const excluirPendenteIndividual = async (sku: string) => {
@@ -905,27 +933,44 @@ export default function ProdutosPage() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-800 pb-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Construtor de Descrições Padronizado com IA</h3>
-                <p className="text-xs text-slate-400 mt-1">Gere descrições exatas e analise imagens usando SKU Alvo e Referência.</p>
+                <p className="text-xs text-slate-400 mt-1">Gere descrições exatas ou treine a IA com instruções/correções manuais.</p>
               </div>
-              <div className="flex items-center gap-2 flex-wrap">
+
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* Seletor de Modo: Geração vs Treinamento */}
+                <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-700">
+                  <button
+                    onClick={() => setModoIA("gerar")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${modoIA === "gerar" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"}`}
+                  >
+                    Modo Geração
+                  </button>
+                  <button
+                    onClick={() => setModoIA("treinar")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${modoIA === "treinar" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"}`}
+                  >
+                    Modo Treinamento / Correção
+                  </button>
+                </div>
+
                 <input
                   type="text"
                   value={skuAlvo}
                   onChange={(e) => setSkuAlvo(e.target.value)}
                   placeholder="SKU Alvo..."
-                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-32"
+                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-28"
                 />
                 <input
                   type="text"
                   value={skuReferencia}
                   onChange={(e) => setSkuReferencia(e.target.value)}
                   placeholder="SKU Referência..."
-                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-32"
+                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none w-28"
                 />
               </div>
             </div>
 
-            <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 h-[400px] overflow-y-auto space-y-4">
+            <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 h-[350px] overflow-y-auto space-y-4">
               {chatMensagens.map((msg, idx) => (
                 <div key={idx} className={`flex ${msg.remetente === "usuario" ? "justify-end" : "justify-start"}`}>
                   <div className={`max-w-[85%] p-4 rounded-2xl text-xs leading-relaxed ${
@@ -938,13 +983,15 @@ export default function ProdutosPage() {
               {carregandoIA && (
                 <div className="flex justify-start">
                   <div className="bg-slate-900 text-slate-400 p-3 rounded-2xl text-xs animate-pulse">
-                    Analisando dados/imagem e gerando descrição padronizada...
+                    {modoIA === "treinar" ? "Processando instrução de treinamento..." : "Analisando dados/imagem e gerando descrição padronizada..."}
                   </div>
                 </div>
               )}
               {chatMensagens.length === 0 && (
-                <div className="text-center text-slate-500 py-20 text-xs">
-                  Informe o SKU Alvo e Referência acima, anexe uma foto se desejar, e digite sua solicitação para gerar a copy.
+                <div className="text-center text-slate-500 py-16 text-xs">
+                  {modoIA === "gerar" 
+                    ? "Informe o SKU Alvo, anexe foto se desejar, e solicite a geração da copy." 
+                    : "Digite as regras, o que estava errado ou o formato esperado para treinar a IA."}
                 </div>
               )}
             </div>
@@ -961,13 +1008,28 @@ export default function ProdutosPage() {
                 type="text"
                 value={inputPrompt}
                 onChange={(e) => setInputPrompt(e.target.value)}
-                placeholder="Ex: Gere a descrição padrão para este produto..."
+                placeholder={modoIA === "gerar" ? "Ex: Gere a descrição padrão para este produto..." : "Ex: Não inclua tamanho na descrição complementar..."}
                 className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-xs text-white outline-none"
               />
               <button type="submit" disabled={carregandoIA} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase cursor-pointer transition-all shadow-lg">
-                Gerar Copy
+                {modoIA === "gerar" ? "Gerar Copy" : "Aplicar Treinamento"}
               </button>
             </form>
+
+            {/* BOTÃO DE APROVAÇÃO E SALVAMENTO MANUAL EXPLÍCITO NA BASE DE PADRONIZAÇÃO */}
+            {ultimaDescricaoGerada && (
+              <div className="pt-3 border-t border-slate-800 flex justify-between items-center bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+                <span className="text-xs text-slate-400">Resultado pré-visualizado (não salvo automaticamente).</span>
+                <button
+                  type="button"
+                  onClick={salvarComoPadraoOficial}
+                  disabled={salvandoPadraoOficial}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-xl text-xs uppercase cursor-pointer transition-all shadow-lg"
+                >
+                  {salvandoPadraoOficial ? "Salvando..." : "✅ Aprovar e Salvar na Base de Padronização"}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -992,7 +1054,6 @@ export default function ProdutosPage() {
               ))}
             </div>
 
-            {/* SEÇÃO: PROCURAR E EXCLUIR DESCRIÇÃO PELO SKU */}
             <div className="border-t border-slate-800 pt-6 space-y-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerenciar Histórico de Descrições IA por SKU</h3>
