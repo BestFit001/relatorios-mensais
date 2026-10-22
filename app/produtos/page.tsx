@@ -7,7 +7,7 @@ import * as XLSX from "xlsx";
 
 export default function ProdutosPage() {
   const router = useRouter();
-  const [subAba, setSubAba] = useState<"pendentes" | "realizados" | "periodo" | "config" | "descricoes" | "imagens">("pendentes");
+  const [subAba, setSubAba] = useState<"pendentes" | "realizados" | "periodo" | "config" | "descricoes">("pendentes");
   const [loading, setLoading] = useState(false);
 
   const [dadosPendentes, setDadosPendentes] = useState<any[]>([]);
@@ -37,14 +37,6 @@ export default function ProdutosPage() {
   const [carregandoIA, setCarregandoIA] = useState(false);
   const [ultimaDescricaoGerada, setUltimaDescricaoGerada] = useState("");
   const [salvandoPadraoOficial, setSalvandoPadraoOficial] = useState(false);
-
-  // Estados para o Gerador de Imagens por IA (Com fotos de referência para a modelo e o produto)
-  const [promptImagem, setPromptImagem] = useState("");
-  const [fotoModelo, setFotoModelo] = useState<{ base64: string; nome: string } | null>(null);
-  const [fotoProduto, setFotoProduto] = useState<{ base64: string; nome: string } | null>(null);
-  const [imagemGeradaUrl, setImagemGeradaUrl] = useState("");
-  const [carregandoImagem, setCarregandoImagem] = useState(false);
-  const [salvandoHistoricoImagem, setSalvandoHistoricoImagem] = useState(false);
 
   // Estados para Configuração / Busca por SKU no Histórico
   const [skuBuscaConfig, setSkuBuscaConfig] = useState("");
@@ -131,78 +123,6 @@ export default function ProdutosPage() {
       }
     };
     reader.readAsDataURL(file);
-  };
-
-  const handleUploadFotoModelo = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const result = evt.target?.result as string;
-      if (result) setFotoModelo({ base64: result.split(",")[1], nome: file.name });
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleUploadFotoProduto = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const result = evt.target?.result as string;
-      if (result) setFotoProduto({ base64: result.split(",")[1], nome: file.name });
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleGerarImagem = async () => {
-    if (!promptImagem.trim()) {
-      alert("Por favor, digite um prompt ou instrução para a imagem.");
-      return;
-    }
-
-    setCarregandoImagem(true);
-    setImagemGeradaUrl("");
-
-    try {
-      const res = await fetch("/api/gerar-imagem", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: promptImagem,
-          modeloBase64: fotoModelo?.base64,
-          produtoBase64: fotoProduto?.base64,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (data.sucesso && data.imagemUrl) {
-        setImagemGeradaUrl(data.imagemUrl);
-      } else {
-        alert("Erro ao gerar imagem: " + (data.error || "Erro desconhecido"));
-      }
-    } catch (err: any) {
-      alert("Erro de conexão: " + err.message);
-    }
-    setCarregandoImagem(false);
-  };
-
-  const salvarHistoricoGeracao = async () => {
-    if (!imagemGeradaUrl) return;
-    setSalvandoHistoricoImagem(true);
-    try {
-      const { error } = await supabase.from("historico_descricoes_ia").insert([{
-        sku: skuAlvo || "IMAGEM_IA",
-        prompt_usuario: promptImagem,
-        resposta_ia: `[IMAGEM GERADA]: ${imagemGeradaUrl}`
-      }]);
-      if (error) throw error;
-      alert("✅ Prompt e resultado guardados com sucesso no Supabase para referência futura!");
-    } catch (err: any) {
-      alert("Erro ao guardar histórico: " + err.message);
-    }
-    setSalvandoHistoricoImagem(false);
   };
 
   const buscarDescricaoPorSkuConfig = async (e: React.FormEvent) => {
@@ -695,8 +615,6 @@ export default function ProdutosPage() {
     }
   });
 
-  const maxGrafico = Math.max(totalSkusRealizados, produtosComVideo, totalVideosPostados, dadosPendentes.length, 1);
-
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -704,7 +622,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições e Gerador de Imagens com Referência Visual</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições por IA</p>
           </div>
           <Navbar />
         </div>
@@ -744,14 +662,6 @@ export default function ProdutosPage() {
               ✨ Descrições IA
             </button>
             <button
-              onClick={() => setSubAba("imagens")}
-              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
-                subAba === "imagens" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              🎨 Gerador de Imagens
-            </button>
-            <button
               onClick={() => setSubAba("config")}
               className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
                 subAba === "config" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
@@ -761,7 +671,7 @@ export default function ProdutosPage() {
             </button>
           </div>
 
-          {subAba !== "descricoes" && subAba !== "imagens" && (
+          {subAba !== "descricoes" && (
             <div className="flex items-center gap-3">
               <input
                 type="text"
@@ -1104,80 +1014,6 @@ export default function ProdutosPage() {
           </div>
         )}
 
-        {subAba === "imagens" && (
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-6">
-            <div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerador de Imagens com Referência Visual (Modelo + Produto)</h3>
-              <p className="text-xs text-slate-400 mt-1">Carregue uma foto de exemplo da modelo e do produto para orientar a IA a criar o visual perfeito.</p>
-            </div>
-
-            {/* Inputs para Upload de Referência Visual */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                <label className="block text-xs font-bold text-slate-300">1. Foto de Exemplo da Modelo (Opcional):</label>
-                <input type="file" accept="image/*" onChange={handleUploadFotoModelo} className="text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:bg-purple-600 file:text-white file:border-0 cursor-pointer" />
-                {fotoModelo && <p className="text-[11px] text-emerald-400">✓ Carregada: {fotoModelo.nome}</p>}
-              </div>
-
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                <label className="block text-xs font-bold text-slate-300">2. Foto de Exemplo do Produto (Opcional):</label>
-                <input type="file" accept="image/*" onChange={handleUploadFotoProduto} className="text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:bg-purple-600 file:text-white file:border-0 cursor-pointer" />
-                {fotoProduto && <p className="text-[11px] text-emerald-400">✓ Carregada: {fotoProduto.nome}</p>}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="block text-xs text-slate-300">Instrução / Prompt para a Composição:</label>
-              <textarea
-                value={promptImagem}
-                onChange={(e) => setPromptImagem(e.target.value)}
-                placeholder="Ex: Modelo a vestir o produto de referência em cenário de estúdio limpo com iluminação profissional..."
-                className="w-full bg-slate-950 text-xs text-white p-3 rounded-xl border border-slate-700 outline-none h-24"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={handleGerarImagem}
-              disabled={carregandoImagem}
-              className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
-            >
-              {carregandoImagem ? "A processar composição com IA..." : "Gerar Imagem com Referências"}
-            </button>
-
-            {/* Resultado da Imagem Gerada */}
-            {imagemGeradaUrl && (
-              <div className="mt-6 space-y-4 bg-slate-950 p-5 rounded-xl border border-slate-800 text-center">
-                <p className="text-xs text-slate-400">Resultado Gerado:</p>
-                <img
-                  src={imagemGeradaUrl}
-                  alt="Composição gerada por IA"
-                  className="rounded-xl border border-slate-700 max-w-md mx-auto shadow-2xl h-auto"
-                />
-                <div className="flex justify-center gap-3 flex-wrap">
-                  <a
-                    href={imagemGeradaUrl}
-                    download={`bestfit_composicao_${Date.now()}.png`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white py-2 px-5 rounded-xl text-xs font-bold transition cursor-pointer shadow-md"
-                  >
-                    ⬇️ Baixar Imagem (PNG)
-                  </a>
-                  <button
-                    type="button"
-                    onClick={salvarHistoricoGeracao}
-                    disabled={salvandoHistoricoImagem}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white py-2 px-5 rounded-xl text-xs font-bold transition cursor-pointer shadow-md"
-                  >
-                    {salvandoHistoricoImagem ? "A guardar..." : "💾 Salvar Prompt/Referência no Supabase"}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
         {subAba === "config" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-6">
             <div>
@@ -1201,7 +1037,7 @@ export default function ProdutosPage() {
 
             <div className="border-t border-slate-800 pt-6 space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerenciar Histórico de Descrições e Imagens por SKU</h3>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerenciar Histórico de Descrições por SKU</h3>
                 <p className="text-xs text-slate-400 mt-1">Consulte ou remova dados salvos no Supabase para qualquer SKU.</p>
               </div>
 
