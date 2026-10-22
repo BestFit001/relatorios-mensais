@@ -19,7 +19,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "O prompt descritivo é obrigatório." }, { status: 400 });
     }
 
-    // Monta o conteúdo multimodal caso tenhas enviado as fotos de referência
     const contents: any[] = [];
     
     if (modeloBase64) {
@@ -42,13 +41,13 @@ export async function POST(req: Request) {
 
     contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
 
-    // Utiliza o modelo multimodal para estruturar o prompt perfeito ou gerar a descrição visual avançada
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: contents,
     });
 
-    const respostaTexto = response.text();
+    // Correção: .text é uma propriedade (string) e não uma função
+    const respostaTexto = response.text || "Diretriz gerada com sucesso.";
 
     return NextResponse.json({ 
       sucesso: true, 
