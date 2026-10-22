@@ -41,13 +41,27 @@ export async function POST(req: Request) {
 
     contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
 
-    // Utilizando o modelo obrigatório indicado pela mensagem de erro da Google
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: contents,
-    });
+    let response;
+    let tentativas = 3;
+    let sucesso = false;
 
-    const respostaTexto = response.text || "Diretriz gerada com sucesso.";
+    // Loop de tentativas automáticas para contornar picos de alta demanda (503)
+    while (tentativas > 0 && !sucesso) {
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3.8-flash",
+          contents: contents,
+        });
+        sucesso = true;
+      } catch (err: any) {
+        tentativas--;
+        if (tentativas === 0) throw err;
+        // Aguarda 1.5 segundos antes de tentar novamente
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    }
+
+    const respostaTexto = response?.text || "Diretriz gerada com sucesso.";
 
     return NextResponse.json({ 
       sucesso: true, 
@@ -58,7 +72,7 @@ export async function POST(req: Request) {
   } catch (error: any) {
     console.error("Erro na API do Gemini:", error);
     return NextResponse.json(
-      { error: error?.message || "Erro interno ao processar com o Gemini." },
+      { error: "Os servidores da IA estão com alta demanda no momento. Por favor, tente novamente em alguns segundos." },
       { status: 500 }
     );
   }
