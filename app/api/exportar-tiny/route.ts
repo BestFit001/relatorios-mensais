@@ -74,6 +74,11 @@ export async function POST(req: Request) {
       );
     }
 
+    // Busca todos os padrões oficiais homologados para cruzamento inteligente
+    const { data: padroesOficiais } = await supabase
+      .from("padroes_anuncios")
+      .select("*");
+
     const paisUnicos = Array.from(
       new Set(
         produtos.map((p) =>
@@ -95,7 +100,6 @@ export async function POST(req: Request) {
       if (itensDoPai.length === 0) continue;
 
       const produtoBase = itensDoPai[0];
-
       const nomePaiRaw = limparTextoEstrito(
         String(produtoBase.produto || "").split("-")[0]
       );
@@ -105,14 +109,28 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      // Busca na aba de Padronização de Anúncios o modelo correspondente à marca
-      const { data: padroes } = await supabase
-        .from("padroes_anuncios")
-        .select("*")
-        .ilike("marca", `%${marcaPai}%`)
-        .limit(1);
+      // Seleção inteligente do padrão base por palavras-chave do nome do produto
+      let padraoEncontrado: any = null;
+      if (padroesOficiais && padroesOficiais.length > 0) {
+        const nomeLower = nomePaiFormatado.toLowerCase();
+        const palavrasChaveNome = nomeLower.split(/\s+/).filter((w: string) => w.length > 3);
 
-      const padraoEncontrado = padroes && padroes.length > 0 ? padroes[0] : null;
+        let melhorMatch: any = null;
+        let maiorPontuacao = -1;
+
+        for (const padrao of padroesOficiais) {
+          const tituloPadrao = (padrao.titulo || "").toLowerCase();
+          let pontuacao = 0;
+          for (const palavra of palavrasChaveNome) {
+            if (tituloPadrao.includes(palavra)) pontuacao++;
+          }
+          if (pontuacao > maiorPontuacao) {
+            maiorPontuacao = pontuacao;
+            melhorMatch = padrao;
+          }
+        }
+        padraoEncontrado = maiorPontuacao > 0 ? melhorMatch : padroesOficiais[0];
+      }
 
       let descricaoComplementarPai = "";
       if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
@@ -122,24 +140,21 @@ export async function POST(req: Request) {
         }
       } else {
         descricaoComplementarPai = [
-          `O ${nomePaiFormatado} é a ferramenta perfeita para organizar a sua rotina com muita sofisticação, praticidade e a energia inconfundível da ${marcaPai}. Desenvolvido com estética impecável e materiais de alta qualidade, ele proporciona um visual impecável e excelente durabilidade para acompanhar a sua rotina com total conforto e estilo.`,
+          `O ${nomePaiFormatado} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
           "",
           "Especificações:",
           `- Marca: ${marcaPai}.`,
           `- Modelo: ${nomePaiFormatado}.`,
-          "- Categoria: Moda e Vestuário / Acessórios.",
           "",
           "Benefícios:",
           "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
           "- Alta Durabilidade: Costuras reforçadas e acabamento premium.",
-          "- Estética Sofisticada: Design autêntico que valoriza o visual em qualquer ocasião.",
           "",
           "Composição:",
           "- Materiais nobres de alta performance e resistência.",
           "",
           "Cuidados e Conservação:",
           "- Armazenar em local seco, fresco e arejado.",
-          "- Evitar exposição prolongada direta à luz solar.",
           "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante.",
         ].join("\n");
       }
@@ -220,7 +235,8 @@ export async function POST(req: Request) {
 
       // 2. Produtos Filhos / Variações (Tipo do produto = S)
       for (const p of itensDoPai) {
-        const { data: hist, error: erroHistorico } = await supabase
+        // Tenta buscar no histórico específico do SKU gerado/treinado recentemente
+        const { data: hist } = await supabase
           .from("historico_descricoes_ia")
           .select("resposta_ia")
           .eq("sku", p.sku)
@@ -228,26 +244,15 @@ export async function POST(req: Request) {
           .limit(1)
           .maybeSingle();
 
-        if (erroHistorico) {
-          throw erroHistorico;
-        }
-
         const nomeFilhoRaw = limparTextoEstrito(p.produto || "");
         const nomeFilhoFormatado = toTitleCase(nomeFilhoRaw);
         const slugFilho = gerarSlug(nomeFilhoFormatado);
         const palavrasChaveFilho = gerarPalavrasChave(nomeFilhoFormatado);
         const marcaFilho = p.marca || "Best Fit";
 
-        const corFormatada = p.cor
-          ? toTitleCase(limparTextoEstrito(p.cor))
-          : "";
-
-        const tamFormatado = p.tamanho
-          ? limparTextoEstrito(String(p.tamanho))
-          : "";
-
-        const variacaoFormatada =
-          `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
+        const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
+        const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
+        const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
         let descricaoComplementarFilho = "";
         if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
@@ -262,8 +267,8 @@ export async function POST(req: Request) {
             "Especificações:",
             `- Marca: ${marcaFilho}.`,
             `- Modelo / Variação: ${nomeFilhoFormatado}.`,
-            `- Cor: ${corFormatada}.`,
-            `- Tamanho: ${tamFormatado}.`,
+            corFormatada ? `- Cor: ${corFormatada}.` : "",
+            tamFormatado ? `- Tamanho: ${tamFormatado}.` : "",
             "",
             "Benefícios:",
             "- Conforto Absoluto: Modelagem anatómica que se ajusta perfeitamente ao corpo.",
@@ -277,9 +282,10 @@ export async function POST(req: Request) {
             "- Lavar à mão ou em ciclo delicado.",
             "- Secar à sombra para preservar a cor e a elasticidade.",
             "- Não utilizar alvejantes à base de cloro.",
-          ].join("\n");
+          ].filter(Boolean).join("\n");
         }
 
+        // Prioriza o histórico refinado do chat/IA, depois o padrão inteligente homologado
         const descricaoComplementarFinal =
           hist?.resposta_ia || descricaoComplementarFilho;
 
@@ -358,15 +364,8 @@ export async function POST(req: Request) {
     });
   } catch (error: unknown) {
     console.error("Erro ao exportar produtos:", error);
-
     const mensagem =
-      error instanceof Error
-        ? error.message
-        : "Erro interno ao exportar os produtos.";
-
-    return NextResponse.json(
-      { error: mensagem },
-      { status: 500 }
-    );
+      error instanceof Error ? error.message : "Erro interno ao exportar os produtos.";
+    return NextResponse.json({ error: mensagem }, { status: 500 });
   }
 }
