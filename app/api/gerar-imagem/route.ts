@@ -41,12 +41,12 @@ export async function POST(req: Request) {
 
     contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
 
+    // Atualizado para o modelo correto indicado pela mensagem de erro
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.8-flash",
       contents: contents,
     });
 
-    // Correção: .text é uma propriedade (string) e não uma função
     const respostaTexto = response.text || "Diretriz gerada com sucesso.";
 
     return NextResponse.json({ 
