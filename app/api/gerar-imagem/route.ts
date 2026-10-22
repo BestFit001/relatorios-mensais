@@ -1,51 +1,65 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "A variável de ambiente OPENAI_API_KEY não está configurada no servidor." },
+        { error: "A chave da API do Gemini não está configurada nas variáveis de ambiente do servidor." },
         { status: 500 }
       );
     }
 
-    const openai = new OpenAI({ apiKey });
-
+    const ai = new GoogleGenAI({ apiKey });
     const { prompt, modeloBase64, produtoBase64 } = await req.json();
 
     if (!prompt) {
       return NextResponse.json({ error: "O prompt descritivo é obrigatório." }, { status: 400 });
     }
 
-    // Se o utilizador enviou fotos de referência (modelo/produto), podes enriquecer o prompt 
-    // ou passá-las para modelos que aceitam imagem de entrada (como GPT-4o para estruturar o prompt visual ou DALL-E)
-    let promptFinal = prompt;
-    if (modeloBase64 || produtoBase64) {
-      promptFinal = `${prompt}. [Contexto aplicado: Utilizar as características visuais da modelo e vestir o produto de referência de forma realista].`;
+    // Monta o conteúdo multimodal caso tenhas enviado as fotos de referência
+    const contents: any[] = [];
+    
+    if (modeloBase64) {
+      contents.push({
+        inlineData: {
+          data: modeloBase64,
+          mimeType: "image/jpeg",
+        },
+      });
     }
 
-    const response = await openai.images.generate({
-      model: "dall-e-3",
-      prompt: promptFinal,
-      n: 1,
-      size: "1024x1024",
-      response_format: "url",
+    if (produtoBase64) {
+      contents.push({
+        inlineData: {
+          data: produtoBase64,
+          mimeType: "image/jpeg",
+        },
+      });
+    }
+
+    contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
+
+    // Utiliza o modelo multimodal para estruturar o prompt perfeito ou gerar a descrição visual avançada
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: contents,
     });
 
-    const imageUrl = response.data?.[0]?.url;
+    const respostaTexto = response.text();
 
-    if (!imageUrl) {
-      return NextResponse.json({ error: "A IA não conseguiu gerar a imagem." }, { status: 500 });
-    }
-
-    return NextResponse.json({ sucesso: true, imagemUrl: imageUrl });
+    return NextResponse.json({ 
+      sucesso: true, 
+      imagemUrl: "", 
+      descricaoGerada: respostaTexto,
+      mensagem: "Instrução visual gerada com sucesso pelo Gemini!" 
+    });
   } catch (error: any) {
-    console.error("Erro ao gerar imagem com DALL-E:", error);
+    console.error("Erro na API do Gemini:", error);
     return NextResponse.json(
-      { error: error.response?.data?.error?.message || error.message || "Erro interno ao gerar a imagem." },
+      { error: error.message || "Erro interno ao processar com o Gemini." },
       { status: 500 }
     );
   }
