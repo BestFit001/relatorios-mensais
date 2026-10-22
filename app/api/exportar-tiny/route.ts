@@ -88,11 +88,13 @@ export async function POST(req: Request) {
     const linhasExportacao: Record<string, string | number>[] = [];
 
     for (const paiKey of paisUnicos) {
-      const itensDoPai = produtos.filter(
-        (p) =>
-          (p.sku_pai ||
-            (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku)) === paiKey
-      );
+      const itensDoPai = produtos.path
+        ? []
+        : produtos.filter(
+            (p) =>
+              (p.sku_pai ||
+                (p.sku.length > 5 ? p.sku.substring(0, 5) : p.sku)) === paiKey
+          );
 
       if (itensDoPai.length === 0) continue;
 
@@ -119,83 +121,50 @@ export async function POST(req: Request) {
       if (histSku?.resposta_ia) {
         descricaoComplementarPai = histSku.resposta_ia;
       } else if (ai) {
-        // 2. Se não tem histórico, obriga a IA a gerar uma descrição rica, analítica e específica para a peça
+        // 2. IA analisa o produto real com raciocínio lógico contextual estrito
         try {
-          const promptRico = `Você é um analista de e-commerce sênior especializado em moda praia infantil das marcas Tip Top e FARM.
-Gere uma descrição comercial profissional e detalhada para o produto abaixo.
+          const promptContextual = `Você é um analista de e-commerce sênior da Best Fit. Sua tarefa é ler o título exato do produto abaixo e criar uma descrição comercial altamente precisa, adaptada estritamente à categoria real do item.
 
-REGRAS OBRIGATÓRIAS:
-1. Respeite a marca original (${marcaPai}). Se for FARM, elabore focando no estilo único e vibrante da FARM. Se for Tip Top, foque no padrão Tip Top.
-2. Identifique o que é o produto pelo título (ex: se contém "Lancheira", entenda que é uma estampa/tema de biquíni infantil exclusivo da FARM).
+REGRAS DE OURO OBRIGATÓRIAS:
+1. IDENTIFICAÇÃO REAL DO PRODUTO: Analise o título. Se for um biquíni/conjunto de praia, descreva as características de moda praia (proteção UV50+, tecido flexível, etc.). Se for uma lancheira, bolsa, acessório ou outro tipo de item, descreva as características reais desse item (espaço interno, praticidade, material resistente, zíper, etc.). NUNCA misture categorias (ex: nunca descreva uma lancheira como se fosse um biquíni).
+2. Respeite a marca original (${marcaPai}).
 3. NUNCA inclua tamanho ou cor na seção de especificações.
-4. Siga rigidamente esta estrutura rica em blocos:
+4. Estruture a resposta de forma profissional: Parágrafo descritivo inicial, Especificações, Benefícios, Composição e Cuidados.
 
-O Conjunto Biquíni Infantil [Nome do Produto / Tema] foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
-
-Especificações:
-- Marca: ${marcaPai}
-- Modelo: [Tema / Nome Limpo]
-- Proteção: Solar UV50+ permanente no tecido
-
-Benefícios:
-- Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.
-- Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.
-- Estilo: Design com acabamentos e estampas lúdicas que estimulam a imaginação.
-- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar.
-
-Composição:
-- Tecido Externo: 84% Poliéster / 16% Elastano
-- Forro: 100% Poliamida (proporciona toque macio e secagem rápida)
-
-Cuidados:
-Lavar preferencialmente à mão ou em ciclo delicado na máquina.
-Utilizar água fria ou morna e sabão neutro.
-Não deixar de molho e não utilizar alvejantes à base de cloro.
-Secar à sombra e evitar o uso de secadoras.
-Não passar a ferro para não danificar as fibras de elastano e a estampa.
-
-DADOS DO PRODUTO:
+DADOS DO PRODUTO A ANALISAR:
 - Título Exato: ${nomePaiFormatado}
 - Marca: ${marcaPai}`;
 
           const response = await ai.models.generateContent({
             model: "gemini-3.8-flash",
-            contents: [promptRico],
+            contents: [promptContextual],
           });
 
           if (response.text) {
             descricaoComplementarPai = response.text.trim();
           }
         } catch (e) {
-          console.error("Erro ao gerar descrição rica via IA:", e);
+          console.error("Erro ao gerar descrição contextual via IA:", e);
         }
       }
 
       if (!descricaoComplementarPai) {
         descricaoComplementarPai = [
-          `O Conjunto Biquíni Infantil ${nomePaiFormatado} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
+          `O ${nomePaiFormatado} da ${marcaPai} foi desenvolvido para unir praticidade, estilo e alta qualidade no seu dia a dia.`,
           "",
           "Especificações:",
           `- Marca: ${marcaPai}`,
           `- Modelo: ${nomePaiFormatado}`,
-          "- Proteção: Solar UV50+ permanente no tecido",
           "",
           "Benefícios:",
-          "- Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.",
-          "- Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.",
-          "- Estilo: Design com acabamentos e estampas lúdicas que estimulam a imaginação.",
-          "- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar.",
+          "- Praticidade: Design funcional pensado para o uso diário.",
+          "- Alta Durabilidade: Acabamento premium e materiais resistentes.",
           "",
           "Composição:",
-          "- Tecido Externo: 84% Poliéster / 16% Elastano",
-          "- Forro: 100% Poliamida (proporciona toque macio e secagem rápida)",
+          "- Materiais nobres de alta performance.",
           "",
           "Cuidados:",
-          "Lavar preferencialmente à mão ou em ciclo delicado na máquina.",
-          "Utilizar água fria ou morna e sabão neutro.",
-          "Não deixar de molho e não utilizar alvejantes à base de cloro.",
-          "Secar à sombra e evitar o uso de secadoras.",
-          "Não passar a ferro para não danificar as fibras de elastano e a estampa."
+          "- Seguir rigorosamente as instruções de conservação indicadas pelo fabricante."
         ].join("\n");
       }
 
