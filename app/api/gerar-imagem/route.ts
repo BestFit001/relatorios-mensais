@@ -41,9 +41,9 @@ export async function POST(req: Request) {
       text: `Gera uma diretriz de imagem profissional para e-commerce baseada nisto: ${prompt}`,
     });
 
-    // Chamada direta via REST API evitando as restrições e travas do SDK Node.js
+    // Chamada direta via REST utilizando o modelo exigido pela Google (gemini-3.8-flash)
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: {
