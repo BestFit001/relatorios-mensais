@@ -8,7 +8,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 export async function POST(req: Request) {
   try {
-    const { skuAlvo, sku, modo, prompt, imagemBase64, mimeType, skuReferencia } = await req.json();
+    const { skuAlvo, sku, modo, prompt, imagemBase64, mimeType } = await req.json();
 
     let skuFinal = skuAlvo || sku;
     if (!skuFinal && prompt) {
@@ -25,7 +25,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Procura o produto nas tabelas de pendentes ou realizados
+    // Busca o produto
     let { data: produto } = await supabase
       .from("produtos_pendentes")
       .select("*")
@@ -48,56 +48,18 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- BUSCA INTELIGENTE AUTOMÁTICA POR SIMILARIDADE ---
-    let padraoBase = null;
+    // 1. Busca os padrões oficiais homologados na base
+    const { data: padroesOficiais } = await supabase
+      .from("padroes_anuncios")
+      .select("titulo, descricao_complementar")
+      .limit(5);
 
-    // 1. Se foi passado um SKU de referência manual, tenta buscá-lo primeiro
-    if (skuReferencia) {
-      const { data: padraoRef } = await supabase
-        .from("historico_descricoes_ia")
-        .select("resposta_ia")
-        .eq("sku", skuReferencia)
-        .order("id", { ascending: false })
-        .limit(1)
-        .single();
-      if (padraoRef) padraoBase = padraoRef.resposta_ia;
-    }
-
-    // 2. Se não encontrou por referência manual, busca automaticamente na tabela de padrões por palavras-chave do nome
-    if (!padraoBase) {
-      const { data: todosPadroes } = await supabase
-        .from("padroes_anuncios")
-        .select("*");
-
-      if (todosPadroes && todosPadroes.length > 0) {
-        // Extrai palavras significativas do nome do produto (ex: remove preposições e pega termos maiores que 3 letras)
-        const nomeProdutoLower = (produto.produto || "").toLowerCase();
-        const palavrasChave = nomeProdutoLower.split(/\s+/).filter((w: string) => w.length > 3);
-
-        let melhorMatch: any = null;
-        let maiorPontuacao = -1;
-
-        for (const padrao of todosPadroes) {
-          const tituloPadrao = (padrao.titulo || "").toLowerCase();
-          let pontuacao = 0;
-          for (const palavra of palavrasChave) {
-            if (tituloPadrao.includes(palavra)) pontuacao++;
-          }
-          if (pontuacao > maiorPontuacao) {
-            maiorPontuacao = pontuacao;
-            melhorMatch = padrao;
-          }
-        }
-
-        // Se encontrou um match relevante por semelhança, usa-o como base
-        if (melhorMatch && maiorPontuacao > 0) {
-          padraoBase = melhorMatch.descricao_complementar;
-        } else {
-          // Fallback para o primeiro padrão genérico da marca ou da tabela
-          padraoBase = todosPadroes[0].descricao_complementar;
-        }
-      }
-    }
+    // 2. Busca o histórico recente de feedbacks de treinamento/correção do chat para acumular inteligência
+    const { data: historicoTreinamentos } = await supabase
+      .from("historico_descricoes_ia")
+      .select("prompt_usuario, resposta_ia")
+      .order("id", { ascending: false })
+      .limit(6);
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     let respostaIA = "";
@@ -115,14 +77,30 @@ export async function POST(req: Request) {
         });
       }
 
-      const contextoProduto = `Informações do Novo Produto:\n- SKU: ${produto.sku}\n- Nome: ${produto.produto}\n- Marca: ${produto.marca || "Best Fit"}\n- Cor: ${produto.cor || "N/A"}\n- Tamanho: ${produto.tamanho || "N/A"}`;
-      const baseReferencia = padraoBase ? `\n\nPadrão de Descrição Homologado/Referência Encontrado na Base para este tipo de produto:\n${padraoBase}` : "";
-      
-      const instrucao = modo === "treinar"
-        ? `Modo de Treinamento/Correção. Instrução do usuário: "${prompt}". Ajuste a estrutura aplicando esta regra.`
-        : `Gere a descrição otimizada para este novo produto utilizando obrigatoriamente a estrutura e o tom do Padrão de Referência acima (se houver), adaptando o nome e as especificações para o novo item.`;
+      // Constrói o contexto acumulado com os padrões da base e o aprendizado contínuo do chat
+      let contextoAcumulado = "DIRETRIZES DE APRENDIZAGEM E PADRÃO DE QUALIDADE (Best Fit):\n";
 
-      contents.push(`${contextoProduto}${baseReferencia}\n\n${instrucao}`);
+      if (padroesOficiais && padroesOficiais.length > 0) {
+        contextoAcumulado += "\n--- Padrões Oficiais Homologados ---\n";
+        padroesOficiais.forEach((p, idx) => {
+          contextoAcumulado += `[Padrão ${idx + 1}]:\n${p.descricao_complementar}\n`;
+        });
+      }
+
+      if (historicoTreinamentos && historicoTreinamentos.length > 0) {
+        contextoAcumulado += "\n--- Histórico de Treinamentos e Correções Anteriores do Chat ---\n";
+        historicoTreinamentos.forEach((h, idx) => {
+          contextoAcumulado += `Correção ${idx + 1} -> Instrução: "${h.prompt_usuario}"\n`;
+        });
+      }
+
+      const infoProduto = `\nProduto Atual a Processar:\n- SKU: ${produto.sku}\n- Nome: ${produto.produto}\n- Marca: ${produto.marca || "Best Fit"}\n- Cor: ${produto.cor || "N/A"}\n- Tamanho: ${produto.tamanho || "N/A"}`;
+      
+      const instrucaoFinal = modo === "treinar"
+        ? `[MODO TREINAMENTO]: O usuário aplicou a seguinte instrução de refinamento: "${prompt}". Atualize a diretriz para este produto aplicando rigorosamente esta melhoria.`
+        : `Gere a descrição otimizada para este produto utilizando a fusão perfeita entre os Padrões Oficiais e as Correções Recentes do chat, garantindo uma copy de alta conversão e alinhada ao Tiny.`;
+
+      contents.push(`${contextoAcumulado}\n${infoProduto}\n\n${instrucaoFinal}`);
 
       try {
         const response = await ai.models.generateContent({
@@ -135,10 +113,7 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!respostaIA && padraoBase) {
-      // Substitui o título do padrão antigo pelo nome do novo produto caso a IA falhe
-      respostaIA = padraoBase;
-    } else if (!respostaIA) {
+    if (!respostaIA) {
       respostaIA = [
         `O ${produto.produto} combina sofisticação, toque macio e caimento perfeito. Produzido com materiais de alta performance, é ideal para acompanhar você com total conforto e estilo em qualquer ocasião.`,
         "",
