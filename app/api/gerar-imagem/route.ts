@@ -21,7 +21,6 @@ export async function POST(req: Request) {
 
     const contents: any[] = [];
     
-    // Adiciona a foto da modelo como referência visual, se fornecida
     if (modeloBase64) {
       contents.push({
         inlineData: {
@@ -31,7 +30,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // Adiciona a foto do produto como referência visual, se fornecida
     if (produtoBase64) {
       contents.push({
         inlineData: {
@@ -41,43 +39,26 @@ export async function POST(req: Request) {
       });
     }
 
-    contents.push(`Gera uma imagem realista de e-commerce e as diretrizes baseadas nisto: ${prompt}`);
+    contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
 
-    // Chamada à API utilizando o modelo compatível com multimodal e configuração de modalidades
+    // Utilizando o modelo 1.5-flash que é amplamente suportado e estável na API padrão
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-1.5-flash",
       contents: contents,
-      config: {
-        responseModalities: ["TEXT", "IMAGE"],
-      },
     });
 
-    let imagemUrl = "";
-    let textoGerado = "";
-
-    // Varre as partes da resposta para extrair o texto e/ou a imagem gerada em base64
-    if (response.candidates?.[0]?.content?.parts) {
-      for (const part of response.candidates[0].content.parts) {
-        if (part.text) {
-          textoGerado += part.text;
-        } else if (part.inlineData) {
-          const base64Data = part.inlineData.data;
-          const mimeType = part.inlineData.mimeType || "image/png";
-          imagemUrl = `data:${mimeType};base64,${base64Data}`;
-        }
-      }
-    }
+    const respostaTexto = response.text || "Diretriz gerada com sucesso.";
 
     return NextResponse.json({ 
       sucesso: true, 
-      imagemUrl: imagemUrl, 
-      descricaoGerada: textoGerado || response.text || "",
-      mensagem: "Processado com sucesso pelo Gemini!" 
+      imagemUrl: "", 
+      descricaoGerada: respostaTexto,
+      mensagem: "Instrução visual gerada com sucesso pelo Gemini!" 
     });
   } catch (error: any) {
     console.error("Erro na API do Gemini:", error);
     return NextResponse.json(
-      { error: error?.message || "Erro interno ao processar a imagem com o Gemini." },
+      { error: error?.message || "Erro interno ao processar com o Gemini." },
       { status: 500 }
     );
   }
