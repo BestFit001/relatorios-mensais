@@ -41,9 +41,9 @@ export async function POST(req: Request) {
 
     contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
 
-    // Utilizando o modelo 1.5-flash que é amplamente suportado e estável na API padrão
+    // Utilizando o identificador de modelo compatível com o SDK atual @google/genai
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.5-flash",
       contents: contents,
     });
 
