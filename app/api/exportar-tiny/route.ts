@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { GoogleGenAI } from "@google/genai";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -63,9 +64,7 @@ export async function POST(req: Request) {
       .select("*")
       .in("sku", skus);
 
-    if (erroProdutos) {
-      throw erroProdutos;
-    }
+    if (erroProdutos) throw erroProdutos;
 
     if (!produtos || produtos.length === 0) {
       return NextResponse.json(
@@ -74,9 +73,20 @@ export async function POST(req: Request) {
       );
     }
 
+    // Busca os padrões oficiais e o histórico de treinos do chat para contexto da IA
     const { data: padroesOficiais } = await supabase
       .from("padroes_anuncios")
-      .select("*");
+      .select("titulo, descricao_complementar")
+      .limit(3);
+
+    const { data: historicoTreinamentos } = await supabase
+      .from("historico_descricoes_ia")
+      .select("prompt_usuario, resposta_ia")
+      .order("id", { ascending: false })
+      .limit(4);
+
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
     const paisUnicos = Array.from(
       new Set(
@@ -102,60 +112,66 @@ export async function POST(req: Request) {
       const nomePaiRaw = limparTextoEstrito(
         String(produtoBase.produto || "").split("-")[0]
       );
-
       const nomePaiFormatado = toTitleCase(nomePaiRaw);
       const slugPai = gerarSlug(nomePaiFormatado);
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      let padraoEncontrado: any = null;
-      if (padroesOficiais && padroesOficiais.length > 0) {
-        const nomeLower = nomePaiFormatado.toLowerCase();
-        const palavrasChaveNome = nomeLower.split(/\s+/).filter((w: string) => w.length > 3);
+      // Função para gerar a descrição via IA analisando rigorosamente o título atual
+      async function gerarDescricaoInteligente(nomeItem: string, corItem: string, tamItem: string) {
+        // Se houver histórico salvo especificamente para este SKU, prioriza-o
+        const { data: histSku } = await supabase
+          .from("historico_descricoes_ia")
+          .select("resposta_ia")
+          .eq("sku", produtoBase.sku)
+          .order("id", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-        let melhorMatch: any = null;
-        let maiorPontuacao = -1;
-
-        for (const padrao of padroesOficiais) {
-          const tituloPadrao = (padrao.titulo || "").toLowerCase();
-          let pontuacao = 0;
-          for (const palavra of palavrasChaveNome) {
-            if (tituloPadrao.includes(palavra)) pontuacao++;
-          }
-          if (pontuacao > maiorPontuacao) {
-            maiorPontuacao = pontuacao;
-            melhorMatch = padrao;
-          }
-        }
-        padraoEncontrado = maiorPontuacao > 0 ? melhorMatch : padroesOficiais[0];
-      }
-
-      // Função robusta para limpar e aplicar o nome correto sem deixar resíduos de produtos antigos
-      const construirDescricaoDinamica = (nomeProduto: string, cor: string, tam: string) => {
-        if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
-          let texto = padraoEncontrado.descricao_complementar;
-          
-          // Remove nomes de coleções/produtos anteriores que possam estar hardcoded no texto base
-          if (padraoEncontrado.titulo && padraoEncontrado.titulo.length > 3) {
-            const regexTituloAntigo = new RegExp(padraoEncontrado.titulo, "gi");
-            texto = texto.replace(regexTituloAntigo, nomeProduto);
-          }
-          
-          // Garante substituição de menções genéricas ou títulos mal formatados no início da frase
-          texto = texto.replace(/^O\s+[^f]+?\s+Tip Top/i, `O ${nomeProduto} Tip Top`);
-          texto = texto.replace(/^O\s+[^f]+?\s+foi desenvolvido/i, `O ${nomeProduto} foi desenvolvido`);
-          
-          return texto;
+        if (histSku?.resposta_ia) {
+          return histSku.resposta_ia;
         }
 
+        if (ai) {
+          try {
+            let contexto = "Você é um assistente especialista em e-commerce da Best Fit. Sua tarefa é analisar o nome do produto novo e redigir uma descrição comercial limpa, técnica e padronizada, sem manter nomes de produtos antigos.\n\n";
+            
+            if (padroesOficiais && padroesOficiais.length > 0) {
+              contexto += "Padrões de referência aprovados:\n";
+              padroesOficiais.forEach(p => {
+                contexto += `- ${p.descricao_complementar}\n`;
+              });
+            }
+
+            if (historicoTreinamentos && historicoTreinamentos.length > 0) {
+              contexto += "\nÚltimas correções e ensinamentos aplicados pelo usuário:\n";
+              historicoTreinamentos.forEach(h => {
+                contexto += `- ${h.prompt_usuario}\n`;
+              });
+            }
+
+            const promptFinal = `${contexto}\n\nGere a descrição exata e otimizada para este novo produto:\n- Nome: ${nomeItem}\n- Marca: ${marcaPai}\n- Cor: ${corItem || "N/A"}\n- Tamanho: ${tamItem || "N/A"}\n\nIMPORTANTE: Substitua qualquer menção a nomes de produtos antigos pelo nome atual ("${nomeItem}").`;
+
+            const response = await ai.models.generateContent({
+              model: "gemini-3.8-flash",
+              contents: [promptFinal],
+            });
+
+            if (response.text) return response.text;
+          } catch (err) {
+            console.error("Erro na IA durante exportação:", err);
+          }
+        }
+
+        // Fallback robusto caso a IA falhe
         return [
-          `O ${nomeProduto} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança.`,
+          `O ${nomeItem} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança e estilo.`,
           "",
           "Especificações:",
           `- Marca: ${marcaPai}.`,
-          `- Modelo: ${nomeProduto}.`,
-          cor ? `- Cor: ${cor}.` : "",
-          tam ? `- Tamanho: ${tam}.` : "",
+          `- Modelo: ${nomeItem}.`,
+          corItem ? `- Cor: ${corItem}.` : "",
+          tamItem ? `- Tamanho: ${tamItem}.` : "",
           "",
           "Benefícios:",
           "- Conforto Superior: Toque macio e caimento projetado para o uso diário.",
@@ -167,15 +183,9 @@ export async function POST(req: Request) {
           "Cuidados e Conservação:",
           "- Seguir rigorosamente as instruções de lavagem indicadas na etiqueta do fabricante."
         ].filter(Boolean).join("\n");
-      };
+      }
 
-      const descricaoComplementarPai = construirDescricaoDinamica(nomePaiFormatado, "", "");
-
-      const slugFinalPai = padraoEncontrado?.slug ? gerarSlug(nomePaiFormatado) : slugPai;
-      const palavrasChaveFinalPai = padraoEncontrado?.palavras_chave_seo ? gerarPalavrasChave(nomePaiFormatado) : palavrasChavePai;
-      const descricaoSeoFinalPai = padraoEncontrado?.descricao_seo 
-        ? padraoEncontrado.descricao_seo.replace(new RegExp(padraoEncontrado.titulo || "", "gi"), nomePaiFormatado)
-        : `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`;
+      const descricaoComplementarPai = await gerarDescricaoInteligente(nomePaiFormatado, "", "");
 
       // 1. Produto Pai (Tipo do produto = V)
       linhasExportacao.push({
@@ -230,9 +240,9 @@ export async function POST(req: Request) {
         "URL imagem externa 6": "",
         "Link do vídeo": "",
         "Título SEO": nomePaiFormatado,
-        "Descrição SEO": descricaoSeoFinalPai,
-        "Palavras chave SEO": palavrasChaveFinalPai,
-        "Slug": slugFinalPai,
+        "Descrição SEO": `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
+        "Palavras chave SEO": palavrasChavePai,
+        "Slug": slugPai,
         "Dias para preparação": "0",
         "Controlar lotes": "Não",
         "Unidade por caixa": "",
@@ -247,14 +257,6 @@ export async function POST(req: Request) {
 
       // 2. Produtos Filhos / Variações (Tipo do produto = S)
       for (const p of itensDoPai) {
-        const { data: hist } = await supabase
-          .from("historico_descricoes_ia")
-          .select("resposta_ia")
-          .eq("sku", p.sku)
-          .order("id", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
         const nomeFilhoRaw = limparTextoEstrito(p.produto || "");
         const nomeFilhoFormatado = toTitleCase(nomeFilhoRaw);
         const slugFilho = gerarSlug(nomeFilhoFormatado);
@@ -265,10 +267,7 @@ export async function POST(req: Request) {
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
         const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
-        const descricaoComplementarFilho = construirDescricaoDinamica(nomeFilhoFormatado, corFormatada, tamFormatado);
-
-        const descricaoComplementarFinal =
-          hist?.resposta_ia || descricaoComplementarFilho;
+        const descricaoComplementarFinal = await gerarDescricaoInteligente(nomeFilhoFormatado, corFormatada, tamFormatado);
 
         linhasExportacao.push({
           "ID": "",
