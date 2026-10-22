@@ -12,18 +12,24 @@ export async function POST(req: Request) {
       );
     }
 
-    // Inicializa o cliente apenas no momento da chamada (evita erro no build)
     const openai = new OpenAI({ apiKey });
 
-    const { prompt } = await req.json();
+    const { prompt, modeloBase64, produtoBase64 } = await req.json();
 
     if (!prompt) {
-      return NextResponse.json({ error: "O prompt é obrigatório." }, { status: 400 });
+      return NextResponse.json({ error: "O prompt descritivo é obrigatório." }, { status: 400 });
+    }
+
+    // Se o utilizador enviou fotos de referência (modelo/produto), podes enriquecer o prompt 
+    // ou passá-las para modelos que aceitam imagem de entrada (como GPT-4o para estruturar o prompt visual ou DALL-E)
+    let promptFinal = prompt;
+    if (modeloBase64 || produtoBase64) {
+      promptFinal = `${prompt}. [Contexto aplicado: Utilizar as características visuais da modelo e vestir o produto de referência de forma realista].`;
     }
 
     const response = await openai.images.generate({
       model: "dall-e-3",
-      prompt: prompt,
+      prompt: promptFinal,
       n: 1,
       size: "1024x1024",
       response_format: "url",

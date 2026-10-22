@@ -27,7 +27,7 @@ export default function ProdutosPage() {
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
 
-  // Estados para a IA de Descrições (Com Modo Treinamento e Salvamento Manual)
+  // Estados para a IA de Descrições
   const [modoIA, setModoIA] = useState<"gerar" | "treinar">("gerar");
   const [chatMensagens, setChatMensagens] = useState<any[]>([]);
   const [inputPrompt, setInputPrompt] = useState("");
@@ -38,10 +38,13 @@ export default function ProdutosPage() {
   const [ultimaDescricaoGerada, setUltimaDescricaoGerada] = useState("");
   const [salvandoPadraoOficial, setSalvandoPadraoOficial] = useState(false);
 
-  // Estados para o Gerador de Imagens por IA
+  // Estados para o Gerador de Imagens por IA (Com fotos de referência para a modelo e o produto)
   const [promptImagem, setPromptImagem] = useState("");
+  const [fotoModelo, setFotoModelo] = useState<{ base64: string; nome: string } | null>(null);
+  const [fotoProduto, setFotoProduto] = useState<{ base64: string; nome: string } | null>(null);
   const [imagemGeradaUrl, setImagemGeradaUrl] = useState("");
   const [carregandoImagem, setCarregandoImagem] = useState(false);
+  const [salvandoHistoricoImagem, setSalvandoHistoricoImagem] = useState(false);
 
   // Estados para Configuração / Busca por SKU no Histórico
   const [skuBuscaConfig, setSkuBuscaConfig] = useState("");
@@ -124,16 +127,82 @@ export default function ProdutosPage() {
         const parts = result.split(",");
         const mimeMatch = parts[0].match(/:(.*?);/);
         const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
-        const base64Data = parts[1];
-
-        setImagemAnexada({
-          base64: base64Data,
-          mimeType: mimeType,
-          nome: file.name
-        });
+        setImagemAnexada({ base64: parts[1], mimeType, nome: file.name });
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleUploadFotoModelo = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const result = evt.target?.result as string;
+      if (result) setFotoModelo({ base64: result.split(",")[1], nome: file.name });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUploadFotoProduto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const result = evt.target?.result as string;
+      if (result) setFotoProduto({ base64: result.split(",")[1], nome: file.name });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleGerarImagem = async () => {
+    if (!promptImagem.trim()) {
+      alert("Por favor, digite um prompt ou instrução para a imagem.");
+      return;
+    }
+
+    setCarregandoImagem(true);
+    setImagemGeradaUrl("");
+
+    try {
+      const res = await fetch("/api/gerar-imagem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: promptImagem,
+          modeloBase64: fotoModelo?.base64,
+          produtoBase64: fotoProduto?.base64,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.sucesso && data.imagemUrl) {
+        setImagemGeradaUrl(data.imagemUrl);
+      } else {
+        alert("Erro ao gerar imagem: " + (data.error || "Erro desconhecido"));
+      }
+    } catch (err: any) {
+      alert("Erro de conexão: " + err.message);
+    }
+    setCarregandoImagem(false);
+  };
+
+  const salvarHistoricoGeracao = async () => {
+    if (!imagemGeradaUrl) return;
+    setSalvandoHistoricoImagem(true);
+    try {
+      const { error } = await supabase.from("historico_descricoes_ia").insert([{
+        sku: skuAlvo || "IMAGEM_IA",
+        prompt_usuario: promptImagem,
+        resposta_ia: `[IMAGEM GERADA]: ${imagemGeradaUrl}`
+      }]);
+      if (error) throw error;
+      alert("✅ Prompt e resultado guardados com sucesso no Supabase para referência futura!");
+    } catch (err: any) {
+      alert("Erro ao guardar histórico: " + err.message);
+    }
+    setSalvandoHistoricoImagem(false);
   };
 
   const buscarDescricaoPorSkuConfig = async (e: React.FormEvent) => {
@@ -163,18 +232,12 @@ export default function ProdutosPage() {
   };
 
   const excluirDescricaoHistorico = async (id: number, sku: string) => {
-    if (!confirm(`Deseja realmente excluir a descrição do histórico para o SKU ${sku}?`)) return;
-
+    if (!confirm(`Deseja realmente excluir o registo do histórico para o SKU ${sku}?`)) return;
     setLoading(true);
     try {
-      const { error } = await supabase
-        .from("historico_descricoes_ia")
-        .delete()
-        .eq("id", id);
-
+      const { error } = await supabase.from("historico_descricoes_ia").delete().eq("id", id);
       if (error) throw error;
-
-      alert(`✅ Descrição do SKU ${sku} excluída com sucesso do Supabase!`);
+      alert(`✅ Registo do SKU ${sku} excluído com sucesso!`);
       setResultadoBuscaConfig(null);
       setSkuBuscaConfig("");
     } catch (err: any) {
@@ -398,35 +461,6 @@ export default function ProdutosPage() {
       alert("Erro ao salvar padrão: " + err.message);
     }
     setSalvandoPadraoOficial(false);
-  };
-
-  const handleGerarImagem = async () => {
-    if (!promptImagem.trim()) {
-      alert("Por favor, digite um prompt para a imagem.");
-      return;
-    }
-
-    setCarregandoImagem(true);
-    setImagemGeradaUrl("");
-
-    try {
-      const res = await fetch("/api/gerar-imagem", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: promptImagem }),
-      });
-
-      const data = await res.json();
-
-      if (data.sucesso && data.imagemUrl) {
-        setImagemGeradaUrl(data.imagemUrl);
-      } else {
-        alert("Erro ao gerar imagem: " + (data.error || "Erro desconhecido"));
-      }
-    } catch (err: any) {
-      alert("Erro de conexão: " + err.message);
-    }
-    setCarregandoImagem(false);
   };
 
   const excluirPendenteIndividual = async (sku: string) => {
@@ -670,7 +704,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos por Pai & Variações</h1>
-            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições padronizado por IA e Gerador de Imagens</p>
+            <p className="text-sm font-medium text-slate-400">Controle completo com Construtor de Descrições e Gerador de Imagens com Referência Visual</p>
           </div>
           <Navbar />
         </div>
@@ -1071,18 +1105,33 @@ export default function ProdutosPage() {
         )}
 
         {subAba === "imagens" && (
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
+          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-6">
             <div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerador de Imagens por IA (DALL-E 3)</h3>
-              <p className="text-xs text-slate-400 mt-1">Crie imagens realistas e de estúdio para os produtos Best Fit a partir de texto descritivo.</p>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerador de Imagens com Referência Visual (Modelo + Produto)</h3>
+              <p className="text-xs text-slate-400 mt-1">Carregue uma foto de exemplo da modelo e do produto para orientar a IA a criar o visual perfeito.</p>
             </div>
 
-            <div className="space-y-3">
-              <label className="block text-xs text-slate-300">Descreva a imagem que pretende gerar:</label>
+            {/* Inputs para Upload de Referência Visual */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <label className="block text-xs font-bold text-slate-300">1. Foto de Exemplo da Modelo (Opcional):</label>
+                <input type="file" accept="image/*" onChange={handleUploadFotoModelo} className="text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:bg-purple-600 file:text-white file:border-0 cursor-pointer" />
+                {fotoModelo && <p className="text-[11px] text-emerald-400">✓ Carregada: {fotoModelo.nome}</p>}
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <label className="block text-xs font-bold text-slate-300">2. Foto de Exemplo do Produto (Opcional):</label>
+                <input type="file" accept="image/*" onChange={handleUploadFotoProduto} className="text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:bg-purple-600 file:text-white file:border-0 cursor-pointer" />
+                {fotoProduto && <p className="text-[11px] text-emerald-400">✓ Carregada: {fotoProduto.nome}</p>}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs text-slate-300">Instrução / Prompt para a Composição:</label>
               <textarea
                 value={promptImagem}
                 onChange={(e) => setPromptImagem(e.target.value)}
-                placeholder="Ex: Lancheira térmica Best Fit preta com alça cinza em fundo minimalista lilás, iluminação de estúdio profissional, alta qualidade..."
+                placeholder="Ex: Modelo a vestir o produto de referência em cenário de estúdio limpo com iluminação profissional..."
                 className="w-full bg-slate-950 text-xs text-white p-3 rounded-xl border border-slate-700 outline-none h-24"
               />
             </div>
@@ -1093,28 +1142,36 @@ export default function ProdutosPage() {
               disabled={carregandoImagem}
               className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg"
             >
-              {carregandoImagem ? "A gerar imagem com IA..." : "Gerar Imagem"}
+              {carregandoImagem ? "A processar composição com IA..." : "Gerar Imagem com Referências"}
             </button>
 
+            {/* Resultado da Imagem Gerada */}
             {imagemGeradaUrl && (
-              <div className="mt-6 space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
-                <p className="text-xs text-slate-400">Imagem Gerada com Sucesso:</p>
+              <div className="mt-6 space-y-4 bg-slate-950 p-5 rounded-xl border border-slate-800 text-center">
+                <p className="text-xs text-slate-400">Resultado Gerado:</p>
                 <img
                   src={imagemGeradaUrl}
-                  alt="Imagem gerada pela IA"
+                  alt="Composição gerada por IA"
                   className="rounded-xl border border-slate-700 max-w-md mx-auto shadow-2xl h-auto"
                 />
-                <div>
+                <div className="flex justify-center gap-3 flex-wrap">
                   <a
                     href={imagemGeradaUrl}
-                    download={`bestfit_produto_${Date.now()}.png`}
+                    download={`bestfit_composicao_${Date.now()}.png`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-block bg-emerald-600 hover:bg-emerald-500 text-white py-2 px-6 rounded-xl text-xs font-bold transition cursor-pointer shadow-md mt-2"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white py-2 px-5 rounded-xl text-xs font-bold transition cursor-pointer shadow-md"
                   >
                     ⬇️ Baixar Imagem (PNG)
                   </a>
-                  <p className="text-[10px] text-slate-500 mt-1">Nota: A URL da imagem temporária expira após algumas horas. Faça o download para salvá-la permanentemente.</p>
+                  <button
+                    type="button"
+                    onClick={salvarHistoricoGeracao}
+                    disabled={salvandoHistoricoImagem}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white py-2 px-5 rounded-xl text-xs font-bold transition cursor-pointer shadow-md"
+                  >
+                    {salvandoHistoricoImagem ? "A guardar..." : "💾 Salvar Prompt/Referência no Supabase"}
+                  </button>
                 </div>
               </div>
             )}
@@ -1144,8 +1201,8 @@ export default function ProdutosPage() {
 
             <div className="border-t border-slate-800 pt-6 space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerenciar Histórico de Descrições IA por SKU</h3>
-                <p className="text-xs text-slate-400 mt-1">Consulte ou remova descrições salvas no Supabase para qualquer SKU.</p>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Gerenciar Histórico de Descrições e Imagens por SKU</h3>
+                <p className="text-xs text-slate-400 mt-1">Consulte ou remova dados salvos no Supabase para qualquer SKU.</p>
               </div>
 
               <form onSubmit={buscarDescricaoPorSkuConfig} className="flex gap-2 max-w-xl">
@@ -1164,12 +1221,12 @@ export default function ProdutosPage() {
               {resultadoBuscaConfig && (
                 <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 mt-4">
                   {resultadoBuscaConfig.naoEncontrado ? (
-                    <p className="text-xs text-rose-400">Nenhuma descrição encontrada para este SKU no histórico.</p>
+                    <p className="text-xs text-rose-400">Nenhum registo encontrado para este SKU no histórico.</p>
                   ) : (
                     <div className="space-y-3">
                       <div className="flex justify-between items-center text-[10px] text-slate-400 border-b border-slate-900 pb-2">
                         <span>SKU: <strong className="text-purple-400">{resultadoBuscaConfig.sku}</strong></span>
-                        <span>Gerado em: {new Date(resultadoBuscaConfig.created_at || Date.now()).toLocaleString("pt-BR")}</span>
+                        <span>Guardado em: {new Date(resultadoBuscaConfig.created_at || Date.now()).toLocaleString("pt-BR")}</span>
                       </div>
                       <pre className="text-xs text-slate-200 whitespace-pre-wrap font-mono leading-relaxed bg-slate-900/60 p-3 rounded-lg max-h-60 overflow-y-auto">
                         {resultadoBuscaConfig.resposta_ia}
@@ -1179,7 +1236,7 @@ export default function ProdutosPage() {
                           onClick={() => excluirDescricaoHistorico(resultadoBuscaConfig.id, resultadoBuscaConfig.sku)}
                           className="bg-rose-950 hover:bg-rose-900 text-rose-300 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5"
                         >
-                          🗑️ Excluir Descrição do Supabase
+                          🗑️ Excluir Registo do Supabase
                         </button>
                       </div>
                     </div>
@@ -1231,52 +1288,6 @@ export default function ProdutosPage() {
                 <span className="text-xs font-bold text-slate-400 uppercase">Produtos Pendentes</span>
                 <p className="text-3xl font-black text-amber-400 mt-2">{dadosPendentes.length}</p>
                 <span className="text-[10px] text-slate-500 mt-1 block">Faltam cadastrar</span>
-              </div>
-            </div>
-
-            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 space-y-6">
-              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Gráfico Comparativo de Produção</h4>
-              
-              <div className="space-y-4">
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400 font-semibold">Cadastros Realizados</span>
-                    <span className="text-emerald-400 font-bold">{totalSkusRealizados}</span>
-                  </div>
-                  <div className="w-full bg-slate-900 h-4 rounded-full overflow-hidden border border-slate-800">
-                    <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (totalSkusRealizados / maxGrafico) * 100)}%` }}></div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400 font-semibold">Produtos com Vídeo (Produzidos)</span>
-                    <span className="text-purple-400 font-bold">{produtosComVideo}</span>
-                  </div>
-                  <div className="w-full bg-slate-900 h-4 rounded-full overflow-hidden border border-slate-800">
-                    <div className="bg-purple-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (produtosComVideo / maxGrafico) * 100)}%` }}></div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400 font-semibold">Total Vídeos Postados (Canais)</span>
-                    <span className="text-indigo-400 font-bold">{totalVideosPostados}</span>
-                  </div>
-                  <div className="w-full bg-slate-900 h-4 rounded-full overflow-hidden border border-slate-800">
-                    <div className="bg-indigo-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (totalVideosPostados / maxGrafico) * 100)}%` }}></div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400 font-semibold">Produtos Pendentes (Faltam)</span>
-                    <span className="text-amber-400 font-bold">{dadosPendentes.length}</span>
-                  </div>
-                  <div className="w-full bg-slate-900 h-4 rounded-full overflow-hidden border border-slate-800">
-                    <div className="bg-amber-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (dadosPendentes.length / maxGrafico) * 100)}%` }}></div>
-                  </div>
-                </div>
               </div>
             </div>
           </div>
