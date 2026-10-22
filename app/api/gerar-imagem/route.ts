@@ -42,18 +42,26 @@ export async function POST(req: Request) {
     contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
 
     let response;
-    // Tenta primeiro o modelo principal, e se houver pico de demanda (503), tenta o modelo de fallback (gemini-1.5-flash)
+    let erroDetalhado = "";
+
+    // Tenta primeiro o modelo gemini-2.0-flash
     try {
       response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-2.0-flash",
         contents: contents,
       });
     } catch (err: any) {
-      console.warn("Tentando modelo alternativo devido a indisponibilidade:", err.message);
-      response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: contents,
-      });
+      erroDetalhado += ` [2.0-flash: ${err.message}]`;
+      // Tenta o modelo de fallback gemini-1.5-flash
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-1.5-flash",
+          contents: contents,
+        });
+      } catch (err2: any) {
+        erroDetalhado += ` [1.5-flash: ${err2.message}]`;
+        throw new Error(`Falha em ambos os modelos: ${erroDetalhado}`);
+      }
     }
 
     const respostaTexto = response.text || "Diretriz gerada com sucesso.";
@@ -65,9 +73,9 @@ export async function POST(req: Request) {
       mensagem: "Instrução visual gerada com sucesso pelo Gemini!" 
     });
   } catch (error: any) {
-    console.error("Erro na API do Gemini:", error);
+    console.error("Erro detalhado na API do Gemini:", error);
     return NextResponse.json(
-      { error: "Os servidores da IA estão temporariamente sobrecarregados (Alta Demanda). Por favor, aguarde alguns segundos e clique novamente." },
+      { error: `Erro da API Google: ${error.message}` },
       { status: 500 }
     );
   }
