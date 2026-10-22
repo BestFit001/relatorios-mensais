@@ -116,7 +116,7 @@ export async function POST(req: Request) {
       const palavrasChavePai = gerarPalavrasChave(nomePaiFormatado);
       const marcaPai = produtoBase.marca || "Best Fit";
 
-      async function gerarDescricaoComLogica(nomeItem: string, corItem: string, tamItem: string) {
+      async function gerarDescricaoComLogica(nomeItem: string) {
         const { data: histSku } = await supabase
           .from("historico_descricoes_ia")
           .select("resposta_ia")
@@ -134,13 +134,18 @@ export async function POST(req: Request) {
             const promptRigido = `Você é um especialista em e-commerce da Best Fit e Tip Top. 
 Gere a descrição comercial do produto seguindo EXATAMENTE a estrutura rica e detalhada do modelo abaixo, adaptando o tema para o produto atual.
 
+REGRAS DE FORMATAÇÃO OBRIGATÓRIAS:
+1. NUNCA cite o tamanho e a cor na seção de especificações ou no texto descritivo complementar (pois essas informações já vão em campos próprios de variação do Tiny).
+2. Substitua completamente qualquer referência a temas antigos (como cavalo marinho) pelo tema real deste produto ("${nomeItem}").
+3. Mantenha os blocos de benefícios, composição, proteção UV50+ e cuidados detalhados.
+
 EXEMPLO DE FORMATO OBRIGATÓRIO A SEGUIR:
-O Conjunto Biquíni Infantil [Tema/Nome do Produto] Tip Top foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa vibrante de [descrever tema, ex: sorvetinhos] que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
+O Conjunto Biquíni Infantil ${nomeItem} Tip Top foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa vibrante de ${nomeItem} que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.
 
 Especificações:
 - Marca: ${marcaPai}
-- Modelo: [Nome Curto]
-- Top: Estampa colorida com tema de [Tema]
+- Modelo: ${nomeItem}
+- Top: Estampa colorida com tema de ${nomeItem}
 - Calcinha: Cintura elástica para ajuste seguro
 - Proteção: Solar UV50+ permanente no tecido
 
@@ -148,7 +153,7 @@ Benefícios:
 - Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.
 - Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.
 - Estilo: Design com babados e estampas lúdicas que estimulam a imaginação.
-- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar, ideal para o uso prolomgado.
+- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar, ideal para o uso prolongado.
 
 Composição:
 - Tecido Externo: 84% Poliéster / 16% Elastano
@@ -163,11 +168,7 @@ Não passar a ferro para não danificar as fibras de elastano e a estampa.
 
 DADOS DO PRODUTO ATUAL A SER GERADO:
 - Nome/Tema: ${nomeItem}
-- Marca: ${marcaPai}
-- Cor: ${corItem || "Não informada"}
-- Tamanho: ${tamItem || "Não informado"}
-
-ATENÇÃO: Substitua completamente qualquer referência a temas antigos (como cavalo marinho) pelo tema real deste produto ("${nomeItem}").`;
+- Marca: ${marcaPai}`;
 
             const response = await ai.models.generateContent({
               model: "gemini-3.8-flash",
@@ -180,15 +181,13 @@ ATENÇÃO: Substitua completamente qualquer referência a temas antigos (como ca
           }
         }
 
-        // Fallback enriquecido caso a IA falhe
+        // Fallback enriquecido caso a IA falhe (sem citar cor e tamanho)
         return [
           `O Conjunto Biquíni Infantil ${nomeItem} ${marcaPai} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
           "",
           "Especificações:",
           `- Marca: ${marcaPai}`,
           `- Modelo: ${nomeItem}`,
-          `- Cor: ${corItem || "Variada"}`,
-          `- Tamanho: ${tamItem || "Variado"}`,
           "- Proteção: Solar UV50+ permanente no tecido",
           "",
           "Benefícios:",
@@ -210,7 +209,7 @@ ATENÇÃO: Substitua completamente qualquer referência a temas antigos (como ca
         ].join("\n");
       }
 
-      const descricaoComplementarPai = await gerarDescricaoComLogica(nomePaiFormatado, "", "");
+      const descricaoComplementarPai = await gerarDescricaoComLogica(nomePaiFormatado);
 
       // 1. Produto Pai (Tipo do produto = V)
       linhasExportacao.push({
@@ -292,8 +291,6 @@ ATENÇÃO: Substitua completamente qualquer referência a temas antigos (como ca
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
         const variacaoFormatada = `Cor:${corFormatada}||Tamanho:${tamFormatado}||`;
 
-        const descricaoComplementarFinal = await gerarDescricaoComLogica(nomeFilhoFormatado, corFormatada, tamFormatado);
-
         linhasExportacao.push({
           "ID": "",
           "Código (SKU)": p.sku,
@@ -316,7 +313,7 @@ ATENÇÃO: Substitua completamente qualquer referência a temas antigos (como ca
           "Peso bruto (Kg)": "0.500",
           "GTIN/EAN": p.ean || "",
           "GTIN/EAN tributável": p.ean || "",
-          "Descrição complementar": descricaoComplementarFinal,
+          "Descrição complementar": descricaoComplementarPai,
           "CEST": p.cest || "",
           "Código de Enquadramento IPI": "",
           "Formato embalagem": "",
