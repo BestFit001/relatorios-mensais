@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
 
 export async function POST(req: Request) {
   try {
@@ -12,56 +11,74 @@ export async function POST(req: Request) {
       );
     }
 
-    const ai = new GoogleGenAI({ apiKey });
     const { prompt, modeloBase64, produtoBase64 } = await req.json();
 
     if (!prompt) {
       return NextResponse.json({ error: "O prompt é obrigatório." }, { status: 400 });
     }
 
-    const contents: any[] = [];
-    
+    const parts: any[] = [];
+
     if (modeloBase64) {
-      contents.push({
+      parts.push({
         inlineData: {
-          data: modeloBase64,
           mimeType: "image/jpeg",
+          data: modeloBase64,
         },
       });
     }
 
     if (produtoBase64) {
-      contents.push({
+      parts.push({
         inlineData: {
-          data: produtoBase64,
           mimeType: "image/jpeg",
+          data: produtoBase64,
         },
       });
     }
 
-    contents.push(`Gera uma diretriz de imagem profissional para e-commerce baseada nisto: ${prompt}`);
-
-    // Testando com o gemini-2.0-flash que é o padrão da v1
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: contents,
+    parts.push({
+      text: `Gera uma diretriz de imagem profissional para e-commerce baseada nisto: ${prompt}`,
     });
 
-    const respostaTexto = response.text || "Sucesso";
+    // Chamada direta via REST API evitando as restrições e travas do SDK Node.js
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: parts,
+            },
+          ],
+        }),
+      }
+    );
 
-    return NextResponse.json({ 
-      sucesso: true, 
-      imagemUrl: "", 
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data?.error?.message || `Erro HTTP ${response.status}`);
+    }
+
+    const respostaTexto =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "Diretriz gerada com sucesso.";
+
+    return NextResponse.json({
+      sucesso: true,
+      imagemUrl: "",
       descricaoGerada: respostaTexto,
-      mensagem: "Processado com sucesso!" 
+      mensagem: "Processado com sucesso!",
     });
   } catch (error: any) {
-    console.error("ERRO DETALHADO:", error);
-    
-    // Retorna a mensagem técnica exata para vermos na tela
-    const mensagemErro = error?.message || JSON.stringify(error) || "Erro desconhecido";
+    console.error("ERRO TÉCNICO FETCH:", error);
     return NextResponse.json(
-      { error: `Erro técnico: ${mensagemErro}` },
+      { error: `Erro técnico: ${error?.message || "Erro desconhecido"}` },
       { status: 500 }
     );
   }
