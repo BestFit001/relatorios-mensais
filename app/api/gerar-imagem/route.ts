@@ -7,13 +7,14 @@ export async function POST(req: Request) {
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "A chave da API do Gemini não está configurada nas variáveis de ambiente do servidor." },
+        { error: "A chave da API do Gemini não está configurada nas variáveis de ambiente." },
         { status: 500 }
       );
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    const { prompt, modeloBase64, produtoBase64 } = await req.json();
+    const body = await req.json();
+    const { prompt, modeloBase64, produtoBase64 } = body;
 
     if (!prompt) {
       return NextResponse.json({ error: "O prompt descritivo é obrigatório." }, { status: 400 });
@@ -41,7 +42,6 @@ export async function POST(req: Request) {
 
     contents.push(`Gera uma diretriz de imagem profissional e detalhada para e-commerce baseada nisto: ${prompt}`);
 
-    // Utilizando o modelo oficial indicado pela Google
     const response = await ai.models.generateContent({
       model: "gemini-3.8-flash",
       contents: contents,
@@ -56,9 +56,10 @@ export async function POST(req: Request) {
       mensagem: "Instrução visual gerada com sucesso pelo Gemini!" 
     });
   } catch (error: any) {
-    console.error("Erro detalhado na API do Gemini:", error);
+    console.error("Erro completo na API gerar-imagem:", error);
+    // Retorna a mensagem exata do erro para o frontend exibir no alerta
     return NextResponse.json(
-      { error: `Erro da API Google: ${error.message}` },
+      { error: error?.message || JSON.stringify(error) || "Erro interno desconhecido" },
       { status: 500 }
     );
   }
