@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
-import Navbar from "../components/Navbar"; // Ajusta o caminho se a tua Navbar estiver noutra pasta (ex: "@/components/Navbar")
+import Navbar from "../components/Navbar";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -12,11 +12,16 @@ export default function PadronizacaoPage() {
   const [padroes, setPadroes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Estados do formulário
+  // Estados do formulário (incluindo os novos campos)
   const [titulo, setTitulo] = useState("");
   const [marca, setMarca] = useState("");
   const [slug, setSlug] = useState("");
   const [palavrasChave, setPalavrasChave] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [altura, setAltura] = useState("");
+  const [largura, setLargura] = useState("");
+  const [comprimento, setComprimento] = useState("");
+  const [peso, setPeso] = useState("");
   const [descricaoSeo, setDescricaoSeo] = useState("");
   const [descricaoComplementar, setDescricaoComplementar] = useState("");
 
@@ -49,6 +54,11 @@ export default function PadronizacaoPage() {
       marca,
       slug,
       palavras_chave_seo: palavrasChave,
+      categoria,
+      altura: altura ? Number(altura) : null,
+      largura: largura ? Number(largura) : null,
+      comprimento: comprimento ? Number(comprimento) : null,
+      peso: peso ? Number(peso) : null,
       descricao_seo: descricaoSeo,
       descricao_complementar: descricaoComplementar,
     };
@@ -62,6 +72,11 @@ export default function PadronizacaoPage() {
       setMarca("");
       setSlug("");
       setPalavrasChave("");
+      setCategoria("");
+      setAltura("");
+      setLargura("");
+      setComprimento("");
+      setPeso("");
       setDescricaoSeo("");
       setDescricaoComplementar("");
       carregarPadroes();
@@ -81,7 +96,6 @@ export default function PadronizacaoPage() {
   return (
     <div className="min-h-screen bg-[#0d0f18] text-white p-6">
       
-      {/* Navbar adicionada aqui */}
       <Navbar />
 
       <div className="max-w-7xl mx-auto space-y-6 mt-6">
@@ -101,34 +115,65 @@ export default function PadronizacaoPage() {
         {/* Formulário de Criação */}
         <form onSubmit={salvarPadrao} className="bg-[#131625] p-6 rounded-xl border border-gray-800 space-y-4">
           <h2 className="text-lg font-semibold text-purple-400">Novo Produto Modelo</h2>
-          <div className="grid grid-cols-2 gap-4">
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs text-gray-400 mb-1">Título do Produto Referência</label>
               <input type="text" value={titulo} onChange={e => setTitulo(e.target.value)} className="w-full bg-[#1b1f38] text-sm text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none" placeholder="Ex: Lancheira Farm Ziriguidum" required />
             </div>
+
             <div>
               <label className="block text-xs text-gray-400 mb-1">Marca</label>
               <input type="text" value={marca} onChange={e => setMarca(e.target.value)} className="w-full bg-[#1b1f38] text-sm text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none" placeholder="Ex: Farm Rio" required />
             </div>
+
             <div>
               <label className="block text-xs text-gray-400 mb-1">Slug Ideal</label>
               <input type="text" value={slug} onChange={e => setSlug(e.target.value)} className="w-full bg-[#1b1f38] text-sm text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none" placeholder="Ex: lancheira-farm-ziriguidum" />
             </div>
+
             <div>
               <label className="block text-xs text-gray-400 mb-1">Palavras-chave SEO</label>
               <input type="text" value={palavrasChave} onChange={e => setPalavrasChave(e.target.value)} className="w-full bg-[#1b1f38] text-sm text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none" placeholder="Ex: Lancheira, Farm, Térmica..." />
             </div>
-            <div className="col-span-2">
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Categoria</label>
+              <input type="text" value={categoria} onChange={e => setCategoria(e.target.value)} className="w-full bg-[#1b1f38] text-sm text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none" placeholder="Ex: Acessórios / Bolsas" />
+            </div>
+
+            <div className="grid grid-cols-4 gap-2 lg:col-span-1">
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-1">Altura (cm)</label>
+                <input type="number" step="0.01" value={altura} onChange={e => setAltura(e.target.value)} className="w-full bg-[#1b1f38] text-xs text-white px-2 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none text-center" placeholder="Alt" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-1">Larg (cm)</label>
+                <input type="number" step="0.01" value={largura} onChange={e => setLargura(e.target.value)} className="w-full bg-[#1b1f38] text-xs text-white px-2 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none text-center" placeholder="Larg" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-1">Comp (cm)</label>
+                <input type="number" step="0.01" value={comprimento} onChange={e => setComprimento(e.target.value)} className="w-full bg-[#1b1f38] text-xs text-white px-2 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none text-center" placeholder="Comp" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-1">Peso (kg)</label>
+                <input type="number" step="0.001" value={peso} onChange={e => setPeso(e.target.value)} className="w-full bg-[#1b1f38] text-xs text-white px-2 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none text-center" placeholder="Kg" />
+              </div>
+            </div>
+
+            <div className="md:col-span-2 lg:col-span-3">
               <label className="block text-xs text-gray-400 mb-1">Descrição SEO</label>
               <textarea value={descricaoSeo} onChange={e => setDescricaoSeo(e.target.value)} className="w-full bg-[#1b1f38] text-sm text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none h-20" placeholder="Compre Lancheira Farm..." />
             </div>
-            <div className="col-span-2">
+
+            <div className="md:col-span-2 lg:col-span-3">
               <label className="block text-xs text-gray-400 mb-1">Descrição Complementar (Template Oficial)</label>
               <textarea value={descricaoComplementar} onChange={e => setDescricaoComplementar(e.target.value)} className="w-full bg-[#1b1f38] text-sm text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-purple-500 outline-none h-40 font-mono" placeholder="Especificações:&#10;- Marca:&#10;..." />
             </div>
           </div>
+
           <div className="flex justify-end">
-            <button type="submit" className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg font-medium transition">
+            <button type="submit" className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg font-medium transition cursor-pointer">
               Salvar Padrão
             </button>
           </div>
@@ -145,26 +190,33 @@ export default function PadronizacaoPage() {
                 <tr className="border-b border-gray-800 text-gray-400 text-xs uppercase bg-[#1b1f38]">
                   <th className="p-4">Título Referência</th>
                   <th className="p-4">Marca</th>
+                  <th className="p-4">Categoria / Medidas</th>
                   <th className="p-4">SEO / Descrição</th>
                   <th className="p-4 text-center">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800 text-sm">
                 {loading ? (
-                  <tr><td colSpan={4} className="p-6 text-center text-gray-400">A carregar padrões...</td></tr>
+                  <tr><td colSpan={5} className="p-6 text-center text-gray-400">A carregar padrões...</td></tr>
                 ) : padroes.length === 0 ? (
-                  <tr><td colSpan={4} className="p-6 text-center text-gray-400">Nenhum padrão cadastrado.</td></tr>
+                  <tr><td colSpan={5} className="p-6 text-center text-gray-400">Nenhum padrão cadastrado.</td></tr>
                 ) : (
                   padroes.map((p) => (
                     <tr key={p.id} className="hover:bg-[#1b1f38]/50 transition">
                       <td className="p-4 font-medium text-white">{p.titulo}</td>
                       <td className="p-4 text-gray-300">{p.marca}</td>
+                      <td className="p-4 text-gray-300 text-xs">
+                        {p.categoria && <div className="font-semibold text-purple-300">{p.categoria}</div>}
+                        <div className="text-gray-400 font-mono mt-0.5">
+                          {p.altura || 0}x{p.largura || 0}x{p.comprimento || 0} cm {p.peso ? `| ${p.peso} kg` : ""}
+                        </div>
+                      </td>
                       <td className="p-4 text-gray-300">
                         <span className={p.descricao_seo ? "text-green-400" : "text-gray-500"}>✓ SEO</span> •{" "}
                         <span className={p.descricao_complementar ? "text-green-400" : "text-gray-500"}>✓ Desc.</span>
                       </td>
                       <td className="p-4 text-center">
-                        <button onClick={() => excluirPadrao(p.id)} className="bg-red-900/60 hover:bg-red-900 text-red-200 px-3 py-1 rounded text-xs transition">
+                        <button onClick={() => excluirPadrao(p.id)} className="bg-red-900/60 hover:bg-red-900 text-red-200 px-3 py-1 rounded text-xs transition cursor-pointer">
                           Excluir
                         </button>
                       </td>
