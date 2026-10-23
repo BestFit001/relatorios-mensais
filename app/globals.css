@@ -13,38 +13,57 @@ body {
   padding: 0;
 }
 
-/* Modo Claro */
+/* ==========================================
+   MODO CLARO (LIGHT MODE)
+   ========================================== */
 html.light body {
-  background-color: #f8fafc !important;
+  background-color: #f1f5f9 !important;
   color: #0f172a !important;
 }
 
-html.light .bg-slate-950 {
+/* Transforma todos os painéis e fundos escuros em claros e limpos */
+html.light .bg-slate-950,
+html.light .bg-slate-900,
+html.light .bg-\[\#0b0e14\],
+html.light .bg-slate-900\/90,
+html.light .bg-slate-950\/40,
+html.light .bg-slate-950\/60 {
   background-color: #ffffff !important;
   color: #0f172a !important;
   border-color: #cbd5e1 !important;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05) !important;
 }
 
-html.light .bg-slate-900,
-html.light .bg-\[\#0b0e14\] {
-  background-color: #f1f5f9 !important;
-  color: #0f172a !important;
-  border-color: #cbd5e1 !important;
-}
-
+/* Textos e títulos */
 html.light .text-white {
   color: #0f172a !important;
 }
 
-html.light .text-slate-400,
-html.light .text-slate-300 {
-  color: #475569 !important;
+html.light .text-slate-100,
+html.light .text-slate-200,
+html.light .text-slate-300,
+html.light .text-slate-400 {
+  color: #334155 !important;
 }
 
+html.light .text-slate-500 {
+  color: #64748b !important;
+}
+
+/* Inputs, selects e textareas */
 html.light input,
 html.light select,
 html.light textarea {
-  background-color: #ffffff !important;
+  background-color: #f8fafc !important;
   color: #0f172a !important;
   border-color: #cbd5e1 !important;
+}
+
+/* Tabelas e linhas */
+html.light table tr {
+  border-color: #e2e8f0 !important;
+}
+
+html.light table tr:hover {
+  background-color: #f1f5f9 !important;
 }
