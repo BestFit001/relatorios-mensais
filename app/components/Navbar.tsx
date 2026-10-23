@@ -116,7 +116,7 @@ export default function Navbar() {
   return (
     <>
       {/* SIDEBAR LATERAL FIXA */}
-      <aside className={`fixed top-0 left-0 h-full bg-[#0b0e14] border-r border-slate-800 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans transition-all duration-300 ${sidebarAberta ? 'w-56' : 'w-16'}`}>
+      <aside className={`fixed top-0 left-0 h-full bg-[#0b0e14] border-r border-slate-800 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans transition-all duration-300 ${sidebarAberta ? 'w-60' : 'w-16'}`}>
         
         {/* TOPO DA SIDEBAR */}
         <div className="p-2.5 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
@@ -330,13 +330,13 @@ export default function Navbar() {
 
       </aside>
 
-      {/* AJUSTE FINO E PERFEITO DE ESPAÇAMENTO */}
+      {/* ESPAÇAMENTO CORRETO E COMPACTO */}
       <style jsx global>{`
         body {
           background-color: #0d0f18 !important;
         }
         .min-h-screen {
-          padding-left: ${sidebarAberta ? '14.5rem' : '4.5rem'} !important;
+          padding-left: ${sidebarAberta ? '4.5rem' : '4.5rem'} !important;
           transition: padding-left 0.3s ease !important;
         }
         @media (max-width: 768px) {
