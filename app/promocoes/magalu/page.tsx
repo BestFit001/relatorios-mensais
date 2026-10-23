@@ -154,20 +154,13 @@ export default function PromocoesMagaluPage() {
 
     setLoading(true);
     try {
-      // 1. Mapear estoque considerando Coluna F (índice 5)
+      // 1. Mapear estoque: SKU na Coluna C (índice 2) e Saldo na Coluna F (índice 5)
       const estoqueMap = new Map<string, number>();
       for (let i = 0; i < dadosEstoqueRaw.length; i++) {
         const row = dadosEstoqueRaw[i];
         if (!row || row.length < 6) continue;
 
-        let skuEstoque = "";
-        for (let colIdx = 0; colIdx < 5; colIdx++) {
-          const val = normalizarSku(row[colIdx]);
-          if (val && val.length >= 6) {
-            skuEstoque = val;
-            break;
-          }
-        }
+        const skuEstoque = normalizarSku(row[2]); // Coluna C = Índice 2
         const saldoEstoque = parseNumeroBruto(row[5]); // Coluna F = Índice 5
 
         if (skuEstoque) {
@@ -175,7 +168,7 @@ export default function PromocoesMagaluPage() {
         }
       }
 
-      // 2. Processar planilha da Magalu com suporte flexível a cabeçalhos (ex: "codigo SKU do seller", "preco", etc.)
+      // 2. Processar planilha da Magalu
       const headers = dadosMagaluRaw[0].map((h: any) => String(h || "").trim().toUpperCase());
       const getColIndex = (names: string[]) => {
         for (const name of names) {
@@ -189,7 +182,7 @@ export default function PromocoesMagaluPage() {
       const idxPdv = getColIndex(["PDV", "PRECO", "PREÇO", "VALOR", "PRICE"]);
 
       if (idxSku === -1 || idxPdv === -1) {
-        alert(`Erro: Não foi possível localizar as colunas de SKU e Preço/PDV. Cabeçalhos detetados: ${headers.join(" | ")}`);
+        alert(`Erro: Não foi possível localizar as colunas de SKU e Preço/PDV.`);
         setLoading(false);
         return;
       }
@@ -207,6 +200,7 @@ export default function PromocoesMagaluPage() {
 
         if (!skuRaw) continue;
 
+        // Verificar estoque na Coluna C mapeada
         let saldoAtual = 0;
         for (const [estKey, estVal] of estoqueMap.entries()) {
           if (estKey === skuRaw || estKey.includes(skuRaw) || skuRaw.includes(estKey)) {
@@ -317,7 +311,7 @@ export default function PromocoesMagaluPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
-            <p className="text-sm font-medium text-slate-400">Filtro de estoque (Coluna F), margem de lucro e vigência promocional</p>
+            <p className="text-sm font-medium text-slate-400">Validação via Coluna C (SKU) e Coluna F (Estoque), margem e vigência</p>
           </div>
           <Navbar />
         </div>
@@ -391,7 +385,7 @@ export default function PromocoesMagaluPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-800 items-end">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">1. Planilha de Estoque (Inventário):</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">1. Planilha de Estoque (SKU na Col. C, Qtd na Col. F):</label>
                   <input
                     type="file"
                     accept=".xlsx, .xls, .csv"
