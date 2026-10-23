@@ -272,16 +272,34 @@ export default function PromocoesTiktokPage() {
       return;
     }
 
-    // Exporta o valor numérico com ponto decimal exato exigido pelo TikTok Shop
-    const templateData = aptos.map(item => ({
-      "Product_id (obrigatório)": item.productId,
-      "SKU_id (obrigatório)": item.skuId,
-      "Preço da oferta (obrigatório)\n1. 0 < Preço da oferta ≤ Preço mais baixo nos últimos 30 dias\n2. Preço da oferta < Preço original": Number(item.offerPrice.toFixed(2)),
-      "Limite total de compra (opcional)\n1. Limite total de compra ≤ Estoque\n2. Em branco refere -se a nenhum limite": "",
-      "Limite de compra do comprador (opcional)\n1. 1 ≤ Limite de compra do comprador ≤ 99\n2. Em branco refere -se a nenhum limite": ""
-    }));
+    const wsData = [
+      ["Product_id", "sku_id", "price", "total_purchase_limit", "buyer_purchase_limit"],
+      ["V4", "FixedPriceWithSKU", "", "", ""],
+      [
+        "Product_id (obrigatório)",
+        "SKU_id (obrigatório)",
+        "Preço da oferta (obrigatório)\n1. 0 < Preço da oferta ≤ Preço mais baixo nos últimos 30 dias\n2. Preço da oferta < Preço original",
+        "Limite total de compra (opcional)\n1. Limite total de compra ≤ Estoque\n2. Em branco refere -se a nenhum limite",
+        "Limite de compra do comprador (opcional)\n1. 1 ≤ Limite de compra do comprador ≤ 99\n2. Em branco refere -se a nenhum limite"
+      ]
+    ];
 
-    const ws = XLSX.utils.json_to_sheet(templateData);
+    aptos.forEach(item => {
+      wsData.push([
+        item.productId,
+        item.skuId,
+        Number(item.offerPrice.toFixed(2)),
+        "",
+        ""
+      ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    if (!ws["!rows"]) ws["!rows"] = [];
+    ws["!rows"][0] = { hidden: true };
+    ws["!rows"][1] = { hidden: true };
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
     XLSX.writeFile(wb, "FixedPriceWithSKU_TikTok.xlsx");
