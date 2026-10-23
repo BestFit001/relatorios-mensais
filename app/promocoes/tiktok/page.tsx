@@ -42,7 +42,7 @@ export default function PromocoesTiktokPage() {
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
-  const [regrasTiktokList, setRegrasTiktokList] = useState<any[]>([]);
+  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -79,28 +79,47 @@ export default function PromocoesTiktokPage() {
       });
       setCustosMap(cMap);
 
-      let allRegras: any[] = [];
-      from = 0;
-      keep = true;
-      while (keep) {
-        const { data } = await supabase.from("config_regras_tiny").select("*").range(from, from + step - 1);
-        if (data && data.length > 0) {
-          allRegras = [...allRegras, ...data];
-          from += step;
-          if (data.length < step) keep = false;
-        } else keep = false;
+      // Carregando da mesma tabela de regras da calculadora: config_regras_tarifacao
+      const { data: tarifacaoData } = await supabase.from("config_regras_tarifacao").select("*");
+      if (tarifacaoData) {
+        setRegrasTarifacao(tarifacaoData);
       }
-
-      const regrasTiktok = allRegras.filter((r: any) => {
-        const campoStr = String(r.campo || r.canal || "").toLowerCase();
-        return campoStr.includes("tiktok");
-      });
-      setRegrasTiktokList(regrasTiktok);
 
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
     }
     setLoading(false);
+  };
+
+  const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
+    const cLower = canalNome.toLowerCase();
+    
+    const regrasDoCanal = regrasTarifacao.filter((r) => {
+      const rCanal = String(r.canal || "").toLowerCase();
+      if (rCanal === cLower) return true;
+      if (cLower.includes("tiktok") && rCanal.includes("tiktok")) return true;
+      return rCanal.includes(cLower) || cLower.includes(rCanal);
+    });
+
+    if (regrasDoCanal.length === 0) {
+      return { comissao: 14, tarifa_fixa: 0, frete: 0 };
+    }
+
+    for (const regra of regrasDoCanal) {
+      const faixaStr = String(regra.faixa_preco || "").toLowerCase();
+      const matchNums = faixaStr.match(/[\d.,]+/g);
+
+      if (faixaStr.includes("em diante") || faixaStr.includes("99999") || (matchNums && matchNums.length === 1)) {
+        const limiteInf = matchNums ? parseNumeroBruto(matchNums[0]) : 0;
+        if (precoReferencia >= limiteInf) return regra;
+      } else if (matchNums && matchNums.length >= 2) {
+        const min = parseNumeroBruto(matchNums[0]);
+        const max = parseNumeroBruto(matchNums[1]);
+        if (precoReferencia >= min && precoReferencia <= max) return regra;
+      }
+    }
+
+    return regrasDoCanal[0];
   };
 
   const lerArquivoGenerico = (file: File): Promise<any[][]> => {
@@ -190,7 +209,7 @@ export default function PromocoesTiktokPage() {
         return;
       }
 
-      const margemDesejada = parseFloat(margemAlvo) / 100 || 0.10;
+      const margemAlvoDec = parseFloat(margemAlvo) / 100 || 0.10;
       const imposto = 0.09;
       const embalagem = 0.70;
       const resultados: any[] = [];
@@ -222,20 +241,15 @@ export default function PromocoesTiktokPage() {
 
         let precoOferta = precoOriginal;
         if (statusItem === "APTO") {
-          let pdvEstimado = custo * 1.5; // Começo neutro para convergência exata
+          let pdvEstimado = custo * 1.5;
           for (let iter = 0; iter < 15; iter++) {
-            let regraAplicada = regrasTiktokList.find((reg: any) => {
-              const min = parseNumeroBruto(reg.faixa_min ?? reg.min ?? 0);
-              const max = parseNumeroBruto(reg.faixa_max ?? reg.max ?? 999999);
-              return pdvEstimado >= min && pdvEstimado <= max;
-            }) || regrasTiktokList[0];
-
-            const comissaoVal = regraAplicada ? parseNumeroBruto(regraAplicada.comissao ?? regraAplicada.valor_comissao ?? 14) : 14;
+            const regraTabela = obterRegraCanalDaTabela("TikTok Shop", pdvEstimado);
+            const comissaoVal = parseNumeroBruto(regraTabela.comissao ?? 14);
             const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
-            const tarifaFixa = regraAplicada ? parseNumeroBruto(regraAplicada.tarifa_fixa ?? regraAplicada.tarifa ?? 4) : 4;
-            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete ?? regraAplicada.valor_frete ?? 0) : 0;
+            const tarifaFixa = parseNumeroBruto(regraTabela.tarifa_fixa ?? 0);
+            const freteValor = parseNumeroBruto(regraTabela.frete ?? 0);
 
-            const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+            const denominador = 1 - (comissaoDec + imposto + margemAlvoDec);
             if (denominador > 0) {
               pdvEstimado = (custo + tarifaFixa + embalagem + freteValor) / denominador;
             }
