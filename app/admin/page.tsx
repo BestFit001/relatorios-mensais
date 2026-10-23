@@ -4,9 +4,9 @@ import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 
-// Lista completa com todas as rotas e ferramentas do sistema
 const rotasDisponiveis = [
   { id: "/", nome: "Dashboard (Curva ABC)" },
+  { id: "/marketing", nome: "Marketing (Postagens)" }, // <--- Aba de Marketing adicionada
   { id: "/mapeamento", nome: "Cadastros" },
   { id: "/ads", nome: "Adsense" },
   { id: "/devolucoes", nome: "Devoluções" },
@@ -35,9 +35,8 @@ export default function AdminPage() {
   const [novoPerfil, setNovoPerfil] = useState("");
   const [editandoPaginas, setEditandoPaginas] = useState<string[]>([]);
 
-  // Estados para o tamanho da Base de Dados
   const [tamanhoDb, setTamanhoDb] = useState({ mb: 0, percentual: 0 });
-  const limiteDbMb = 500; // Limite do plano gratuito do Supabase (500MB)
+  const limiteDbMb = 500;
 
   const carregarUsuariosEStatus = async () => {
     const { data: usersData, error } = await supabase.from('usuarios_permissoes').select('*');
@@ -163,7 +162,6 @@ export default function AdminPage() {
           <Navbar />
         </div>
 
-        {/* PAINEL DE USO DE MEMÓRIA (SUPABASE) */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex flex-col md:flex-row items-center justify-between gap-6">
           <div>
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
