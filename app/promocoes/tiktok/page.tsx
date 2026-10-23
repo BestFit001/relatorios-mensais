@@ -167,15 +167,23 @@ export default function PromocoesTiktokPage() {
         }
       }
 
-      // 2. Localizar colunas técnicas na linha 0 da planilha do TikTok Seller Center
-      const headerRow = dadosTiktokRaw[0].map(c => String(c || "").trim().toLowerCase());
-      const idxProdId = headerRow.findIndex(h => h === "product_id");
-      const idxSkuId = headerRow.findIndex(h => h === "sku_id");
-      const idxSellerSku = headerRow.findIndex(h => h === "seller_sku");
-      const idxPrice = headerRow.findIndex(h => h === "price");
+      // 2. Cabeçalho na Linha 3 (índice 2 do array)
+      const headerRowIdx = 2;
+      if (dadosTiktokRaw.length <= headerRowIdx) {
+        alert("Erro: A planilha do TikTok Seller Center está incompleta.");
+        setLoading(false);
+        return;
+      }
+
+      const headerRow = dadosTiktokRaw[headerRowIdx].map(c => String(c || "").trim().toLowerCase());
+      
+      const idxProdId = headerRow.findIndex(h => h.includes("id do produto") || h.includes("product_id"));
+      const idxSkuId = headerRow.findIndex(h => h.includes("id do sku") || h.includes("sku_id"));
+      const idxSellerSku = headerRow.findIndex(h => h.includes("sku do vendedor") || h.includes("seller_sku"));
+      const idxPrice = headerRow.findIndex(h => h.includes("preço de varejo") || h.includes("price"));
 
       if (idxProdId === -1 || idxSkuId === -1 || idxSellerSku === -1) {
-        alert("Erro: Não foi possível localizar as colunas técnicas ('product_id', 'sku_id', 'seller_sku') na linha 1 da planilha do TikTok.");
+        alert("Erro: Não foi possível localizar as colunas na linha 3 da planilha do TikTok.");
         setLoading(false);
         return;
       }
@@ -184,7 +192,7 @@ export default function PromocoesTiktokPage() {
       const imposto = 0.09;
       const resultados: any[] = [];
 
-      // Os dados reais no template do TikTok começam a partir da linha 5 (índice 5)
+      // Os dados reais iniciam a partir da linha 5 (índice 5)
       for (let i = 5; i < dadosTiktokRaw.length; i++) {
         const r = dadosTiktokRaw[i];
         if (!r || r.length === 0) continue;
@@ -321,7 +329,7 @@ export default function PromocoesTiktokPage() {
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Planilha TikTok Seller Center:</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Planilha TikTok Seller Center (Cabeçalho Linha 3):</label>
               <input
                 type="file"
                 accept=".xlsx, .xls, .csv"
