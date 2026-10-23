@@ -167,17 +167,15 @@ export default function PromocoesTiktokPage() {
         }
       }
 
-      // 2. Localizar colunas na planilha do TikTok Seller Center
-      let headerRowIdx = 0; // Linha 0 (primeira linha) contém as chaves técnicas
-      const headers = dadosTiktokRaw[headerRowIdx].map(c => String(c || "").trim().toLowerCase());
-      
-      const idxProdId = headers.findIndex(h => h.includes("product_id") || h.includes("id do produto"));
-      const idxSkuId = headers.findIndex(h => h.includes("sku_id") || h.includes("id do sku"));
-      const idxSellerSku = headers.findIndex(h => h.includes("seller_sku") || h.includes("sku do vendedor"));
-      const idxPrice = headers.findIndex(h => h === "price" || h.includes("preço de varejo"));
+      // 2. Localizar colunas técnicas na linha 0 da planilha do TikTok Seller Center
+      const headerRow = dadosTiktokRaw[0].map(c => String(c || "").trim().toLowerCase());
+      const idxProdId = headerRow.findIndex(h => h === "product_id");
+      const idxSkuId = headerRow.findIndex(h => h === "sku_id");
+      const idxSellerSku = headerRow.findIndex(h => h === "seller_sku");
+      const idxPrice = headerRow.findIndex(h => h === "price");
 
       if (idxProdId === -1 || idxSkuId === -1 || idxSellerSku === -1) {
-        alert("Erro: Não foi possível localizar as colunas obrigatórias na planilha do TikTok.");
+        alert("Erro: Não foi possível localizar as colunas técnicas ('product_id', 'sku_id', 'seller_sku') na linha 1 da planilha do TikTok.");
         setLoading(false);
         return;
       }
@@ -186,7 +184,7 @@ export default function PromocoesTiktokPage() {
       const imposto = 0.09;
       const resultados: any[] = [];
 
-      // Os dados reais começam a partir da linha 5 (índice 5), ignorando cabeçalhos descritivos (linhas 1, 2, 3, 4)
+      // Os dados reais no template do TikTok começam a partir da linha 5 (índice 5)
       for (let i = 5; i < dadosTiktokRaw.length; i++) {
         const r = dadosTiktokRaw[i];
         if (!r || r.length === 0) continue;
@@ -196,9 +194,8 @@ export default function PromocoesTiktokPage() {
         const sellerSku = idxSellerSku !== -1 ? normalizarSku(r[idxSellerSku]) : "";
         const precoOriginal = idxPrice !== -1 ? parseNumeroBruto(r[idxPrice]) : 0;
 
-        if (!sellerSku || !prodId || !skuId || sellerSku.includes("identificador")) continue;
+        if (!sellerSku || !prodId || !skuId) continue;
 
-        // Validar estoque e custo usando o SKU do vendedor
         let saldoAtual = estoqueMap.get(sellerSku) || 0;
         const custo = custosMap.get(sellerSku) || 0;
 
