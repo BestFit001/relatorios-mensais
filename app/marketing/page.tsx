@@ -30,6 +30,8 @@ export default function MarketingPage() {
   const [tamanhoStorageMb, setTamanhoStorageMb] = useState<number>(0);
   const [totalItensBase, setTotalItensBase] = useState<number>(0);
 
+  const limiteStorageMb = 500; // Limite padrão do Supabase Storage (500 MB)
+
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
     if (!usuarioLogado) {
@@ -212,6 +214,9 @@ export default function MarketingPage() {
     setLimpando(false);
   };
 
+  const percentualUso = Math.min((tamanhoStorageMb / limiteStorageMb) * 100, 100);
+  const mbDisponiveis = Math.max(limiteStorageMb - tamanhoStorageMb, 0);
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -224,7 +229,6 @@ export default function MarketingPage() {
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO DE SUB-ABAS RENOMEADA PARA "GERÊNCIA" */}
         <div className="flex gap-3">
           <button
             onClick={() => setSubAba("calendario")}
@@ -244,7 +248,6 @@ export default function MarketingPage() {
           </button>
         </div>
 
-        {/* SUB-ABA: CALENDÁRIO COM CARROSSEL DE SETAS */}
         {subAba === "calendario" && (
           <div className="space-y-8">
             <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl">
@@ -299,7 +302,6 @@ export default function MarketingPage() {
               </form>
             </div>
 
-            {/* VISUALIZAÇÃO EM GRID COM SETAS PARA NAVEGAR HORIZONTALMENTE */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               {diasSemana.map((dia, idx) => {
                 const itensDoDia = postagens.filter((p) => p.dia_semana === dia);
@@ -343,7 +345,6 @@ export default function MarketingPage() {
                       )}
                     </div>
 
-                    {/* SETAS DE NAVEGAÇÃO DO CARROSSEL */}
                     {itensDoDia.length > 1 && (
                       <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
                         <button
@@ -367,26 +368,42 @@ export default function MarketingPage() {
           </div>
         )}
 
-        {/* SUB-ABA: GERÊNCIA COM MEDIDOR DE ARMAZENAMENTO */}
         {subAba === "gerencia" && (
           <div className="space-y-6 max-w-2xl mx-auto">
-            {/* PAINEL DE USO DE ARMAZENAMENTO DO SUPABASE */}
+            {/* PAINEL DE USO DE ARMAZENAMENTO COM % E MB */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-              <h2 className="text-lg font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                <span>📊 Uso de Armazenamento (Supabase Storage)</span>
+              <h2 className="text-lg font-bold text-white uppercase tracking-wider flex items-center justify-between">
+                <span>📊 Uso de Armazenamento</span>
+                <span className="text-sm font-mono text-purple-400">{percentualUso.toFixed(1)}% utilizado</span>
               </h2>
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                <div className="flex justify-between text-xs font-bold">
-                  <span className="text-indigo-400">{tamanhoStorageMb.toFixed(2)} MB Utilizados</span>
-                  <span className="text-slate-400">{totalItensBase} ficheiros na base</span>
+              
+              <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
+                <div className="grid grid-cols-3 gap-2 text-center text-xs border-b border-slate-800 pb-3">
+                  <div>
+                    <span className="block text-[10px] text-slate-500 uppercase font-bold">Usado</span>
+                    <span className="font-mono font-bold text-indigo-400">{tamanhoStorageMb.toFixed(2)} MB</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-slate-500 uppercase font-bold">Disponível</span>
+                    <span className="font-mono font-bold text-emerald-400">{mbDisponiveis.toFixed(2)} MB</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-slate-500 uppercase font-bold">Total Limite</span>
+                    <span className="font-mono font-bold text-slate-300">{limiteStorageMb} MB</span>
+                  </div>
                 </div>
-                <div className="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden border border-slate-800">
+
+                <div className="w-full bg-slate-900 h-3 rounded-full overflow-hidden border border-slate-800">
                   <div 
-                    className="h-full rounded-full bg-purple-600 transition-all duration-1000" 
-                    style={{ width: `${Math.min((tamanhoStorageMb / 1000) * 100, 100)}%` }}
+                    className={`h-full rounded-full transition-all duration-1000 ${percentualUso > 85 ? 'bg-rose-500' : percentualUso > 60 ? 'bg-amber-500' : 'bg-purple-600'}`} 
+                    style={{ width: `${percentualUso}%` }}
                   ></div>
                 </div>
-                <p className="text-[10px] text-slate-500">Métrica calculada com base em imagens e vídeos guardados no storage do Hub.</p>
+                
+                <div className="flex justify-between items-center text-[11px] text-slate-400 pt-1">
+                  <span>{totalItensBase} ficheiro(s) guardado(s) na base</span>
+                  <span className="font-mono">{percentualUso.toFixed(2)}% de {limiteStorageMb} MB</span>
+                </div>
               </div>
             </div>
 
