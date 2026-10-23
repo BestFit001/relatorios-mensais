@@ -12,6 +12,7 @@ export default function Navbar() {
   const [emailUsuario, setEmailUsuario] = useState("");
   const [menuExpandido, setMenuExpandido] = useState<string | null>("relatorios");
   const [sidebarAberta, setSidebarAberta] = useState(false);
+  const [modoEscuro, setModoEscuro] = useState(true);
   
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -20,6 +21,15 @@ export default function Navbar() {
     const prefSidebar = localStorage.getItem("hub_bestfit_sidebar_aberta");
     if (prefSidebar !== null) {
       setSidebarAberta(prefSidebar === "true");
+    }
+
+    const temaSalvo = localStorage.getItem("hub_bestfit_tema");
+    if (temaSalvo === "light") {
+      setModoEscuro(false);
+      document.documentElement.classList.add("light");
+    } else {
+      setModoEscuro(true);
+      document.documentElement.classList.add("dark");
     }
 
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -61,6 +71,20 @@ export default function Navbar() {
     const novoEstado = !sidebarAberta;
     setSidebarAberta(novoEstado);
     localStorage.setItem("hub_bestfit_sidebar_aberta", String(novoEstado));
+  };
+
+  const alternarTema = () => {
+    const novoEstado = !modoEscuro;
+    setModoEscuro(novoEstado);
+    if (novoEstado) {
+      document.documentElement.classList.remove("light");
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("hub_bestfit_tema", "dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+      document.documentElement.classList.add("light");
+      localStorage.setItem("hub_bestfit_tema", "light");
+    }
   };
 
   const carregarLogoGlobal = async () => {
@@ -176,7 +200,7 @@ export default function Navbar() {
             </Link>
           )}
 
-          {/* RELATÓRIOS (CONTEM CURVA ABC, CADASTROS, ADS, DEVOLUÇÕES E FULL) */}
+          {/* RELATÓRIOS (CONTEM CURVA ABC E DEMAIS RELATÓRIOS) */}
           {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full")) && (
             <div>
               <button
@@ -315,6 +339,15 @@ export default function Navbar() {
         </div>
 
         <div className="p-2.5 border-t border-slate-800/80 bg-slate-950/60 space-y-2">
+          {/* BOTÃO DE ALTERNÂNCIA DE TEMA (MODO CLARO / ESCURO) */}
+          <button
+            onClick={alternarTema}
+            title="Alternar Tema Claro / Escuro"
+            className="w-full bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 font-bold py-1.5 px-2 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1.5"
+          >
+            <span>{modoEscuro ? "☀️" : "🌙"}</span> {sidebarAberta && <span>{modoEscuro ? "Modo Claro" : "Modo Escuro"}</span>}
+          </button>
+
           {sidebarAberta ? (
             <div className="overflow-hidden">
               <p className="text-[10px] font-bold text-white truncate">{emailUsuario || "Utilizador"}</p>
