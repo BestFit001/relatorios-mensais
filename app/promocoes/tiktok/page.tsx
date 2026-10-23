@@ -90,6 +90,7 @@ export default function PromocoesTiktokPage() {
         } else keep = false;
       }
 
+      // Filtrar regras aceitando "tiktok" ou "tiktok shop"
       const regrasTiktok = allRegras.filter((r: any) => {
         const campoStr = String(r.campo || r.canal || "").toLowerCase();
         return campoStr.includes("tiktok");
