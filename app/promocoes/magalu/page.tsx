@@ -42,7 +42,6 @@ export default function PromocoesMagaluPage() {
   const [loading, setLoading] = useState(false);
   const [salvandoBanco, setSalvandoBanco] = useState(false);
   
-  // Parâmetros de configuração no painel
   const [margemAlvo, setMargemAlvo] = useState("20");
   const [nomePromocao, setNomePromocao] = useState("Campanha Magalu");
   const [dataInicio, setDataInicio] = useState("");
@@ -71,7 +70,6 @@ export default function PromocoesMagaluPage() {
   const carregarBasesIniciais = async () => {
     setLoading(true);
     try {
-      // 1. Carregar custos
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -94,7 +92,6 @@ export default function PromocoesMagaluPage() {
       });
       setCustosMap(cMap);
 
-      // 2. Carregar SKUs mapeados para "Magazine Luiza"
       let allMapeamentos: any[] = [];
       from = 0;
       keep = true;
@@ -119,7 +116,6 @@ export default function PromocoesMagaluPage() {
       });
       setSkusMagaluBaseSet(magaluSet);
 
-      // 3. Carregar regras de tarifação do canal Magalu da tabela config_regras_tiny
       let allRegras: any[] = [];
       from = 0;
       keep = true;
@@ -211,9 +207,9 @@ export default function PromocoesMagaluPage() {
 
         let precoSugerido = 0;
         if (statusItem === "APTO") {
-          // Processo iterativo igual à calculadora para encontrar o PDV ideal com base na faixa de preço (Comissão, Tarifa Fixa e Frete dinâmicos)
-          let pdvEstimado = custo * 2;
-          for (let iter = 0; iter < 10; iter++) {
+          // Fórmula exata da calculadora idêntica ao painel
+          let pdvEstimado = custo * 1.9;
+          for (let iter = 0; iter < 15; iter++) {
             let regraAplicada = regrasMagaluList.find((r: any) => {
               const min = Number(r.faixa_min || r.min || 0);
               const max = Number(r.faixa_max || r.max || 999999);
@@ -227,14 +223,14 @@ export default function PromocoesMagaluPage() {
             const comissaoVal = regraAplicada ? parseNumeroBruto(regraAplicada.comissao || regraAplicada.valor_comissao || 18) : 18;
             const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
             const tarifaFixa = regraAplicada ? parseNumeroBruto(regraAplicada.tarifa_fixa || regraAplicada.tarifa || 5) : 5;
-            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete || regraAplicada.valor_frete || 0) : 0;
+            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete || regraAplicada.valor_frete || 20.45) : 20.45;
 
             const denominador = 1 - (comissaoDec + imposto + margemDesejada);
             if (denominador > 0) {
               pdvEstimado = (custo + tarifaFixa + freteValor) / denominador;
             }
           }
-          precoSugerido = pdvEstimado > 0 ? pdvEstimado : custo * 2;
+          precoSugerido = pdvEstimado > 0 ? pdvEstimado : custo * 1.9;
         }
 
         resultados.push({
@@ -320,7 +316,7 @@ export default function PromocoesMagaluPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação exata com regras dinâmicas da calculadora (Frete, Tarifa e Comissão por faixa)</p>
+            <p className="text-sm font-medium text-slate-400">Precificação exata sincronizada com as regras da calculadora</p>
           </div>
           <Navbar />
         </div>
