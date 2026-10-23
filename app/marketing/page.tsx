@@ -23,10 +23,12 @@ export default function MarketingPage() {
     Segunda: 0, Terça: 0, Quarta: 0, Quinta: 0, Sexta: 0, Sábado: 0, Domingo: 0
   });
 
-  // Estados da Gerência
+  // Estados da Gerência e Armazenamento
   const [dataInicioLimpeza, setDataInicioLimpeza] = useState("");
   const [dataFimLimpeza, setDataFimLimpeza] = useState("");
   const [limpando, setLimpando] = useState(false);
+  const [tamanhoStorageMb, setTamanhoStorageMb] = useState<number>(0);
+  const [totalItensBase, setTotalItensBase] = useState<number>(0);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -35,6 +37,7 @@ export default function MarketingPage() {
       return;
     }
     carregarPostagens();
+    calcularUsoArmazenamento();
   }, []);
 
   const carregarPostagens = async () => {
@@ -46,8 +49,29 @@ export default function MarketingPage() {
 
     if (!error && data) {
       setPostagens(data);
+      setTotalItensBase(data.length);
     }
     setLoading(false);
+  };
+
+  const calcularUsoArmazenamento = async () => {
+    try {
+      const { data, error } = await supabase.storage.from("anexos").list("evidencias", {
+        limit: 1000,
+        offset: 0,
+      });
+
+      if (!error && data) {
+        let bytesTotais = 0;
+        data.forEach((file: any) => {
+          bytesTotais += file.metadata?.size || 0;
+        });
+        const mb = bytesTotais / (1024 * 1024);
+        setTamanhoStorageMb(mb);
+      }
+    } catch (err) {
+      console.error("Erro ao calcular armazenamento:", err);
+    }
   };
 
   const handleSalvarPostagem = async (e: React.FormEvent) => {
@@ -93,6 +117,7 @@ export default function MarketingPage() {
       setLegenda("");
       setArquivos(null);
       carregarPostagens();
+      calcularUsoArmazenamento();
     } catch (err: any) {
       alert("Erro ao salvar postagem: " + err.message);
     }
@@ -103,7 +128,10 @@ export default function MarketingPage() {
     if (!confirm("Deseja apagar este item do calendário?")) return;
     const { error } = await supabase.from("marketing_postagens").delete().eq("id", id);
     if (error) alert("Erro ao excluir: " + error.message);
-    else carregarPostagens();
+    else {
+      carregarPostagens();
+      calcularUsoArmazenamento();
+    }
   };
 
   const proximoItem = (dia: string, total: number) => {
@@ -156,6 +184,7 @@ export default function MarketingPage() {
       setDataInicioLimpeza("");
       setDataFimLimpeza("");
       carregarPostagens();
+      calcularUsoArmazenamento();
     } catch (err: any) {
       alert("Erro ao limpar dados: " + err.message);
     }
@@ -176,6 +205,7 @@ export default function MarketingPage() {
 
       alert("🗑️ Toda a base de marketing foi limpa com sucesso!");
       carregarPostagens();
+      calcularUsoArmazenamento();
     } catch (err: any) {
       alert("Erro ao limpar base: " + err.message);
     }
@@ -337,55 +367,78 @@ export default function MarketingPage() {
           </div>
         )}
 
-        {/* SUB-ABA: GERÊNCIA */}
+        {/* SUB-ABA: GERÊNCIA COM MEDIDOR DE ARMAZENAMENTO */}
         {subAba === "gerencia" && (
-          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl max-w-2xl mx-auto space-y-6">
-            <div>
-              <h2 className="text-lg font-bold text-white uppercase tracking-wider">🧹 Gerência de Armazenamento</h2>
-              <p className="text-xs text-slate-400 mt-1">Apague registos por período ou limpe toda a base de postagens de uma só vez.</p>
+          <div className="space-y-6 max-w-2xl mx-auto">
+            {/* PAINEL DE USO DE ARMAZENAMENTO DO SUPABASE */}
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+              <h2 className="text-lg font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <span>📊 Uso de Armazenamento (Supabase Storage)</span>
+              </h2>
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <div className="flex justify-between text-xs font-bold">
+                  <span className="text-indigo-400">{tamanhoStorageMb.toFixed(2)} MB Utilizados</span>
+                  <span className="text-slate-400">{totalItensBase} ficheiros na base</span>
+                </div>
+                <div className="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden border border-slate-800">
+                  <div 
+                    className="h-full rounded-full bg-purple-600 transition-all duration-1000" 
+                    style={{ width: `${Math.min((tamanhoStorageMb / 1000) * 100, 100)}%` }}
+                  ></div>
+                </div>
+                <p className="text-[10px] text-slate-500">Métrica calculada com base em imagens e vídeos guardados no storage do Hub.</p>
+              </div>
             </div>
 
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-6 rounded-xl border border-slate-800">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Inicial:</label>
-                  <input
-                    type="date"
-                    value={dataInicioLimpeza}
-                    onChange={(e) => setDataInicioLimpeza(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Final:</label>
-                  <input
-                    type="date"
-                    value={dataFimLimpeza}
-                    onChange={(e) => setDataFimLimpeza(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
-                  />
-                </div>
+            {/* PAINEL DE LIMPEZA */}
+            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+              <div>
+                <h2 className="text-lg font-bold text-white uppercase tracking-wider">🧹 Gerência de Armazenamento</h2>
+                <p className="text-xs text-slate-400 mt-1">Apague registos por período ou limpe toda a base de postagens de uma só vez.</p>
               </div>
 
-              <div className="flex justify-between items-center pt-2">
-                <button
-                  type="button"
-                  onClick={limparDadosPorPeriodo}
-                  disabled={limpando}
-                  className="bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
-                >
-                  {limpando ? "A limpar..." : "🗑️ Apagar Período Selecionado"}
-                </button>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-6 rounded-xl border border-slate-800">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Inicial:</label>
+                    <input
+                      type="date"
+                      value={dataInicioLimpeza}
+                      onChange={(e) => setDataInicioLimpeza(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
+                    />
+                  </div>
 
-                <button
-                  type="button"
-                  onClick={limparTudoDaBase}
-                  disabled={limpando}
-                  className="bg-rose-700 hover:bg-rose-600 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
-                >
-                  {limpando ? "A limpar..." : "🚨 Apagar TUDO da Base"}
-                </button>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Final:</label>
+                    <input
+                      type="date"
+                      value={dataFimLimpeza}
+                      onChange={(e) => setDataFimLimpeza(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center pt-2 gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={limparDadosPorPeriodo}
+                    disabled={limpando}
+                    className="bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                  >
+                    {limpando ? "A limpar..." : "🗑️ Apagar Período Selecionado"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={limparTudoDaBase}
+                    disabled={limpando}
+                    className="bg-rose-700 hover:bg-rose-600 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                  >
+                    {limpando ? "A limpar..." : "🚨 Apagar TUDO da Base"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
