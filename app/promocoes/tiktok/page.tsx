@@ -36,7 +36,7 @@ export default function PromocoesTiktokPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   
-  const [margemAlvo, setMargemAlvo] = useState("18");
+  const [margemAlvo, setMargemAlvo] = useState("10");
   const [dadosEstoqueRaw, setDadosEstoqueRaw] = useState<any[][] | null>(null);
   const [dadosTiktokRaw, setDadosTiktokRaw] = useState<any[][] | null>(null);
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
@@ -139,7 +139,7 @@ export default function PromocoesTiktokPage() {
       try {
         const rawData = await lerArquivoGenerico(e.target.files[0]);
         setDadosTiktokRaw(rawData);
-        alert("✅ Planilha do TikTok Seller Center carregada com sucesso!");
+        alert("✅ Planilha TikTok Seller Center carregada com sucesso!");
       } catch (err: any) {
         alert("Erro ao ler planilha do TikTok: " + err.message);
       }
@@ -185,12 +185,12 @@ export default function PromocoesTiktokPage() {
       const idxPrice = headerRow.findIndex(h => h.includes("price"));
 
       if (idxProdId === -1 || idxSkuId === -1 || idxSellerSku === -1) {
-        alert("Erro: Não foi possível localizar as colunas técnicas ('product_id', 'sku_id', 'seller_sku') na linha 1 da planilha.");
+        alert("Erro: Não foi possível localizar as colunas técnicas na linha 1 da planilha.");
         setLoading(false);
         return;
       }
 
-      const margemDesejada = parseFloat(margemAlvo) / 100 || 0.18;
+      const margemDesejada = parseFloat(margemAlvo) / 100 || 0.10;
       const imposto = 0.09;
       const embalagem = 0.70;
       const resultados: any[] = [];
@@ -222,8 +222,8 @@ export default function PromocoesTiktokPage() {
 
         let precoOferta = precoOriginal;
         if (statusItem === "APTO") {
-          let pdvEstimado = custo * 2;
-          for (let iter = 0; iter < 10; iter++) {
+          let pdvEstimado = custo * 1.5; // Começo neutro para convergência exata
+          for (let iter = 0; iter < 15; iter++) {
             let regraAplicada = regrasTiktokList.find((reg: any) => {
               const min = parseNumeroBruto(reg.faixa_min ?? reg.min ?? 0);
               const max = parseNumeroBruto(reg.faixa_max ?? reg.max ?? 999999);
