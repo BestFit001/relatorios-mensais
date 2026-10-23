@@ -7,7 +7,6 @@ import * as XLSX from "xlsx";
 
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
-  // Converte explicitamente para string, remove apóstrofos iniciais (comuns em TXT do Excel) e espaços
   let s = String(valor).trim().replace(/^['"]/, "");
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
   s = s.replace(/^["']|["']$/g, "").trim();
@@ -154,21 +153,30 @@ export default function PromocoesTiktokPage() {
 
     setLoading(true);
     try {
-      // 1. Mapear estoque do Tiny normalizando rigorosamente os SKUs para string
       const estoqueMap = new Map<string, number>();
-      for (let i = 0; i < dadosEstoqueRaw.length; i++) {
-        const row = dadosEstoqueRaw[i];
-        if (!row || row.length < 6) continue;
+      let colSkuEstoque = 2;
+      let colSaldoEstoque = 5;
 
-        const skuEstoque = normalizarSku(row[2]);
-        const saldoEstoque = parseNumeroBruto(row[5]);
+      if (dadosEstoqueRaw.length > 0) {
+        const cabecalhoEstoque = dadosEstoqueRaw[0].map(c => String(c || "").trim().toLowerCase());
+        const foundSku = cabecalhoEstoque.findIndex(h => h.includes("sku") || h.includes("código"));
+        const foundSaldo = cabecalhoEstoque.findIndex(h => h.includes("saldo") || h.includes("estoque"));
+        if (foundSku !== -1) colSkuEstoque = foundSku;
+        if (foundSaldo !== -1) colSaldoEstoque = foundSaldo;
+      }
+
+      for (let i = 1; i < dadosEstoqueRaw.length; i++) {
+        const row = dadosEstoqueRaw[i];
+        if (!row || row.length <= Math.max(colSkuEstoque, colSaldoEstoque)) continue;
+
+        const skuEstoque = normalizarSku(row[colSkuEstoque]);
+        const saldoEstoque = parseNumeroBruto(row[colSaldoEstoque]);
 
         if (skuEstoque) {
           estoqueMap.set(skuEstoque, saldoEstoque);
         }
       }
 
-      // 2. Cabeçalho técnico na linha 0 (índice 0)
       const headerRow = dadosTiktokRaw[0].map(c => String(c || "").trim().toLowerCase());
       const idxProdId = headerRow.findIndex(h => h.includes("product_id"));
       const idxSkuId = headerRow.findIndex(h => h.includes("sku_id"));
@@ -176,7 +184,7 @@ export default function PromocoesTiktokPage() {
       const idxPrice = headerRow.findIndex(h => h.includes("price"));
 
       if (idxProdId === -1 || idxSkuId === -1 || idxSellerSku === -1) {
-        alert("Erro: Não foi possível localizar as colunas técnicas na linha 1 da planilha.");
+        alert("Erro: Não foi possível localizar as colunas técnicas ('product_id', 'sku_id', 'seller_sku') na linha 1 da planilha.");
         setLoading(false);
         return;
       }
@@ -264,10 +272,11 @@ export default function PromocoesTiktokPage() {
       return;
     }
 
+    // Exporta o valor numérico com ponto decimal exato exigido pelo TikTok Shop
     const templateData = aptos.map(item => ({
       "Product_id (obrigatório)": item.productId,
       "SKU_id (obrigatório)": item.skuId,
-      "Preço da oferta (obrigatório)\n1. 0 < Preço da oferta ≤ Preço mais baixo nos últimos 30 dias\n2. Preço da oferta < Preço original": item.offerPrice,
+      "Preço da oferta (obrigatório)\n1. 0 < Preço da oferta ≤ Preço mais baixo nos últimos 30 dias\n2. Preço da oferta < Preço original": Number(item.offerPrice.toFixed(2)),
       "Limite total de compra (opcional)\n1. Limite total de compra ≤ Estoque\n2. Em branco refere -se a nenhum limite": "",
       "Limite de compra do comprador (opcional)\n1. 1 ≤ Limite de compra do comprador ≤ 99\n2. Em branco refere -se a nenhum limite": ""
     }));
