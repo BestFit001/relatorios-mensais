@@ -11,12 +11,20 @@ export default function Navbar() {
   const [perfilUsuario, setPerfilUsuario] = useState("");
   const [emailUsuario, setEmailUsuario] = useState("");
   const [menuExpandido, setMenuExpandido] = useState<string | null>("relatorios");
-  const [sidebarAberta, setSidebarAberta] = useState(true);
+  
+  // Alterado para iniciar como FALSE (fechado por predefinição)
+  const [sidebarAberta, setSidebarAberta] = useState(false);
   
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useEffect(() => {
+    // Verifica se o utilizador já tinha uma preferência salva no navegador
+    const prefSidebar = localStorage.getItem("hub_bestfit_sidebar_aberta");
+    if (prefSidebar !== null) {
+      setSidebarAberta(prefSidebar === "true");
+    }
+
     const usuarioLogado = localStorage.getItem("usuario_logado");
     if (usuarioLogado) {
       try {
@@ -26,6 +34,7 @@ export default function Navbar() {
         if (user.perfil === "admin") {
           setPaginasPermitidas([
             "/",
+            "/marketing",
             "/mapeamento",
             "/ads",
             "/devolucoes",
@@ -38,8 +47,7 @@ export default function Navbar() {
             "/calculadora",
             "/promocoes",
             "/produtos",
-            "/padronizacao",
-            "/marketing"
+            "/padronizacao"
           ]);
         } else {
           setPaginasPermitidas(user.paginas_permitidas || ["/"]);
@@ -51,6 +59,12 @@ export default function Navbar() {
 
     carregarLogoGlobal();
   }, []);
+
+  const toggleSidebar = () => {
+    const novoEstado = !sidebarAberta;
+    setSidebarAberta(novoEstado);
+    localStorage.setItem("hub_bestfit_sidebar_aberta", String(novoEstado));
+  };
 
   const carregarLogoGlobal = async () => {
     try {
@@ -142,7 +156,7 @@ export default function Navbar() {
           </div>
 
           <button
-            onClick={() => setSidebarAberta(!sidebarAberta)}
+            onClick={toggleSidebar}
             className="w-6 h-6 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center text-[10px] cursor-pointer transition-all flex-shrink-0"
             title={sidebarAberta ? "Recolher menu" : "Expandir menu"}
           >
@@ -165,7 +179,6 @@ export default function Navbar() {
             </Link>
           )}
 
-          {/* NOVA ABA MARKETING */}
           {temPermissao("/marketing") && (
             <Link
               href="/marketing"
@@ -340,7 +353,7 @@ export default function Navbar() {
           background-color: #0d0f18 !important;
         }
         .min-h-screen {
-          padding-left: ${sidebarAberta ? '4.5rem' : '4.5rem'} !important;
+          padding-left: ${sidebarAberta ? '14.5rem' : '4.5rem'} !important;
           transition: padding-left 0.3s ease !important;
         }
         @media (max-width: 768px) {
