@@ -115,14 +115,14 @@ export default function Navbar() {
 
   return (
     <>
-      {/* SIDEBAR LATERAL FIXA MAIS COMPACTA */}
-      <aside className={`fixed top-0 left-0 h-full bg-[#0b0e14] border-r border-slate-800 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans transition-all duration-300 ${sidebarAberta ? 'w-56' : 'w-20'}`}>
+      {/* SIDEBAR LATERAL FIXA */}
+      <aside className={`fixed top-0 left-0 h-full bg-[#0b0e14] border-r border-slate-800 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans transition-all duration-300 ${sidebarAberta ? 'w-56' : 'w-16'}`}>
         
         {/* TOPO DA SIDEBAR */}
-        <div className="p-3 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
-          <div className="flex items-center gap-2.5 overflow-hidden">
+        <div className="p-2.5 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
+          <div className="flex items-center gap-2 overflow-hidden">
             <label className="relative group cursor-pointer flex-shrink-0" title="Clique para alterar a imagem de perfil/logo">
-              <div className="w-9 h-9 rounded-xl bg-purple-600 overflow-hidden flex items-center justify-center font-black text-white text-sm shadow-lg shadow-purple-900/40 border border-purple-500/30">
+              <div className="w-8 h-8 rounded-xl bg-purple-600 overflow-hidden flex items-center justify-center font-black text-white text-xs shadow-lg shadow-purple-900/40 border border-purple-500/30">
                 {logoUrl ? (
                   <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
                 ) : (
@@ -153,7 +153,7 @@ export default function Navbar() {
         </div>
 
         {/* MENU DE NAVEGAÇÃO LATERAL */}
-        <div className="flex-1 overflow-y-auto px-2.5 py-3 space-y-1.5 text-xs font-semibold">
+        <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1 text-xs font-semibold">
           
           {/* SEÇÃO: DASHBOARD / INÍCIO */}
           {temPermissao("/") && (
@@ -303,7 +303,7 @@ export default function Navbar() {
         </div>
 
         {/* RODAPÉ DA SIDEBAR: PERFIL E SAIR */}
-        <div className="p-3 border-t border-slate-800/80 bg-slate-950/60 space-y-2">
+        <div className="p-2.5 border-t border-slate-800/80 bg-slate-950/60 space-y-2">
           {sidebarAberta ? (
             <div className="overflow-hidden">
               <p className="text-[10px] font-bold text-white truncate">{emailUsuario || "Utilizador"}</p>
@@ -330,13 +330,13 @@ export default function Navbar() {
 
       </aside>
 
-      {/* AJUSTE COMPACTO DE ESPAÇAMENTO DA TELA */}
+      {/* AJUSTE FINO E PERFEITO DE ESPAÇAMENTO */}
       <style jsx global>{`
         body {
           background-color: #0d0f18 !important;
         }
         .min-h-screen {
-          padding-left: ${sidebarAberta ? '14.5rem' : '5.5rem'} !important;
+          padding-left: ${sidebarAberta ? '14.5rem' : '4.5rem'} !important;
           transition: padding-left 0.3s ease !important;
         }
         @media (max-width: 768px) {
