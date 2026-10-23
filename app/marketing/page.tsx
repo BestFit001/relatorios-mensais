@@ -79,7 +79,7 @@ export default function MarketingPage() {
   const handleSalvarPostagem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!arquivos || arquivos.length === 0) {
-      alert("Selecione pelo menos um arquivo de imagem ou vídeo.");
+      alert("Selecione pelo menos um ficheiro de imagem ou vídeo.");
       return;
     }
 
@@ -126,13 +126,26 @@ export default function MarketingPage() {
     setSalvando(false);
   };
 
-  const excluirPostagem = async (id: number) => {
+  const excluirPostagem = async (id: number, urlArquivo: string) => {
     if (!confirm("Deseja apagar este item do calendário?")) return;
-    const { error } = await supabase.from("marketing_postagens").delete().eq("id", id);
-    if (error) alert("Erro ao excluir: " + error.message);
-    else {
+    
+    try {
+      // Extrai o caminho relativo do ficheiro no Storage para apagá-lo fisicamente
+      if (urlArquivo) {
+        const partesUrl = urlArquivo.split("/anexos/");
+        if (partesUrl.length > 1) {
+          const caminhoRelativo = decodeURIComponent(partesUrl[1]);
+          await supabase.storage.from("anexos").remove([caminhoRelativo]);
+        }
+      }
+
+      const { error } = await supabase.from("marketing_postagens").delete().eq("id", id);
+      if (error) throw error;
+
       carregarPostagens();
       calcularUsoArmazenamento();
+    } catch (err: any) {
+      alert("Erro ao excluir: " + err.message);
     }
   };
 
@@ -175,6 +188,18 @@ export default function MarketingPage() {
       }
 
       const ids = itensParaApagar.map((i: any) => i.id);
+      
+      // Remove ficheiros físicos do Storage
+      for (const item of itensParaApagar) {
+        if (item.url_arquivo) {
+          const partesUrl = item.url_arquivo.split("/anexos/");
+          if (partesUrl.length > 1) {
+            const caminhoRelativo = decodeURIComponent(partesUrl[1]);
+            await supabase.storage.from("anexos").remove([caminhoRelativo]);
+          }
+        }
+      }
+
       const { error: errDelete } = await supabase
         .from("marketing_postagens")
         .delete()
@@ -194,18 +219,25 @@ export default function MarketingPage() {
   };
 
   const limparTudoDaBase = async () => {
-    if (!confirm("⚠️ ATENÇÃO: Deseja apagar ABSOLUTAMENTE TODAS as postagens cadastradas na base de marketing?")) return;
+    if (!confirm("⚠️ ATENÇÃO: Deseja apagar ABSOLUTAMENTE TODAS as postagens e ficheiros cadastrados na base de marketing?")) return;
 
     setLimpando(true);
     try {
+      // Lista e remove todos os ficheiros da pasta evidencias no storage
+      const { data: listaFicheiros } = await supabase.storage.from("anexos").list("evidencias", { limit: 1000 });
+      if (listaFicheiros && listaFicheiros.length > 0) {
+        const caminhos = listaFicheiros.map(f => `evidencias/${f.name}`);
+        await supabase.storage.from("anexos").remove(caminhos);
+      }
+
       const { error } = await supabase
         .from("marketing_postagens")
         .delete()
-        .neq("id", 0);
+        .not("id", "is", null);
 
       if (error) throw error;
 
-      alert("🗑️ Toda a base de marketing foi limpa com sucesso!");
+      alert("🗑️ Toda a base de marketing e ficheiros foram limpos com sucesso!");
       carregarPostagens();
       calcularUsoArmazenamento();
     } catch (err: any) {
@@ -321,7 +353,7 @@ export default function MarketingPage() {
                       {itensDoDia.length > 0 && postAtual ? (
                         <div className="w-full bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 relative group">
                           <button
-                            onClick={() => excluirPostagem(postAtual.id)}
+                            onClick={() => excluirPostagem(postAtual.id, postAtual.url_arquivo)}
                             className="absolute top-2 right-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10"
                             title="Apagar item"
                           >
