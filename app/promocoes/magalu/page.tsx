@@ -56,7 +56,6 @@ export default function PromocoesMagaluPage() {
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [skusMagaluBaseSet, setSkusMagaluBaseSet] = useState<Set<string>>(new Set());
-  const [regrasMagaluList, setRegrasMagaluList] = useState<any[]>([]);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -71,7 +70,6 @@ export default function PromocoesMagaluPage() {
   const carregarBasesIniciais = async () => {
     setLoading(true);
     try {
-      // 1. Carregar custos
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -94,7 +92,6 @@ export default function PromocoesMagaluPage() {
       });
       setCustosMap(cMap);
 
-      // 2. Carregar SKUs mapeados para "Magazine Luiza"
       let allMapeamentos: any[] = [];
       from = 0;
       keep = true;
@@ -118,16 +115,6 @@ export default function PromocoesMagaluPage() {
         if (sk) magaluSet.add(sk);
       });
       setSkusMagaluBaseSet(magaluSet);
-
-      // 3. Carregar regras de tarifação do canal Magalu
-      const { data: regrasData } = await supabase.from("config_regras_tiny").select("*");
-      if (regrasData) {
-        const regrasMag = regrasData.filter((r: any) => 
-          String(r.campo || "").toLowerCase().includes("magalu") || 
-          String(r.canal || "").toLowerCase() === "magalu"
-        );
-        setRegrasMagaluList(regrasMag);
-      }
 
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
@@ -166,13 +153,8 @@ export default function PromocoesMagaluPage() {
       return;
     }
 
-    if (skusMagaluBaseSet.size === 0) {
-      alert("Aviso: Nenhum SKU encontrado no Supabase mapeado para o canal 'Magazine Luiza'. Verifique a tabela mapeamento_canais_skus.");
-    }
-
     setLoading(true);
     try {
-      // 1. Mapear estoque do Tiny: SKU na Coluna C (índice 2) e Saldo na Coluna F (índice 5)
       const estoqueMap = new Map<string, number>();
       for (let i = 0; i < dadosEstoqueRaw.length; i++) {
         const row = dadosEstoqueRaw[i];
@@ -190,7 +172,6 @@ export default function PromocoesMagaluPage() {
       const imposto = 0.09;
       const resultados: any[] = [];
 
-      // 2. Percorrer todos os SKUs mapeados para Magazine Luiza no Supabase
       for (const skuMapeado of skusMagaluBaseSet.values()) {
         const saldoAtual = estoqueMap.get(skuMapeado) || 0;
         const custo = custosMap.get(skuMapeado) || 0;
@@ -206,7 +187,6 @@ export default function PromocoesMagaluPage() {
           errosList.push("Custo não encontrado");
         }
 
-        // Lógica de precificação igual à calculadora (Comissão padrão 18%, Tarifa Fixa R$ 5,00)
         let comissaoDec = 0.18;
         let tarifaFixa = 5.00;
         let freteValor = 0.00;
@@ -230,7 +210,9 @@ export default function PromocoesMagaluPage() {
       }
 
       setDadosProcessados(resultados);
-      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos (Mapeados na Magalu e com Estoque > 0).`);
+      const qtdAptos = resultados.filter(r => r.STATUS === "APTO").length;
+      const qtdInaptos = resultados.filter(r => r.STATUS === "INAPTO").length;
+      alert(`✅ Processamento concluído!\n• Itens Aptos: ${qtdAptos}\n• Itens Inaptos (ocultos): ${qtdInaptos}`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
     }
@@ -271,7 +253,6 @@ export default function PromocoesMagaluPage() {
       return;
     }
 
-    // Gerando com Coluna A (SKU) e Coluna B (PDV final) conforme solicitado
     const dadosOtimizados = dadosProcessados
       .filter((item: any) => item.STATUS === "APTO")
       .map((item: any) => ({
@@ -290,7 +271,10 @@ export default function PromocoesMagaluPage() {
     XLSX.writeFile(newWb, "magalu_promocoes_PDV.xlsx");
   };
 
-  const itensFiltrados = promocoesAtivas.filter(p => String(p.sku || "").toLowerCase().includes(termoBusca.toLowerCase()));
+  const itensAptosList = dadosProcessados.filter((item: any) => item.STATUS === "APTO");
+  const qtdInaptosTotal = dadosProcessados.filter((item: any) => item.STATUS === "INAPTO").length;
+
+  const itensFiltradosAtivas = promocoesAtivas.filter(p => String(p.sku || "").toLowerCase().includes(termoBusca.toLowerCase()));
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -299,7 +283,7 @@ export default function PromocoesMagaluPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
-            <p className="text-sm font-medium text-slate-400">Cruzamento automático com Supabase (Magazine Luiza) e Tiny (Col. C e F)</p>
+            <p className="text-sm font-medium text-slate-400">Apenas itens aptos exibidos na tabela (Inaptos ocultos por resumo)</p>
           </div>
           <Navbar />
         </div>
@@ -395,22 +379,27 @@ export default function PromocoesMagaluPage() {
               </div>
 
               {dadosProcessados.length > 0 && (
-                <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={salvarNoBanco}
-                    disabled={salvandoBanco}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
-                  >
-                    {salvandoBanco ? "A Salvar..." : "Salvar na Base Ativa"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={baixarExcelOtimizado}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
-                  >
-                    Baixar Excel Otimizado (Col. A: SKU, Col. B: PDV)
-                  </button>
+                <div className="flex flex-col md:flex-row justify-between items-center gap-4 pt-2 border-t border-slate-800">
+                  <div className="text-xs text-slate-300 font-medium">
+                    Itens aptos exibidos: <strong className="text-emerald-400">{itensAptosList.length}</strong> | Itens inaptos ignorados: <strong className="text-rose-400">{qtdInaptosTotal}</strong>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={salvarNoBanco}
+                      disabled={salvandoBanco}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                    >
+                      {salvandoBanco ? "A Salvar..." : "Salvar na Base Ativa"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={baixarExcelOtimizado}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                    >
+                      Baixar Excel Otimizado (Col. A: SKU, Col. B: PDV)
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -418,8 +407,8 @@ export default function PromocoesMagaluPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">Resultado do Processamento (Magalu)</h3>
-                  <span className="text-xs text-slate-400">Total avaliados: {dadosProcessados.length}</span>
+                  <h3 className="text-sm font-bold text-white">Produtos Aptos para Campanha (Magalu)</h3>
+                  <span className="text-xs text-slate-400">Total exibidos: {itensAptosList.length}</span>
                 </div>
                 <div className="overflow-x-auto max-h-[500px]">
                   <table className="w-full text-left border-collapse text-xs">
@@ -430,24 +419,27 @@ export default function PromocoesMagaluPage() {
                         <th className="p-3 text-right">Custo Unitário</th>
                         <th className="p-3 text-right">PDV Sugerido (Coluna B)</th>
                         <th className="p-3 text-center">Status</th>
-                        <th className="p-3 text-center">Observações</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                      {dadosProcessados.map((item: any, idx: number) => (
+                      {itensAptosList.map((item: any, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                           <td className="p-3 font-mono text-indigo-400">{item.SKU}</td>
                           <td className="p-3 text-center font-mono font-bold text-purple-300">{item.SALDO}</td>
                           <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.CUSTO)}</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.FINAL_PRICE)}</td>
                           <td className="p-3 text-center">
-                            <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${item.STATUS === "APTO" ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-rose-950 text-rose-400 border border-rose-800"}`}>
-                              {item.STATUS}
+                            <span className="px-2.5 py-1 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                              APTO
                             </span>
                           </td>
-                          <td className="p-3 text-center font-bold text-rose-400">{item.ERRO || "-"}</td>
                         </tr>
                       ))}
+                      {itensAptosList.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="p-8 text-center text-slate-500">Nenhum produto apto encontrado com estoque positivo e mapeado na Magalu.</td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -479,7 +471,7 @@ export default function PromocoesMagaluPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                  {itensFiltrados.map((p, idx) => (
+                  {itensFiltradosAtivas.map((p, idx) => (
                     <tr key={p.id || idx} className="hover:bg-slate-800/40 transition-colors">
                       <td className="p-3.5 font-mono text-indigo-400">{p.sku}</td>
                       <td className="p-3.5 font-bold text-white">{p.promocao || "-"}</td>
@@ -488,7 +480,7 @@ export default function PromocoesMagaluPage() {
                       <td className="p-3.5 text-right font-mono font-bold text-emerald-400">{formatarMoeda(p.preco_sugerido)}</td>
                     </tr>
                   ))}
-                  {itensFiltrados.length === 0 && (
+                  {itensFiltradosAtivas.length === 0 && (
                     <tr>
                       <td colSpan={5} className="p-8 text-center text-slate-500">Nenhum registo encontrado.</td>
                     </tr>
