@@ -14,9 +14,14 @@ export default function MarketingPage() {
 
   // Estados do Calendário
   const [diaSelecionado, setDiaSelecionado] = useState("Segunda");
+  const [semanaSelecionadaEnvio, setSemanaSelecionadaEnvio] = useState("atual");
+  const [formatoSelecionado, setFormatoSelecionado] = useState("Feed");
   const [legenda, setLegenda] = useState("");
   const [arquivos, setArquivos] = useState<FileList | null>(null);
   const [postagens, setPostagens] = useState<any[]>([]);
+
+  // Filtro de Semana para visualização
+  const [filtroSemanaVisualizacao, setFiltroSemanaVisualizacao] = useState<"anterior" | "atual" | "proxima">("atual");
 
   // Índices do carrossel para cada dia da semana
   const [indicesCarrossel, setIndicesCarrossel] = useState<{ [dia: string]: number }>({
@@ -30,7 +35,7 @@ export default function MarketingPage() {
   const [tamanhoStorageMb, setTamanhoStorageMb] = useState<number>(0);
   const [totalItensBase, setTotalItensBase] = useState<number>(0);
 
-  const limiteStorageMb = 500; // Limite padrão do Supabase Storage (500 MB)
+  const limiteStorageMb = 500;
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -106,6 +111,8 @@ export default function MarketingPage() {
 
         novosRegistros.push({
           dia_semana: diaSelecionado,
+          semana_tipo: semanaSelecionadaEnvio,
+          formato: formatoSelecionado,
           tipo_midia: tipoMidia,
           url_arquivo: urlPublica,
           legenda: legenda.trim(),
@@ -115,7 +122,7 @@ export default function MarketingPage() {
       const { error } = await supabase.from("marketing_postagens").insert(novosRegistros);
       if (error) throw error;
 
-      alert(`✅ ${novosRegistros.length} item(ns) adicionado(s) para ${diaSelecionado} com sucesso!`);
+      alert(`✅ ${novosRegistros.length} item(ns) adicionado(s) para ${diaSelecionado} (${semanaSelecionadaEnvio}) com sucesso!`);
       setLegenda("");
       setArquivos(null);
       carregarPostagens();
@@ -130,7 +137,6 @@ export default function MarketingPage() {
     if (!confirm("Deseja apagar este item do calendário?")) return;
     
     try {
-      // Extrai o caminho relativo do ficheiro no Storage para apagá-lo fisicamente
       if (urlArquivo) {
         const partesUrl = urlArquivo.split("/anexos/");
         if (partesUrl.length > 1) {
@@ -189,7 +195,6 @@ export default function MarketingPage() {
 
       const ids = itensParaApagar.map((i: any) => i.id);
       
-      // Remove ficheiros físicos do Storage
       for (const item of itensParaApagar) {
         if (item.url_arquivo) {
           const partesUrl = item.url_arquivo.split("/anexos/");
@@ -223,7 +228,6 @@ export default function MarketingPage() {
 
     setLimpando(true);
     try {
-      // Lista e remove todos os ficheiros da pasta evidencias no storage
       const { data: listaFicheiros } = await supabase.storage.from("anexos").list("evidencias", { limit: 1000 });
       if (listaFicheiros && listaFicheiros.length > 0) {
         const caminhos = listaFicheiros.map(f => `evidencias/${f.name}`);
@@ -249,6 +253,9 @@ export default function MarketingPage() {
   const percentualUso = Math.min((tamanhoStorageMb / limiteStorageMb) * 100, 100);
   const mbDisponiveis = Math.max(limiteStorageMb - tamanhoStorageMb, 0);
 
+  // Filtrar postagens pela semana selecionada
+  const postagensFiltradasPorSemana = postagens.filter(p => (p.semana_tipo || "atual") === filtroSemanaVisualizacao);
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -256,34 +263,67 @@ export default function MarketingPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Marketing — Hub Best Fit</h1>
-            <p className="text-sm font-medium text-slate-400">Calendário de postagens da semana e gerência de armazenamento</p>
+            <p className="text-sm font-medium text-slate-400">Calendário de postagens com suporte a 3 semanas e formatos (Story, Reels, Feed)</p>
           </div>
           <Navbar />
         </div>
 
-        <div className="flex gap-3">
-          <button
-            onClick={() => setSubAba("calendario")}
-            className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
-              subAba === "calendario" ? "bg-purple-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"
-            }`}
-          >
-            📅 Postagens da Semana
-          </button>
-          <button
-            onClick={() => setSubAba("gerencia")}
-            className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
-              subAba === "gerencia" ? "bg-purple-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"
-            }`}
-          >
-            🧹 Gerência
-          </button>
+        <div className="flex justify-between items-center flex-wrap gap-4 bg-slate-900 p-3 rounded-2xl border border-slate-800">
+          <div className="flex gap-3">
+            <button
+              onClick={() => setSubAba("calendario")}
+              className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+                subAba === "calendario" ? "bg-purple-600 text-white" : "bg-slate-950 text-slate-400 border border-slate-800"
+              }`}
+            >
+              📅 Postagens da Semana
+            </button>
+            <button
+              onClick={() => setSubAba("gerencia")}
+              className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+                subAba === "gerencia" ? "bg-purple-600 text-white" : "bg-slate-950 text-slate-400 border border-slate-800"
+              }`}
+            >
+              🧹 Gerência
+            </button>
+          </div>
+
+          {/* FILTRO DE SEMANAS */}
+          {subAba === "calendario" && (
+            <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+              <span className="text-[10px] font-bold text-slate-400 uppercase px-2">Visualizar:</span>
+              <button
+                onClick={() => setFiltroSemanaVisualizacao("anterior")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  filtroSemanaVisualizacao === "anterior" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Semana Anterior
+              </button>
+              <button
+                onClick={() => setFiltroSemanaVisualizacao("atual")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  filtroSemanaVisualizacao === "atual" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Semana Atual
+              </button>
+              <button
+                onClick={() => setFiltroSemanaVisualizacao("proxima")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  filtroSemanaVisualizacao === "proxima" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Próxima Semana
+              </button>
+            </div>
+          )}
         </div>
 
         {subAba === "calendario" && (
           <div className="space-y-8">
             <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <h2 className="text-lg font-bold text-white mb-4">➕ Adicionar Postagem (Suporte a Carrossel / Múltiplos)</h2>
+              <h2 className="text-lg font-bold text-white mb-4">➕ Adicionar Postagem (Carrossel, Formato & Semana)</h2>
               
               <form onSubmit={handleSalvarPostagem} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                 <div>
@@ -299,8 +339,34 @@ export default function MarketingPage() {
                   </select>
                 </div>
 
-                <div className="md:col-span-2">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ficheiro(s) (Imagens / Vídeos - Selecione múltiplos para carrossel):</label>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Período / Semana:</label>
+                  <select
+                    value={semanaSelecionadaEnvio}
+                    onChange={(e) => setSemanaSelecionadaEnvio(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer"
+                  >
+                    <option value="anterior">Semana Anterior</option>
+                    <option value="atual">Semana Atual</option>
+                    <option value="proxima">Próxima Semana</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Formato:</label>
+                  <select
+                    value={formatoSelecionado}
+                    onChange={(e) => setFormatoSelecionado(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer"
+                  >
+                    <option value="Feed">🖼️ Feed</option>
+                    <option value="Reels">🎬 Reels</option>
+                    <option value="Story">📱 Story</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-3">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ficheiro(s) (Múltiplos para carrossel):</label>
                   <input
                     type="file"
                     multiple
@@ -334,9 +400,10 @@ export default function MarketingPage() {
               </form>
             </div>
 
+            {/* VISUALIZAÇÃO EM GRID COM CARROSSEL E ETIQUETA DE FORMATO */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               {diasSemana.map((dia, idx) => {
-                const itensDoDia = postagens.filter((p) => p.dia_semana === dia);
+                const itensDoDia = postagensFiltradasPorSemana.filter((p) => p.dia_semana === dia);
                 const currentIndex = indicesCarrossel[dia] || 0;
                 const postAtual = itensDoDia[currentIndex];
 
@@ -352,6 +419,16 @@ export default function MarketingPage() {
                     <div className="relative flex items-center justify-center min-h-[200px]">
                       {itensDoDia.length > 0 && postAtual ? (
                         <div className="w-full bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 relative group">
+                          {/* ETIQUETA DE FORMATO (STORY, REELS, FEED) */}
+                          <div className="absolute top-2 left-2 z-10">
+                            <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase shadow-md ${
+                              postAtual.formato === 'Story' ? 'bg-amber-600 text-white' :
+                              postAtual.formato === 'Reels' ? 'bg-rose-600 text-white' : 'bg-indigo-600 text-white'
+                            }`}>
+                              {postAtual.formato === 'Story' ? '📱 Story' : postAtual.formato === 'Reels' ? '🎬 Reels' : '🖼️ Feed'}
+                            </span>
+                          </div>
+
                           <button
                             onClick={() => excluirPostagem(postAtual.id, postAtual.url_arquivo)}
                             className="absolute top-2 right-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10"
@@ -361,9 +438,9 @@ export default function MarketingPage() {
                           </button>
 
                           {postAtual.tipo_midia === "video" ? (
-                            <video src={postAtual.url_arquivo} controls className="w-full h-44 object-cover rounded-lg bg-black" />
+                            <video src={postAtual.url_arquivo} controls className="w-full h-44 object-cover rounded-lg bg-black pt-5" />
                           ) : (
-                            <img src={postAtual.url_arquivo} alt="Post" className="w-full h-44 object-cover rounded-lg bg-black" />
+                            <img src={postAtual.url_arquivo} alt="Post" className="w-full h-44 object-cover rounded-lg bg-black pt-5" />
                           )}
 
                           {postAtual.legenda && (
@@ -373,7 +450,7 @@ export default function MarketingPage() {
                           )}
                         </div>
                       ) : (
-                        <p className="text-center text-slate-600 italic text-xs py-10">Nenhuma postagem para este dia.</p>
+                        <p className="text-center text-slate-600 italic text-xs py-10">Nenhuma postagem para este dia nesta semana.</p>
                       )}
                     </div>
 
@@ -402,7 +479,6 @@ export default function MarketingPage() {
 
         {subAba === "gerencia" && (
           <div className="space-y-6 max-w-2xl mx-auto">
-            {/* PAINEL DE USO DE ARMAZENAMENTO COM % E MB */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
               <h2 className="text-lg font-bold text-white uppercase tracking-wider flex items-center justify-between">
                 <span>📊 Uso de Armazenamento</span>
@@ -439,7 +515,6 @@ export default function MarketingPage() {
               </div>
             </div>
 
-            {/* PAINEL DE LIMPEZA */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
               <div>
                 <h2 className="text-lg font-bold text-white uppercase tracking-wider">🧹 Gerência de Armazenamento</h2>
