@@ -207,39 +207,49 @@ export default function PromocoesMagaluPage() {
 
         let precoSugerido = 0;
         if (statusItem === "APTO") {
-          // 1. Primeiro testamos com a regra de faixa menor (< 79.00), onde o frete é 0.00
-          let regraBaixa = regrasMagaluList.find((r: any) => {
-            const max = Number(r.faixa_max || r.max || 999999);
-            return max <= 79.00 || String(r.faixa_preco || "").includes("78.99");
-          }) || regrasMagaluList[0];
-
-          let comissaoVal = regraBaixa ? parseNumeroBruto(regraBaixa.comissao || regraBaixa.valor_comissao || 18) : 18;
-          let comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
-          let tarifaFixa = regraBaixa ? parseNumeroBruto(regraBaixa.tarifa_fixa || regraBaixa.tarifa || 5) : 5;
-          let freteValor = regraBaixa ? parseNumeroBruto(regraBaixa.frete || regraBaixa.valor_frete || 0) : 0;
-
-          let denominador = 1 - (comissaoDec + imposto + margemDesejada);
-          let pdvCalculado = denominador > 0 ? (custo + tarifaFixa + freteValor) / denominador : custo * 2;
-
-          // 2. Se o preço calculado ultrapassar 79.00, aplicamos a regra da faixa superior (com frete e tarifas da faixa alta)
-          if (pdvCalculado >= 79.00) {
-            let regraAlta = regrasMagaluList.find((r: any) => {
+          let pdvEstimado = custo * 2;
+          for (let iter = 0; iter < 10; iter++) {
+            let regraAplicada = regrasMagaluList.find((r: any) => {
               const min = Number(r.faixa_min || r.min || 0);
-              return min >= 79.00 || String(r.faixa_preco || "").includes("79.00");
-            }) || regrasMagaluList[1] || regraBaixa;
+              const max = Number(r.faixa_max || r.max || 999999);
+              return pdvEstimado >= min && pdvEstimado <= max;
+            });
 
-            comissaoVal = parseNumeroBruto(regraAlta.comissao || regraAlta.valor_comissao || 18);
-            comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
-            tarifaFixa = parseNumeroBruto(regraAlta.tarifa_fixa || regraAlta.tarifa || 5);
-            freteValor = parseNumeroBruto(regraAlta.frete || regraAlta.valor_frete || 20.45);
+            const comissaoVal = regraAplicada ? parseNumeroBruto(regraAplicada.comissao || regraAplicada.valor_comissao || 18) : 18;
+            const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
+            const tarifaFixa = regraAplicada ? parseNumeroBruto(regraAplicada.tarifa_fixa || regraAplicada.tarifa || 5) : 5;
+            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete || regraAplicada.valor_frete || 0) : 0;
 
-            denominador = 1 - (comissaoDec + imposto + margemDesejada);
+            const denominador = 1 - (comissaoDec + imposto + margemDesejada);
             if (denominador > 0) {
-              pdvCalculado = (custo + tarifaFixa + freteValor) / denominador;
+              pdvEstimado = (custo + tarifaFixa + freteValor) / denominador;
             }
           }
 
-          precoSugerido = pdvCalculado > 0 ? pdvCalculado : custo * 2;
+          // Ajuste de faixa superior se PDV >= 79.00
+          if (pdvEstimado >= 79.00) {
+            let pdvAlto = custo * 2;
+            for (let iter = 0; iter < 10; iter++) {
+              let regraAlta = regrasMagaluList.find((r: any) => {
+                const min = Number(r.faixa_min || r.min || 0);
+                const max = Number(r.faixa_max || r.max || 999999);
+                return pdvAlto >= min && pdvAlto <= max;
+              }) || regrasMagaluList[1] || regrasMagaluList[0];
+
+              const comissaoVal = regraAlta ? parseNumeroBruto(regraAlta.comissao || regraAlta.valor_comissao || 18) : 18;
+              const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
+              const tarifaFixa = regraAlta ? parseNumeroBruto(regraAlta.tarifa_fixa || regraAlta.tarifa || 5) : 5;
+              const freteValor = regraAlta ? parseNumeroBruto(regraAlta.frete || regraAlta.valor_frete || 20.45) : 20.45;
+
+              const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+              if (denominador > 0) {
+                pdvAlto = (custo + tarifaFixa + freteValor) / denominador;
+              }
+            }
+            pdvEstimado = pdvAlto;
+          }
+
+          precoSugerido = pdvEstimado > 0 ? pdvEstimado : custo * 2;
         }
 
         resultados.push({
@@ -325,7 +335,7 @@ export default function PromocoesMagaluPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação exata com regras de frete grátis (&lt; 78,99) e faixa superior (&ge; 79,00)</p>
+            <p className="text-sm font-medium text-slate-400">Precificação robusta com fallback seguro para regras da Magalu</p>
           </div>
           <Navbar />
         </div>
