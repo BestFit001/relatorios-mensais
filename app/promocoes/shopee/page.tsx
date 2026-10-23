@@ -7,7 +7,7 @@ import * as XLSX from "xlsx";
 
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
-  let s = String(valor).trim();
+  let s = String(valor).trim().replace(/^['"]/, "");
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
   s = s.replace(/^["']|["']$/g, "").trim();
   if (/e\+/i.test(s)) {
@@ -36,13 +36,13 @@ export default function PromocoesShopeePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   
-  const [margemAlvo, setMargemAlvo] = useState("18");
+  const [margemAlvo, setMargemAlvo] = useState("10");
   const [dadosEstoqueRaw, setDadosEstoqueRaw] = useState<any[][] | null>(null);
   const [dadosShopeeRaw, setDadosShopeeRaw] = useState<any[][] | null>(null);
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
-  const [regrasShopeeList, setRegrasShopeeList] = useState<any[]>([]);
+  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -73,28 +73,16 @@ export default function PromocoesShopeePage() {
       allCustos.forEach((c: any) => {
         const k = normalizarSku(c.sku);
         if (k) {
-          cMap.set(k, Number(c.custo_unitario || c.custo || 0));
+          const custoVal = parseNumeroBruto(c.custo_unitario ?? c.custo ?? 0);
+          cMap.set(k, custoVal);
         }
       });
       setCustosMap(cMap);
 
-      let allRegras: any[] = [];
-      from = 0;
-      keep = true;
-      while (keep) {
-        const { data } = await supabase.from("config_regras_tiny").select("*").range(from, from + step - 1);
-        if (data && data.length > 0) {
-          allRegras = [...allRegras, ...data];
-          from += step;
-          if (data.length < step) keep = false;
-        } else keep = false;
+      const { data: tarifacaoData } = await supabase.from("config_regras_tarifacao").select("*");
+      if (tarifacaoData) {
+        setRegrasTarifacao(tarifacaoData);
       }
-
-      const regrasShopee = allRegras.filter((r: any) => {
-        const campoStr = String(r.campo || r.canal || "").toLowerCase();
-        return campoStr.includes("shopee");
-      });
-      setRegrasShopeeList(regrasShopee);
 
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
@@ -102,29 +90,60 @@ export default function PromocoesShopeePage() {
     setLoading(false);
   };
 
-  const lerArquivoParaMatriz = (file: File): Promise<any[][]> => {
+  const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
+    const cLower = canalNome.toLowerCase();
+    
+    const regrasDoCanal = regrasTarifacao.filter((r) => {
+      const rCanal = String(r.canal || "").toLowerCase();
+      if (rCanal === cLower) return true;
+      if (cLower.includes("shopee") && rCanal.includes("shopee")) return true;
+      return rCanal.includes(cLower) || cLower.includes(rCanal);
+    });
+
+    if (regrasDoCanal.length === 0) {
+      return { comissao: 14, tarifa_fixa: 0, frete: 0 };
+    }
+
+    for (const regra of regrasDoCanal) {
+      const faixaStr = String(regra.faixa_preco || "").toLowerCase();
+      const matchNums = faixaStr.match(/[\d.,]+/g);
+
+      if (faixaStr.includes("em diante") || faixaStr.includes("99999") || (matchNums && matchNums.length === 1)) {
+        const limiteInf = matchNums ? parseNumeroBruto(matchNums[0]) : 0;
+        if (precoReferencia >= limiteInf) return regra;
+      } else if (matchNums && matchNums.length >= 2) {
+        const min = parseNumeroBruto(matchNums[0]);
+        const max = parseNumeroBruto(matchNums[1]);
+        if (precoReferencia >= min && precoReferencia <= max) return regra;
+      }
+    }
+
+    return regrasDoCanal[0];
+  };
+
+  const lerArquivoGenerico = (file: File): Promise<any[][]> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (evt) => {
         try {
-          const bstr = evt.target?.result;
-          const wb = XLSX.read(bstr, { type: "binary", cellDates: true });
+          const buffer = evt.target?.result;
+          const wb = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
           const ws = wb.Sheets[wb.SheetNames[0]];
-          const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+          const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
           resolve(rawData);
         } catch (err) {
           reject(err);
         }
       };
       reader.onerror = (error) => reject(error);
-      reader.readAsBinaryString(file);
+      reader.readAsArrayBuffer(file);
     });
   };
 
   const handleEstoqueUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       try {
-        const rawData = await lerArquivoParaMatriz(e.target.files[0]);
+        const rawData = await lerArquivoGenerico(e.target.files[0]);
         setDadosEstoqueRaw(rawData);
         alert("✅ Planilha de estoque (Tiny) carregada com sucesso!");
       } catch (err: any) {
@@ -136,90 +155,79 @@ export default function PromocoesShopeePage() {
   const handleShopeeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       try {
-        const rawData = await lerArquivoParaMatriz(e.target.files[0]);
+        const rawData = await lerArquivoGenerico(e.target.files[0]);
         setDadosShopeeRaw(rawData);
-        alert("✅ Planilha de anúncios Shopee carregada com sucesso!");
+        alert("✅ Planilha da Shopee carregada com sucesso!");
       } catch (err: any) {
-        alert("Erro ao ler anúncios Shopee: " + err.message);
+        alert("Erro ao ler planilha da Shopee: " + err.message);
       }
     }
   };
 
   const processarCampanhaShopee = () => {
     if (!dadosEstoqueRaw || !dadosShopeeRaw) {
-      alert("Por favor, selecione tanto a Planilha de Estoque quanto a Planilha de Anúncios da Shopee.");
+      alert("Por favor, selecione tanto a Planilha de Estoque quanto a Planilha da Shopee.");
       return;
     }
 
     setLoading(true);
     try {
-      // 1. Mapear estoque do Tiny: SKU na Coluna C (índice 2) e Saldo na Coluna F (índice 5)
       const estoqueMap = new Map<string, number>();
-      for (let i = 0; i < dadosEstoqueRaw.length; i++) {
-        const row = dadosEstoqueRaw[i];
-        if (!row || row.length < 6) continue;
+      let colSkuEstoque = 2;
+      let colSaldoEstoque = 5;
 
-        const skuEstoque = normalizarSku(row[2]);
-        const saldoEstoque = parseNumeroBruto(row[5]);
+      if (dadosEstoqueRaw.length > 0) {
+        const cabecalhoEstoque = dadosEstoqueRaw[0].map(c => String(c || "").trim().toLowerCase());
+        const foundSku = cabecalhoEstoque.findIndex(h => h.includes("sku") || h.includes("código"));
+        const foundSaldo = cabecalhoEstoque.findIndex(h => h.includes("saldo") || h.includes("estoque"));
+        if (foundSku !== -1) colSkuEstoque = foundSku;
+        if (foundSaldo !== -1) colSaldoEstoque = foundSaldo;
+      }
+
+      for (let i = 1; i < dadosEstoqueRaw.length; i++) {
+        const row = dadosEstoqueRaw[i];
+        if (!row || row.length <= Math.max(colSkuEstoque, colSaldoEstoque)) continue;
+
+        const skuEstoque = normalizarSku(row[colSkuEstoque]);
+        const saldoEstoque = parseNumeroBruto(row[colSaldoEstoque]);
 
         if (skuEstoque) {
           estoqueMap.set(skuEstoque, saldoEstoque);
         }
       }
 
-      // 2. Encontrar linha de cabeçalho na planilha da Shopee (varrendo até as primeiras 5 linhas)
-      let headerRowIdx = -1;
-      let headers: string[] = [];
-      let idxProdId = -1, idxVarId = -1, idxSku = -1, idxPreco = -1, idxNomeProd = -1, idxNomeVar = -1;
+      // Cabeçalho da Shopee na linha 3 (índice 2)
+      const headerRow = dadosShopeeRaw[2].map(c => String(c || "").trim().toLowerCase());
+      const idxProdId = headerRow.findIndex(h => h.includes("id do produto") || h.includes("product id"));
+      const idxVarId = headerRow.findIndex(h => h.findIndex(str => str.includes("variante") || str.includes("variation")) !== -1 ? true : h.includes("variação"));
+      const idxSku = headerRow.findIndex(h => h === "sku" || h.includes("sku do vendedor"));
+      const idxPrice = headerRow.findIndex(h => h.includes("preço") || h.includes("price"));
 
-      for (let rIdx = 0; rIdx < Math.min(6, dadosShopeeRaw.length); rIdx++) {
-        const row = dadosShopeeRaw[rIdx];
-        if (!row) continue;
-        const rowStrs = row.map(c => String(c || "").trim().toUpperCase());
-        
-        const pId = rowStrs.findIndex(s => s.includes("ID DO PRODUTO") || s.includes("PRODUCT_ID"));
-        const vId = rowStrs.findIndex(s => s.includes("ID DE VARIAÇÃO") || s.includes("VARIATION_ID"));
-        const skuC = rowStrs.findIndex(s => s === "SKU" || s.includes("SKU DE REFERÊNCIA") || s.includes("VARIATION_SKU"));
-        const prc = rowStrs.findIndex(s => s.includes("PREÇO") || s.includes("PRICE"));
-
-        if (pId !== -1 || vId !== -1 || skuC !== -1 || prc !== -1) {
-          headerRowIdx = rIdx;
-          headers = rowStrs;
-          idxProdId = pId;
-          idxVarId = vId;
-          idxSku = skuC;
-          idxPreco = prc;
-          idxNomeProd = rowStrs.findIndex(s => s.includes("NOME DO PRODUTO"));
-          idxNomeVar = rowStrs.findIndex(s => s.includes("VARIAÇÃO") || s.includes("NOME"));
-          break;
-        }
-      }
-
-      if (headerRowIdx === -1 || idxSku === -1 || idxPreco === -1) {
-        alert("Erro: Não foi possível detetar o cabeçalho correto na planilha da Shopee.");
+      if (idxProdId === -1 || idxSku === -1) {
+        alert("Erro: Não foi possível localizar as colunas 'ID do Produto' e 'SKU' na linha 3 da planilha da Shopee.");
         setLoading(false);
         return;
       }
 
-      const margemDesejada = parseFloat(margemAlvo) / 100 || 0.18;
+      const margemAlvoDec = parseFloat(margemAlvo) / 100 || 0.10;
       const imposto = 0.09;
+      const embalagem = 0.70;
       const resultados: any[] = [];
 
-      for (let i = headerRowIdx + 1; i < dadosShopeeRaw.length; i++) {
+      // Os dados reais na planilha da Shopee começam a partir da linha 7 (índice 6)
+      for (let i = 6; i < dadosShopeeRaw.length; i++) {
         const r = dadosShopeeRaw[i];
         if (!r || r.length === 0) continue;
 
-        const prodId = idxProdId !== -1 ? r[idxProdId] : "";
+        const prodId = r[idxProdId] || "";
         const varId = idxVarId !== -1 ? r[idxVarId] : "";
-        const skuRaw = idxSku !== -1 ? normalizarSku(r[idxSku]) : "";
-        const precoOriginal = idxPreco !== -1 ? parseNumeroBruto(r[idxPreco]) : 0;
-        const nomeProd = idxNomeProd !== -1 ? r[idxNomeProd] : "";
-        const nomeVar = idxNomeVar !== -1 ? r[idxNomeVar] : "";
+        const skuVendedor = normalizarSku(r[idxSku]);
+        const precoOriginal = idxPrice !== -1 ? parseNumeroBruto(r[idxPrice]) : 0;
 
-        if (!skuRaw || precoOriginal <= 0) continue;
+        if (!skuVendedor) continue;
 
-        let saldoAtual = estoqueMap.get(skuRaw) || 0;
-        const custo = custosMap.get(skuRaw) || 0;
+        const saldoAtual = estoqueMap.get(skuVendedor) || 0;
+        const custo = custosMap.get(skuVendedor) || 0;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
@@ -229,42 +237,33 @@ export default function PromocoesShopeePage() {
           errosList.push(`Sem estoque (Saldo: ${saldoAtual})`);
         } else if (custo <= 0) {
           statusItem = "INAPTO";
-          errosList.push("Custo não encontrado");
+          errosList.push("Custo não encontrado na base");
         }
 
-        let precoDesconto = precoOriginal;
+        let precoOferta = precoOriginal;
         if (statusItem === "APTO") {
-          let pdvEstimado = custo * 2;
-          for (let iter = 0; iter < 10; iter++) {
-            let regraAplicada = regrasShopeeList.find((reg: any) => {
-              const min = Number(reg.faixa_min || reg.min || 0);
-              const max = Number(reg.faixa_max || reg.max || 999999);
-              return pdvEstimado >= min && pdvEstimado <= max;
-            }) || regrasShopeeList[0];
-
-            const comissaoVal = regraAplicada ? parseNumeroBruto(regraAplicada.comissao || regraAplicada.valor_comissao || 20) : 20;
+          let pdvEstimado = custo * 1.5;
+          for (let iter = 0; iter < 15; iter++) {
+            const regraTabela = obterRegraCanalDaTabela("Shopee", pdvEstimado);
+            const comissaoVal = parseNumeroBruto(regraTabela.comissao ?? 14);
             const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
-            const tarifaFixa = regraAplicada ? parseNumeroBruto(regraAplicada.tarifa_fixa || regraAplicada.tarifa || 4) : 4;
-            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete || regraAplicada.valor_frete || 0) : 0;
-            const embalagem = 0.70;
+            const tarifaFixa = parseNumeroBruto(regraTabela.tarifa_fixa ?? 0);
+            const freteValor = parseNumeroBruto(regraTabela.frete ?? 0);
 
-            const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+            const denominador = 1 - (comissaoDec + imposto + margemAlvoDec);
             if (denominador > 0) {
               pdvEstimado = (custo + tarifaFixa + embalagem + freteValor) / denominador;
             }
           }
-          precoDesconto = pdvEstimado > 0 ? pdvEstimado : precoOriginal * 0.9;
+          precoOferta = pdvEstimado > 0 ? pdvEstimado : precoOriginal * 0.9;
         }
 
         resultados.push({
           productId: prodId,
-          productName: nomeProd,
-          parentSku: "",
-          variationId: varId,
-          variationName: nomeVar,
+          varId: varId,
           sku: r[idxSku],
           originalPrice: precoOriginal,
-          discountPrice: Number(precoDesconto.toFixed(2)),
+          offerPrice: Number(precoOferta.toFixed(2)),
           status: statusItem,
           erro: errosList.join(" | ")
         });
@@ -292,22 +291,35 @@ export default function PromocoesShopeePage() {
       return;
     }
 
-    const templateData = aptos.map(item => ({
-      "ID do produto": item.productId,
-      "Nome do Produto. (Opcional)": item.productName,
-      "Nº de Ref. Parent SKU. (Opcional)": item.parentSku,
-      "ID de variação": item.variationId,
-      "Variação de nome. (Opcional)": item.variationName,
-      "Nº de Ref. SKU. (Opcional)": item.sku,
-      "Preço original (opcional)": item.originalPrice,
-      "Preço de desconto": item.discountPrice,
-      "Limite de compra (Opcional)": ""
-    }));
+    // Mantendo a estrutura original exata da Shopee para o template de desconto
+    const wsData = [
+      ["et_title_product_id", "et_title_product_name", "et_title_variation_id", "et_title_variation_name", "et_title_parent_sku", "et_title_variation_sku", "et_title_variation_price", "ps_gtin_code", "et_title_variation_stock", "et_title_reason"],
+      ["sales_info", "700a3d5d251db047505a7f359", "0", "471903358", '{"search_condition":{}}', "nan", "nan", "nan", "nan", "nan"],
+      ["ID do Produto", "Nome do Produto", "Variante Identificador", "Nome", "SKU de referência", "SKU", "Preço", "GTIN (EAN)", "Estoque do Vendedor", "Motivo da Falha"],
+      ["nan", "nan", "nan", "nan", "nan", "nan", "Obrigatório", "nan", "nan", "nan"],
+      ["nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan"],
+      ["nan", "nan", "nan", "nan", "nan", "nan", "Insira de1.00 a 1000", "nan", "nan", "nan"]
+    ];
 
-    const ws = XLSX.utils.json_to_sheet(templateData);
+    aptos.forEach(item => {
+      wsData.push([
+        item.productId,
+        "",
+        item.varId,
+        "",
+        "",
+        item.sku,
+        Number(item.offerPrice.toFixed(2)),
+        "",
+        "",
+        ""
+      ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Sheet");
-    XLSX.writeFile(wb, "template-discount-shopee.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    XLSX.writeFile(wb, "Template_Discount_Shopee.xlsx");
   };
 
   const itensAptos = dadosProcessados.filter(i => i.status === "APTO");
@@ -399,7 +411,6 @@ export default function PromocoesShopeePage() {
                     <tr>
                       <th className="p-3">ID Produto</th>
                       <th className="p-3">SKU</th>
-                      <th className="p-3">Variação</th>
                       <th className="p-3 text-right">Preço Original</th>
                       <th className="p-3 text-right">Preço de Desconto</th>
                       <th className="p-3 text-center">Status</th>
@@ -410,9 +421,8 @@ export default function PromocoesShopeePage() {
                       <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                         <td className="p-3 font-mono text-indigo-400">{item.productId}</td>
                         <td className="p-3 font-mono text-slate-300">{item.sku}</td>
-                        <td className="p-3 text-slate-300">{item.variationName || "Único"}</td>
-                        <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.originalPrice)}</td>
-                        <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.discountPrice)}</td>
+                        <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.originalPrice)}</td>
+                        <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.offerPrice)}</td>
                         <td className="p-3 text-center">
                           <span className="px-2.5 py-1 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
                             APTO
@@ -422,7 +432,7 @@ export default function PromocoesShopeePage() {
                     ))}
                     {itensAptos.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="p-8 text-center text-slate-500">Nenhum produto apto encontrado.</td>
+                        <td colSpan={5} className="p-8 text-center text-slate-500">Nenhum produto apto encontrado.</td>
                       </tr>
                     )}
                   </tbody>
