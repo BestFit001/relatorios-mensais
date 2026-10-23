@@ -7,7 +7,6 @@ import * as XLSX from "xlsx";
 
 export default function ProdutosPage() {
   const router = useRouter();
-  // Novas sub-abas: "pendentes", "canais", "videos", "periodo", "descricoes", "config"
   const [subAba, setSubAba] = useState<"pendentes" | "canais" | "videos" | "periodo" | "config" | "descricoes">("pendentes");
   const [loading, setLoading] = useState(false);
 
@@ -127,7 +126,6 @@ export default function ProdutosPage() {
     setLoading(true);
     const skuNorm = skuBuscaManual.trim();
 
-    // Procura na tabela de custos ou base tiny
     const { data: custoMatch } = await supabase
       .from("tabela_custos_skus")
       .select("*")
@@ -187,6 +185,23 @@ export default function ProdutosPage() {
     if (!confirm(`Remover o SKU ${sku} da aba de Vídeos?`)) return;
     await supabase.from("produtos_videos_manuais").delete().eq("sku", sku);
     await carregarVideosManuaisDoBanco();
+  };
+
+  const toggleClipeRealizado = async (sku: string, canal: string, checked: boolean) => {
+    try {
+      const atualizados = [...cadastrosRealizados];
+      const alvo = atualizados.find(i => i.sku === sku);
+      if (!alvo) return;
+
+      const clipes = alvo.clipes_enviados || {};
+      clipes[canal] = checked;
+      alvo.clipes_enviados = clipes;
+
+      await supabase.from("produtos_novos_cadastrados").update({ clipes_enviados: clipes }).eq("sku", sku);
+      setCadastrosRealizados(atualizados);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const toggleClipeVideoManual = async (sku: string, canal: string, checked: boolean) => {
@@ -616,31 +631,10 @@ export default function ProdutosPage() {
     }
   };
 
-  const toggleClipePai = async (paiKey: string, canal: string, checked: boolean) => {
-    try {
-      const atualizados = [...cadastrosRealizados];
-      const alvos = atualizados.filter(i => (i.sku_pai || i.sku.substring(0, 5)) === paiKey);
-
-      for (const alvo of alvos) {
-        const clipes = alvo.clipes_enviados || {};
-        clipes[canal] = checked;
-        alvo.clipes_enviados = clipes;
-
-        await supabase.from("produtos_novos_cadastrados").update({
-          clipes_enviados: clipes,
-          data_clipes: checked ? new Date().toISOString() : alvo.data_clipes
-        }).eq("sku", alvo.sku);
-      }
-      setCadastrosRealizados(atualizados);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   const agruparPorPai = (lista: any[]) => {
     const grupos: { [pai: string]: any[] } = {};
     lista.forEach(item => {
-      const pai = item.sku_pai || item.sku.substring(0, 5);
+      const pai = item.sku_pai || (item.sku.length > 5 ? item.sku.substring(0, 5) : item.sku);
       if (!grupos[pai]) grupos[pai] = [];
       grupos[pai].push(item);
     });
@@ -722,7 +716,7 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Produtos & Vídeos</h1>
-            <p className="text-sm font-medium text-slate-400">Controlo separado de Canais e Clipes/Vídeos com Inclusão Manual</p>
+            <p className="text-sm font-medium text-slate-400">Controlo separado de Canais e Clipes/Vídeos padronizados por SKU Pai</p>
           </div>
           <Navbar />
         </div>
@@ -751,7 +745,7 @@ export default function ProdutosPage() {
                 subAba === "videos" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
               }`}
             >
-              📹 Vídeos / Clipes ({cadastrosRealizados.length + produtosVideosManual.length})
+              📹 Vídeos / Clipes ({chavesGrupos.length + produtosVideosManual.length})
             </button>
             <button
               onClick={() => setSubAba("periodo")}
@@ -899,7 +893,6 @@ export default function ProdutosPage() {
           </div>
         )}
 
-        {/* ===================== ABA 1: CANAIS ===================== */}
         {subAba === "canais" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
             <div className="flex flex-wrap justify-between items-center gap-4 border-b border-slate-800 pb-4">
@@ -1004,13 +997,13 @@ export default function ProdutosPage() {
           </div>
         )}
 
-        {/* ===================== ABA 2: VÍDEOS / CLIPES ===================== */}
+        {/* ===================== ABA 3: VÍDEOS / CLIPES (PADRONIZADO POR SKU PAI + TÍTULO) ===================== */}
         {subAba === "videos" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
             <div className="flex flex-wrap justify-between items-center gap-4 border-b border-slate-800 pb-4">
               <div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Controlo de Vídeos e Clipes por Canal</h3>
-                <p className="text-xs text-slate-400 mt-1">Gerencie os clipes dos produtos cadastrados ou inclua novos SKUs manualmente da base de custos.</p>
+                <p className="text-xs text-slate-400 mt-1">Tabela unificada agrupada por SKU Pai (5 primeiros dígitos) e Título Base do Produto.</p>
               </div>
               <button
                 onClick={() => setModalVideoAberto(true)}
@@ -1020,119 +1013,102 @@ export default function ProdutosPage() {
               </button>
             </div>
 
-            {/* Listagem unificada de vídeos: Realizados + Manuais */}
-            <div className="space-y-6">
-              <h4 className="text-xs font-black text-purple-400 uppercase tracking-wider">Produtos Cadastrados (Realizados)</h4>
-              <div className="space-y-4">
-                {cadastrosRealizados.map((item, gIdx) => {
-                  return (
-                    <div key={gIdx} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
-                      <div className="flex justify-between items-center border-b border-slate-900 pb-2">
-                        <span className="text-xs font-mono font-bold text-indigo-300">
-                          SKU: {item.sku} — <span className="text-white">{item.produto}</span>
-                        </span>
-                        <span className="text-[10px] text-slate-500">Cadastrado em: {new Date(item.data_cadastro || Date.now()).toLocaleDateString("pt-BR")}</span>
-                      </div>
+            <div className="bg-slate-950 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+              <div className="overflow-x-auto max-h-[600px]">
+                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                    <tr>
+                      <th className="p-3">SKU Pai / Título do Produto</th>
+                      {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => (
+                        <th key={cIdx} className="p-3 text-center">{canal}</th>
+                      ))}
+                      <th className="p-3 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {/* Produtos Realizados Agrupados por Pai */}
+                    {chavesGrupos.map((paiKey, idx) => {
+                      const itensDoGrupo = gruposRealizados[paiKey];
+                      const primeiroItem = itensDoGrupo[0];
+                      const tituloBase = String(primeiroItem.produto || "").split("-")[0].trim();
 
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
-                          <thead>
-                            <tr className="text-[10px] text-slate-400 uppercase border-b border-slate-900">
-                              {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => (
-                                <th key={cIdx} className="p-2 text-center text-[9px]">{canal}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr>
-                              {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => {
-                                const clipes = item.clipes_enviados || {};
-                                const clipeMarcado = Boolean(clipes[canal]);
-
-                                return (
-                                  <td key={cIdx} className="p-2 text-center">
-                                    <div className="flex flex-col items-center gap-1">
-                                      <input
-                                        type="checkbox"
-                                        checked={clipeMarcado}
-                                        onChange={async (e) => {
-                                          const checked = e.target.checked;
-                                          const novosClip = { ...clipes, [canal]: checked };
-                                          await supabase.from("produtos_novos_cadastrados").update({ clipes_enviados: novosClip }).eq("sku", item.sku);
-                                          carregarRealizadosDoBanco();
-                                        }}
-                                        className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
-                                      />
-                                    </div>
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {videosManuaisFiltrados.length > 0 && (
-                <>
-                  <h4 className="text-xs font-black text-amber-400 uppercase tracking-wider pt-4">Produtos Incluídos Manualmente para Vídeos</h4>
-                  <div className="space-y-4">
-                    {videosManuaisFiltrados.map((item, gIdx) => {
                       return (
-                        <div key={gIdx} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
-                          <div className="flex justify-between items-center border-b border-slate-900 pb-2">
-                            <span className="text-xs font-mono font-bold text-amber-300">
-                              SKU Manual: {item.sku} — <span className="text-white">{item.produto}</span>
-                            </span>
-                            <button
-                              onClick={() => excluirVideoManual(item.sku)}
-                              className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer"
-                            >
-                              🗑️ Remover
-                            </button>
-                          </div>
-
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left text-xs">
-                              <thead>
-                                <tr className="text-[10px] text-slate-400 uppercase border-b border-slate-900">
-                                  {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => (
-                                    <th key={cIdx} className="p-2 text-center text-[9px]">{canal}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                <tr>
-                                  {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => {
-                                    const clipes = item.clipes_enviados || {};
-                                    const clipeMarcado = Boolean(clipes[canal]);
-
-                                    return (
-                                      <td key={cIdx} className="p-2 text-center">
-                                        <div className="flex flex-col items-center gap-1">
-                                          <input
-                                            type="checkbox"
-                                            checked={clipeMarcado}
-                                            onChange={(e) => toggleClipeVideoManual(item.sku, canal, e.target.checked)}
-                                            className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
-                                          />
-                                        </div>
-                                      </td>
-                                    );
-                                  })}
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
+                        <tr key={`grupo-realizado-${idx}`} className="hover:bg-slate-800/40">
+                          <td className="p-3 font-mono">
+                            <span className="text-purple-400 font-bold">Pai: {paiKey}</span> — <span className="text-white font-semibold">{tituloBase}</span>
+                          </td>
+                          {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => {
+                            const todosMarcados = itensDoGrupo.every(i => Boolean((i.clipes_enviados || {})[canal]));
+                            return (
+                              <td key={cIdx} className="p-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={todosMarcados}
+                                  onChange={async (e) => {
+                                    const checked = e.target.checked;
+                                    for (const alvo of itensDoGrupo) {
+                                      const clipes = alvo.clipes_enviados || {};
+                                      clipes[canal] = checked;
+                                      await supabase.from("produtos_novos_cadastrados").update({ clipes_enviados: clipes }).eq("sku", alvo.sku);
+                                    }
+                                    carregarRealizadosDoBanco();
+                                  }}
+                                  className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                                />
+                              </td>
+                            );
+                          })}
+                          <td className="p-3 text-center text-slate-500 text-[10px]">Cadastrado</td>
+                        </tr>
                       );
                     })}
-                  </div>
-                </>
-              )}
+
+                    {/* Produtos Manuais */}
+                    {videosManuaisFiltrados.map((item, idx) => {
+                      const paiManual = item.sku_pai || (item.sku.length > 5 ? item.sku.substring(0, 5) : item.sku);
+                      const tituloManual = String(item.produto || "").split("-")[0].trim();
+
+                      return (
+                        <tr key={`manual-${idx}`} className="hover:bg-slate-800/40 bg-amber-950/10">
+                          <td className="p-3 font-mono">
+                            <span className="text-amber-400 font-bold">Pai: {paiManual}</span> — <span className="text-white font-semibold">{tituloManual}</span> <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.5 rounded ml-2">Manual</span>
+                          </td>
+                          {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => {
+                            const clipes = item.clipes_enviados || {};
+                            const clipeMarcado = Boolean(clipes[canal]);
+                            return (
+                              <td key={cIdx} className="p-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={clipeMarcado}
+                                  onChange={(e) => toggleClipeVideoManual(item.sku, canal, e.target.checked)}
+                                  className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                                />
+                              </td>
+                            );
+                          })}
+                          <td className="p-3 text-center">
+                            <button
+                              onClick={() => excluirVideoManual(item.sku)}
+                              className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer"
+                            >
+                              Excluir
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {chavesGrupos.length === 0 && videosManuaisFiltrados.length === 0 && (
+                      <tr>
+                        <td colSpan={canaisLista.filter(c => canaisComClipesConfig[c]).length + 2} className="p-8 text-center text-slate-500">
+                          Nenhum produto encontrado para controle de vídeos.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
