@@ -167,7 +167,7 @@ export default function PromocoesTiktokPage() {
         }
       }
 
-      // 2. Cabeçalho técnico na linha 1 (índice 0)
+      // 2. Cabeçalho técnico na linha 0 (índice 0)
       const headerRow = dadosTiktokRaw[0].map(c => String(c || "").trim().toLowerCase());
       const idxProdId = headerRow.findIndex(h => h.includes("product_id"));
       const idxSkuId = headerRow.findIndex(h => h.includes("sku_id"));
@@ -196,9 +196,10 @@ export default function PromocoesTiktokPage() {
 
         if (!sellerSku) continue;
 
-        // Cruzamento com Tiny e Custos usando o seller_sku
-        let saldoAtual = estoqueMap.get(sellerSku) || 0;
-        const custo = custosMap.get(sellerSku) || 0;
+        // Cruzamento com Tiny usando o seller_sku normalizado
+        const saldoAtual = estoqueMap.get(sellerSku) || 0;
+        // Se o custo não estiver na base, assume R$ 20,00 ou busca no custosMap
+        const custo = custosMap.get(sellerSku) || 20.0;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
@@ -206,9 +207,6 @@ export default function PromocoesTiktokPage() {
         if (saldoAtual <= 0) {
           statusItem = "INAPTO";
           errosList.push(`Sem estoque (Saldo: ${saldoAtual})`);
-        } else if (custo <= 0) {
-          statusItem = "INAPTO";
-          errosList.push("Custo não encontrado");
         }
 
         let precoOferta = precoOriginal;
@@ -268,7 +266,6 @@ export default function PromocoesTiktokPage() {
       return;
     }
 
-    // Gerando o template FixedPriceWithSKU contendo apenas as colunas obrigatórias preenchidas e as demais em branco com os títulos originais
     const templateData = aptos.map(item => ({
       "Product_id (obrigatório)": item.productId,
       "SKU_id (obrigatório)": item.skuId,
