@@ -7,10 +7,10 @@ import * as XLSX from "xlsx";
 
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
-  let s = String(valor).trim();
+  // Converte explicitamente para string, remove apóstrofos iniciais (comuns em TXT do Excel) e espaços
+  let s = String(valor).trim().replace(/^['"]/, "");
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
   s = s.replace(/^["']|["']$/g, "").trim();
-  // Remove formatações científicas ou conversões indesejadas
   if (/e\+/i.test(s)) {
     try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
   }
@@ -154,7 +154,7 @@ export default function PromocoesTiktokPage() {
 
     setLoading(true);
     try {
-      // 1. Mapear estoque do Tiny: SKU na Coluna C (índice 2) e Saldo na Coluna F (índice 5)
+      // 1. Mapear estoque do Tiny normalizando rigorosamente os SKUs para string
       const estoqueMap = new Map<string, number>();
       for (let i = 0; i < dadosEstoqueRaw.length; i++) {
         const row = dadosEstoqueRaw[i];
@@ -176,7 +176,7 @@ export default function PromocoesTiktokPage() {
       const idxPrice = headerRow.findIndex(h => h.includes("price"));
 
       if (idxProdId === -1 || idxSkuId === -1 || idxSellerSku === -1) {
-        alert("Erro: Não foi possível localizar as colunas técnicas ('product_id', 'sku_id', 'seller_sku') na linha 1 da planilha.");
+        alert("Erro: Não foi possível localizar as colunas técnicas na linha 1 da planilha.");
         setLoading(false);
         return;
       }
@@ -185,7 +185,6 @@ export default function PromocoesTiktokPage() {
       const imposto = 0.09;
       const resultados: any[] = [];
 
-      // Os dados reais no template do TikTok começam a partir da linha 5 (índice 5)
       for (let i = 5; i < dadosTiktokRaw.length; i++) {
         const r = dadosTiktokRaw[i];
         if (!r || r.length === 0) continue;
@@ -197,7 +196,6 @@ export default function PromocoesTiktokPage() {
 
         if (!sellerSku) continue;
 
-        // Cruzamento com Tiny usando o seller_sku normalizado
         const saldoAtual = estoqueMap.get(sellerSku) || 0;
         const custo = custosMap.get(sellerSku) || 20.0;
 
