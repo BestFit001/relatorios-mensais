@@ -6,14 +6,17 @@ import Navbar from "../components/Navbar";
 
 const rotasDisponiveis = [
   { id: "/", nome: "Dashboard (Curva ABC)" },
-  { id: "/marketing", nome: "Marketing (Postagens)" }, // <--- Aba de Marketing adicionada
+  { id: "/marketing", nome: "Marketing (Postagens)" },
   { id: "/mapeamento", nome: "Cadastros" },
   { id: "/ads", nome: "Adsense" },
   { id: "/devolucoes", nome: "Devoluções" },
   { id: "/full", nome: "FULL / FBA" },
   { id: "/plp", nome: "PLPs" },
   { id: "/calculadora", nome: "Calculadora" },
-  { id: "/promocoes", nome: "Promoções" },
+  { id: "/promocoes/ml", nome: "Promoções: Mercado Livre" },
+  { id: "/promocoes/magalu", nome: "Promoções: Magazine Luiza" },
+  { id: "/promocoes/shopee", nome: "Promoções: Shopee" },
+  { id: "/promocoes/tiktok", nome: "Promoções: TikTok Shop" },
   { id: "/produtos", nome: "Produtos" },
   { id: "/padronizacao", nome: "Padronização" },
   { id: "/agenda", nome: "Agenda (Restrito)" }, 
