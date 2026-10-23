@@ -18,7 +18,12 @@ export default function MarketingPage() {
   const [arquivos, setArquivos] = useState<FileList | null>(null);
   const [postagens, setPostagens] = useState<any[]>([]);
 
-  // Estados da Gerência de Limpeza
+  // Índices do carrossel para cada dia da semana
+  const [indicesCarrossel, setIndicesCarrossel] = useState<{ [dia: string]: number }>({
+    Segunda: 0, Terça: 0, Quarta: 0, Quinta: 0, Sexta: 0, Sábado: 0, Domingo: 0
+  });
+
+  // Estados da Gerência
   const [dataInicioLimpeza, setDataInicioLimpeza] = useState("");
   const [dataFimLimpeza, setDataFimLimpeza] = useState("");
   const [limpando, setLimpando] = useState(false);
@@ -101,6 +106,20 @@ export default function MarketingPage() {
     else carregarPostagens();
   };
 
+  const proximoItem = (dia: string, total: number) => {
+    setIndicesCarrossel(prev => ({
+      ...prev,
+      [dia]: (prev[dia] + 1) % total
+    }));
+  };
+
+  const anteriorItem = (dia: string, total: number) => {
+    setIndicesCarrossel(prev => ({
+      ...prev,
+      [dia]: (prev[dia] - 1 + total) % total
+    }));
+  };
+
   const limparDadosPorPeriodo = async () => {
     if (!dataInicioLimpeza || !dataFimLimpeza) {
       alert("Selecione a data inicial e a data final para a limpeza.");
@@ -143,6 +162,26 @@ export default function MarketingPage() {
     setLimpando(false);
   };
 
+  const limparTudoDaBase = async () => {
+    if (!confirm("⚠️ ATENÇÃO: Deseja apagar ABSOLUTAMENTE TODAS as postagens cadastradas na base de marketing?")) return;
+
+    setLimpando(true);
+    try {
+      const { error } = await supabase
+        .from("marketing_postagens")
+        .delete()
+        .neq("id", 0);
+
+      if (error) throw error;
+
+      alert("🗑️ Toda a base de marketing foi limpa com sucesso!");
+      carregarPostagens();
+    } catch (err: any) {
+      alert("Erro ao limpar base: " + err.message);
+    }
+    setLimpando(false);
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -155,7 +194,7 @@ export default function MarketingPage() {
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO DE SUB-ABAS */}
+        {/* NAVEGAÇÃO DE SUB-ABAS RENOMEADA PARA "GERÊNCIA" */}
         <div className="flex gap-3">
           <button
             onClick={() => setSubAba("calendario")}
@@ -171,11 +210,11 @@ export default function MarketingPage() {
               subAba === "gerencia" ? "bg-purple-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"
             }`}
           >
-            🧹 Gerência (Limpeza de Dados)
+            🧹 Gerência
           </button>
         </div>
 
-        {/* SUB-ABA: CALENDÁRIO DE POSTAGENS */}
+        {/* SUB-ABA: CALENDÁRIO COM CARROSSEL DE SETAS */}
         {subAba === "calendario" && (
           <div className="space-y-8">
             <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl">
@@ -230,49 +269,67 @@ export default function MarketingPage() {
               </form>
             </div>
 
-            {/* VISUALIZAÇÃO EM GRID DOS DIAS DA SEMANA */}
+            {/* VISUALIZAÇÃO EM GRID COM SETAS PARA NAVEGAR HORIZONTALMENTE */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               {diasSemana.map((dia, idx) => {
                 const itensDoDia = postagens.filter((p) => p.dia_semana === dia);
+                const currentIndex = indicesCarrossel[dia] || 0;
+                const postAtual = itensDoDia[currentIndex];
 
                 return (
                   <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-5 flex flex-col justify-between space-y-4">
                     <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
                       <h3 className="text-sm font-black text-purple-400 uppercase">{dia}</h3>
                       <span className="text-[10px] bg-slate-950 px-2 py-0.5 rounded text-slate-400 font-mono">
-                        {itensDoDia.length} item(ns)
+                        {itensDoDia.length > 0 ? `${currentIndex + 1} de ${itensDoDia.length}` : "0 item"}
                       </span>
                     </div>
 
-                    <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
-                      {itensDoDia.map((post, pIdx) => (
-                        <div key={pIdx} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 relative group">
+                    <div className="relative flex items-center justify-center min-h-[200px]">
+                      {itensDoDia.length > 0 && postAtual ? (
+                        <div className="w-full bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 relative group">
                           <button
-                            onClick={() => excluirPostagem(post.id)}
-                            className="absolute top-2 right-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                            onClick={() => excluirPostagem(postAtual.id)}
+                            className="absolute top-2 right-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10"
                             title="Apagar item"
                           >
                             ✕
                           </button>
 
-                          {post.tipo_midia === "video" ? (
-                            <video src={post.url_arquivo} controls className="w-full h-36 object-cover rounded-lg bg-black" />
+                          {postAtual.tipo_midia === "video" ? (
+                            <video src={postAtual.url_arquivo} controls className="w-full h-44 object-cover rounded-lg bg-black" />
                           ) : (
-                            <img src={post.url_arquivo} alt="Post" className="w-full h-36 object-cover rounded-lg bg-black" />
+                            <img src={postAtual.url_arquivo} alt="Post" className="w-full h-44 object-cover rounded-lg bg-black" />
                           )}
 
-                          {post.legenda && (
+                          {postAtual.legenda && (
                             <p className="text-[11px] text-slate-300 leading-relaxed font-mono bg-slate-900 p-2 rounded-lg max-h-20 overflow-y-auto">
-                              {post.legenda}
+                              {postAtual.legenda}
                             </p>
                           )}
                         </div>
-                      ))}
-
-                      {itensDoDia.length === 0 && (
+                      ) : (
                         <p className="text-center text-slate-600 italic text-xs py-10">Nenhuma postagem para este dia.</p>
                       )}
                     </div>
+
+                    {/* SETAS DE NAVEGAÇÃO DO CARROSSEL */}
+                    {itensDoDia.length > 1 && (
+                      <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
+                        <button
+                          onClick={() => anteriorItem(dia, itensDoDia.length)}
+                          className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer"
+                        >
+                          ◀ Anterior
+                        </button>
+                        <button
+                          onClick={() => proximoItem(dia, itensDoDia.length)}
+                          className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer"
+                        >
+                          Próxima ▶
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -280,45 +337,56 @@ export default function MarketingPage() {
           </div>
         )}
 
-        {/* SUB-ABA: GERÊNCIA DE LIMPEZA */}
+        {/* SUB-ABA: GERÊNCIA */}
         {subAba === "gerencia" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl max-w-2xl mx-auto space-y-6">
             <div>
               <h2 className="text-lg font-bold text-white uppercase tracking-wider">🧹 Gerência de Armazenamento</h2>
-              <p className="text-xs text-slate-400 mt-1">Selecione o intervalo de datas para limpar as postagens e descarregar espaço do Supabase.</p>
+              <p className="text-xs text-slate-400 mt-1">Apague registos por período ou limpe toda a base de postagens de uma só vez.</p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-6 rounded-xl border border-slate-800">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Inicial:</label>
-                <input
-                  type="date"
-                  value={dataInicioLimpeza}
-                  onChange={(e) => setDataInicioLimpeza(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
-                />
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-6 rounded-xl border border-slate-800">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Inicial:</label>
+                  <input
+                    type="date"
+                    value={dataInicioLimpeza}
+                    onChange={(e) => setDataInicioLimpeza(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Final:</label>
+                  <input
+                    type="date"
+                    value={dataFimLimpeza}
+                    onChange={(e) => setDataFimLimpeza(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Final:</label>
-                <input
-                  type="date"
-                  value={dataFimLimpeza}
-                  onChange={(e) => setDataFimLimpeza(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
-                />
-              </div>
-            </div>
+              <div className="flex justify-between items-center pt-2">
+                <button
+                  type="button"
+                  onClick={limparDadosPorPeriodo}
+                  disabled={limpando}
+                  className="bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                >
+                  {limpando ? "A limpar..." : "🗑️ Apagar Período Selecionado"}
+                </button>
 
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                onClick={limparDadosPorPeriodo}
-                disabled={limpando}
-                className="bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-3 px-8 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
-              >
-                {limpando ? "A limpar dados..." : "🗑️ Apagar Dados do Período Selecionado"}
-              </button>
+                <button
+                  type="button"
+                  onClick={limparTudoDaBase}
+                  disabled={limpando}
+                  className="bg-rose-700 hover:bg-rose-600 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                >
+                  {limpando ? "A limpar..." : "🚨 Apagar TUDO da Base"}
+                </button>
+              </div>
             </div>
           </div>
         )}
