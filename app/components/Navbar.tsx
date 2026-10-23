@@ -10,6 +10,7 @@ export default function Navbar() {
   const [perfilUsuario, setPerfilUsuario] = useState("");
   const [emailUsuario, setEmailUsuario] = useState("");
   const [menuExpandido, setMenuExpandido] = useState<string | null>("relatorios");
+  const [sidebarAberta, setSidebarAberta] = useState(true);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -59,18 +60,34 @@ export default function Navbar() {
 
   return (
     <>
-      {/* SIDEBAR LATERAL FIXA (ESTILO TINY / OLIST) */}
-      <aside className="fixed top-0 left-0 h-full w-64 bg-[#0b0e14] border-r border-slate-800 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans">
+      {/* SIDEBAR LATERAL FIXA COM OPÇÃO DE RECOLHER / EXPANDIR */}
+      <aside className={`fixed top-0 left-0 h-full bg-[#0b0e14] border-r border-slate-800 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans transition-all duration-300 ${sidebarAberta ? 'w-64' : 'w-20'}`}>
         
-        {/* TOPO DA SIDEBAR: LOGO E IDENTIFICAÇÃO */}
-        <div className="p-5 border-b border-slate-800/80 flex items-center gap-3 bg-slate-950/40">
-          <div className="w-9 h-9 rounded-xl bg-purple-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-purple-900/40">
-            BF
-          </div>
-          <div className="overflow-hidden">
-            <h2 className="text-sm font-black text-white tracking-tight truncate">Hub Best Fit</h2>
-            <p className="text-[10px] text-slate-400 truncate">Performance & E-commerce</p>
-          </div>
+        {/* TOPO DA SIDEBAR: LOGO E BOTÃO DE RECOLHER */}
+        <div className="p-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
+          {sidebarAberta ? (
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="w-9 h-9 rounded-xl bg-purple-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-purple-900/40 flex-shrink-0">
+                BF
+              </div>
+              <div className="overflow-hidden">
+                <h2 className="text-sm font-black text-white tracking-tight truncate">Hub Best Fit</h2>
+                <p className="text-[10px] text-slate-400 truncate">Performance & E-commerce</p>
+              </div>
+            </div>
+          ) : (
+            <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-purple-900/40 mx-auto">
+              BF
+            </div>
+          )}
+
+          <button
+            onClick={() => setSidebarAberta(!sidebarAberta)}
+            className="w-7 h-7 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center text-xs cursor-pointer transition-all flex-shrink-0"
+            title={sidebarAberta ? "Recolher menu" : "Expandir menu"}
+          >
+            {sidebarAberta ? "◀" : "▶"}
+          </button>
         </div>
 
         {/* MENU DE NAVEGAÇÃO LATERAL */}
@@ -80,11 +97,13 @@ export default function Navbar() {
           {temPermissao("/") && (
             <Link
               href="/"
+              title="Curva ABC (Início)"
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
                 pathname === "/" ? "bg-purple-600 text-white shadow-md shadow-purple-900/30 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900"
               }`}
             >
-              <span className="text-base">📊</span> Curva ABC (Início)
+              <span className="text-base flex-shrink-0">📊</span>
+              {sidebarAberta && <span className="truncate">Curva ABC (Início)</span>}
             </Link>
           )}
 
@@ -92,14 +111,15 @@ export default function Navbar() {
           {(temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full")) && (
             <div>
               <button
-                onClick={() => toggleSecao("relatorios")}
+                onClick={() => sidebarAberta && toggleSecao("relatorios")}
+                title="Relatórios"
                 className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all cursor-pointer"
               >
-                <span className="flex items-center gap-3"><span className="text-base">📈</span> Relatórios</span>
-                <span className={`transform transition-transform text-[10px] ${menuExpandido === "relatorios" ? "rotate-180" : ""}`}>▼</span>
+                <span className="flex items-center gap-3"><span className="text-base flex-shrink-0">📈</span> {sidebarAberta && <span className="truncate">Relatórios</span>}</span>
+                {sidebarAberta && <span className={`transform transition-transform text-[10px] ${menuExpandido === "relatorios" ? "rotate-180" : ""}`}>▼</span>}
               </button>
 
-              {menuExpandido === "relatorios" && (
+              {sidebarAberta && menuExpandido === "relatorios" && (
                 <div className="pl-9 space-y-1 mt-1 border-l border-slate-800 ml-4 py-1">
                   {temPermissao("/mapeamento") && (
                     <Link href="/mapeamento" className={`block px-3 py-2 rounded-lg transition-all ${pathname?.includes("/mapeamento") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
@@ -130,14 +150,15 @@ export default function Navbar() {
           {(temPermissao("/calculadora") || temPermissao("/promocoes") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp")) && (
             <div>
               <button
-                onClick={() => toggleSecao("ferramentas")}
+                onClick={() => sidebarAberta && toggleSecao("ferramentas")}
+                title="Ferramentas"
                 className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all cursor-pointer"
               >
-                <span className="flex items-center gap-3"><span className="text-base">🛠️</span> Ferramentas</span>
-                <span className={`transform transition-transform text-[10px] ${menuExpandido === "ferramentas" ? "rotate-180" : ""}`}>▼</span>
+                <span className="flex items-center gap-3"><span className="text-base flex-shrink-0">🛠️</span> {sidebarAberta && <span className="truncate">Ferramentas</span>}</span>
+                {sidebarAberta && <span className={`transform transition-transform text-[10px] ${menuExpandido === "ferramentas" ? "rotate-180" : ""}`}>▼</span>}
               </button>
 
-              {menuExpandido === "ferramentas" && (
+              {sidebarAberta && menuExpandido === "ferramentas" && (
                 <div className="pl-9 space-y-1 mt-1 border-l border-slate-800 ml-4 py-1">
                   {temPermissao("/calculadora") && (
                     <Link href="/calculadora" className={`block px-3 py-2 rounded-lg transition-all ${pathname?.includes("/calculadora") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
@@ -173,14 +194,15 @@ export default function Navbar() {
           {(temPermissao("/regras") || temPermissao("/upload") || temPermissao("/admin")) && (
             <div>
               <button
-                onClick={() => toggleSecao("config")}
+                onClick={() => sidebarAberta && toggleSecao("config")}
+                title="Configurações"
                 className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all cursor-pointer"
               >
-                <span className="flex items-center gap-3"><span className="text-base">⚙️</span> Configurações</span>
-                <span className={`transform transition-transform text-[10px] ${menuExpandido === "config" ? "rotate-180" : ""}`}>▼</span>
+                <span className="flex items-center gap-3"><span className="text-base flex-shrink-0">⚙️</span> {sidebarAberta && <span className="truncate">Configurações</span>}</span>
+                {sidebarAberta && <span className={`transform transition-transform text-[10px] ${menuExpandido === "config" ? "rotate-180" : ""}`}>▼</span>}
               </button>
 
-              {menuExpandido === "config" && (
+              {sidebarAberta && menuExpandido === "config" && (
                 <div className="pl-9 space-y-1 mt-1 border-l border-slate-800 ml-4 py-1">
                   {temPermissao("/regras") && (
                     <Link href="/regras" className={`block px-3 py-2 rounded-lg transition-all ${pathname?.includes("/regras") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
@@ -206,11 +228,13 @@ export default function Navbar() {
           {temPermissao("/agenda") && (
             <Link
               href="/agenda"
+              title="Agenda"
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
                 pathname?.includes("/agenda") ? "bg-purple-600 text-white shadow-md shadow-purple-900/30 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900"
               }`}
             >
-              <span className="text-base">📅</span> Agenda
+              <span className="text-base flex-shrink-0">📅</span>
+              {sidebarAberta && <span className="truncate">Agenda</span>}
             </Link>
           )}
 
@@ -218,31 +242,40 @@ export default function Navbar() {
 
         {/* RODAPÉ DA SIDEBAR: PERFIL E SAIR */}
         <div className="p-4 border-t border-slate-800/80 bg-slate-950/60 space-y-3">
-          <div className="overflow-hidden">
-            <p className="text-[11px] font-bold text-white truncate">{emailUsuario || "Utilizador"}</p>
-            <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[9px] font-black uppercase bg-purple-950 text-purple-300 border border-purple-800/50">
-              {perfilUsuario}
-            </span>
-          </div>
+          {sidebarAberta ? (
+            <div className="overflow-hidden">
+              <p className="text-[11px] font-bold text-white truncate">{emailUsuario || "Utilizador"}</p>
+              <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[9px] font-black uppercase bg-purple-950 text-purple-300 border border-purple-800/50">
+                {perfilUsuario}
+              </span>
+            </div>
+          ) : (
+            <div className="text-center">
+              <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-purple-950 text-purple-300 border border-purple-800/50">
+                {perfilUsuario.substring(0, 3)}
+              </span>
+            </div>
+          )}
 
           <button
             onClick={handleSair}
+            title="Sair da Conta"
             className="w-full bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-900/50 font-bold py-2 px-3 rounded-xl text-[11px] uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-2"
           >
-            <span>🚪</span> Sair da Conta
+            <span>🚪</span> {sidebarAberta && <span>Sair</span>}
           </button>
         </div>
 
       </aside>
 
-      {/* ESPAÇAMENTO PARA COMPENSAR A SIDEBAR FIXA NAS PÁGINAS */}
+      {/* AJUSTE DINÂMICO DE ESPAÇAMENTO DA TELA COM BASE NA SIDEBAR ABERTA/FECHADA */}
       <style jsx global>{`
         body {
           background-color: #0d0f18 !important;
         }
-        /* Ajusta o container principal de todas as páginas para abrir ao lado da sidebar */
         .min-h-screen {
-          padding-left: 17rem !important;
+          padding-left: ${sidebarAberta ? '17rem' : '6rem'} !important;
+          transition: padding-left 0.3s ease !important;
         }
         @media (max-width: 768px) {
           aside {
