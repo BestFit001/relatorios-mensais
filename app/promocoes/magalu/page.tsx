@@ -56,6 +56,7 @@ export default function PromocoesMagaluPage() {
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [skusMagaluBaseSet, setSkusMagaluBaseSet] = useState<Set<string>>(new Set());
+  const [regrasMagaluList, setRegrasMagaluList] = useState<any[]>([]);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -70,6 +71,7 @@ export default function PromocoesMagaluPage() {
   const carregarBasesIniciais = async () => {
     setLoading(true);
     try {
+      // 1. Carregar custos
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -92,6 +94,7 @@ export default function PromocoesMagaluPage() {
       });
       setCustosMap(cMap);
 
+      // 2. Carregar SKUs mapeados para "Magazine Luiza"
       let allMapeamentos: any[] = [];
       from = 0;
       keep = true;
@@ -115,6 +118,25 @@ export default function PromocoesMagaluPage() {
         if (sk) magaluSet.add(sk);
       });
       setSkusMagaluBaseSet(magaluSet);
+
+      // 3. Carregar regras de tarifação do canal Magalu da tabela config_regras_tiny
+      let allRegras: any[] = [];
+      from = 0;
+      keep = true;
+      while (keep) {
+        const { data } = await supabase.from("config_regras_tiny").select("*").range(from, from + step - 1);
+        if (data && data.length > 0) {
+          allRegras = [...allRegras, ...data];
+          from += step;
+          if (data.length < step) keep = false;
+        } else keep = false;
+      }
+
+      const regrasMag = allRegras.filter((r: any) => {
+        const campoStr = String(r.campo || r.canal || "").toLowerCase();
+        return campoStr.includes("magalu");
+      });
+      setRegrasMagaluList(regrasMag);
 
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
@@ -187,16 +209,32 @@ export default function PromocoesMagaluPage() {
           errosList.push("Custo não encontrado");
         }
 
-        let comissaoDec = 0.18;
-        let tarifaFixa = 5.00;
-        let freteValor = 0.00;
-
         let precoSugerido = 0;
         if (statusItem === "APTO") {
-          let denominador = 1 - (comissaoDec + imposto + margemDesejada);
-          if (denominador > 0) {
-            precoSugerido = (custo + tarifaFixa + freteValor) / denominador;
+          // Processo iterativo igual à calculadora para encontrar o PDV ideal com base na faixa de preço (Comissão, Tarifa Fixa e Frete dinâmicos)
+          let pdvEstimado = custo * 2;
+          for (let iter = 0; iter < 10; iter++) {
+            let regraAplicada = regrasMagaluList.find((r: any) => {
+              const min = Number(r.faixa_min || r.min || 0);
+              const max = Number(r.faixa_max || r.max || 999999);
+              return pdvEstimado >= min && pdvEstimado <= max;
+            });
+
+            if (!regraAplicada && regrasMagaluList.length > 0) {
+              regraAplicada = regrasMagaluList[0];
+            }
+
+            const comissaoVal = regraAplicada ? parseNumeroBruto(regraAplicada.comissao || regraAplicada.valor_comissao || 18) : 18;
+            const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
+            const tarifaFixa = regraAplicada ? parseNumeroBruto(regraAplicada.tarifa_fixa || regraAplicada.tarifa || 5) : 5;
+            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete || regraAplicada.valor_frete || 0) : 0;
+
+            const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+            if (denominador > 0) {
+              pdvEstimado = (custo + tarifaFixa + freteValor) / denominador;
+            }
           }
+          precoSugerido = pdvEstimado > 0 ? pdvEstimado : custo * 2;
         }
 
         resultados.push({
@@ -273,7 +311,6 @@ export default function PromocoesMagaluPage() {
 
   const itensAptosList = dadosProcessados.filter((item: any) => item.STATUS === "APTO");
   const qtdInaptosTotal = dadosProcessados.filter((item: any) => item.STATUS === "INAPTO").length;
-
   const itensFiltradosAtivas = promocoesAtivas.filter(p => String(p.sku || "").toLowerCase().includes(termoBusca.toLowerCase()));
 
   return (
@@ -283,7 +320,7 @@ export default function PromocoesMagaluPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
-            <p className="text-sm font-medium text-slate-400">Apenas itens aptos exibidos na tabela (Inaptos ocultos por resumo)</p>
+            <p className="text-sm font-medium text-slate-400">Precificação exata com regras dinâmicas da calculadora (Frete, Tarifa e Comissão por faixa)</p>
           </div>
           <Navbar />
         </div>
