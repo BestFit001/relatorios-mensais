@@ -10,6 +10,7 @@ function normalizarSku(valor: any): string {
   let s = String(valor).trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
   s = s.replace(/^["']|["']$/g, "").trim();
+  // Remove formatações científicas ou conversões indesejadas
   if (/e\+/i.test(s)) {
     try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
   }
@@ -102,29 +103,29 @@ export default function PromocoesTiktokPage() {
     setLoading(false);
   };
 
-  const lerArquivoParaMatriz = (file: File): Promise<any[][]> => {
+  const lerArquivoGenerico = (file: File): Promise<any[][]> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (evt) => {
         try {
-          const bstr = evt.target?.result;
-          const wb = XLSX.read(bstr, { type: "binary", cellDates: true });
+          const buffer = evt.target?.result;
+          const wb = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
           const ws = wb.Sheets[wb.SheetNames[0]];
-          const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+          const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
           resolve(rawData);
         } catch (err) {
           reject(err);
         }
       };
       reader.onerror = (error) => reject(error);
-      reader.readAsBinaryString(file);
+      reader.readAsArrayBuffer(file);
     });
   };
 
   const handleEstoqueUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       try {
-        const rawData = await lerArquivoParaMatriz(e.target.files[0]);
+        const rawData = await lerArquivoGenerico(e.target.files[0]);
         setDadosEstoqueRaw(rawData);
         alert("✅ Planilha de estoque (Tiny) carregada com sucesso!");
       } catch (err: any) {
@@ -136,7 +137,7 @@ export default function PromocoesTiktokPage() {
   const handleTiktokUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       try {
-        const rawData = await lerArquivoParaMatriz(e.target.files[0]);
+        const rawData = await lerArquivoGenerico(e.target.files[0]);
         setDadosTiktokRaw(rawData);
         alert("✅ Planilha do TikTok Seller Center carregada com sucesso!");
       } catch (err: any) {
@@ -198,7 +199,6 @@ export default function PromocoesTiktokPage() {
 
         // Cruzamento com Tiny usando o seller_sku normalizado
         const saldoAtual = estoqueMap.get(sellerSku) || 0;
-        // Se o custo não estiver na base, assume R$ 20,00 ou busca no custosMap
         const custo = custosMap.get(sellerSku) || 20.0;
 
         let statusItem = "APTO";
