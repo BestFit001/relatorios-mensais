@@ -11,15 +11,12 @@ export default function Navbar() {
   const [perfilUsuario, setPerfilUsuario] = useState("");
   const [emailUsuario, setEmailUsuario] = useState("");
   const [menuExpandido, setMenuExpandido] = useState<string | null>("relatorios");
-  
-  // Alterado para iniciar como FALSE (fechado por predefinição)
   const [sidebarAberta, setSidebarAberta] = useState(false);
   
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useEffect(() => {
-    // Verifica se o utilizador já tinha uma preferência salva no navegador
     const prefSidebar = localStorage.getItem("hub_bestfit_sidebar_aberta");
     if (prefSidebar !== null) {
       setSidebarAberta(prefSidebar === "true");
@@ -107,7 +104,7 @@ export default function Navbar() {
       );
 
       setLogoUrl(urlPublica);
-      alert("✅ Logotipo atualizado para todo o sistema!");
+      alert("✅ Logotipo atualizado e salvo no Supabase para todo o sistema!");
     } catch (err: any) {
       alert("Erro ao fazer upload do logotipo: " + err.message);
     }
@@ -133,7 +130,7 @@ export default function Navbar() {
         
         <div className="p-2.5 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
           <div className="flex items-center gap-2 overflow-hidden">
-            <label className="relative group cursor-pointer flex-shrink-0" title="Clique para alterar a imagem de perfil/logo">
+            <label className="relative group cursor-pointer flex-shrink-0" title="Clique para alterar a imagem de perfil/logo no Supabase">
               <div className="w-8 h-8 rounded-xl bg-purple-600 overflow-hidden flex items-center justify-center font-black text-white text-xs shadow-lg shadow-purple-900/40 border border-purple-500/30">
                 {logoUrl ? (
                   <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
@@ -166,19 +163,6 @@ export default function Navbar() {
 
         <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1 text-xs font-semibold">
           
-          {temPermissao("/") && (
-            <Link
-              href="/"
-              title="Curva ABC (Início)"
-              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl transition-all ${
-                pathname === "/" ? "bg-purple-600 text-white shadow-md shadow-purple-900/30 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900"
-              }`}
-            >
-              <span className="text-sm flex-shrink-0">📊</span>
-              {sidebarAberta && <span className="truncate">Curva ABC (Início)</span>}
-            </Link>
-          )}
-
           {temPermissao("/marketing") && (
             <Link
               href="/marketing"
@@ -192,7 +176,8 @@ export default function Navbar() {
             </Link>
           )}
 
-          {(temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full")) && (
+          {/* RELATÓRIOS (CONTEM CURVA ABC, CADASTROS, ADS, DEVOLUÇÕES E FULL) */}
+          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full")) && (
             <div>
               <button
                 onClick={() => sidebarAberta && toggleSecao("relatorios")}
@@ -205,6 +190,11 @@ export default function Navbar() {
 
               {sidebarAberta && menuExpandido === "relatorios" && (
                 <div className="pl-7 space-y-1 mt-1 border-l border-slate-800 ml-3 py-1">
+                  {temPermissao("/") && (
+                    <Link href="/" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/" ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                      Curva ABC
+                    </Link>
+                  )}
                   {temPermissao("/mapeamento") && (
                     <Link href="/mapeamento" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/mapeamento") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
                       Cadastros
@@ -230,6 +220,7 @@ export default function Navbar() {
             </div>
           )}
 
+          {/* FERRAMENTAS */}
           {(temPermissao("/calculadora") || temPermissao("/promocoes") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp")) && (
             <div>
               <button
@@ -273,6 +264,7 @@ export default function Navbar() {
             </div>
           )}
 
+          {/* CONFIGURAÇÕES */}
           {(temPermissao("/regras") || temPermissao("/upload") || temPermissao("/admin")) && (
             <div>
               <button
@@ -306,6 +298,7 @@ export default function Navbar() {
             </div>
           )}
 
+          {/* AGENDA */}
           {temPermissao("/agenda") && (
             <Link
               href="/agenda"
