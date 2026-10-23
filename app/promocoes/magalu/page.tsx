@@ -128,10 +128,9 @@ export default function PromocoesMagaluPage() {
         } else keep = false;
       }
 
-      // Filtrar estritamente regras onde o canal/campo seja "Magalu" ou "Magazine Luiza"
       const regrasMag = allRegras.filter((r: any) => {
-        const canalStr = String(r.canal || r.campo || "").toLowerCase();
-        return canalStr.includes("magalu");
+        const campoStr = String(r.campo || r.canal || "").toLowerCase();
+        return campoStr.includes("magalu");
       });
       setRegrasMagaluList(regrasMag);
 
@@ -208,9 +207,9 @@ export default function PromocoesMagaluPage() {
 
         let precoSugerido = 0;
         if (statusItem === "APTO") {
-          // Processo iterativo exato da calculadora consultando as regras dinâmicas por faixa de preço
-          let pdvEstimado = custo * 1.8;
-          for (let iter = 0; iter < 15; iter++) {
+          // Lógica exata da calculadora: calcular primeiro com a regra abaixo de 78.99 (frete R$ 0,00)
+          let pdvEstimado = custo * 2;
+          for (let iter = 0; iter < 10; iter++) {
             let regraAplicada = regrasMagaluList.find((r: any) => {
               const min = Number(r.faixa_min || r.min || 0);
               const max = Number(r.faixa_max || r.max || 999999);
@@ -231,7 +230,31 @@ export default function PromocoesMagaluPage() {
               pdvEstimado = (custo + tarifaFixa + freteValor) / denominador;
             }
           }
-          precoSugerido = pdvEstimado > 0 ? pdvEstimado : custo * 1.8;
+
+          // Se o preço estimado ultrapassar 79.00, reavaliar aplicando a regra da faixa superior (com frete correspondente)
+          if (pdvEstimado >= 79.00 && regrasMagaluList.length > 1) {
+            let pdvAlto = custo * 2;
+            for (let iter = 0; iter < 10; iter++) {
+              let regraAlta = regrasMagaluList.find((r: any) => {
+                const min = Number(r.faixa_min || r.min || 0);
+                const max = Number(r.faixa_max || r.max || 999999);
+                return pdvAlto >= min && pdvAlto <= max;
+              }) || regrasMagaluList[1];
+
+              const comissaoVal = parseNumeroBruto(regraAlta.comissao || regraAlta.valor_comissao || 18);
+              const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
+              const tarifaFixa = parseNumeroBruto(regraAlta.tarifa_fixa || regraAlta.tarifa || 5);
+              const freteValor = parseNumeroBruto(regraAlta.frete || regraAlta.valor_frete || 20.45);
+
+              const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+              if (denominador > 0) {
+                pdvAlto = (custo + tarifaFixa + freteValor) / denominador;
+              }
+            }
+            pdvEstimado = pdvAlto;
+          }
+
+          precoSugerido = pdvEstimado > 0 ? pdvEstimado : custo * 2;
         }
 
         resultados.push({
@@ -317,7 +340,7 @@ export default function PromocoesMagaluPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação integrada com as regras de tarifação por faixa de preço</p>
+            <p className="text-sm font-medium text-slate-400">Precificação 100% sincronizada com as faixas de preço da calculadora</p>
           </div>
           <Navbar />
         </div>
