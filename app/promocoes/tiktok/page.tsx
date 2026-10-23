@@ -167,30 +167,32 @@ export default function PromocoesTiktokPage() {
         }
       }
 
-      // 2. Cabeçalho na linha 3 (índice 2) do TikTok Seller Center
-      const headerRowIdx = 2; 
-      if (dadosTiktokRaw.length <= headerRowIdx) {
-        alert("Erro: A planilha do TikTok Seller Center parece estar vazia ou fora do formato esperado.");
-        setLoading(false);
-        return;
+      // 2. Detetar linha de cabeçalho na planilha do TikTok Seller Center (procurando nas primeiras 4 linhas)
+      let headerRowIdx = -1;
+      let idxProdId = -1, idxSkuId = -1, idxSellerSku = -1, idxPrice = -1;
+
+      for (let rIdx = 0; rIdx < Math.min(4, dadosTiktokRaw.length); rIdx++) {
+        const row = dadosTiktokRaw[rIdx];
+        if (!row) continue;
+        const rowStrs = row.map(c => String(c || "").trim().toLowerCase());
+        
+        const pId = rowStrs.findIndex(s => s === "product_id" || s.includes("id do produto"));
+        const sId = rowStrs.findIndex(s => s === "sku_id" || s.includes("id do sku"));
+        const sSku = rowStrs.findIndex(s => s === "seller_sku" || s.includes("sku do vendedor"));
+        const prc = rowStrs.findIndex(s => s === "price" || s.includes("preço"));
+
+        if (pId !== -1 && sId !== -1 && sSku !== -1) {
+          headerRowIdx = rIdx;
+          idxProdId = pId;
+          idxSkuId = sId;
+          idxSellerSku = sSku;
+          idxPrice = prc;
+          break;
+        }
       }
 
-      const headers = dadosTiktokRaw[headerRowIdx].map(c => String(c || "").trim().toUpperCase());
-      const getColIdx = (names: string[]) => {
-        for (const n of names) {
-          const idx = headers.findIndex(h => h.includes(n.toUpperCase()));
-          if (idx !== -1) return idx;
-        }
-        return -1;
-      };
-
-      const idxProdId = getColIdx(["PRODUCT_ID", "ID DO PRODUTO"]);
-      const idxSkuId = getColIdx(["SKU_ID", "ID DO SKU"]);
-      const idxSellerSku = getColIdx(["SELLER_SKU", "SKU DO VENDEDOR"]);
-      const idxPrice = getColIdx(["PRICE", "PREÇO"]);
-
-      if (idxProdId === -1 || idxSkuId === -1 || idxSellerSku === -1) {
-        alert("Erro: Não foi possível localizar as colunas obrigatórias (Product_id, SKU_id, seller_sku) na linha 3 da planilha.");
+      if (headerRowIdx === -1) {
+        alert("Erro: Não foi possível localizar os campos técnicos ('product_id', 'sku_id', 'seller_sku') na planilha do TikTok.");
         setLoading(false);
         return;
       }
@@ -199,8 +201,10 @@ export default function PromocoesTiktokPage() {
       const imposto = 0.09;
       const resultados: any[] = [];
 
-      // Os dados reais começam após o cabeçalho e linhas descritivas (a partir da linha 4 / índice 3 ou 4)
-      for (let i = headerRowIdx + 1; i < dadosTiktokRaw.length; i++) {
+      // Os dados reais na planilha do TikTok começam após as linhas descritivas (a partir da linha 4 / índice 4)
+      const startRow = Math.max(headerRowIdx + 1, 4);
+
+      for (let i = startRow; i < dadosTiktokRaw.length; i++) {
         const r = dadosTiktokRaw[i];
         if (!r || r.length === 0) continue;
 
@@ -336,7 +340,7 @@ export default function PromocoesTiktokPage() {
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Planilha TikTok Seller Center (Cabeçalho Linha 3):</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Planilha TikTok Seller Center:</label>
               <input
                 type="file"
                 accept=".xlsx, .xls, .csv"
