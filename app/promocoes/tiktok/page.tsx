@@ -73,7 +73,8 @@ export default function PromocoesTiktokPage() {
       allCustos.forEach((c: any) => {
         const k = normalizarSku(c.sku);
         if (k) {
-          cMap.set(k, Number(c.custo_unitario || c.custo || 0));
+          const custoVal = parseNumeroBruto(c.custo_unitario ?? c.custo ?? 0);
+          cMap.set(k, custoVal);
         }
       });
       setCustosMap(cMap);
@@ -191,6 +192,7 @@ export default function PromocoesTiktokPage() {
 
       const margemDesejada = parseFloat(margemAlvo) / 100 || 0.18;
       const imposto = 0.09;
+      const embalagem = 0.70;
       const resultados: any[] = [];
 
       for (let i = 5; i < dadosTiktokRaw.length; i++) {
@@ -205,7 +207,7 @@ export default function PromocoesTiktokPage() {
         if (!sellerSku) continue;
 
         const saldoAtual = estoqueMap.get(sellerSku) || 0;
-        const custo = custosMap.get(sellerSku) || 20.0;
+        const custo = custosMap.get(sellerSku) || 0;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
@@ -213,6 +215,9 @@ export default function PromocoesTiktokPage() {
         if (saldoAtual <= 0) {
           statusItem = "INAPTO";
           errosList.push(`Sem estoque (Saldo: ${saldoAtual})`);
+        } else if (custo <= 0) {
+          statusItem = "INAPTO";
+          errosList.push("Custo não encontrado na base");
         }
 
         let precoOferta = precoOriginal;
@@ -220,16 +225,15 @@ export default function PromocoesTiktokPage() {
           let pdvEstimado = custo * 2;
           for (let iter = 0; iter < 10; iter++) {
             let regraAplicada = regrasTiktokList.find((reg: any) => {
-              const min = Number(reg.faixa_min || reg.min || 0);
-              const max = Number(reg.faixa_max || reg.max || 999999);
+              const min = parseNumeroBruto(reg.faixa_min ?? reg.min ?? 0);
+              const max = parseNumeroBruto(reg.faixa_max ?? reg.max ?? 999999);
               return pdvEstimado >= min && pdvEstimado <= max;
             }) || regrasTiktokList[0];
 
-            const comissaoVal = regraAplicada ? parseNumeroBruto(regraAplicada.comissao || regraAplicada.valor_comissao || 14) : 14;
+            const comissaoVal = regraAplicada ? parseNumeroBruto(regraAplicada.comissao ?? regraAplicada.valor_comissao ?? 14) : 14;
             const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
-            const tarifaFixa = regraAplicada ? parseNumeroBruto(regraAplicada.tarifa_fixa || regraAplicada.tarifa || 4) : 4;
-            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete || regraAplicada.valor_frete || 0) : 0;
-            const embalagem = 0.70;
+            const tarifaFixa = regraAplicada ? parseNumeroBruto(regraAplicada.tarifa_fixa ?? regraAplicada.tarifa ?? 4) : 4;
+            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete ?? regraAplicada.valor_frete ?? 0) : 0;
 
             const denominador = 1 - (comissaoDec + imposto + margemDesejada);
             if (denominador > 0) {
