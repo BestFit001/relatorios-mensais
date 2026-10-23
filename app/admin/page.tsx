@@ -4,14 +4,18 @@ import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 
-// Lista com todas as rotas do sistema
+// Lista completa com todas as rotas e ferramentas do sistema
 const rotasDisponiveis = [
   { id: "/", nome: "Dashboard (Curva ABC)" },
   { id: "/mapeamento", nome: "Cadastros" },
   { id: "/ads", nome: "Adsense" },
   { id: "/devolucoes", nome: "Devoluções" },
   { id: "/full", nome: "FULL / FBA" },
-  { id: "/plp", nome: "PLPs" }, // <--- NOVA ABA ADICIONADA
+  { id: "/plp", nome: "PLPs" },
+  { id: "/calculadora", nome: "Calculadora" },
+  { id: "/promocoes", nome: "Promoções" },
+  { id: "/produtos", nome: "Produtos" },
+  { id: "/padronizacao", nome: "Padronização" },
   { id: "/agenda", nome: "Agenda (Restrito)" }, 
   { id: "/regras", nome: "Regras" },
   { id: "/upload", nome: "Uploads" },
@@ -36,12 +40,10 @@ export default function AdminPage() {
   const limiteDbMb = 500; // Limite do plano gratuito do Supabase (500MB)
 
   const carregarUsuariosEStatus = async () => {
-    // Carrega Usuários da tabela oficial
     const { data: usersData, error } = await supabase.from('usuarios_permissoes').select('*');
     if (usersData) setUsuarios(usersData);
     if (error) console.error("Erro ao carregar utilizadores:", error.message);
 
-    // Carrega Tamanho do Banco (chama a função RPC)
     const { data: dbSizeData, error: dbError } = await supabase.rpc('obter_tamanho_db');
     if (dbSizeData !== null && !dbError) {
       const mb = Number(dbSizeData);
@@ -215,7 +217,7 @@ export default function AdminPage() {
 
             <div className="md:col-span-3 bg-slate-950 p-5 rounded-xl border border-slate-800">
               <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-3">Marque as Abas Permitidas para este utilizador:</label>
-              <div className="flex flex-wrap gap-4">
+              <div className="flex flex-wrap gap-3">
                 {rotasDisponiveis.map(rota => (
                   <label key={rota.id} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-200 bg-slate-900 px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors">
                     <input 
@@ -287,9 +289,9 @@ export default function AdminPage() {
 
                         <td className="p-4 text-slate-300">
                           {isEditing ? (
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap gap-2 max-w-xl">
                               {rotasDisponiveis.map(rota => (
-                                <label key={rota.id} className="flex items-center gap-1.5 cursor-pointer text-[10px] font-semibold bg-slate-950 px-2 py-1 rounded border border-slate-700">
+                                <label key={rota.id} className="flex items-center gap-1.5 cursor-pointer text-[10px] font-semibold bg-slate-950 px-2.5 py-1.5 rounded border border-slate-700">
                                   <input 
                                     type="checkbox" 
                                     checked={editandoPaginas.includes(rota.id)} 
