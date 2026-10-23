@@ -90,7 +90,6 @@ export default function PromocoesTiktokPage() {
         } else keep = false;
       }
 
-      // Filtrar regras aceitando "tiktok" ou "tiktok shop"
       const regrasTiktok = allRegras.filter((r: any) => {
         const campoStr = String(r.campo || r.canal || "").toLowerCase();
         return campoStr.includes("tiktok");
@@ -170,13 +169,13 @@ export default function PromocoesTiktokPage() {
 
       // 2. Cabeçalho técnico na linha 1 (índice 0)
       const headerRow = dadosTiktokRaw[0].map(c => String(c || "").trim().toLowerCase());
-      const idxProdId = headerRow.indexOf("product_id");
-      const idxSkuId = headerRow.indexOf("sku_id");
-      const idxSellerSku = headerRow.indexOf("seller_sku");
-      const idxPrice = headerRow.indexOf("price");
+      const idxProdId = headerRow.findIndex(h => h.includes("product_id"));
+      const idxSkuId = headerRow.findIndex(h => h.includes("sku_id"));
+      const idxSellerSku = headerRow.findIndex(h => h.includes("seller_sku"));
+      const idxPrice = headerRow.findIndex(h => h.includes("price"));
 
       if (idxProdId === -1 || idxSkuId === -1 || idxSellerSku === -1) {
-        alert("Erro: Não foi possível localizar as colunas técnicas obrigatórias ('product_id', 'sku_id', 'seller_sku') na linha 1 da planilha.");
+        alert("Erro: Não foi possível localizar as colunas técnicas ('product_id', 'sku_id', 'seller_sku') na linha 1 da planilha.");
         setLoading(false);
         return;
       }
@@ -185,7 +184,7 @@ export default function PromocoesTiktokPage() {
       const imposto = 0.09;
       const resultados: any[] = [];
 
-      // Os dados reais iniciam a partir da linha 5 (índice 5)
+      // Os dados reais no template do TikTok começam a partir da linha 5 (índice 5)
       for (let i = 5; i < dadosTiktokRaw.length; i++) {
         const r = dadosTiktokRaw[i];
         if (!r || r.length === 0) continue;
@@ -195,7 +194,7 @@ export default function PromocoesTiktokPage() {
         const sellerSku = idxSellerSku !== -1 ? normalizarSku(r[idxSellerSku]) : "";
         const precoOriginal = idxPrice !== -1 ? parseNumeroBruto(r[idxPrice]) : 0;
 
-        if (!sellerSku || !prodId || !skuId) continue;
+        if (!sellerSku) continue;
 
         // Cruzamento com Tiny e Custos usando o seller_sku
         let saldoAtual = estoqueMap.get(sellerSku) || 0;
@@ -269,6 +268,7 @@ export default function PromocoesTiktokPage() {
       return;
     }
 
+    // Gerando o template FixedPriceWithSKU contendo apenas as colunas obrigatórias preenchidas e as demais em branco com os títulos originais
     const templateData = aptos.map(item => ({
       "Product_id (obrigatório)": item.productId,
       "SKU_id (obrigatório)": item.skuId,
