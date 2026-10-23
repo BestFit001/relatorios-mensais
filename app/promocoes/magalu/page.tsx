@@ -57,6 +57,7 @@ export default function PromocoesMagaluPage() {
   const [abaAtiva, setAbaAtiva] = useState<"precificar" | "ativas">("precificar");
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
+  const [skusMagaluBaseSet, setSkusMagaluBaseSet] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -64,13 +65,14 @@ export default function PromocoesMagaluPage() {
       router.push("/login");
       return;
     }
-    carregarCustos();
+    carregarBasesIniciais();
     carregarPromocoesAtivasSupabase();
   }, []);
 
-  const carregarCustos = async () => {
+  const carregarBasesIniciais = async () => {
     setLoading(true);
     try {
+      // 1. Carregar custos
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -92,8 +94,34 @@ export default function PromocoesMagaluPage() {
         }
       });
       setCustosMap(cMap);
+
+      // 2. Carregar SKUs mapeados para "Magazine Luiza" na tabela mapeamento_canais_skus
+      let allMapeamentos: any[] = [];
+      from = 0;
+      keep = true;
+      while (keep) {
+        const { data } = await supabase
+          .from("mapeamento_canais_skus")
+          .select("sku")
+          .ilike("canal", "Magazine Luiza")
+          .range(from, from + step - 1);
+
+        if (data && data.length > 0) {
+          allMapeamentos = [...allMapeamentos, ...data];
+          from += step;
+          if (data.length < step) keep = false;
+        } else keep = false;
+      }
+
+      const magaluSet = new Set<string>();
+      allMapeamentos.forEach((m: any) => {
+        const sk = normalizarSku(m.sku);
+        if (sk) magaluSet.add(sk);
+      });
+      setSkusMagaluBaseSet(magaluSet);
+
     } catch (e) {
-      console.error("Erro ao carregar custos:", e);
+      console.error("Erro ao carregar bases:", e);
     }
     setLoading(false);
   };
@@ -127,7 +155,7 @@ export default function PromocoesMagaluPage() {
       try {
         const rawData = await lerArquivoParaMatriz(e.target.files[0]);
         setDadosEstoqueRaw(rawData);
-        alert("✅ Planilha de estoque carregada com sucesso!");
+        alert("✅ Planilha de estoque (Tiny) carregada com sucesso!");
       } catch (err: any) {
         alert("Erro ao ler estoque: " + err.message);
       }
@@ -154,7 +182,7 @@ export default function PromocoesMagaluPage() {
 
     setLoading(true);
     try {
-      // 1. Mapear estoque: SKU na Coluna C (índice 2) e Saldo na Coluna F (índice 5)
+      // 1. Mapear estoque do Tiny: SKU na Coluna C (índice 2) e Saldo na Coluna F (índice 5)
       const estoqueMap = new Map<string, number>();
       for (let i = 0; i < dadosEstoqueRaw.length; i++) {
         const row = dadosEstoqueRaw[i];
@@ -168,7 +196,7 @@ export default function PromocoesMagaluPage() {
         }
       }
 
-      // 2. Processar planilha da Magalu
+      // 2. Processar planilha da Magalu ignorando as linhas de exemplo (ex: sku1, sku2 ou linhas inválidas)
       const headers = dadosMagaluRaw[0].map((h: any) => String(h || "").trim().toUpperCase());
       const getColIndex = (names: string[]) => {
         for (const name of names) {
@@ -182,7 +210,7 @@ export default function PromocoesMagaluPage() {
       const idxPdv = getColIndex(["PDV", "PRECO", "PREÇO", "VALOR", "PRICE"]);
 
       if (idxSku === -1 || idxPdv === -1) {
-        alert(`Erro: Não foi possível localizar as colunas de SKU e Preço/PDV.`);
+        alert(`Erro: Não foi possível localizar as colunas de SKU e Preço/PDV na planilha Magalu.`);
         setLoading(false);
         return;
       }
@@ -198,9 +226,12 @@ export default function PromocoesMagaluPage() {
         const skuRaw = normalizarSku(r[idxSku]);
         const pdvOriginal = parseNumeroBruto(r[idxPdv]);
 
-        if (!skuRaw) continue;
+        if (!skuRaw || skuRaw === "sku1" || skuRaw === "sku2") continue; // Ignorar exemplos da planilha modelo
 
-        // Verificar estoque na Coluna C mapeada
+        // Verificar se o SKU está presente na base de mapeamento para "Magazine Luiza"
+        const mapeadoMagalu = skusMagaluBaseSet.has(skuRaw);
+
+        // Verificar estoque no Tiny (Coluna C -> Coluna F)
         let saldoAtual = 0;
         for (const [estKey, estVal] of estoqueMap.entries()) {
           if (estKey === skuRaw || estKey.includes(skuRaw) || skuRaw.includes(estKey)) {
@@ -214,7 +245,10 @@ export default function PromocoesMagaluPage() {
         let statusItem = "APTO";
         let errosList: string[] = [];
 
-        if (saldoAtual <= 0) {
+        if (!mapeadoMagalu) {
+          statusItem = "INAPTO";
+          errosList.push("Não mapeado para Magazine Luiza");
+        } else if (saldoAtual <= 0) {
           statusItem = "INAPTO";
           errosList.push(`Sem estoque (Saldo: ${saldoAtual})`);
         } else if (!skuValido(skuRaw) || custo <= 0) {
@@ -247,7 +281,7 @@ export default function PromocoesMagaluPage() {
       }
 
       setDadosProcessados(resultados);
-      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos com estoque > 0.`);
+      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos (mapeados na Magalu e com estoque > 0).`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
     }
@@ -311,7 +345,7 @@ export default function PromocoesMagaluPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
-            <p className="text-sm font-medium text-slate-400">Validação via Coluna C (SKU) e Coluna F (Estoque), margem e vigência</p>
+            <p className="text-sm font-medium text-slate-400">Validação com mapeamento Supabase (Magalu), Tiny (Col. C e F) e margem</p>
           </div>
           <Navbar />
         </div>
@@ -385,7 +419,7 @@ export default function PromocoesMagaluPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-800 items-end">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">1. Planilha de Estoque (SKU na Col. C, Qtd na Col. F):</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">1. Planilha de Estoque (Tiny - Col. C e F):</label>
                   <input
                     type="file"
                     accept=".xlsx, .xls, .csv"
@@ -411,7 +445,7 @@ export default function PromocoesMagaluPage() {
                     disabled={loading}
                     className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
                   >
-                    {loading ? "A processar..." : "Processar com Estoque"}
+                    {loading ? "A processar..." : "Processar com Mapeamento & Estoque"}
                   </button>
                 </div>
               </div>
@@ -440,7 +474,7 @@ export default function PromocoesMagaluPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">Resultado do Processamento (Magalu com Estoque &gt; 0)</h3>
+                  <h3 className="text-sm font-bold text-white">Resultado do Processamento (Magalu com Mapeamento & Estoque)</h3>
                   <span className="text-xs text-slate-400">Total itens: {dadosProcessados.length}</span>
                 </div>
                 <div className="overflow-x-auto max-h-[500px]">
