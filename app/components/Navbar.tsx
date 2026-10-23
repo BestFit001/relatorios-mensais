@@ -13,7 +13,6 @@ export default function Navbar() {
   const [menuExpandido, setMenuExpandido] = useState<string | null>("relatorios");
   const [sidebarAberta, setSidebarAberta] = useState(true);
   
-  // Estado do Logotipo Global
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
@@ -39,7 +38,8 @@ export default function Navbar() {
             "/calculadora",
             "/promocoes",
             "/produtos",
-            "/padronizacao"
+            "/padronizacao",
+            "/marketing"
           ]);
         } else {
           setPaginasPermitidas(user.paginas_permitidas || ["/"]);
@@ -115,10 +115,8 @@ export default function Navbar() {
 
   return (
     <>
-      {/* SIDEBAR LATERAL FIXA */}
       <aside className={`fixed top-0 left-0 h-full bg-[#0b0e14] border-r border-slate-800 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans transition-all duration-300 ${sidebarAberta ? 'w-60' : 'w-16'}`}>
         
-        {/* TOPO DA SIDEBAR */}
         <div className="p-2.5 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
           <div className="flex items-center gap-2 overflow-hidden">
             <label className="relative group cursor-pointer flex-shrink-0" title="Clique para alterar a imagem de perfil/logo">
@@ -152,10 +150,8 @@ export default function Navbar() {
           </button>
         </div>
 
-        {/* MENU DE NAVEGAÇÃO LATERAL */}
         <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1 text-xs font-semibold">
           
-          {/* SEÇÃO: DASHBOARD / INÍCIO */}
           {temPermissao("/") && (
             <Link
               href="/"
@@ -169,7 +165,20 @@ export default function Navbar() {
             </Link>
           )}
 
-          {/* SEÇÃO: RELATÓRIOS */}
+          {/* NOVA ABA MARKETING */}
+          {temPermissao("/marketing") && (
+            <Link
+              href="/marketing"
+              title="Marketing"
+              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl transition-all ${
+                pathname?.includes("/marketing") ? "bg-purple-600 text-white shadow-md shadow-purple-900/30 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900"
+              }`}
+            >
+              <span className="text-sm flex-shrink-0">📣</span>
+              {sidebarAberta && <span className="truncate">Marketing</span>}
+            </Link>
+          )}
+
           {(temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full")) && (
             <div>
               <button
@@ -208,7 +217,6 @@ export default function Navbar() {
             </div>
           )}
 
-          {/* SEÇÃO: FERRAMENTAS */}
           {(temPermissao("/calculadora") || temPermissao("/promocoes") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp")) && (
             <div>
               <button
@@ -252,7 +260,6 @@ export default function Navbar() {
             </div>
           )}
 
-          {/* SEÇÃO: CONFIGURAÇÕES */}
           {(temPermissao("/regras") || temPermissao("/upload") || temPermissao("/admin")) && (
             <div>
               <button
@@ -286,7 +293,6 @@ export default function Navbar() {
             </div>
           )}
 
-          {/* AGENDA */}
           {temPermissao("/agenda") && (
             <Link
               href="/agenda"
@@ -302,7 +308,6 @@ export default function Navbar() {
 
         </div>
 
-        {/* RODAPÉ DA SIDEBAR: PERFIL E SAIR */}
         <div className="p-2.5 border-t border-slate-800/80 bg-slate-950/60 space-y-2">
           {sidebarAberta ? (
             <div className="overflow-hidden">
@@ -330,7 +335,6 @@ export default function Navbar() {
 
       </aside>
 
-      {/* ESPAÇAMENTO CORRETO E COMPACTO */}
       <style jsx global>{`
         body {
           background-color: #0d0f18 !important;
