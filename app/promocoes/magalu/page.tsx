@@ -41,8 +41,19 @@ export default function PromocoesMagaluPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [salvandoBanco, setSalvandoBanco] = useState(false);
+  
+  // Parâmetros de configuração no painel
   const [margemAlvo, setMargemAlvo] = useState("20");
-  const [dadosProcessados, setDadosProcessados] = useState<any>(null);
+  const [nomePromocao, setNomePromocao] = useState("Campanha Magalu");
+  const [dataInicio, setDataInicio] = useState("");
+  const [dataFim, setDataFim] = useState("");
+
+  const [arquivoEstoque, setArquivoEstoque] = useState<File | null>(null);
+  const [arquivoMagalu, setArquivoMagalu] = useState<File | null>(null);
+  const [dadosEstoqueRaw, setDadosEstoqueRaw] = useState<any[][] | null>(null);
+  const [dadosMagaluRaw, setDadosMagaluRaw] = useState<any[][] | null>(null);
+
+  const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
   const [promocoesAtivas, setPromocoesAtivas] = useState<any[]>([]);
   const [termoBusca, setTermoBusca] = useState("");
   const [abaAtiva, setAbaAtiva] = useState<"precificar" | "ativas">("precificar");
@@ -55,11 +66,11 @@ export default function PromocoesMagaluPage() {
       router.push("/login");
       return;
     }
-    carregarBasesDoApp();
+    carregarCustos();
     carregarPromocoesAtivasSupabase();
   }, []);
 
-  const carregarBasesDoApp = async () => {
+  const carregarCustos = async () => {
     setLoading(true);
     try {
       let allCustos: any[] = [];
@@ -94,38 +105,82 @@ export default function PromocoesMagaluPage() {
     if (data) setPromocoesAtivas(data);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEstoqueUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      setArquivoEstoque(file);
       const reader = new FileReader();
       reader.onload = (evt) => {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: "binary" });
-        const sheetName = wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
-        const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-        setDadosProcessados({ rawData, sheetName });
+        try {
+          const bstr = evt.target?.result;
+          const wb = XLSX.read(bstr, { type: "binary" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+          setDadosEstoqueRaw(rawData);
+          alert("✅ Planilha de estoque carregada com sucesso!");
+        } catch (err: any) {
+          alert("Erro ao ler estoque: " + err.message);
+        }
       };
       reader.readAsBinaryString(file);
     }
   };
 
-  const processarPlanilhaMagalu = async () => {
-    if (!dadosProcessados || !dadosProcessados.rawData) {
-      alert("Por favor, selecione uma planilha da Magalu.");
+  const handleMagaluUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setArquivoMagalu(file);
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const bstr = evt.target?.result;
+          const wb = XLSX.read(bstr, { type: "binary" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+          setDadosMagaluRaw(rawData);
+          alert("✅ Planilha Magalu carregada com sucesso!");
+        } catch (err: any) {
+          alert("Erro ao ler planilha Magalu: " + err.message);
+        }
+      };
+      reader.readAsBinaryString(file);
+    }
+  };
+
+  const processarPrecificacaoComEstoque = () => {
+    if (!dadosEstoqueRaw || !dadosMagaluRaw) {
+      alert("Por favor, selecione tanto a Planilha de Estoque quanto a Planilha da Magalu.");
       return;
     }
 
     setLoading(true);
     try {
-      const { rawData, sheetName } = dadosProcessados;
-      if (rawData.length < 1) {
-        alert("A planilha parece estar vazia.");
-        setLoading(false);
-        return;
+      // 1. Mapear estoque considerando Coluna F (índice 5)
+      const estoqueMap = new Map<string, number>();
+      
+      // Procurar linha de cabeçalho ou varrer a partir da linha 1
+      for (let i = 0; i < dadosEstoqueRaw.length; i++) {
+        const row = dadosEstoqueRaw[i];
+        if (!row || row.length < 6) continue;
+
+        // Tentar detetar SKU (geralmente nas primeiras colunas) e saldo na coluna F (índice 5)
+        let skuEstoque = "";
+        for (let colIdx = 0; colIdx < 5; colIdx++) {
+          const val = normalizarSku(row[colIdx]);
+          if (val && val.length >= 6) {
+            skuEstoque = val;
+            break;
+          }
+        }
+        const saldoEstoque = parseNumeroBruto(row[5]); // Coluna F = Índice 5
+
+        if (skuEstoque) {
+          estoqueMap.set(skuEstoque, saldoEstoque);
+        }
       }
 
-      const headers = rawData[0].map((h: any) => String(h || "").trim().toUpperCase());
+      // 2. Processar planilha da Magalu
+      const headers = dadosMagaluRaw[0].map((h: any) => String(h || "").trim().toUpperCase());
       const getColIndex = (names: string[]) => {
         for (const name of names) {
           const idx = headers.indexOf(name.toUpperCase());
@@ -138,7 +193,7 @@ export default function PromocoesMagaluPage() {
       const idxPdv = getColIndex(["PDV", "PREÇO", "PRECO", "VALOR", "PRICE"]);
 
       if (idxSku === -1 || idxPdv === -1) {
-        alert("Erro: Não foi possível localizar as colunas 'SKU' e 'PDV' no cabeçalho original.");
+        alert("Erro: Não foi possível localizar as colunas 'SKU' e 'PDV' no cabeçalho da Magalu.");
         setLoading(false);
         return;
       }
@@ -147,8 +202,8 @@ export default function PromocoesMagaluPage() {
       const imposto = 0.09;
       const resultados: any[] = [];
 
-      for (let i = 1; i < rawData.length; i++) {
-        const r = rawData[i];
+      for (let i = 1; i < dadosMagaluRaw.length; i++) {
+        const r = dadosMagaluRaw[i];
         if (!r || r.length === 0) continue;
 
         const skuRaw = normalizarSku(r[idxSku]);
@@ -156,16 +211,30 @@ export default function PromocoesMagaluPage() {
 
         if (!skuRaw) continue;
 
+        // Verificar estoque (deve ser > 0)
+        // Tentamos match exato ou parcial no mapa de estoque
+        let saldoAtual = 0;
+        for (const [estKey, estVal] of estoqueMap.entries()) {
+          if (estKey === skuRaw || estKey.includes(skuRaw) || skuRaw.includes(estKey)) {
+            saldoAtual = estVal;
+            break;
+          }
+        }
+
         const custo = custosMap.has(skuRaw) ? Number(custosMap.get(skuRaw)) : 0;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
 
-        if (!skuValido(skuRaw) || custo <= 0) {
+        if (saldoAtual <= 0) {
+          statusItem = "INAPTO";
+          errosList.push(`Sem estoque (Saldo: ${saldoAtual})`);
+        } else if (!skuValido(skuRaw) || custo <= 0) {
           statusItem = "INAPTO";
           errosList.push("SKU inválido ou Custo não encontrado");
         }
 
+        // Regras Magalu (Comissão 18%, Tarifa Fixa R$ 5,00)
         let comissaoDec = 0.18;
         let tarifaFixa = 5.00;
         let freteValor = 0.00;
@@ -181,6 +250,7 @@ export default function PromocoesMagaluPage() {
         resultados.push({
           rowIndex: i,
           SKU: skuRaw,
+          SALDO: saldoAtual,
           ORIGINAL_PRICE: pdvOriginal,
           FINAL_PRICE: Number(novoPrecoSugerido.toFixed(2)),
           STATUS: statusItem,
@@ -188,8 +258,8 @@ export default function PromocoesMagaluPage() {
         });
       }
 
-      setDadosProcessados({ ...dadosProcessados, itens: resultados });
-      alert(`✅ Processamento Magalu concluído!`);
+      setDadosProcessados(resultados);
+      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos com estoque > 0.`);
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
     }
@@ -197,8 +267,8 @@ export default function PromocoesMagaluPage() {
   };
 
   const salvarNoBanco = async () => {
-    if (!dadosProcessados || !dadosProcessados.itens) return;
-    const aptos = dadosProcessados.itens.filter((i: any) => i.STATUS === "APTO");
+    if (!dadosProcessados || dadosProcessados.length === 0) return;
+    const aptos = dadosProcessados.filter((i: any) => i.STATUS === "APTO");
     if (aptos.length === 0) {
       alert("Nenhum item apto para salvar.");
       return;
@@ -210,11 +280,14 @@ export default function PromocoesMagaluPage() {
         await supabase.from("promocoes_ativas_magalu").insert([{
           sku: item.SKU,
           preco_sugerido: item.FINAL_PRICE,
-          preco_original: item.ORIGINAL_PRICE
+          preco_original: item.ORIGINAL_PRICE,
+          promocao: nomePromocao,
+          data_inicio: dataInicio || null,
+          data_fim: dataFim || null
         }]);
       }
       await carregarPromocoesAtivasSupabase();
-      alert(`🚀 ${aptos.length} itens salvos na base Magalu com sucesso!`);
+      alert(`🚀 ${aptos.length} promoções salvas com sucesso na base Magalu!`);
       setAbaAtiva("ativas");
     } catch (e: any) {
       alert("Erro ao salvar: " + e.message);
@@ -223,12 +296,12 @@ export default function PromocoesMagaluPage() {
   };
 
   const baixarExcelOtimizado = () => {
-    if (!dadosProcessados || !dadosProcessados.itens || dadosProcessados.itens.length === 0) {
+    if (!dadosProcessados || dadosProcessados.length === 0) {
       alert("Processe a planilha primeiro.");
       return;
     }
 
-    const dadosOtimizados = dadosProcessados.itens.map((item: any) => ({
+    const dadosOtimizados = dadosProcessados.map((item: any) => ({
       SKU: item.SKU,
       PDV: item.STATUS === "APTO" ? item.FINAL_PRICE : item.ORIGINAL_PRICE,
       STATUS: item.STATUS === "APTO" ? "Elegível" : "Inapto",
@@ -237,12 +310,10 @@ export default function PromocoesMagaluPage() {
 
     const newWs = XLSX.utils.json_to_sheet(dadosOtimizados);
     const newWb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(newWb, newWs, dadosProcessados.sheetName || "Magalu");
-
-    XLSX.writeFile(newWb, "magalu_promocoes_otimizada.xlsx");
+    XLSX.utils.book_append_sheet(newWb, newWs, "Magalu");
+    XLSX.writeFile(newWb, "magalu_promocoes_com_estoque.xlsx");
   };
 
-  const listaItens = dadosProcessados?.itens || [];
   const itensFiltrados = promocoesAtivas.filter(p => String(p.sku || "").toLowerCase().includes(termoBusca.toLowerCase()));
 
   return (
@@ -252,7 +323,7 @@ export default function PromocoesMagaluPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação e exportação respeitando o cabeçalho original</p>
+            <p className="text-sm font-medium text-slate-400">Filtro de estoque (Coluna F), margem de lucro e vigência promocional</p>
           </div>
           <Navbar />
         </div>
@@ -278,70 +349,119 @@ export default function PromocoesMagaluPage() {
 
         {abaAtiva === "precificar" ? (
           <div className="space-y-6">
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha Magalu (Cabeçalho Original):</label>
-                <input
-                  type="file"
-                  accept=".xlsx, .xls, .csv"
-                  onChange={handleFileUpload}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white cursor-pointer"
-                />
+            {/* PAINEL DE CONFIGURAÇÃO E UPLOADS */}
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">⚙️ Configurações da Campanha & Uploads</h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Lucro Desejado (%):</label>
+                  <input
+                    type="number"
+                    value={margemAlvo}
+                    onChange={(e) => setMargemAlvo(e.target.value)}
+                    className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nome da Promoção:</label>
+                  <input
+                    type="text"
+                    value={nomePromocao}
+                    onChange={(e) => setNomePromocao(e.target.value)}
+                    placeholder="Ex: Liquidação Magalu"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Início:</label>
+                  <input
+                    type="date"
+                    value={dataInicio}
+                    onChange={(e) => setDataInicio(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Fim:</label>
+                  <input
+                    type="date"
+                    value={dataFim}
+                    onChange={(e) => setDataFim(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Desejada (%):</label>
-                <input
-                  type="number"
-                  value={margemAlvo}
-                  onChange={(e) => setMargemAlvo(e.target.value)}
-                  className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
-                />
-              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-800 items-end">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">1. Planilha de Estoque (Inventário):</label>
+                  <input
+                    type="file"
+                    accept=".xlsx, .xls, .csv"
+                    onChange={handleEstoqueUpload}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white cursor-pointer"
+                  />
+                </div>
 
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={processarPlanilhaMagalu}
-                  disabled={loading}
-                  className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
-                >
-                  {loading ? "A processar..." : "Processar Magalu"}
-                </button>
-              </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Planilha Magalu (SKU e PDV):</label>
+                  <input
+                    type="file"
+                    accept=".xlsx, .xls, .csv"
+                    onChange={handleMagaluUpload}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white cursor-pointer"
+                  />
+                </div>
 
-              {listaItens.length > 0 && (
                 <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={processarPrecificacaoComEstoque}
+                    disabled={loading}
+                    className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                  >
+                    {loading ? "A processar..." : "Processar com Estoque"}
+                  </button>
+                </div>
+              </div>
+
+              {dadosProcessados.length > 0 && (
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
                   <button
                     type="button"
                     onClick={salvarNoBanco}
                     disabled={salvandoBanco}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
                   >
-                    {salvandoBanco ? "A Salvar..." : "Salvar na Base"}
+                    {salvandoBanco ? "A Salvar..." : "Salvar na Base Ativa"}
                   </button>
                   <button
                     type="button"
                     onClick={baixarExcelOtimizado}
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
                   >
-                    Baixar Excel
+                    Baixar Excel Otimizado
                   </button>
                 </div>
               )}
             </div>
 
-            {listaItens.length > 0 && (
+            {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">Resultado — Magazine Luiza</h3>
-                  <span className="text-xs text-slate-400">Total itens: {listaItens.length}</span>
+                  <h3 className="text-sm font-bold text-white">Resultado do Processamento (Magalu com Estoque &gt; 0)</h3>
+                  <span className="text-xs text-slate-400">Total itens: {dadosProcessados.length}</span>
                 </div>
                 <div className="overflow-x-auto max-h-[500px]">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                       <tr>
                         <th className="p-3">SKU</th>
+                        <th className="p-3 text-center">Saldo Estoque</th>
                         <th className="p-3 text-right">PDV Original</th>
                         <th className="p-3 text-right">Preço Sugerido (Magalu)</th>
                         <th className="p-3 text-center">Status</th>
@@ -349,9 +469,10 @@ export default function PromocoesMagaluPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                      {listaItens.map((item: any, idx: number) => (
+                      {dadosProcessados.map((item: any, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                           <td className="p-3 font-mono text-indigo-400">{item.SKU}</td>
+                          <td className="p-3 text-center font-mono font-bold text-purple-300">{item.SALDO}</td>
                           <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.ORIGINAL_PRICE)}</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.FINAL_PRICE)}</td>
                           <td className="p-3 text-center">
@@ -386,7 +507,9 @@ export default function PromocoesMagaluPage() {
                 <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                   <tr>
                     <th className="p-3.5">SKU</th>
-                    <th className="p-3.5 text-right">Preço Original</th>
+                    <th className="p-3.5">Promoção</th>
+                    <th className="p-3.5 text-center">Início</th>
+                    <th className="p-3.5 text-center">Fim</th>
                     <th className="p-3.5 text-right">Preço Sugerido</th>
                   </tr>
                 </thead>
@@ -394,13 +517,15 @@ export default function PromocoesMagaluPage() {
                   {itensFiltrados.map((p, idx) => (
                     <tr key={p.id || idx} className="hover:bg-slate-800/40 transition-colors">
                       <td className="p-3.5 font-mono text-indigo-400">{p.sku}</td>
-                      <td className="p-3.5 text-right font-mono text-slate-400">{formatarMoeda(p.preco_original)}</td>
+                      <td className="p-3.5 font-bold text-white">{p.promocao || "-"}</td>
+                      <td className="p-3.5 text-center font-mono text-amber-400">{p.data_inicio || "-"}</td>
+                      <td className="p-3.5 text-center font-mono text-amber-400">{p.data_fim || "-"}</td>
                       <td className="p-3.5 text-right font-mono font-bold text-emerald-400">{formatarMoeda(p.preco_sugerido)}</td>
                     </tr>
                   ))}
                   {itensFiltrados.length === 0 && (
                     <tr>
-                      <td colSpan={3} className="p-8 text-center text-slate-500">Nenhum registo encontrado.</td>
+                      <td colSpan={5} className="p-8 text-center text-slate-500">Nenhum registo encontrado.</td>
                     </tr>
                   )}
                 </tbody>
