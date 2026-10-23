@@ -128,9 +128,10 @@ export default function PromocoesMagaluPage() {
         } else keep = false;
       }
 
+      // Filtrar estritamente regras onde o canal/campo seja "Magalu" ou "Magazine Luiza"
       const regrasMag = allRegras.filter((r: any) => {
-        const campoStr = String(r.campo || r.canal || "").toLowerCase();
-        return campoStr.includes("magalu");
+        const canalStr = String(r.canal || r.campo || "").toLowerCase();
+        return canalStr.includes("magalu");
       });
       setRegrasMagaluList(regrasMag);
 
@@ -207,8 +208,8 @@ export default function PromocoesMagaluPage() {
 
         let precoSugerido = 0;
         if (statusItem === "APTO") {
-          // Fórmula exata da calculadora idêntica ao painel
-          let pdvEstimado = custo * 1.9;
+          // Processo iterativo exato da calculadora consultando as regras dinâmicas por faixa de preço
+          let pdvEstimado = custo * 1.8;
           for (let iter = 0; iter < 15; iter++) {
             let regraAplicada = regrasMagaluList.find((r: any) => {
               const min = Number(r.faixa_min || r.min || 0);
@@ -223,14 +224,14 @@ export default function PromocoesMagaluPage() {
             const comissaoVal = regraAplicada ? parseNumeroBruto(regraAplicada.comissao || regraAplicada.valor_comissao || 18) : 18;
             const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
             const tarifaFixa = regraAplicada ? parseNumeroBruto(regraAplicada.tarifa_fixa || regraAplicada.tarifa || 5) : 5;
-            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete || regraAplicada.valor_frete || 20.45) : 20.45;
+            const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete || regraAplicada.valor_frete || 0) : 0;
 
             const denominador = 1 - (comissaoDec + imposto + margemDesejada);
             if (denominador > 0) {
               pdvEstimado = (custo + tarifaFixa + freteValor) / denominador;
             }
           }
-          precoSugerido = pdvEstimado > 0 ? pdvEstimado : custo * 1.9;
+          precoSugerido = pdvEstimado > 0 ? pdvEstimado : custo * 1.8;
         }
 
         resultados.push({
@@ -316,7 +317,7 @@ export default function PromocoesMagaluPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação exata sincronizada com as regras da calculadora</p>
+            <p className="text-sm font-medium text-slate-400">Precificação integrada com as regras de tarifação por faixa de preço</p>
           </div>
           <Navbar />
         </div>
