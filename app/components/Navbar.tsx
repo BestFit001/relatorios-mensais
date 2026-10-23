@@ -50,11 +50,11 @@ export default function Navbar() {
 
   return (
     <nav className="bg-slate-900 border border-slate-800 rounded-2xl px-6 py-3 flex items-center justify-between shadow-xl print:hidden">
-      {/* Esquerda: Logo / Título */}
+      {/* Esquerda: Logo / Título Centralizado */}
       <div className="flex items-center gap-3">
         <div>
-          <h2 className="text-sm font-black text-white tracking-tight">Relatórios Mensais</h2>
-          <p className="text-[10px] text-slate-400">Gestão de Performance e Compras — Best Fit</p>
+          <h2 className="text-sm font-black text-white tracking-tight">Hub Best Fit</h2>
+          <p className="text-[10px] text-slate-400">Gerenciamento e análise de performance.</p>
         </div>
       </div>
 
