@@ -16,11 +16,6 @@ function normalizarSku(valor: any): string {
   return s.toLowerCase();
 }
 
-function skuValido(sku: string): boolean {
-  const limpo = normalizarSku(sku);
-  return limpo.length >= 10;
-}
-
 function parseNumeroBruto(valor: any): number {
   if (valor === null || valor === undefined || valor === "") return 0;
   if (typeof valor === "number") return valor;
@@ -61,7 +56,6 @@ export default function PromocoesShopeePage() {
   const carregarBasesIniciais = async () => {
     setLoading(true);
     try {
-      // 1. Carregar custos
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -84,7 +78,6 @@ export default function PromocoesShopeePage() {
       });
       setCustosMap(cMap);
 
-      // 2. Carregar regras de tarifação da Shopee
       let allRegras: any[] = [];
       from = 0;
       keep = true;
@@ -115,7 +108,7 @@ export default function PromocoesShopeePage() {
       reader.onload = (evt) => {
         try {
           const bstr = evt.target?.result;
-          const wb = XLSX.read(bstr, { type: "binary" });
+          const wb = XLSX.read(bstr, { type: "binary", cellDates: true });
           const ws = wb.Sheets[wb.SheetNames[0]];
           const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
           resolve(rawData);
@@ -174,25 +167,36 @@ export default function PromocoesShopeePage() {
         }
       }
 
-      // 2. Ler cabeçalhos da planilha da Shopee
-      const headers = dadosShopeeRaw[0].map((h: any) => String(h || "").trim().toUpperCase());
-      const getColIndex = (names: string[]) => {
-        for (const name of names) {
-          const idx = headers.findIndex(h => h.includes(name.toUpperCase()));
-          if (idx !== -1) return idx;
+      // 2. Encontrar linha de cabeçalho na planilha da Shopee (varrendo até as primeiras 5 linhas)
+      let headerRowIdx = -1;
+      let headers: string[] = [];
+      let idxProdId = -1, idxVarId = -1, idxSku = -1, idxPreco = -1, idxNomeProd = -1, idxNomeVar = -1;
+
+      for (let rIdx = 0; rIdx < Math.min(6, dadosShopeeRaw.length); rIdx++) {
+        const row = dadosShopeeRaw[rIdx];
+        if (!row) continue;
+        const rowStrs = row.map(c => String(c || "").trim().toUpperCase());
+        
+        const pId = rowStrs.findIndex(s => s.includes("ID DO PRODUTO") || s.includes("PRODUCT_ID"));
+        const vId = rowStrs.findIndex(s => s.includes("ID DE VARIAÇÃO") || s.includes("VARIATION_ID"));
+        const skuC = rowStrs.findIndex(s => s === "SKU" || s.includes("SKU DE REFERÊNCIA") || s.includes("VARIATION_SKU"));
+        const prc = rowStrs.findIndex(s => s.includes("PREÇO") || s.includes("PRICE"));
+
+        if (pId !== -1 || vId !== -1 || skuC !== -1 || prc !== -1) {
+          headerRowIdx = rIdx;
+          headers = rowStrs;
+          idxProdId = pId;
+          idxVarId = vId;
+          idxSku = skuC;
+          idxPreco = prc;
+          idxNomeProd = rowStrs.findIndex(s => s.includes("NOME DO PRODUTO"));
+          idxNomeVar = rowStrs.findIndex(s => s.includes("VARIAÇÃO") || s.includes("NOME"));
+          break;
         }
-        return -1;
-      };
+      }
 
-      const idxProdId = getColIndex(["ID DO PRODUTO"]);
-      const idxVarId = getColIndex(["ID DE VARIAÇÃO"]);
-      const idxSku = getColIndex(["SKU"]);
-      const idxPreco = getColIndex(["PREÇO", "PRECO"]);
-      const idxNomeProd = getColIndex(["NOME DO PRODUTO"]);
-      const idxNomeVar = getColIndex(["VARIAÇÃO", "VARIAÇÃO DE NOME"]);
-
-      if (idxProdId === -1 || idxVarId === -1 || idxSku === -1 || idxPreco === -1) {
-        alert(`Erro: Não foi possível localizar as colunas obrigatórias na planilha da Shopee.`);
+      if (headerRowIdx === -1 || idxSku === -1 || idxPreco === -1) {
+        alert("Erro: Não foi possível detetar o cabeçalho correto na planilha da Shopee.");
         setLoading(false);
         return;
       }
@@ -201,20 +205,19 @@ export default function PromocoesShopeePage() {
       const imposto = 0.09;
       const resultados: any[] = [];
 
-      for (let i = 1; i < dadosShopeeRaw.length; i++) {
+      for (let i = headerRowIdx + 1; i < dadosShopeeRaw.length; i++) {
         const r = dadosShopeeRaw[i];
         if (!r || r.length === 0) continue;
 
-        const prodId = r[idxProdId] || "";
-        const varId = r[idxVarId] || "";
-        const skuRaw = normalizarSku(r[idxSku]);
-        const precoOriginal = parseNumeroBruto(r[idxPreco]);
+        const prodId = idxProdId !== -1 ? r[idxProdId] : "";
+        const varId = idxVarId !== -1 ? r[idxVarId] : "";
+        const skuRaw = idxSku !== -1 ? normalizarSku(r[idxSku]) : "";
+        const precoOriginal = idxPreco !== -1 ? parseNumeroBruto(r[idxPreco]) : 0;
         const nomeProd = idxNomeProd !== -1 ? r[idxNomeProd] : "";
         const nomeVar = idxNomeVar !== -1 ? r[idxNomeVar] : "";
 
-        if (!skuRaw) continue;
+        if (!skuRaw || precoOriginal <= 0) continue;
 
-        // Verificar estoque no Tiny
         let saldoAtual = estoqueMap.get(skuRaw) || 0;
         const custo = custosMap.get(skuRaw) || 0;
 
@@ -347,7 +350,7 @@ export default function PromocoesShopeePage() {
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase sm:mb-1">2. Planilha de Anúncios Shopee (Mass Update):</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Planilha de Anúncios Shopee (Mass Update):</label>
               <input
                 type="file"
                 accept=".xlsx, .xls, .csv"
