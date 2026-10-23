@@ -199,7 +199,7 @@ export default function PromocoesShopeePage() {
       // Cabeçalho da Shopee na linha 3 (índice 2)
       const headerRow = dadosShopeeRaw[2].map(c => String(c || "").trim().toLowerCase());
       const idxProdId = headerRow.findIndex(h => h.includes("id do produto") || h.includes("product id"));
-      const idxVarId = headerRow.findIndex(h => h.findIndex(str => str.includes("variante") || str.includes("variation")) !== -1 ? true : h.includes("variação"));
+      const idxVarId = headerRow.findIndex(h => h.includes("variante") || h.includes("variation") || h.includes("variação"));
       const idxSku = headerRow.findIndex(h => h === "sku" || h.includes("sku do vendedor"));
       const idxPrice = headerRow.findIndex(h => h.includes("preço") || h.includes("price"));
 
@@ -291,7 +291,6 @@ export default function PromocoesShopeePage() {
       return;
     }
 
-    // Mantendo a estrutura original exata da Shopee para o template de desconto
     const wsData = [
       ["et_title_product_id", "et_title_product_name", "et_title_variation_id", "et_title_variation_name", "et_title_parent_sku", "et_title_variation_sku", "et_title_variation_price", "ps_gtin_code", "et_title_variation_stock", "et_title_reason"],
       ["sales_info", "700a3d5d251db047505a7f359", "0", "471903358", '{"search_condition":{}}', "nan", "nan", "nan", "nan", "nan"],
