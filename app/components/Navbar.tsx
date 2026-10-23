@@ -52,7 +52,10 @@ export default function Navbar() {
             "/upload",
             "/admin",
             "/calculadora",
-            "/promocoes",
+            "/promocoes/ml",
+            "/promocoes/shopee",
+            "/promocoes/magalu",
+            "/promocoes/tiktok",
             "/produtos",
             "/padronizacao"
           ]);
@@ -200,7 +203,7 @@ export default function Navbar() {
             </Link>
           )}
 
-          {/* RELATÓRIOS (CONTEM CURVA ABC E DEMAIS RELATÓRIOS) */}
+          {/* RELATÓRIOS */}
           {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full")) && (
             <div>
               <button
@@ -244,8 +247,47 @@ export default function Navbar() {
             </div>
           )}
 
+          {/* PROMOÇÕES POR CANAL */}
+          {(temPermissao("/promocoes/ml") || temPermissao("/promocoes/shopee") || temPermissao("/promocoes/magalu") || temPermissao("/promocoes/tiktok")) && (
+            <div>
+              <button
+                onClick={() => sidebarAberta && toggleSecao("promocoes")}
+                title="Promoções"
+                className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5"><span className="text-sm flex-shrink-0">🏷️</span> {sidebarAberta && <span className="truncate">Promoções</span>}</span>
+                {sidebarAberta && <span className={`transform transition-transform text-[9px] ${menuExpandido === "promocoes" ? "rotate-180" : ""}`}>▼</span>}
+              </button>
+
+              {sidebarAberta && menuExpandido === "promocoes" && (
+                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800 ml-3 py-1">
+                  {temPermissao("/promocoes/ml") && (
+                    <Link href="/promocoes/ml" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/ml") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                      🟡 Mercado Livre
+                    </Link>
+                  )}
+                  {temPermissao("/promocoes/magalu") && (
+                    <Link href="/promocoes/magalu" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/magalu") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                      🔵 Magazine Luiza
+                    </Link>
+                  )}
+                  {temPermissao("/promocoes/shopee") && (
+                    <Link href="/promocoes/shopee" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/shopee") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                      🟠 Shopee
+                    </Link>
+                  )}
+                  {temPermissao("/promocoes/tiktok") && (
+                    <Link href="/promocoes/tiktok" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/tiktok") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                      ⚫ TikTok Shop
+                    </Link>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* FERRAMENTAS */}
-          {(temPermissao("/calculadora") || temPermissao("/promocoes") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp")) && (
+          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp")) && (
             <div>
               <button
                 onClick={() => sidebarAberta && toggleSecao("ferramentas")}
@@ -261,11 +303,6 @@ export default function Navbar() {
                   {temPermissao("/calculadora") && (
                     <Link href="/calculadora" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/calculadora") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
                       Calculadora
-                    </Link>
-                  )}
-                  {temPermissao("/promocoes") && (
-                    <Link href="/promocoes" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
-                      Promoções
                     </Link>
                   )}
                   {temPermissao("/produtos") && (
@@ -339,7 +376,6 @@ export default function Navbar() {
         </div>
 
         <div className="p-2.5 border-t border-slate-800/80 bg-slate-950/60 space-y-2">
-          {/* BOTÃO DE ALTERNÂNCIA DE TEMA (MODO CLARO / ESCURO) */}
           <button
             onClick={alternarTema}
             title="Alternar Tema Claro / Escuro"
