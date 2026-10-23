@@ -74,6 +74,7 @@ export default function CalculadoraPage() {
   const [precoAlvoCustoIdeal, setPrecoAlvoCustoIdeal] = useState("100.00");
   const [margemCustoIdeal, setMargemCustoIdeal] = useState("20");
 
+  // Estado para armazenar o valor de rebate inserido por canal
   const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
 
   const [produtoEncontrado, setProdutoEncontrado] = useState<any>(null);
@@ -102,7 +103,6 @@ export default function CalculadoraPage() {
     ];
     setCanaisConfig(listaNomesCanais);
 
-    // Restaura os canais salvos especificamente para este usuário logado
     const canaisSalvosDoUsuario = localStorage.getItem(`canais_selecionados_${usuarioLogado}`);
     if (canaisSalvosDoUsuario) {
       try {
@@ -322,6 +322,9 @@ export default function CalculadoraPage() {
         const largura = refAnuncio && Number(refAnuncio.largura) > 0 ? Number(refAnuncio.largura) : 10;
         const comprimento = refAnuncio && Number(refAnuncio.comprimento) > 0 ? Number(refAnuncio.comprimento) : 10;
 
+        // Valor de rebate adicionado manualmente pelo usuário para este canal
+        const valRebate = parseNumero(rebatesCanais[canalNome] || "0");
+
         if (modoCalculo === "pdv_ideal") {
           const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
           const margemAlvoDec = parseFloat(margemAlvo) / 100;
@@ -342,7 +345,9 @@ export default function CalculadoraPage() {
             }
 
             const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
-            pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
+            // O rebate reduz o custo efetivo ou soma-se à receita, facilitando o cálculo do PDV ideal
+            const custoEfetivo = Math.max(0, custoProduto - valRebate);
+            pdvCalculado = denominador > 0 ? (custoEfetivo + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
           }
 
           let tarifaFixaFinal = 0;
@@ -359,7 +364,10 @@ export default function CalculadoraPage() {
 
           const valorComissao = pdvCalculado * comissaoPct;
           const valorImposto = pdvCalculado * impostoPercent;
-          const lucroLiquido = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+          
+          // Lucro base + Rebate somado ao líquido/lucro
+          const lucroLiquidoBase = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+          const lucroLiquido = lucroLiquidoBase + valRebate;
           const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
 
           return {
@@ -373,13 +381,13 @@ export default function CalculadoraPage() {
             valorImposto,
             lucroLiquido,
             margemFinal,
+            rebate: valRebate,
             custoIdealCalculado: null,
             temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
           };
         } else if (modoCalculo === "reversa") {
           const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
           const pdvBase = parseNumero(precoFixo);
-          const valRebate = parseNumero(rebatesCanais[canalNome] || "0");
 
           let tarifaFixaFinal = 0;
           let freteFinal = 0;
@@ -397,6 +405,7 @@ export default function CalculadoraPage() {
           const valorComissao = pdvBase * comissaoPct;
           const valorImposto = pdvBase * impostoPercent;
           
+          // O rebate soma-se ao lucro líquido
           const lucroLiquidoBase = pdvBase - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
           const lucroLiquido = lucroLiquidoBase + valRebate;
           const margemFinal = pdvBase > 0 ? (lucroLiquido / pdvBase) * 100 : 0;
@@ -412,6 +421,7 @@ export default function CalculadoraPage() {
             valorImposto,
             lucroLiquido,
             margemFinal,
+            rebate: valRebate,
             custoIdealCalculado: null,
             temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
           };
@@ -436,9 +446,11 @@ export default function CalculadoraPage() {
           const valorImposto = pdvAlvo * impostoPercent;
 
           const termoMultiplicador = 1 - (comissaoPct + impostoPercent + margemDesejadaDec);
-          const custoIdealCalculado = (pdvAlvo * termoMultiplicador) - tarifaFixaFinal - freteFinal;
+          // O rebate ajuda a suportar um custo ideal maior
+          let custoIdealCalculado = (pdvAlvo * termoMultiplicador) - tarifaFixaFinal - freteFinal + valRebate;
 
-          const lucroLiquidoIdeal = pdvAlvo - (custoIdealCalculado + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+          const lucroLiquidoIdealBase = pdvAlvo - (custoIdealCalculado > 0 ? custoIdealCalculado : 0 + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+          const lucroLiquidoIdeal = lucroLiquidoIdealBase + valRebate;
           const margemFinalIdeal = pdvAlvo > 0 ? (lucroLiquidoIdeal / pdvAlvo) * 100 : 0;
 
           return {
@@ -452,6 +464,7 @@ export default function CalculadoraPage() {
             valorImposto,
             lucroLiquido: lucroLiquidoIdeal,
             margemFinal: margemFinalIdeal,
+            rebate: valRebate,
             custoIdealCalculado: custoIdealCalculado > 0 ? custoIdealCalculado : 0,
             temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
           };
@@ -481,7 +494,7 @@ export default function CalculadoraPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Calculadora de Precificação & Margens</h1>
-            <p className="text-sm font-medium text-slate-400">Precificação com peso volumétrico e preferências salvas por usuário</p>
+            <p className="text-sm font-medium text-slate-400">Precificação com peso volumétrico e rebate manual por canal</p>
           </div>
           <Navbar />
         </div>
@@ -686,6 +699,19 @@ export default function CalculadoraPage() {
                   </div>
                 </div>
 
+                {/* CAMPO DE REBATE MANUAL POR CANAL */}
+                <div className="bg-purple-950/20 border border-purple-900/40 p-2.5 rounded-xl flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold text-purple-300 uppercase">Rebate / Subsídio (R$):</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={rebatesCanais[res.canal] || ""}
+                    onChange={(e) => setRebatesCanais({ ...rebatesCanais, [res.canal]: e.target.value })}
+                    placeholder="0.00"
+                    className="w-24 bg-slate-950 border border-purple-700/60 rounded-lg p-1 text-xs font-mono font-bold text-purple-200 text-right outline-none"
+                  />
+                </div>
+
                 <div className="space-y-1.5 text-xs font-mono text-slate-300 pt-1">
                   <div className="flex justify-between">
                     <span className="text-slate-500">{modoCalculo === "custo_ideal" ? "Custo Ideal Calculado:" : "Custo Produto:"}</span>
@@ -713,6 +739,12 @@ export default function CalculadoraPage() {
                     <span className="text-slate-500">Imposto (9%):</span>
                     <span className="text-rose-400">- {formatarMoeda(res.valorImposto)}</span>
                   </div>
+                  {res.rebate > 0 && (
+                    <div className="flex justify-between font-bold text-purple-400">
+                      <span>Rebate Adicionado:</span>
+                      <span>+ {formatarMoeda(res.rebate)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
