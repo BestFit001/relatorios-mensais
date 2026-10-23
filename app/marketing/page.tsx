@@ -155,6 +155,25 @@ export default function MarketingPage() {
     }
   };
 
+  const baixarFicheiro = async (url: string, formato: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      const extensao = url.split(".").pop()?.split("?")[0] || "jpg";
+      link.download = `post_${formato}_${Date.now()}.${extensao}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      // Fallback abrindo em nova aba se o CORS bloquear o blob
+      window.open(url, "_blank");
+    }
+  };
+
   const proximoItem = (dia: string, total: number) => {
     setIndicesCarrossel(prev => ({
       ...prev,
@@ -253,7 +272,6 @@ export default function MarketingPage() {
   const percentualUso = Math.min((tamanhoStorageMb / limiteStorageMb) * 100, 100);
   const mbDisponiveis = Math.max(limiteStorageMb - tamanhoStorageMb, 0);
 
-  // Filtrar postagens pela semana selecionada
   const postagensFiltradasPorSemana = postagens.filter(p => (p.semana_tipo || "atual") === filtroSemanaVisualizacao);
 
   return (
@@ -288,7 +306,6 @@ export default function MarketingPage() {
             </button>
           </div>
 
-          {/* FILTRO DE SEMANAS */}
           {subAba === "calendario" && (
             <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
               <span className="text-[10px] font-bold text-slate-400 uppercase px-2">Visualizar:</span>
@@ -400,7 +417,6 @@ export default function MarketingPage() {
               </form>
             </div>
 
-            {/* VISUALIZAÇÃO EM GRID COM CARROSSEL E ETIQUETA DE FORMATO */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               {diasSemana.map((dia, idx) => {
                 const itensDoDia = postagensFiltradasPorSemana.filter((p) => p.dia_semana === dia);
@@ -419,7 +435,7 @@ export default function MarketingPage() {
                     <div className="relative flex items-center justify-center min-h-[200px]">
                       {itensDoDia.length > 0 && postAtual ? (
                         <div className="w-full bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 relative group">
-                          {/* ETIQUETA DE FORMATO (STORY, REELS, FEED) */}
+                          {/* ETIQUETA DE FORMATO */}
                           <div className="absolute top-2 left-2 z-10">
                             <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase shadow-md ${
                               postAtual.formato === 'Story' ? 'bg-amber-600 text-white' :
@@ -427,6 +443,17 @@ export default function MarketingPage() {
                             }`}>
                               {postAtual.formato === 'Story' ? '📱 Story' : postAtual.formato === 'Reels' ? '🎬 Reels' : '🖼️ Feed'}
                             </span>
+                          </div>
+
+                          {/* BOTÃO DE DOWNLOAD RÁPIDO */}
+                          <div className="absolute top-2 right-9 z-10">
+                            <button
+                              onClick={() => baixarFicheiro(postAtual.url_arquivo, postAtual.formato)}
+                              className="bg-emerald-800 hover:bg-emerald-700 text-white w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center shadow-md cursor-pointer transition-all"
+                              title="Descarregar ficheiro"
+                            >
+                              ⬇️
+                            </button>
                           </div>
 
                           <button
