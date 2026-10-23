@@ -22,6 +22,11 @@ export default function ProdutosPage() {
   const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais">("todos");
   const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
 
+  // Estados específicos da Aba Vídeos
+  const [filtroStatusVideo, setFiltroStatusVideo] = useState<"pendentes" | "finalizados" | "todos">("pendentes");
+  const [paginaAtualVideos, setPaginaAtualVideos] = useState(1);
+  const [itensPorPaginaVideos, setItensPorPaginaVideos] = useState(10);
+
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
@@ -167,6 +172,21 @@ export default function ProdutosPage() {
 
   const salvarProdutoVideoManual = async () => {
     if (!produtoEncontradoManual) return;
+    
+    const paiNovo = produtoEncontradoManual.sku_pai || (produtoEncontradoManual.sku.length > 5 ? produtoEncontradoManual.sku.substring(0, 5) : produtoEncontradoManual.sku);
+    
+    // Verifica duplicidade por SKU Pai
+    const jaExisteRealizado = chavesGrupos.includes(paiNovo);
+    const jaExisteManual = produtosVideosManual.some(item => {
+      const paiExistente = item.sku_pai || (item.sku.length > 5 ? item.sku.substring(0, 5) : item.sku);
+      return paiExistente === paiNovo;
+    });
+
+    if (jaExisteRealizado || jaExisteManual) {
+      const confirmar = confirm("Produto duplicado, será inserido novamente?");
+      if (!confirmar) return;
+    }
+
     setLoading(true);
     const { error } = await supabase.from("produtos_videos_manuais").upsert([produtoEncontradoManual], { onConflict: "sku" });
     if (error) {
@@ -709,6 +729,57 @@ export default function ProdutosPage() {
     }
   });
 
+  // Lista combinada e filtrada para a Aba de Vídeos com paginação e filtro por status
+  const canaisAtivosClipes = canaisLista.filter(c => canaisComClipesConfig[c]);
+
+  const itensUnificadosVideos = [
+    ...chavesGrupos.map(paiKey => {
+      const itens = gruposRealizados[paiKey];
+      const primeiro = itens[0];
+      const titulo = String(primeiro.produto || "").split("-")[0].trim();
+      
+      // Verifica se todos os canais de clipes estão marcados
+      const finalizado = canaisAtivosClipes.length > 0 && canaisAtivosClipes.every(canal => {
+        return itens.every(it => Boolean((it.clipes_enviados || {})[canal]));
+      });
+
+      return {
+        tipo: "realizado",
+        chave: paiKey,
+        sku: paiKey,
+        produto: titulo,
+        itensGrupo: itens,
+        finalizado
+      };
+    }),
+    ...videosManuaisFiltrados.map(item => {
+      const pai = item.sku_pai || (item.sku.length > 5 ? item.sku.substring(0, 5) : item.sku);
+      const titulo = String(item.produto || "").split("-")[0].trim();
+
+      const finalizado = canaisAtivosClipes.length > 0 && canaisAtivosClipes.every(canal => {
+        return Boolean((item.clipes_enviados || {})[canal]);
+      });
+
+      return {
+        tipo: "manual",
+        chave: item.sku,
+        sku: pai,
+        produto: titulo,
+        itemManual: item,
+        finalizado
+      };
+    })
+  ].filter(item => {
+    if (filtroStatusVideo === "pendentes") return !item.finalizado;
+    if (filtroStatusVideo === "finalizados") return item.finalizado;
+    return true;
+  });
+
+  const totalPaginasVideos = Math.ceil(itensUnificadosVideos.length / itensPorPaginaVideos) || 1;
+  const indiceUltimoItemVideos = paginaAtualVideos * itensPorPaginaVideos;
+  const indicePrimeiroItemVideos = indiceUltimoItemVideos - itensPorPaginaVideos;
+  const itensAtuaisVideos = itensUnificadosVideos.slice(indicePrimeiroItemVideos, indiceUltimoItemVideos);
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -745,7 +816,7 @@ export default function ProdutosPage() {
                 subAba === "videos" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
               }`}
             >
-              📹 Vídeos / Clipes ({chavesGrupos.length + produtosVideosManual.length})
+              📹 Vídeos / Clipes ({itensUnificadosVideos.length})
             </button>
             <button
               onClick={() => setSubAba("periodo")}
@@ -773,7 +844,8 @@ export default function ProdutosPage() {
             </button>
           </div>
 
-          {subAba !== "descricoes" && (
+          {/* Oculta a pesquisa global nas demais abas quando estiver em Vídeos/Clipes */}
+          {subAba !== "descricoes" && subAba !== "videos" && (
             <div className="flex items-center gap-3">
               <input
                 type="text"
@@ -997,24 +1069,48 @@ export default function ProdutosPage() {
           </div>
         )}
 
-        {/* ===================== ABA 3: VÍDEOS / CLIPES (PADRONIZADO POR SKU PAI + TÍTULO) ===================== */}
+        {/* ===================== ABA 3: VÍDEOS / CLIPES (COM FILTROS, PAGINAÇÃO E SKU PAI) ===================== */}
         {subAba === "videos" && (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
             <div className="flex flex-wrap justify-between items-center gap-4 border-b border-slate-800 pb-4">
-              <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Controlo de Vídeos e Clipes por Canal</h3>
-                <p className="text-xs text-slate-400 mt-1">Tabela unificada agrupada por SKU Pai (5 primeiros dígitos) e Título Base do Produto.</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs font-bold text-slate-400 uppercase">Status:</span>
+                <select
+                  value={filtroStatusVideo}
+                  onChange={(e) => { setFiltroStatusVideo(e.target.value as any); setPaginaAtualVideos(1); }}
+                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer font-bold"
+                >
+                  <option value="pendentes">Vídeos pendentes</option>
+                  <option value="finalizados">Vídeos finalizados</option>
+                  <option value="todos">Todos os vídeos</option>
+                </select>
               </div>
-              <button
-                onClick={() => setModalVideoAberto(true)}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg"
-              >
-                + Incluir Produto p/ Vídeos
-              </button>
+
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-400">Mostrar por página:</span>
+                  <select
+                    value={itensPorPaginaVideos}
+                    onChange={(e) => { setItensPorPaginaVideos(Number(e.target.value)); setPaginaAtualVideos(1); }}
+                    className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1 text-white outline-none cursor-pointer font-bold"
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={30}>30</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={() => setModalVideoAberto(true)}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg"
+                >
+                  + Incluir Produto p/ Vídeos
+                </button>
+              </div>
             </div>
 
             <div className="bg-slate-950 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-              <div className="overflow-x-auto max-h-[600px]">
+              <div className="overflow-x-auto min-h-[300px]">
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                     <tr>
@@ -1026,88 +1122,89 @@ export default function ProdutosPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                    {/* Produtos Realizados Agrupados por Pai */}
-                    {chavesGrupos.map((paiKey, idx) => {
-                      const itensDoGrupo = gruposRealizados[paiKey];
-                      const primeiroItem = itensDoGrupo[0];
-                      const tituloBase = String(primeiroItem.produto || "").split("-")[0].trim();
-
-                      return (
-                        <tr key={`grupo-realizado-${idx}`} className="hover:bg-slate-800/40">
-                          <td className="p-3 font-mono">
-                            <span className="text-purple-400 font-bold">Pai: {paiKey}</span> — <span className="text-white font-semibold">{tituloBase}</span>
-                          </td>
-                          {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => {
-                            const todosMarcados = itensDoGrupo.every(i => Boolean((i.clipes_enviados || {})[canal]));
-                            return (
-                              <td key={cIdx} className="p-3 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={todosMarcados}
-                                  onChange={async (e) => {
-                                    const checked = e.target.checked;
-                                    for (const alvo of itensDoGrupo) {
-                                      const clipes = alvo.clipes_enviados || {};
-                                      clipes[canal] = checked;
-                                      await supabase.from("produtos_novos_cadastrados").update({ clipes_enviados: clipes }).eq("sku", alvo.sku);
-                                    }
-                                    carregarRealizadosDoBanco();
-                                  }}
-                                  className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
-                                />
-                              </td>
-                            );
-                          })}
-                          <td className="p-3 text-center text-slate-500 text-[10px]">Cadastrado</td>
-                        </tr>
-                      );
+                    {itensAtuaisVideos.map((item: any, idx: number) => {
+                      if (item.tipo === "realizado") {
+                        return (
+                          <tr key={`realizado-${idx}`} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-mono">
+                              <span className="text-purple-400 font-bold">Pai: {item.sku}</span> — <span className="text-white font-semibold">{item.produto}</span>
+                            </td>
+                            {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => {
+                              const todosMarcadosGrupo = item.itensGrupo.every((it: any) => Boolean((it.clipes_enviados || {})[canal]));
+                              return (
+                                <td key={cIdx} className="p-3 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={todosMarcadosGrupo}
+                                    onChange={async (e) => {
+                                      const checked = e.target.checked;
+                                      for (const alvo of item.itensGrupo) {
+                                        const clipes = alvo.clipes_enviados || {};
+                                        clipes[canal] = checked;
+                                        await supabase.from("produtos_novos_cadastrados").update({ clipes_enviados: clipes }).eq("sku", alvo.sku);
+                                      }
+                                      carregarRealizadosDoBanco();
+                                    }}
+                                    className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                                  />
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 text-center text-slate-500 text-[10px]">Cadastrado</td>
+                          </tr>
+                        );
+                      } else {
+                        const itemManual = item.itemManual;
+                        return (
+                          <tr key={`manual-${idx}`} className="hover:bg-slate-800/40 bg-amber-950/10">
+                            <td className="p-3 font-mono">
+                              <span className="text-amber-400 font-bold">Pai: {item.sku}</span> — <span className="text-white font-semibold">{item.produto}</span> <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.5 rounded ml-2">Manual</span>
+                            </td>
+                            {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => {
+                              const clipes = itemManual.clipes_enviados || {};
+                              const clipeMarcado = Boolean(clipes[canal]);
+                              return (
+                                <td key={cIdx} className="p-3 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={clipeMarcado}
+                                    onChange={(e) => toggleClipeVideoManual(itemManual.sku, canal, e.target.checked)}
+                                    className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                                  />
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 text-center">
+                              <button
+                                onClick={() => excluirVideoManual(itemManual.sku)}
+                                className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer"
+                              >
+                                Excluir
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      }
                     })}
 
-                    {/* Produtos Manuais */}
-                    {videosManuaisFiltrados.map((item, idx) => {
-                      const paiManual = item.sku_pai || (item.sku.length > 5 ? item.sku.substring(0, 5) : item.sku);
-                      const tituloManual = String(item.produto || "").split("-")[0].trim();
-
-                      return (
-                        <tr key={`manual-${idx}`} className="hover:bg-slate-800/40 bg-amber-950/10">
-                          <td className="p-3 font-mono">
-                            <span className="text-amber-400 font-bold">Pai: {paiManual}</span> — <span className="text-white font-semibold">{tituloManual}</span> <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.5 rounded ml-2">Manual</span>
-                          </td>
-                          {canaisLista.filter(c => canaisComClipesConfig[c]).map((canal, cIdx) => {
-                            const clipes = item.clipes_enviados || {};
-                            const clipeMarcado = Boolean(clipes[canal]);
-                            return (
-                              <td key={cIdx} className="p-3 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={clipeMarcado}
-                                  onChange={(e) => toggleClipeVideoManual(item.sku, canal, e.target.checked)}
-                                  className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
-                                />
-                              </td>
-                            );
-                          })}
-                          <td className="p-3 text-center">
-                            <button
-                              onClick={() => excluirVideoManual(item.sku)}
-                              className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer"
-                            >
-                              Excluir
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-
-                    {chavesGrupos.length === 0 && videosManuaisFiltrados.length === 0 && (
+                    {itensAtuaisVideos.length === 0 && (
                       <tr>
                         <td colSpan={canaisLista.filter(c => canaisComClipesConfig[c]).length + 2} className="p-8 text-center text-slate-500">
-                          Nenhum produto encontrado para controle de vídeos.
+                          Nenhum vídeo encontrado para o filtro selecionado.
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              {/* PAGINAÇÃO DE VÍDEOS */}
+              <div className="p-5 bg-slate-950 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
+                <span>Página {paginaAtualVideos} de {totalPaginasVideos} (Total: {itensUnificadosVideos.length} itens)</span>
+                <div className="flex gap-2">
+                  <button onClick={() => setPaginaAtualVideos(p => Math.max(p - 1, 1))} disabled={paginaAtualVideos === 1} className="px-4 py-2 bg-slate-900 rounded-xl font-bold text-slate-300 disabled:opacity-40 cursor-pointer">Anterior</button>
+                  <button onClick={() => setPaginaAtualVideos(p => Math.min(p + 1, totalPaginasVideos))} disabled={paginaAtualVideos === totalPaginasVideos} className="px-4 py-2 bg-slate-900 rounded-xl font-bold text-slate-300 disabled:opacity-40 cursor-pointer">Próxima</button>
+                </div>
               </div>
             </div>
           </div>
