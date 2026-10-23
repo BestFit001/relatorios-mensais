@@ -1,8 +1,8 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
-import Navbar from "../components/Navbar";
+import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
 
 const matrizFretes = [
@@ -76,7 +76,7 @@ function parseNumeroBruto(valor: any): number {
 const formatarMoeda = (valor: number) =>
   "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export default function PromocoesPage() {
+export default function PromocoesMlPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [salvandoBanco, setSalvandoBanco] = useState(false);
@@ -104,7 +104,6 @@ export default function PromocoesPage() {
   const carregarBasesDoApp = async () => {
     setLoading(true);
     try {
-      // Carregamento completo de custos sem limite de 1000 linhas
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -133,7 +132,6 @@ export default function PromocoesPage() {
       setCustosMap(cMap);
       setObsoletosSet(obsSet);
 
-      // Carregamento completo das regras do ML sem limite de 1000 linhas
       let allMlRegras: any[] = [];
       from = 0;
       keep = true;
@@ -634,265 +632,210 @@ export default function PromocoesPage() {
           </button>
         </div>
 
-        {abaAtiva === "precificar" ? (
-          <div className="space-y-6">
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Campanha (Excel):</label>
-                <input
-                  type="file"
-                  accept=".xlsx, .xls"
-                  onChange={handleFileUpload}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Desejada (%):</label>
-                <input
-                  type="number"
-                  value={margemAlvo}
-                  onChange={(e) => setMargemAlvo(e.target.value)}
-                  className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={processarPlanilhaCampanha}
-                  disabled={loading}
-                  className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
-                >
-                  {loading ? "A processar..." : "Executar Precificação"}
-                </button>
-              </div>
-
-              {listaItens.length > 0 && tipoProcessamento === "precificar" && (
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={salvarPromocoesNoBanco}
-                    disabled={salvandoBanco}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
-                  >
-                    {salvandoBanco ? "A Salvar..." : "Salvar na Base Ativa"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={baixarExcelOtimizado}
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
-                  >
-                    Baixar Excel Otimizado
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {listaItens.length > 0 && tipoProcessamento === "precificar" && (
-              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-                <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">Resultado do Processamento da Campanha</h3>
-                  <span className="text-xs text-slate-400">Total únicos: {listaItens.length}</span>
-                </div>
-                <div className="overflow-x-auto max-h-[500px]">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                      <tr>
-                        <th className="p-3">MLB</th>
-                        <th className="p-3">SKU</th>
-                        <th className="p-3">Campanha</th>
-                        <th className="p-3 text-right">Preço Original</th>
-                        <th className="p-3 text-right">Novo Preço Sugerido</th>
-                        <th className="p-3 text-center">Status</th>
-                        <th className="p-3 text-center">Observações / Erros</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                      {listaItens.map((item: any, idx: number) => (
-                        <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
-                          <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
-                          <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
-                          <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.ORIGINAL_PRICE)}</td>
-                          <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.FINAL_PRICE)}</td>
-                          <td className="p-3 text-center">
-                            <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${item.STATUS === "APTO" ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-rose-950 text-rose-400 border border-rose-800"}`}>
-                              {item.STATUS}
-                            </span>
-                          </td>
-                          <td className="p-3 text-center font-bold text-rose-400">{item.ERRO || "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : abaAtiva === "rebate" ? (
-          <div className="space-y-6">
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Rebate (Excel):</label>
-                <input
-                  type="file"
-                  accept=".xlsx, .xls"
-                  onChange={handleFileUpload}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Mínima Alvo (%):</label>
-                <input
-                  type="number"
-                  value={margemAlvo}
-                  onChange={(e) => setMargemAlvo(e.target.value)}
-                  className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={processarPlanilhaRebate}
-                  disabled={loading}
-                  className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
-                >
-                  {loading ? "A processar..." : "Analisar Rebate"}
-                </button>
-              </div>
-
-              {listaItens.length > 0 && tipoProcessamento === "rebate" && (
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={salvarPromocoesNoBanco}
-                    disabled={salvandoBanco}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
-                  >
-                    {salvandoBanco ? "A Salvar..." : "Salvar na Base Ativa"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={baixarExcelOtimizado}
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
-                  >
-                    Baixar Excel Otimizado
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {listaItens.length > 0 && tipoProcessamento === "rebate" && (
-              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-                <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">Resultado da Análise de Rebate & Redução de Tarifas</h3>
-                  <span className="text-xs text-slate-400">Total processados: {listaItens.length}</span>
-                </div>
-                <div className="overflow-x-auto max-h-[500px]">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                      <tr>
-                        <th className="p-3">MLB</th>
-                        <th className="p-3">SKU</th>
-                        <th className="p-3">Promoção / Campanha</th>
-                        <th className="p-3 text-right">Preço Final (PDV)</th>
-                        <th className="p-3 text-right text-purple-400">Novo Recebe (Rebate)</th>
-                        <th className="p-3 text-right">Lucro Líquido</th>
-                        <th className="p-3 text-right">Margem Final</th>
-                        <th className="p-3 text-center">Status</th>
-                        <th className="p-3 text-center">Observações / Erros</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                      {listaItens.map((item: any, idx: number) => (
-                        <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
-                          <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
-                          <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
-                          <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.FINAL_PRICE)}</td>
-                          <td className="p-3 text-right font-mono text-purple-300 font-bold">{formatarMoeda(item.NEW_RECEIVES)}</td>
-                          <td className="p-3 text-right font-mono text-emerald-400 font-bold">{formatarMoeda(item.LUCRO)}</td>
-                          <td className={`p-3 text-right font-mono font-bold ${item.MARGEM >= parseFloat(margemAlvo) ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {item.MARGEM}%
-                          </td>
-                          <td className="p-3 text-center">
-                            <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${item.STATUS === "APTO" ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-rose-950 text-rose-400 border border-rose-800"}`}>
-                              {item.STATUS}
-                            </span>
-                          </td>
-                          <td className="p-3 text-center font-bold text-rose-400">{item.ERRO || "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden p-6 space-y-4">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Painel de Campanhas & Promoções Ativas</h3>
-                <button
-                  type="button"
-                  onClick={limparBasePromocoes}
-                  className="bg-rose-950/80 hover:bg-rose-900 text-rose-400 border border-rose-900/50 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all"
-                >
-                  🗑️ Limpar Toda a Base
-                </button>
-              </div>
+        <div className="space-y-6">
+          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Campanha (Excel):</label>
               <input
-                type="text"
-                value={termoBusca}
-                onChange={(e) => setTermoBusca(e.target.value)}
-                placeholder="Pesquisar por SKU, MLB ou Promoção..."
-                className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none w-full md:w-80"
+                type="file"
+                accept=".xlsx, .xls"
+                onChange={handleFileUpload}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
               />
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                  <tr>
-                    <th className="p-3.5">MLB</th>
-                    <th className="p-3.5">SKU</th>
-                    <th className="p-3.5">Nome da Promoção</th>
-                    <th className="p-3.5">Período de Validade (DATE_VALIDITY)</th>
-                    <th className="p-3.5 text-center">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                  {promocoesFiltradas.map((p, idx) => (
-                    <tr key={p.id || idx} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="p-3.5 font-mono text-indigo-400">{p.mlb}</td>
-                      <td className="p-3.5 font-mono text-slate-300">{p.sku}</td>
-                      <td className="p-3.5 font-bold text-white">{p.promocao}</td>
-                      <td className="p-3.5 font-mono text-amber-400">{p.date_validity || "Indeterminado"}</td>
-                      <td className="p-3.5 text-center">
-                        <button
-                          type="button"
-                          onClick={() => excluirPromocaoIndividual(p.id)}
-                          className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer transition-all"
-                        >
-                          Excluir
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {promocoesFiltradas.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center text-slate-500">Nenhuma promoção ativa encontrada.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+            <div>
+              <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Desejada (%):</label>
+              <input
+                type="number"
+                value={margemAlvo}
+                onChange={(e) => setMargemAlvo(e.target.value)}
+                className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
+              />
             </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={abaAtiva === "rebate" ? processarPlanilhaRebate : processarPlanilhaCampanha}
+                disabled={loading}
+                className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all"
+              >
+                {loading ? "A processar..." : abaAtiva === "rebate" ? "Analisar Rebate" : "Executar Precificação"}
+              </button>
+            </div>
+
+            {listaItens.length > 0 && (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={salvarPromocoesNoBanco}
+                  disabled={salvandoBanco}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                >
+                  {salvandoBanco ? "A Salvar..." : "Salvar na Base Ativa"}
+                </button>
+                <button
+                  type="button"
+                  onClick={baixarExcelOtimizado}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg"
+                >
+                  Baixar Excel Otimizado
+                </button>
+              </div>
+            )}
           </div>
-        )}
+
+          {abaAtiva === "precificar" && listaItens.length > 0 && tipoProcessamento === "precificar" && (
+            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+              <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
+                <h3 className="text-sm font-bold text-white">Resultado do Processamento da Campanha</h3>
+                <span className="text-xs text-slate-400">Total únicos: {listaItens.length}</span>
+              </div>
+              <div className="overflow-x-auto max-h-[500px]">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                    <tr>
+                      <th className="p-3">MLB</th>
+                      <th className="p-3">SKU</th>
+                      <th className="p-3">Campanha</th>
+                      <th className="p-3 text-right">Preço Original</th>
+                      <th className="p-3 text-right">Novo Preço Sugerido</th>
+                      <th className="p-3 text-center">Status</th>
+                      <th className="p-3 text-center">Observações / Erros</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {listaItens.map((item: any, idx: number) => (
+                      <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
+                        <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
+                        <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
+                        <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.ORIGINAL_PRICE)}</td>
+                        <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.FINAL_PRICE)}</td>
+                        <td className="p-3 text-center">
+                          <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${item.STATUS === "APTO" ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-rose-950 text-rose-400 border border-rose-800"}`}>
+                            {item.STATUS}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center font-bold text-rose-400">{item.ERRO || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {abaAtiva === "rebate" && listaItens.length > 0 && tipoProcessamento === "rebate" && (
+            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+              <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
+                <h3 className="text-sm font-bold text-white">Resultado da Análise de Rebate & Redução de Tarifas</h3>
+                <span className="text-xs text-slate-400">Total processados: {listaItens.length}</span>
+              </div>
+              <div className="overflow-x-auto max-h-[500px]">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                    <tr>
+                      <th className="p-3">MLB</th>
+                      <th className="p-3">SKU</th>
+                      <th className="p-3">Promoção / Campanha</th>
+                      <th className="p-3 text-right">Preço Final (PDV)</th>
+                      <th className="p-3 text-right text-purple-400">Novo Recebe (Rebate)</th>
+                      <th className="p-3 text-right">Lucro Líquido</th>
+                      <th className="p-3 text-right">Margem Final</th>
+                      <th className="p-3 text-center">Status</th>
+                      <th className="p-3 text-center">Observações / Erros</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {listaItens.map((item: any, idx: number) => (
+                      <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
+                        <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
+                        <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
+                        <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.FINAL_PRICE)}</td>
+                        <td className="p-3 text-right font-mono text-purple-300 font-bold">{formatarMoeda(item.NEW_RECEIVES)}</td>
+                        <td className="p-3 text-right font-mono text-emerald-400 font-bold">{formatarMoeda(item.LUCRO)}</td>
+                        <td className={`p-3 text-right font-mono font-bold ${item.MARGEM >= parseFloat(margemAlvo) ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {item.MARGEM}%
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${item.STATUS === "APTO" ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-rose-950 text-rose-400 border border-rose-800"}`}>
+                            {item.STATUS}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center font-bold text-rose-400">{item.ERRO || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {abaAtiva === "ativas" && (
+            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden p-6 space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Painel de Campanhas & Promoções Ativas</h3>
+                  <button
+                    type="button"
+                    onClick={limparBasePromocoes}
+                    className="bg-rose-950/80 hover:bg-rose-900 text-rose-400 border border-rose-900/50 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all"
+                  >
+                    🗑️ Limpar Toda a Base
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={termoBusca}
+                  onChange={(e) => setTermoBusca(e.target.value)}
+                  placeholder="Pesquisar por SKU, MLB ou Promoção..."
+                  className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none w-full md:w-80"
+                />
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                    <tr>
+                      <th className="p-3.5">MLB</th>
+                      <th className="p-3.5">SKU</th>
+                      <th className="p-3.5">Nome da Promoção</th>
+                      <th className="p-3.5">Período de Validade (DATE_VALIDITY)</th>
+                      <th className="p-3.5 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {promocoesFiltradas.map((p, idx) => (
+                      <tr key={p.id || idx} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3.5 font-mono text-indigo-400">{p.mlb}</td>
+                        <td className="p-3.5 font-mono text-slate-300">{p.sku}</td>
+                        <td className="p-3.5 font-bold text-white">{p.promocao}</td>
+                        <td className="p-3.5 font-mono text-amber-400">{p.date_validity || "Indeterminado"}</td>
+                        <td className="p-3.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => excluirPromocaoIndividual(p.id)}
+                            className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer transition-all"
+                          >
+                            Excluir
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {promocoesFiltradas.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-slate-500">Nenhuma promoção ativa encontrada.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
 
       </div>
     </div>
