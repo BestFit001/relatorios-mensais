@@ -48,8 +48,6 @@ export default function PromocoesMagaluPage() {
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
-  const [arquivoEstoque, setArquivoEstoque] = useState<File | null>(null);
-  const [arquivoMagalu, setArquivoMagalu] = useState<File | null>(null);
   const [dadosEstoqueRaw, setDadosEstoqueRaw] = useState<any[][] | null>(null);
   const [dadosMagaluRaw, setDadosMagaluRaw] = useState<any[][] | null>(null);
 
@@ -105,10 +103,8 @@ export default function PromocoesMagaluPage() {
     if (data) setPromocoesAtivas(data);
   };
 
-  const handleEstoqueUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setArquivoEstoque(file);
+  const lerArquivoParaMatriz = (file: File): Promise<any[][]> => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (evt) => {
         try {
@@ -116,34 +112,37 @@ export default function PromocoesMagaluPage() {
           const wb = XLSX.read(bstr, { type: "binary" });
           const ws = wb.Sheets[wb.SheetNames[0]];
           const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-          setDadosEstoqueRaw(rawData);
-          alert("✅ Planilha de estoque carregada com sucesso!");
-        } catch (err: any) {
-          alert("Erro ao ler estoque: " + err.message);
+          resolve(rawData);
+        } catch (err) {
+          reject(err);
         }
       };
+      reader.onerror = (error) => reject(error);
       reader.readAsBinaryString(file);
+    });
+  };
+
+  const handleEstoqueUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      try {
+        const rawData = await lerArquivoParaMatriz(e.target.files[0]);
+        setDadosEstoqueRaw(rawData);
+        alert("✅ Planilha de estoque carregada com sucesso!");
+      } catch (err: any) {
+        alert("Erro ao ler estoque: " + err.message);
+      }
     }
   };
 
-  const handleMagaluUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMagaluUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setArquivoMagalu(file);
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        try {
-          const bstr = evt.target?.result;
-          const wb = XLSX.read(bstr, { type: "binary" });
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-          setDadosMagaluRaw(rawData);
-          alert("✅ Planilha Magalu carregada com sucesso!");
-        } catch (err: any) {
-          alert("Erro ao ler planilha Magalu: " + err.message);
-        }
-      };
-      reader.readAsBinaryString(file);
+      try {
+        const rawData = await lerArquivoParaMatriz(e.target.files[0]);
+        setDadosMagaluRaw(rawData);
+        alert("✅ Planilha Magalu carregada com sucesso!");
+      } catch (err: any) {
+        alert("Erro ao ler planilha Magalu: " + err.message);
+      }
     }
   };
 
@@ -157,13 +156,10 @@ export default function PromocoesMagaluPage() {
     try {
       // 1. Mapear estoque considerando Coluna F (índice 5)
       const estoqueMap = new Map<string, number>();
-      
-      // Procurar linha de cabeçalho ou varrer a partir da linha 1
       for (let i = 0; i < dadosEstoqueRaw.length; i++) {
         const row = dadosEstoqueRaw[i];
         if (!row || row.length < 6) continue;
 
-        // Tentar detetar SKU (geralmente nas primeiras colunas) e saldo na coluna F (índice 5)
         let skuEstoque = "";
         for (let colIdx = 0; colIdx < 5; colIdx++) {
           const val = normalizarSku(row[colIdx]);
@@ -179,21 +175,21 @@ export default function PromocoesMagaluPage() {
         }
       }
 
-      // 2. Processar planilha da Magalu
+      // 2. Processar planilha da Magalu com suporte flexível a cabeçalhos (ex: "codigo SKU do seller", "preco", etc.)
       const headers = dadosMagaluRaw[0].map((h: any) => String(h || "").trim().toUpperCase());
       const getColIndex = (names: string[]) => {
         for (const name of names) {
-          const idx = headers.indexOf(name.toUpperCase());
+          const idx = headers.findIndex(h => h.includes(name.toUpperCase()));
           if (idx !== -1) return idx;
         }
         return -1;
       };
 
-      const idxSku = getColIndex(["SKU", "CÓDIGO SKU", "CODIGO"]);
-      const idxPdv = getColIndex(["PDV", "PREÇO", "PRECO", "VALOR", "PRICE"]);
+      const idxSku = getColIndex(["SKU", "CODIGO", "CÓDIGO", "SELLER"]);
+      const idxPdv = getColIndex(["PDV", "PRECO", "PREÇO", "VALOR", "PRICE"]);
 
       if (idxSku === -1 || idxPdv === -1) {
-        alert("Erro: Não foi possível localizar as colunas 'SKU' e 'PDV' no cabeçalho da Magalu.");
+        alert(`Erro: Não foi possível localizar as colunas de SKU e Preço/PDV. Cabeçalhos detetados: ${headers.join(" | ")}`);
         setLoading(false);
         return;
       }
@@ -211,8 +207,6 @@ export default function PromocoesMagaluPage() {
 
         if (!skuRaw) continue;
 
-        // Verificar estoque (deve ser > 0)
-        // Tentamos match exato ou parcial no mapa de estoque
         let saldoAtual = 0;
         for (const [estKey, estVal] of estoqueMap.entries()) {
           if (estKey === skuRaw || estKey.includes(skuRaw) || skuRaw.includes(estKey)) {
@@ -302,10 +296,10 @@ export default function PromocoesMagaluPage() {
     }
 
     const dadosOtimizados = dadosProcessados.map((item: any) => ({
-      SKU: item.SKU,
-      PDV: item.STATUS === "APTO" ? item.FINAL_PRICE : item.ORIGINAL_PRICE,
-      STATUS: item.STATUS === "APTO" ? "Elegível" : "Inapto",
-      OBSERVACOES: item.ERRO || ""
+      "codigo SKU do seller": item.SKU,
+      "preco": item.STATUS === "APTO" ? item.FINAL_PRICE : item.ORIGINAL_PRICE,
+      "status": item.STATUS === "APTO" ? "Elegível" : "Inapto",
+      "observacoes": item.ERRO || ""
     }));
 
     const newWs = XLSX.utils.json_to_sheet(dadosOtimizados);
@@ -349,7 +343,6 @@ export default function PromocoesMagaluPage() {
 
         {abaAtiva === "precificar" ? (
           <div className="space-y-6">
-            {/* PAINEL DE CONFIGURAÇÃO E UPLOADS */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">⚙️ Configurações da Campanha & Uploads</h3>
               
@@ -408,7 +401,7 @@ export default function PromocoesMagaluPage() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Planilha Magalu (SKU e PDV):</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Planilha Magalu (codigo SKU do seller e preco):</label>
                   <input
                     type="file"
                     accept=".xlsx, .xls, .csv"
