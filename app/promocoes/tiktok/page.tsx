@@ -167,32 +167,17 @@ export default function PromocoesTiktokPage() {
         }
       }
 
-      // 2. Detetar linha de cabeçalho na planilha do TikTok Seller Center (procurando nas primeiras 4 linhas)
-      let headerRowIdx = -1;
-      let idxProdId = -1, idxSkuId = -1, idxSellerSku = -1, idxPrice = -1;
+      // 2. Localizar colunas na planilha do TikTok Seller Center
+      let headerRowIdx = 0; // Linha 0 (primeira linha) contém as chaves técnicas
+      const headers = dadosTiktokRaw[headerRowIdx].map(c => String(c || "").trim().toLowerCase());
+      
+      const idxProdId = headers.findIndex(h => h.includes("product_id") || h.includes("id do produto"));
+      const idxSkuId = headers.findIndex(h => h.includes("sku_id") || h.includes("id do sku"));
+      const idxSellerSku = headers.findIndex(h => h.includes("seller_sku") || h.includes("sku do vendedor"));
+      const idxPrice = headers.findIndex(h => h === "price" || h.includes("preço de varejo"));
 
-      for (let rIdx = 0; rIdx < Math.min(4, dadosTiktokRaw.length); rIdx++) {
-        const row = dadosTiktokRaw[rIdx];
-        if (!row) continue;
-        const rowStrs = row.map(c => String(c || "").trim().toLowerCase());
-        
-        const pId = rowStrs.findIndex(s => s === "product_id" || s.includes("id do produto"));
-        const sId = rowStrs.findIndex(s => s === "sku_id" || s.includes("id do sku"));
-        const sSku = rowStrs.findIndex(s => s === "seller_sku" || s.includes("sku do vendedor"));
-        const prc = rowStrs.findIndex(s => s === "price" || s.includes("preço"));
-
-        if (pId !== -1 && sId !== -1 && sSku !== -1) {
-          headerRowIdx = rIdx;
-          idxProdId = pId;
-          idxSkuId = sId;
-          idxSellerSku = sSku;
-          idxPrice = prc;
-          break;
-        }
-      }
-
-      if (headerRowIdx === -1) {
-        alert("Erro: Não foi possível localizar os campos técnicos ('product_id', 'sku_id', 'seller_sku') na planilha do TikTok.");
+      if (idxProdId === -1 || idxSkuId === -1 || idxSellerSku === -1) {
+        alert("Erro: Não foi possível localizar as colunas obrigatórias na planilha do TikTok.");
         setLoading(false);
         return;
       }
@@ -201,10 +186,8 @@ export default function PromocoesTiktokPage() {
       const imposto = 0.09;
       const resultados: any[] = [];
 
-      // Os dados reais na planilha do TikTok começam após as linhas descritivas (a partir da linha 4 / índice 4)
-      const startRow = Math.max(headerRowIdx + 1, 4);
-
-      for (let i = startRow; i < dadosTiktokRaw.length; i++) {
+      // Os dados reais começam a partir da linha 5 (índice 5), ignorando cabeçalhos descritivos (linhas 1, 2, 3, 4)
+      for (let i = 5; i < dadosTiktokRaw.length; i++) {
         const r = dadosTiktokRaw[i];
         if (!r || r.length === 0) continue;
 
@@ -213,8 +196,9 @@ export default function PromocoesTiktokPage() {
         const sellerSku = idxSellerSku !== -1 ? normalizarSku(r[idxSellerSku]) : "";
         const precoOriginal = idxPrice !== -1 ? parseNumeroBruto(r[idxPrice]) : 0;
 
-        if (!sellerSku || !prodId || !skuId) continue;
+        if (!sellerSku || !prodId || !skuId || sellerSku.includes("identificador")) continue;
 
+        // Validar estoque e custo usando o SKU do vendedor
         let saldoAtual = estoqueMap.get(sellerSku) || 0;
         const custo = custosMap.get(sellerSku) || 0;
 
