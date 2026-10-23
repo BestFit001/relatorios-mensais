@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
+import { supabase } from "../../lib/supabase";
 
 export default function Navbar() {
   const router = useRouter();
@@ -11,6 +12,10 @@ export default function Navbar() {
   const [emailUsuario, setEmailUsuario] = useState("");
   const [menuExpandido, setMenuExpandido] = useState<string | null>("relatorios");
   const [sidebarAberta, setSidebarAberta] = useState(true);
+  
+  // Estado do Logotipo Global
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -43,7 +48,58 @@ export default function Navbar() {
         setPaginasPermitidas(["/"]);
       }
     }
+
+    carregarLogoGlobal();
   }, []);
+
+  const carregarLogoGlobal = async () => {
+    try {
+      const { data } = await supabase
+        .from("config_regras_tiny")
+        .select("coluna")
+        .eq("campo", "hub_logo_url")
+        .maybeSingle();
+
+      if (data?.coluna) {
+        setLogoUrl(data.coluna);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar logo:", err);
+    }
+  };
+
+  const handleUploadLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingLogo(true);
+    try {
+      const fileExt = file.name.split(".").pop();
+      const fileName = `logo_hub_${Date.now()}.${fileExt}`;
+      const filePath = `evidencias/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("anexos")
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage.from("anexos").getPublicUrl(filePath);
+      const urlPublica = publicUrlData.publicUrl;
+
+      // Salva no banco para todos verem
+      await supabase.from("config_regras_tiny").upsert(
+        { campo: "hub_logo_url", coluna: urlPublica },
+        { onConflict: "campo" }
+      );
+
+      setLogoUrl(urlPublica);
+      alert("✅ Logotipo atualizado para todo o sistema!");
+    } catch (err: any) {
+      alert("Erro ao fazer upload do logotipo: " + err.message);
+    }
+    setUploadingLogo(false);
+  };
 
   const temPermissao = (rota: string) => {
     return paginasPermitidas.includes(rota);
@@ -63,23 +119,30 @@ export default function Navbar() {
       {/* SIDEBAR LATERAL FIXA COM OPÇÃO DE RECOLHER / EXPANDIR */}
       <aside className={`fixed top-0 left-0 h-full bg-[#0b0e14] border-r border-slate-800 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans transition-all duration-300 ${sidebarAberta ? 'w-64' : 'w-20'}`}>
         
-        {/* TOPO DA SIDEBAR: LOGO E BOTÃO DE RECOLHER */}
+        {/* TOPO DA SIDEBAR: LOGO (COM UPLOAD) E BOTÃO DE RECOLHER */}
         <div className="p-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
-          {sidebarAberta ? (
-            <div className="flex items-center gap-3 overflow-hidden">
-              <div className="w-9 h-9 rounded-xl bg-purple-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-purple-900/40 flex-shrink-0">
-                BF
+          <div className="flex items-center gap-3 overflow-hidden">
+            <label className="relative group cursor-pointer flex-shrink-0" title="Clique para alterar a imagem de perfil/logo">
+              <div className="w-10 h-10 rounded-xl bg-purple-600 overflow-hidden flex items-center justify-center font-black text-white text-base shadow-lg shadow-purple-900/40 border border-purple-500/30">
+                {logoUrl ? (
+                  <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
+                ) : (
+                  <span>BF</span>
+                )}
               </div>
+              <div className="absolute inset-0 bg-black/60 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-[9px] text-white font-bold">
+                {uploadingLogo ? "..." : "Trocar"}
+              </div>
+              <input type="file" accept="image/*" onChange={handleUploadLogo} className="hidden" />
+            </label>
+
+            {sidebarAberta && (
               <div className="overflow-hidden">
                 <h2 className="text-sm font-black text-white tracking-tight truncate">Hub Best Fit</h2>
                 <p className="text-[10px] text-slate-400 truncate">Performance & E-commerce</p>
               </div>
-            </div>
-          ) : (
-            <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-purple-900/40 mx-auto">
-              BF
-            </div>
-          )}
+            )}
+          </div>
 
           <button
             onClick={() => setSidebarAberta(!sidebarAberta)}
