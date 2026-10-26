@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
@@ -19,7 +19,7 @@ export default function RegrasPage() {
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
 
-  // Estados para nova regra de tarifação (Excluindo Mercado Livre)
+  // Estados para nova regra de tarifação
   const [novoCanal, setNovoCanal] = useState("Amazon");
   const [novaFaixa, setNovaFaixa] = useState("R$ 0.00 até R$ 78.99");
   const [novaComissao, setNovaComissao] = useState("14.00");
@@ -27,7 +27,13 @@ export default function RegrasPage() {
   const [novoFrete, setNovoFrete] = useState("0.00");
   const [salvandoTarifa, setSalvandoTarifa] = useState(false);
 
-  const canaisTarifacao = ["Amazon", "Centauro", "Magalu", "Netshoes", "Shein", "Shopee", "Site", "TikTok Shop"];
+  // Gestão de Inserção de Novos Canais no Dash
+  const [novoCanalDash, setNovoCanalDash] = useState("");
+  const [listaCanaisDash, setListaCanaisDash] = useState<string[]>([
+    'Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro'
+  ]);
+
+  const canaisTarifacao = ["Amazon", "Centauro", "Magalu", "Netshoes", "Shein", "Shopee", "Site", "TikTok Shop", "Clube Hebraica", "Clube Paineiras"];
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -45,9 +51,17 @@ export default function RegrasPage() {
     if (configs) {
       const getCol = (campo: string, def: string) => configs.find((t: any) => t.campo === campo)?.coluna || def;
       
-      // Lê o TACOS gravado no banco ou usa "2" como padrão
       const tacosSalvo = configs.find((t: any) => t.campo === 'meta_tacos')?.coluna || "2";
       setMetaTacos(tacosSalvo);
+
+      // Carrega canais salvos dinamicamente se houver
+      const canaisSalvos = configs.find((t: any) => t.campo === 'canais_dashboard');
+      if (canaisSalvos && canaisSalvos.coluna) {
+        try {
+          const parsed = JSON.parse(canaisSalvos.coluna);
+          if (Array.isArray(parsed) && parsed.length > 0) setListaCanaisDash(parsed);
+        } catch (e) {}
+      }
 
       setRegrasTiny({ sku: getCol('sku', 'C'), estoque: getCol('estoque', 'F'), status_sku: getCol('status_sku', 'A'), status_valor: getCol('status_valor', 'B') });
       setRegrasCustos({ sku: getCol('custo_sku', 'A'), produto: getCol('custo_produto', 'B'), custo: getCol('custo_valor', 'C'), marca: getCol('custo_marca', 'D') });
@@ -66,12 +80,47 @@ export default function RegrasPage() {
     setLoading(false);
   };
 
+  const adicionarCanalDash = async () => {
+    if (!novoCanalDash.trim()) return;
+    const nomeFormatado = novoCanalDash.trim();
+    if (listaCanaisDash.includes(nomeFormatado)) {
+      alert("Este canal já está cadastrado.");
+      return;
+    }
+    const novaLista = [...listaCanaisDash, nomeFormatado];
+    setListaCanaisDash(novaLista);
+    setNovoCanalDash("");
+
+    await supabase.from('config_regras_tiny').upsert({
+      campo: 'canais_dashboard',
+      coluna: JSON.stringify(novaLista)
+    }, { onConflict: 'campo' });
+
+    alert(`✅ Canal "${nomeFormatado}" inserido com sucesso para o Dashboard!`);
+  };
+
+  const removerCanalDash = async (canalRemover: string) => {
+    if (canalRemover === 'Clube Hebraica' || canalRemover === 'Clube Paineiras') {
+      alert("As lojas físicas principais não podem ser removidas.");
+      return;
+    }
+    if (!confirm(`Remover o canal ${canalRemover}?`)) return;
+    const novaLista = listaCanaisDash.filter(c => c !== canalRemover);
+    setListaCanaisDash(novaLista);
+
+    await supabase.from('config_regras_tiny').upsert({
+      campo: 'canais_dashboard',
+      coluna: JSON.stringify(novaLista)
+    }, { onConflict: 'campo' });
+  };
+
   const salvarTodasRegras = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
 
     const configs = [
-      { campo: 'meta_tacos', coluna: metaTacos.toString() }, // Salva a meta TACOS
+      { campo: 'meta_tacos', coluna: metaTacos.toString() },
+      { campo: 'canais_dashboard', coluna: JSON.stringify(listaCanaisDash) },
       { campo: 'sku', coluna: regrasTiny.sku.toUpperCase() },
       { campo: 'estoque', coluna: regrasTiny.estoque.toUpperCase() },
       { campo: 'status_sku', coluna: regrasTiny.status_sku.toUpperCase() },
@@ -93,7 +142,7 @@ export default function RegrasPage() {
       await supabase.from('config_regras_tiny').upsert(cfg, { onConflict: 'campo' });
     }
 
-    alert("✅ Configurações salvas com sucesso!");
+    alert("✅ Configurações e canais salvos com sucesso!");
     setSalvando(false);
   };
 
@@ -138,7 +187,7 @@ export default function RegrasPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Regras</h1>
-            <p className="text-sm font-medium text-slate-400">Configure colunas brutas, visibilidade e tarifação por canal</p>
+            <p className="text-sm font-medium text-slate-400">Configure canais do dash, visibilidade, colunas e tarifação</p>
           </div>
 
           <Navbar />
@@ -148,6 +197,40 @@ export default function RegrasPage() {
           <p className="p-8 text-center text-slate-400">A carregar...</p>
         ) : (
           <div className="space-y-8">
+
+            {/* GESTÃO DE CANAIS DO DASHBOARD (INCLUINDO CLUBE HEBRAICA E PAINEIRAS) */}
+            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+              <h2 className="text-lg font-bold text-white">Canais Ativos no Dashboard Omnichannel</h2>
+              <p className="text-xs text-slate-400">Insira ou remova canais que aparecerão no painel de faturamento (Lojas físicas como Clube Hebraica e Clube Paineiras são fixas).</p>
+              
+              <div className="flex gap-2 max-w-md">
+                <input 
+                  type="text" 
+                  value={novoCanalDash} 
+                  onChange={e => setNovoCanalDash(e.target.value)} 
+                  placeholder="Nome do novo canal (ex: Dafiti)..." 
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none"
+                />
+                <button 
+                  type="button" 
+                  onClick={adicionarCanalDash}
+                  className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-5 py-3 rounded-xl text-xs uppercase cursor-pointer transition"
+                >
+                  Inserir Canal
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-2">
+                {listaCanaisDash.map((c) => (
+                  <div key={c} className="bg-slate-950 px-3.5 py-2 rounded-xl border border-slate-800 flex items-center gap-3 text-xs">
+                    <span className="font-bold text-slate-200">{c}</span>
+                    {c !== 'Clube Hebraica' && c !== 'Clube Paineiras' && (
+                      <button type="button" onClick={() => removerCanalDash(c)} className="text-rose-400 hover:text-rose-300 font-bold">×</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
 
             {/* VISIBILIDADE DE CANAIS NO ADS */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
@@ -171,11 +254,11 @@ export default function RegrasPage() {
               </div>
             </div>
 
-            {/* REGRAS DE TARIFAÇÃO POR CANAL (EXCETO MERCADO LIVRE) */}
+            {/* REGRAS DE TARIFAÇÃO POR CANAL */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
               <div>
-                <h2 className="text-lg font-bold mb-1 text-white">Regras de Tarifação por Canal (Exceto Mercado Livre)</h2>
-                <p className="text-xs text-slate-400">Defina comissão, tarifa fixa e frete por faixa de preço para os demais markeplaces.</p>
+                <h2 className="text-lg font-bold mb-1 text-white">Regras de Tarifação por Canal</h2>
+                <p className="text-xs text-slate-400">Defina comissão, tarifa fixa e frete por faixa de preço para os marketplaces.</p>
               </div>
 
               <form onSubmit={adicionarRegraTarifacao} className="bg-slate-950 p-6 rounded-xl border border-slate-800 grid grid-cols-1 sm:grid-cols-6 gap-4 items-end">
