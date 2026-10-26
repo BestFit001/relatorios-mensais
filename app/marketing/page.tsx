@@ -304,10 +304,52 @@ export default function MarketingPage() {
   const percentualUso = Math.min((tamanhoStorageMb / limiteStorageMb) * 100, 100);
   const mbDisponiveis = Math.max(limiteStorageMb - tamanhoStorageMb, 0);
 
-  // Filtro rigoroso pela semana selecionada
+  // Função para determinar a semana real com base na data de criação (created_at) comparada ao calendário atual
+  const obterSemanaRealPorData = (createdAtStr: string) => {
+    if (!createdAtStr) return "atual";
+    const dataPost = new Date(createdAtStr);
+    if (isNaN(dataPost.getTime())) return "atual";
+
+    const hoje = new Date();
+    // Início da semana atual (Segunda-feira)
+    const diaSemanaHoje = hoje.getDay() === 0 ? 6 : hoje.getDay() - 1;
+    const inicioSemanaAtual = new Date(hoje);
+    inicioSemanaAtual.setDate(hoje.getDate() - diaSemanaHoje);
+    inicioSemanaAtual.setHours(0, 0, 0, 0);
+
+    // Fim da semana atual (Domingo)
+    const fimSemanaAtual = new Date(inicioSemanaAtual);
+    fimSemanaAtual.setDate(inicioSemanaAtual.getDate() + 6);
+    fimSemanaAtual.setHours(23, 59, 59, 999);
+
+    // Semana Anterior
+    const inicioSemanaAnterior = new Date(inicioSemanaAtual);
+    inicioSemanaAnterior.setDate(inicioSemanaAtual.getDate() - 7);
+    const fimSemanaAnterior = new Date(fimSemanaAtual);
+    fimSemanaAnterior.setDate(fimSemanaAtual.getDate() - 7);
+
+    // Próxima Semana
+    const inicioProximaSemana = new Date(inicioSemanaAtual);
+    inicioProximaSemana.setDate(inicioSemanaAtual.getDate() + 7);
+    const fimProximaSemana = new Date(fimSemanaAtual);
+    fimProximaSemana.setDate(fimSemanaAtual.getDate() + 7);
+
+    if (dataPost >= inicioSemanaAnterior && dataPost <= fimSemanaAnterior) {
+      return "anterior";
+    } else if (dataPost >= inicioProximaSemana && dataPost <= fimProximaSemana) {
+      return "proxima";
+    } else if (dataPost >= inicioSemanaAtual && dataPost <= fimSemanaAtual) {
+      return "atual";
+    }
+
+    // Se estiver fora por muito tempo, usa o campo cadastrado ou classifica por proximidade
+    return dataPost < inicioSemanaAtual ? "anterior" : "proxima";
+  };
+
+  // Filtro rigoroso pela semana real calculada pelo calendário do sistema
   const postagensFiltradasPorSemana = postagens.filter(p => {
-    const tipo = (p.semana_tipo || "atual").toLowerCase().trim();
-    return tipo === filtroSemanaVisualizacao.toLowerCase().trim();
+    const semanaReal = obterSemanaRealPorData(p.created_at);
+    return semanaReal === filtroSemanaVisualizacao;
   });
 
   const agruparPostsDoDia = (dia: string) => {
