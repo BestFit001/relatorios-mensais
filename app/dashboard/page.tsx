@@ -1,18 +1,14 @@
 'use client';
 import React, { useState, useMemo, useEffect } from 'react';
-import { useAppContext } from '@/context/AppContext';
 import { supabase } from '@/lib/supabase';
 import Navbar from '@/app/components/Navbar';
 
 export default function DashboardPage() {
-  const context = useAppContext();
-  const canais = context?.canais || [];
-  const sales = context?.sales || [];
-  const goals = context?.goals || [];
-  const channelRules = context?.channelRules || [];
-  const channelLogos = context?.channelLogos || {};
-  const users = context?.users || [];
-  const addLog = context?.addLog || (() => {});
+  const [loading, setLoading] = useState(true);
+  const [canais, setCanais] = useState<string[]>([]);
+  const [sales, setSales] = useState<any[]>([]);
+  const [goals, setGoals] = useState<any[]>([]);
+  const [channelRules, setChannelRules] = useState<any[]>([]);
   
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
@@ -46,11 +42,13 @@ export default function DashboardPage() {
   
   const [isRecalculating, setIsRecalculating] = useState(false);
 
-  // Carrega custos padrão, devoluções, ads e plp diretamente do Supabase
+  // Carrega todas as informações diretamente do Supabase ao montar a página
   useEffect(() => {
-    async function fetchDataFromSupabase() {
+    async function fetchAllData() {
       try {
-        // 1. Custos de SKUs no padrão atual (tabela_custos_skus ou tb_produtos)
+        setLoading(true);
+
+        // 1. Custos de SKUs
         let allCustos: any[] = [];
         let from = 0;
         const step = 1000;
@@ -72,23 +70,53 @@ export default function DashboardPage() {
         });
         setDbCustosMap(cMap);
 
-        // 2. Devoluções do app
+        // 2. Devoluções do Supabase
         const { data: devData } = await supabase.from('devolucoes').select('*');
         if (devData) setDbDevolucoes(devData);
 
-        // 3. Adsense / Ads do app
+        // 3. Adsense / Ads
         const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*').catch(() => supabase.from('ads').select('*'));
         if (adsDataDb) setDbAds(adsDataDb);
 
-        // 4. PLPs / Frete / Expedição
+        // 4. PLPs / Frete
         const { data: plpData } = await supabase.from('plp_pedidos').select('*').catch(() => supabase.from('plp').select('*'));
         if (plpData) setDbPlp(plpData);
 
+        // 5. Vendas (tabela vendas_lives ou equivalentes do projeto)
+        let allSales: any[] = [];
+        let sFrom = 0;
+        let sKeep = true;
+        while (sKeep) {
+          const { data } = await supabase.from('vendas_lives').select('*').range(sFrom, sFrom + step - 1).catch(() => ({ data: [] }));
+          if (data && data.length > 0) {
+            allSales = [...allSales, ...data];
+            sFrom += step;
+            if (data.length < step) sKeep = false;
+          } else sKeep = false;
+        }
+        setSales(allSales);
+
+        // 6. Metas e Regras de Canal
+        const { data: metasDb } = await supabase.from('tb_metas').select('*').catch(() => ({ data: [] }));
+        if (metasDb) setGoals(metasDb);
+
+        const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*').catch(() => ({ data: [] }));
+        if (regrasDb) {
+          setChannelRules(regrasDb);
+          const cList = Array.from(new Set(regrasDb.map((r: any) => r.canal).filter(Boolean))) as string[];
+          if (cList.length > 0) setCanais(cList);
+          else setCanais(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu']);
+        } else {
+          setCanais(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu']);
+        }
+
       } catch (err) {
         console.error("Erro ao carregar dados do Supabase:", err);
+      } finally {
+        setLoading(false);
       }
     }
-    fetchDataFromSupabase();
+    fetchAllData();
   }, []);
 
   const handleRecalculate = () => {
@@ -100,7 +128,6 @@ export default function DashboardPage() {
       setAppliedStartDate(customStartDate);
       setAppliedEndDate(customEndDate);
       setIsRecalculating(false);
-      addLog(`Painel recalculado com dados nativos do Supabase.`, 'success');
     }, 300);
   };
 
@@ -128,7 +155,6 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
-  // Vendas enriquecidas consultando custos e PLP/Frete direto do app
   const enrichedSales = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -140,8 +166,9 @@ export default function DashboardPage() {
         if (appliedModalidadeFilter === 'FISICO' && !fisico) return false;
         if (appliedModalidadeFilter === 'DIGITAL' && fisico) return false;
 
-        if (s.data_faturamento) {
-           const d = new Date(s.data_faturamento + 'T00:00:00');
+        if (s.data_faturamento || s.data_venda) {
+           const dataStr = s.data_faturamento || s.data_venda;
+           const d = new Date(dataStr + 'T00:00:00');
            d.setHours(0, 0, 0, 0);
            
            if (appliedDateFilter === 'HOJE' && d.getTime() !== today.getTime()) return false;
@@ -171,16 +198,15 @@ export default function DashboardPage() {
           custoCMV = parseCurrency(s.cmv_clube);
         } else {
           const qtd = parseCurrency(s.quantidade) || 1;
-          const custoUnitarioPadrao = dbCustosMap.get(skuNorm) || 0;
+          const custoUnitarioPadrao = dbCustosMap.get(skuNorm) || parseCurrency(s.custo) || 0;
           custoCMV = custoUnitarioPadrao * qtd;
         }
 
-        // Busca custo de frete/PLP diretamente da tabela de PLP do Supabase
         const plpOrder = dbPlp.find((f: any) => String(f.id_pedido || f.pedido_id) === String(s.id_pedido));
         const custoPlp = plpOrder ? parseCurrency(plpOrder.valor_frete ?? plpOrder.frete ?? plpOrder.valor) : 0;
         
-        const precoVenda = parseCurrency(s.preco_venda);
-        let repasseLiquido = parseCurrency(s.repasse_liquido);
+        const precoVenda = parseCurrency(s.preco_venda || s.pdv);
+        let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
         if (repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
           repasseLiquido = precoVenda;
         }
@@ -213,9 +239,7 @@ export default function DashboardPage() {
     let cmvFisico = 0;
     let cmvDigital = 0;
 
-    // Considera devoluções vindas direto da tabela 'devolucoes' do Supabase
     const totalDevolucoesValor = dbDevolucoes.reduce((sum: number, c: any) => sum + parseCurrency(c.valor ?? c.valor_devolucao), 0);
-
     const lojasFisicasDetalhes: any[] = [];
     const lojasFisicasRepasse: any[] = [];
 
@@ -294,7 +318,6 @@ export default function DashboardPage() {
 
     const totalPlpCost = enrichedSales.reduce((sum: number, s: any) => sum + s.custoPlp, 0);
     
-    // Consulta Adsense direto da tabela 'adsense' / 'ads' do Supabase
     const filteredAds = dbAds.filter((a: any) => 
       (a.mes_referencia === currentRefMonth || !a.mes_referencia) && 
       (appliedChannelFilter === 'TODOS' || a.canal === appliedChannelFilter)
@@ -365,25 +388,13 @@ export default function DashboardPage() {
     const isCurrentMonth = (now.getFullYear() === refAno && now.getMonth() === refMes);
     const totalDiasMes = new Date(refAno, refMes + 1, 0).getDate();
     
-    let diasPassados = 1;
-    let diasFaltantes = 1;
-
-    if (isCurrentMonth) {
-      diasPassados = Math.max(1, now.getDate());
-      diasFaltantes = Math.max(1, totalDiasMes - now.getDate());
-    } else if (new Date(refAno, refMes, 1) < now) {
-      diasPassados = totalDiasMes;
-      diasFaltantes = 0;
-    } else {
-      diasPassados = 1;
-      diasFaltantes = totalDiasMes;
-    }
+    let diasPassados = isCurrentMonth ? Math.max(1, now.getDate()) : totalDiasMes;
 
     return channelsToAnalyze.map(channelName => {
       const chSales = enrichedSales.filter((s: any) => s.canal === channelName);
       
       const vendasDoDia = chSales
-        .filter((s: any) => s.data_faturamento === targetDateStr)
+        .filter((s: any) => (s.data_faturamento || s.data_venda) === targetDateStr)
         .reduce((sum: number, s: any) => sum + s.preco_venda, 0);
 
       const ruleObj = channelRules.find((r: any) => r.canal === channelName) || {};
@@ -419,7 +430,7 @@ export default function DashboardPage() {
         : faturadoComRedutor;
         
       const valorFaltante = Math.max(0, metaBase - faturadoComRedutor);
-      const mediaDiariaNecessaria = (isCurrentMonth && valorFaltante > 0) ? valorFaltante / diasFaltantes : 0;
+      const mediaDiariaNecessaria = (isCurrentMonth && valorFaltante > 0) ? valorFaltante / Math.max(1, totalDiasMes - now.getDate()) : 0;
 
       const logoUrl = channelLogos[channelName] || ruleObj.logo_url || null;
 
@@ -443,7 +454,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, dbAds, dbDevolucoes, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, targetDateStr]);
+  }, [enrichedSales, goals, dbAds, dbDevolucoes, appliedChannelFilter, appliedModalidadeFilter, channelRules, currentRefMonth, canais, targetDateStr]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
@@ -507,8 +518,18 @@ export default function DashboardPage() {
 
     const corpoEncoded = encodeURIComponent(corpoTexto);
     window.location.href = `mailto:${emailsCadastrados}?subject=${assunto}&body=${corpoEncoded}`;
-    addLog('E-mail aberto com os destinatários.', 'success');
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#07090e] p-8 text-slate-100 flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-sm font-bold text-slate-400">A carregar dados do Supabase...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#07090e] p-6 md:p-8 text-slate-100 font-sans">
