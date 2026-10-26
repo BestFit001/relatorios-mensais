@@ -204,8 +204,8 @@ export default function Navbar() {
             </Link>
           )}
 
-          {/* RELATÓRIOS */}
-          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full")) && (
+          {/* RELATÓRIOS (INCLUINDO RELATÓRIO DE LIVE) */}
+          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/lives")) && (
             <div>
               <button
                 onClick={() => sidebarAberta && toggleSecao("relatorios")}
@@ -241,6 +241,11 @@ export default function Navbar() {
                   {temPermissao("/full") && (
                     <Link href="/full" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/full") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Full / FBA
+                    </Link>
+                  )}
+                  {temPermissao("/lives") && (
+                    <Link href="/lives" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/lives") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
+                      🔴 Relatório de Live
                     </Link>
                   )}
                 </div>
@@ -288,7 +293,7 @@ export default function Navbar() {
           )}
 
           {/* FERRAMENTAS */}
-          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp") || temPermissao("/lives")) && (
+          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp")) && (
             <div>
               <button
                 onClick={() => sidebarAberta && toggleSecao("ferramentas")}
@@ -319,11 +324,6 @@ export default function Navbar() {
                   {temPermissao("/plp") && (
                     <Link href="/plp" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/plp") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       PLPs (Expedição)
-                    </Link>
-                  )}
-                  {temPermissao("/lives") && (
-                    <Link href="/lives" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/lives") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
-                      🔴 Vendas via Lives
                     </Link>
                   )}
                 </div>
