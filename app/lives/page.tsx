@@ -118,20 +118,20 @@ export default function RelatorioLivesPage() {
       });
       setCustosMap(cMap);
 
-      // Carregar configurações do Supabase
-      const { data: configData } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
+      // Carregar configurações do Supabase (buscando pelos prefixos "live_")
+      const { data: configData } = await supabase.from("config_regras_tiny").select("*").like("campo", "live_%");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
-          if (cfg.campo === "linha_inicial") setLinhaInicial(cfg.coluna);
-          if (cfg.campo === "col_sku") setColunaSku(cfg.coluna);
-          if (cfg.campo === "col_status") setColunaStatus(cfg.coluna);
-          if (cfg.campo === "col_repasse") setColunaRepasse(cfg.coluna);
-          if (cfg.campo === "col_pdv") setColunaPdv(cfg.coluna);
-          if (cfg.campo === "col_data") setColunaData(cfg.coluna);
-          if (cfg.campo === "col_custo_live") setColunaCustosLive(cfg.coluna);
-          if (cfg.campo === "col_roi_live") setColunaRoiLive(cfg.coluna);
-          if (cfg.campo === "imposto") setPercentualImposto(cfg.coluna);
-          if (cfg.campo === "comissao") setPercentualComissao(cfg.coluna);
+          if (cfg.campo === "live_linha_inicial") setLinhaInicial(cfg.coluna);
+          if (cfg.campo === "live_col_sku") setColunaSku(cfg.coluna);
+          if (cfg.campo === "live_col_status") setColunaStatus(cfg.coluna);
+          if (cfg.campo === "live_col_repasse") setColunaRepasse(cfg.coluna);
+          if (cfg.campo === "live_col_pdv") setColunaPdv(cfg.coluna);
+          if (cfg.campo === "live_col_data") setColunaData(cfg.coluna);
+          if (cfg.campo === "live_col_custo_live") setColunaCustosLive(cfg.coluna);
+          if (cfg.campo === "live_col_roi_live") setColunaRoiLive(cfg.coluna);
+          if (cfg.campo === "live_imposto") setPercentualImposto(cfg.coluna);
+          if (cfg.campo === "live_comissao") setPercentualComissao(cfg.coluna);
         });
       }
 
@@ -166,24 +166,23 @@ export default function RelatorioLivesPage() {
 
   const salvarConfiguracoes = async () => {
     try {
-      // Estratégia robusta: apagar as configs antigas de live_config e inserir as novas limpas
-      await supabase.from("config_regras_tiny").delete().eq("canal", "live_config");
-
       const configs = [
-        { canal: "live_config", campo: "linha_inicial", coluna: String(linhaInicial) },
-        { canal: "live_config", campo: "col_sku", coluna: String(colunaSku) },
-        { canal: "live_config", campo: "col_status", coluna: String(colunaStatus) },
-        { canal: "live_config", campo: "col_repasse", coluna: String(colunaRepasse) },
-        { canal: "live_config", campo: "col_pdv", coluna: String(colunaPdv) },
-        { canal: "live_config", campo: "col_data", coluna: String(colunaData) },
-        { canal: "live_config", campo: "col_custo_live", coluna: String(colunaCustosLive) },
-        { canal: "live_config", campo: "col_roi_live", coluna: String(colunaRoiLive) },
-        { canal: "live_config", campo: "imposto", coluna: String(percentualImposto) },
-        { canal: "live_config", campo: "comissao", coluna: String(percentualComissao) },
+        { campo: "live_linha_inicial", coluna: String(linhaInicial) },
+        { campo: "live_col_sku", coluna: String(colunaSku) },
+        { campo: "live_col_status", coluna: String(colunaStatus) },
+        { campo: "live_col_repasse", coluna: String(colunaRepasse) },
+        { campo: "live_col_pdv", coluna: String(colunaPdv) },
+        { campo: "live_col_data", coluna: String(colunaData) },
+        { campo: "live_col_custo_live", coluna: String(colunaCustosLive) },
+        { campo: "live_col_roi_live", coluna: String(colunaRoiLive) },
+        { campo: "live_imposto", coluna: String(percentualImposto) },
+        { campo: "live_comissao", coluna: String(percentualComissao) },
       ];
 
-      const { error } = await supabase.from("config_regras_tiny").insert(configs);
-      if (error) throw error;
+      for (const c of configs) {
+        const { error } = await supabase.from("config_regras_tiny").upsert(c, { onConflict: "campo" });
+        if (error) throw error;
+      }
 
       alert("✅ Configurações salvas com sucesso no Supabase!");
       setSubAba("dados");
