@@ -1,8 +1,8 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { supabase } from "../lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
-import Navbar from "../components/Navbar";
+import Navbar from "@/app/components/Navbar";
 import * as XLSX from "xlsx";
 
 function normalizarSku(valor: any): string {
