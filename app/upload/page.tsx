@@ -5,7 +5,7 @@ import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
 
-export default function UploadPage() {
+export default function AdminPage() {
   const router = useRouter();
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "dashboard_admin">("relatorios");
 
@@ -45,7 +45,7 @@ export default function UploadPage() {
   const [editandoMlId, setEditandoMlId] = useState<number | null>(null);
   const [dadosEdicaoMl, setDadosEdicaoMl] = useState({ mlb: "", sku: "", comissao: 0, peso_real: 0, altura: 0, largura: 0, comprimento: 0, canal: "Mercado Livre 1" });
 
-  // Estados específicos para a Alimentação do Dashboard (Admin / Updates)
+  // Estados específicos para o Alimentador do Dashboard (Admin)
   const [mesAlvoDash, setMesAlvoDash] = useState("outubro de 2026");
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
   const [canaisDashList, setCanaisDashList] = useState<string[]>([
@@ -53,8 +53,6 @@ export default function UploadPage() {
   ]);
   const [colunaIdFaturados, setColunaIdFaturados] = useState("AI");
   const [colunaDataFaturados, setColunaDataFaturados] = useState("D");
-  const [colunaIdSite, setColunaIdSite] = useState("A");
-  const [colunaTarifaSite, setColunaTarifaSite] = useState("E");
 
   const mesReferencia = mes && ano ? `${mes}/${ano}` : "";
   const meses = [
@@ -92,7 +90,6 @@ export default function UploadPage() {
         custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'), custo_marca: getC('custo_marca', 'D')
       });
 
-      // Carrega canais dinâmicos do dashboard se houver
       const canalCfg = tinyConfig.find((t: any) => t.campo === 'canais_dashboard');
       if (canalCfg && canalCfg.coluna) {
         try {
@@ -219,7 +216,7 @@ export default function UploadPage() {
     return s;
   };
 
-  // Funções de Upload específicas para alimentar o Dashboard
+  // Funções de Upload simplificadas e otimizadas
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -254,63 +251,15 @@ export default function UploadPage() {
 
         if (registros.length > 0) {
           await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash);
-          const tamanhoLote = 500;
-          for (let i = 0; i < registros.length; i += tamanhoLote) {
-            const lote = registros.slice(i, i + tamanhoLote);
-            await supabase.from('faturados').insert(lote);
+          for (let i = 0; i < registros.length; i += 500) {
+            await supabase.from('faturados').insert(registros.slice(i, i + 500));
           }
         }
 
-        alert(`✅ Faturados (NFes Saída) importados com sucesso! Total: ${registros.length} registos.`);
+        alert(`✅ Faturados importados com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Faturados: " + err.message);
-        setLoading(false);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleSubirCancelados = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const registros = [];
-        for (let i = 1; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length === 0) continue;
-          const idPedido = String(row[0] || "").trim();
-          const valorDevolucao = Number(String(row[1] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
-          const canalDev = String(row[2] || canalAlvoDash).trim();
-
-          if (idPedido) {
-            registros.push({
-              id_pedido: idPedido,
-              valor_devolucao: valorDevolucao,
-              canal: canalDev,
-              mes_referencia: mesAlvoDash
-            });
-          }
-        }
-
-        if (registros.length > 0) {
-          await supabase.from('devolucoes').delete().eq('mes_referencia', mesAlvoDash);
-          await supabase.from('devolucoes').insert(registros);
-        }
-
-        alert(`✅ Cancelados / Devoluções processados com sucesso! Total: ${registros.length} registos.`);
-        setLoading(false);
-      } catch (err: any) {
-        alert("Erro ao importar Devoluções: " + err.message);
         setLoading(false);
       }
     };
@@ -357,151 +306,15 @@ export default function UploadPage() {
 
         if (registros.length > 0) {
           await supabase.from('vendas_lives').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
-          const tamanhoLote = 500;
-          for (let i = 0; i < registros.length; i += tamanhoLote) {
-            const lote = registros.slice(i, i + tamanhoLote);
-            await supabase.from('vendas_lives').insert(lote);
+          for (let i = 0; i < registros.length; i += 500) {
+            await supabase.from('vendas_lives').insert(registros.slice(i, i + 500));
           }
         }
 
-        alert(`✅ Vendas do canal [${canalAlvoDash}] cruzadas e gravadas no Supabase! (${registros.length} itens).`);
+        alert(`✅ Vendas do canal [${canalAlvoDash}] gravadas! (${registros.length} itens).`);
         setLoading(false);
       } catch (err: any) {
-        alert("Erro ao importar Vendas do Canal: " + err.message);
-        setLoading(false);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleSubirFreteFlex = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const registros = [];
-        for (let i = 1; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length === 0) continue;
-          const idPedido = String(row[0] || "").trim();
-          const valorFrete = Number(String(row[1] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
-
-          if (idPedido) {
-            registros.push({
-              id_pedido: idPedido,
-              valor_frete: valorFrete,
-              mes_referencia: mesAlvoDash
-            });
-          }
-        }
-
-        if (registros.length > 0) {
-          await supabase.from('plp_pedidos').delete().eq('mes_referencia', mesAlvoDash);
-          await supabase.from('plp_pedidos').insert(registros);
-        }
-
-        alert(`✅ Débitos Frete FLEX importados! Total: ${registros.length} registos.`);
-        setLoading(false);
-      } catch (err: any) {
-        alert("Erro ao importar Frete FLEX: " + err.message);
-        setLoading(false);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleSubirAds = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const registros = [];
-        for (let i = 1; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length === 0) continue;
-          const canalAds = String(row[0] || "").trim();
-          const valorGasto = Number(String(row[1] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
-
-          if (canalAds) {
-            registros.push({
-              canal: canalAds,
-              custo_ads: valorGasto,
-              mes_referencia: mesAlvoDash
-            });
-          }
-        }
-
-        if (registros.length > 0) {
-          await supabase.from('ads_faturamento').delete().eq('mes_referencia', mesAlvoDash);
-          await supabase.from('ads_faturamento').insert(registros);
-        }
-
-        alert(`✅ Investimento ADS gravado no Supabase! Total: ${registros.length} canais.`);
-        setLoading(false);
-      } catch (err: any) {
-        alert("Erro ao importar ADS: " + err.message);
-        setLoading(false);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleSubirTarifasSite = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const idxId = letraParaIndice(colunaIdSite);
-        const idxTarifa = letraParaIndice(colunaTarifaSite);
-
-        const registros = [];
-        for (let i = 1; i < json.length; i++) {
-          const row = json[i];
-          if (!row) continue;
-          const idPedido = String(row[idxId] || "").trim();
-          const valorTarifa = Number(String(row[idxTarifa] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
-
-          if (idPedido) {
-            registros.push({
-              id_pedido: idPedido,
-              tarifa_site: valorTarifa,
-              mes_referencia: mesAlvoDash
-            });
-          }
-        }
-
-        if (registros.length > 0) {
-          await supabase.from('config_regras_tarifacao').upsert(registros, { onConflict: 'id_pedido' });
-        }
-
-        alert(`✅ Tarifas do Site importadas! Total: ${registros.length} registos.`);
-        setLoading(false);
-      } catch (err: any) {
-        alert("Erro ao importar Tarifas: " + err.message);
+        alert("Erro: " + err.message);
         setLoading(false);
       }
     };
@@ -509,25 +322,22 @@ export default function UploadPage() {
   };
 
   const apagarDadosPorTipo = async (tabela: string) => {
-    if (!confirm(`Deseja realmente limpar os registros da tabela [${tabela}] para o mês [${mesAlvoDash}]?`)) return;
+    if (!confirm(`Deseja limpar os registros de [${tabela}] para o mês [${mesAlvoDash}]?`)) return;
     setLoading(true);
     try {
       await supabase.from(tabela).delete().eq('mes_referencia', mesAlvoDash);
-      alert(`✅ Registros de ${tabela} limpos com sucesso.`);
+      alert(`✅ Registros de ${tabela} limpos.`);
     } catch (err: any) {
-      alert("Erro ao limpar: " + err.message);
+      alert("Erro: " + err.message);
     }
     setLoading(false);
   };
 
   const zerarBancoTotal = async () => {
-    if (!confirm("⚠️ ATENÇÃO: Deseja apagar TODAS as informações das bases principais? Esta ação é irreversível!")) return;
+    if (!confirm("⚠️ Deseja apagar TODAS as informações das bases principais?")) return;
     setLoading(true);
     try {
       await supabase.from('vendas_lives').delete().neq('id', 0);
-      await supabase.from('devolucoes').delete().neq('id', 0);
-      await supabase.from('ads_faturamento').delete().neq('id', 0);
-      await supabase.from('plp_pedidos').delete().neq('id', 0);
       await supabase.from('faturados').delete().neq('id', 0);
       alert("✅ Banco de dados limpo com sucesso!");
     } catch (err: any) {
@@ -574,7 +384,7 @@ export default function UploadPage() {
         setDadosABC(formatado);
         alert(`Curva ABC processada: ${formatado.length} produtos válidos.`);
       } catch (err: any) {
-        alert("Erro ao ler Curva ABC: " + err.message);
+        alert("Erro: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -623,7 +433,7 @@ export default function UploadPage() {
         setDadosInvBruto(formatado);
         alert(`Inventário processado: ${formatado.length} SKUs identificados.`);
       } catch (err: any) {
-        alert("Erro ao ler Inventário: " + err.message);
+        alert("Erro: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -655,39 +465,26 @@ export default function UploadPage() {
 
   const limparBaseTiny = async () => {
     if (!confirm("Tem certeza que deseja apagar toda a base do Tiny ERP?")) return;
-    const { error } = await supabase.from('cadastros_base_tiny').delete().neq('id', 0);
-    if (error) alert("Erro: " + error.message);
-    else {
-      alert("Base Tiny limpa com sucesso!");
-      carregarDadosCadastros();
-    }
+    await supabase.from('cadastros_base_tiny').delete().neq('id', 0);
+    carregarDadosCadastros();
   };
 
   const limparCanal = async (canalNome: string) => {
-    if (!confirm(`Tem certeza que deseja apagar todo o mapeamento do canal "${canalNome}"?`)) return;
-    const { error } = await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
-    if (error) alert("Erro: " + error.message);
-    else alert(`Canal "${canalNome}" limpo com sucesso!`);
+    if (!confirm(`Apagar canal "${canalNome}"?`)) return;
+    await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
+    alert(`Canal limpo.`);
   };
 
   const limparTabelaCustos = async () => {
-    if (!confirm("Tem certeza que deseja apagar todos os custos unitários do Supabase?")) return;
-    const { error } = await supabase.from('tabela_custos_skus').delete().neq('id', 0);
-    if (error) alert("Erro: " + error.message);
-    else {
-      alert("🗑️ Tabela de custos limpa com sucesso!");
-      setListaCustosFiltrados([]);
-    }
+    if (!confirm("Apagar todos os custos?")) return;
+    await supabase.from('tabela_custos_skus').delete().neq('id', 0);
+    setListaCustosFiltrados([]);
   };
 
   const limparRegrasMl = async () => {
-    if (!confirm(`Tem certeza que deseja apagar todas as regras de "${contaMlSelecionada}" do Supabase?`)) return;
-    const { error } = await supabase.from('ml_anuncios_regras').delete().eq('canal', contaMlSelecionada);
-    if (error) alert("Erro: " + error.message);
-    else {
-      alert(`🗑️ Regras de ${contaMlSelecionada} limpas com sucesso!`);
-      setListaRegrasMlFiltradas([]);
-    }
+    if (!confirm(`Apagar regras de "${contaMlSelecionada}"?`)) return;
+    await supabase.from('ml_anuncios_regras').delete().eq('canal', contaMlSelecionada);
+    setListaRegrasMlFiltradas([]);
   };
 
   const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
@@ -720,14 +517,11 @@ export default function UploadPage() {
         }
         const registros = Array.from(mapaUnico.values());
 
-        const tamanhoLote = 500;
-        for (let i = 0; i < registros.length; i += tamanhoLote) {
-          const lote = registros.slice(i, i + tamanhoLote);
-          const { error } = await supabase.from('cadastros_base_tiny').upsert(lote, { onConflict: 'sku' });
-          if (error) throw error;
+        for (let i = 0; i < registros.length; i += 500) {
+          await supabase.from('cadastros_base_tiny').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
 
-        alert(`Base Tiny atualizada com sucesso! ${registros.length} SKUs válidos processados.`);
+        alert(`Base Tiny atualizada! ${registros.length} SKUs processados.`);
         setLoading(false);
         carregarDadosCadastros();
       } catch (err: any) {
@@ -755,15 +549,14 @@ export default function UploadPage() {
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         let allTiny: any[] = [];
-        let rangeStep = 1000;
         let from = 0;
         let keepFetching = true;
         while (keepFetching) {
-          const { data } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + rangeStep - 1);
+          const { data } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + 999);
           if (data && data.length > 0) {
             allTiny = [...allTiny, ...data];
-            from += rangeStep;
-            if (data.length < rangeStep) keepFetching = false;
+            from += 1000;
+            if (data.length < 1000) keepFetching = false;
           } else {
             keepFetching = false;
           }
@@ -774,7 +567,6 @@ export default function UploadPage() {
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
-
           const sku = normalizarSku(row[indiceSku]);
           if (!skusTinySet.has(sku)) continue;
 
@@ -786,14 +578,11 @@ export default function UploadPage() {
         }
         const registros = Array.from(mapaUnico.values());
 
-        const tamanhoLote = 500;
-        for (let i = 0; i < registros.length; i += tamanhoLote) {
-          const lote = registros.slice(i, i + tamanhoLote);
-          const { error } = await supabase.from('status_skus_catalogo').upsert(lote, { onConflict: 'sku' });
-          if (error) throw error;
+        for (let i = 0; i < registros.length; i += 500) {
+          await supabase.from('status_skus_catalogo').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
 
-        alert(`Status atualizados com sucesso! ${registros.length} SKUs validados.`);
+        alert(`Status atualizados! ${registros.length} SKUs validados.`);
         setLoading(false);
         carregarDadosCadastros();
       } catch (err: any) {
@@ -828,7 +617,7 @@ export default function UploadPage() {
           if (!row || row.length <= Math.max(idxSku, idxCusto)) continue;
 
           const sku = normalizarSku(row[idxSku]);
-          const produto = String(row[idxProd] || "Produto sem nome").trim();
+          const produto = String(row[idxProd] || "Produto").trim();
           const custo = Number(row[idxCusto] || 0);
           const marca = String(row[idxMarca] || "").trim();
 
@@ -838,18 +627,14 @@ export default function UploadPage() {
         }
 
         const registros = Array.from(mapaUnicoCustos.values());
-
-        const tamanhoLote = 500;
-        for (let i = 0; i < registros.length; i += tamanhoLote) {
-          const lote = registros.slice(i, i + tamanhoLote);
-          const { error } = await supabase.from('tabela_custos_skus').upsert(lote, { onConflict: 'sku' });
-          if (error) throw error;
+        for (let i = 0; i < registros.length; i += 500) {
+          await supabase.from('tabela_custos_skus').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
 
-        alert(`💰 Custos unitários extraídos e salvos com sucesso! Total de ${registros.length} registos únicos válidos processados.`);
+        alert(`💰 Custos salvos com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
-        alert("Erro ao processar custos: " + err.message);
+        alert("Erro: " + err.message);
         setLoading(false);
       }
     };
@@ -875,7 +660,6 @@ export default function UploadPage() {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
-        
         let sheetName = workbook.SheetNames[0];
         if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
         
@@ -888,15 +672,13 @@ export default function UploadPage() {
           if (!row) continue;
           const mlbVal = String(row[idxMlb] || "").trim().toUpperCase();
           const skuVal = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-          if (mlbVal && mlbVal.startsWith("MLB") && skuVal && skuVal !== "-" && skuVal.length >= 10 && !mapSkuPorMlb.has(mlbVal)) {
+          if (mlbVal && mlbVal.startsWith("MLB") && skuVal && skuVal.length >= 10 && !mapSkuPorMlb.has(mlbVal)) {
             mapSkuPorMlb.set(mlbVal, skuVal);
           }
         }
 
         const mapaMlPendente = new Map<string, { registro: any, score: number }>();
-        const linhaInicio = 4;
-
-        for (let i = linhaInicio; i < json.length; i++) {
+        for (let i = 4; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
 
@@ -904,76 +686,37 @@ export default function UploadPage() {
           if (!mlb || !mlb.startsWith("MLB")) continue;
 
           let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-
           if ((!sku || sku === "-" || sku.length < 10) && mapSkuPorMlb.has(mlb)) {
             sku = mapSkuPorMlb.get(mlb)!;
           }
-          if (sku && sku.length < 10) {
-            sku = "";
-          }
 
-          let rawComissao = row[idxCom];
           let comissaoNum = 14;
-          if (rawComissao !== undefined && rawComissao !== null && rawComissao !== "") {
-            let strCom = String(rawComissao).replace("%", "").trim().replace(",", ".");
-            let parsed = parseFloat(strCom);
-            if (!isNaN(parsed) && parsed > 0) {
-              if (parsed > 0 && parsed < 1) {
-                comissaoNum = parsed * 100;
-              } else {
-                comissaoNum = parsed;
-              }
-            }
+          let rawComissao = row[idxCom];
+          if (rawComissao !== undefined && rawComissao !== "") {
+            let parsed = parseFloat(String(rawComissao).replace("%", "").trim().replace(",", "."));
+            if (!isNaN(parsed) && parsed > 0) comissaoNum = parsed < 1 ? parsed * 100 : parsed;
           }
-
-          if (comissaoNum > 100) comissaoNum = 14;
 
           let pesoReal = 2.000;
-          if (idxPeso >= 0 && row[idxPeso] !== undefined && row[idxPeso] !== "") {
-            const valPeso = Number(String(row[idxPeso]).replace(",", "."));
-            if (!isNaN(valPeso) && valPeso > 0 && valPeso < 100) pesoReal = valPeso;
+          if (idxPeso >= 0 && row[idxPeso] !== undefined) {
+            let p = Number(String(row[idxPeso]).replace(",", "."));
+            if (!isNaN(p) && p > 0) pesoReal = p;
           }
 
           const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
           const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
           const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
 
-          let score = 0;
-          if (sku && sku.length >= 10) score += 2;
-          if (comissaoNum > 0 && comissaoNum <= 100) score++;
-          if (pesoReal !== 2.000) score++;
-          if (altura > 0) score++;
-          if (largura > 0) score++;
-          if (comprimento > 0) score++;
-
           const objReg = { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada };
-
-          if (!mapaMlPendente.has(mlb) || score > mapaMlPendente.get(mlb)!.score) {
-            mapaMlPendente.set(mlb, { registro: objReg, score });
-          } else {
-            const regAtual = mapaMlPendente.get(mlb)!.registro;
-            if ((!regAtual.sku || regAtual.sku.length < 10) && sku && sku.length >= 10) {
-              regAtual.sku = sku;
-            }
-          }
+          mapaMlPendente.set(mlb, { registro: objReg, score: 1 });
         }
 
         const registros = Array.from(mapaMlPendente.values()).map(item => item.registro);
-
-        if (registros.length === 0) {
-          alert("Nenhum anúncio válido foi encontrado.");
-          setLoading(false);
-          return;
+        for (let i = 0; i < registros.length; i += 500) {
+          await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
         }
 
-        const tamanhoLote = 500;
-        for (let i = 0; i < registros.length; i += tamanhoLote) {
-          const lote = registros.slice(i, i + tamanhoLote);
-          const { error } = await supabase.from('ml_anuncios_regras').upsert(lote, { onConflict: 'mlb' });
-          if (error) throw error;
-        }
-
-        alert(`🚀 Regras de ${contaMlSelecionada} processadas com sucesso!`);
+        alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro: " + err.message);
@@ -989,18 +732,16 @@ export default function UploadPage() {
     setLoading(true);
 
     const indiceColuna = letraParaIndice(letraColuna || "A");
-
     try {
       let allTiny: any[] = [];
-      let rangeStep = 1000;
       let from = 0;
       let keepFetching = true;
       while (keepFetching) {
-        const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + rangeStep - 1);
+        const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + 999);
         if (tinyBatch && tinyBatch.length > 0) {
           allTiny = [...allTiny, ...tinyBatch];
-          from += rangeStep;
-          if (tinyBatch.length < rangeStep) keepFetching = false;
+          from += 1000;
+          if (tinyBatch.length < 1000) keepFetching = false;
         } else {
           keepFetching = false;
         }
@@ -1012,8 +753,7 @@ export default function UploadPage() {
         const file = files[f];
         const buffer = await file.arrayBuffer();
         const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true, raw: false });
-        let sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         for (let i = 4; i < json.length; i++) {
@@ -1056,27 +796,6 @@ export default function UploadPage() {
     if (!confirm("Excluir?")) return;
     await supabase.from('tabela_custos_skus').delete().eq('id', id);
     pesquisarCustosNoBanco();
-  };
-
-  const salvarEdicaoMl = async (id: number) => {
-    await supabase.from('ml_anuncios_regras').update({
-      mlb: dadosEdicaoMl.mlb.trim().toUpperCase(),
-      sku: dadosEdicaoMl.sku.trim(),
-      comissao: Number(dadosEdicaoMl.comissao || 0),
-      peso_real: Number(dadosEdicaoMl.peso_real || 0),
-      altura: Number(dadosEdicaoMl.altura || 0),
-      largura: Number(dadosEdicaoMl.largura || 0),
-      comprimento: Number(dadosEdicaoMl.comprimento || 0),
-      canal: dadosEdicaoMl.canal
-    }).eq('id', id);
-    setEditandoMlId(null);
-    pesquisarMlNoBanco();
-  };
-
-  const excluirRegraMl = async (id: number) => {
-    if (!confirm("Excluir?")) return;
-    await supabase.from('ml_anuncios_regras').delete().eq('id', id);
-    pesquisarMlNoBanco();
   };
 
   return (
@@ -1286,16 +1005,14 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* ABA NOVA ADICIONADA: ALIMENTA DASHBOARD (ADMIN)[cite: 8] */}
+        {/* ABA: ALIMENTA DASHBOARD (ADMIN) [Limpado sem os campos manuais de frete, ads e cancelamentos] */}
         {abaAtiva === "dashboard_admin" && (
           <div className="space-y-6">
             
-            {/* PASSO 1: BASES E FILTROS ERP */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Faturados */}
+            {/* PASSO 1: FATURADOS */}
+            <div className="grid grid-cols-1 gap-6 max-w-xl">
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-                <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 1A: Faturados (NFes Saída)</h3>
+                <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 1: Faturados (NFes Saída)</h3>
                 <div className="space-y-3">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência dos Faturados</label>
@@ -1317,133 +1034,46 @@ export default function UploadPage() {
                   </label>
                 </div>
               </div>
-
-              {/* Cancelados / Redutores */}
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/50 shadow-xl space-y-4">
-                <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">Passo 1B: Cancelados / Redutores</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência para Abatimento</label>
-                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-bold" />
-                  </div>
-                  <label className="block w-full text-center bg-rose-600 hover:bg-rose-500 transition text-white font-extrabold text-xs py-3 rounded-xl shadow-lg cursor-pointer mt-8">
-                    <span>Subir Cancelados / Devoluções</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirCancelados} className="hidden" />
-                  </label>
-                </div>
-              </div>
-
             </div>
 
-            {/* PASSO 2: VENDAS, CUSTOS E LOGÍSTICA */}
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
-              <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 2: Vendas, Custos e Logística</h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                
-                {/* Planilha Vendas por Canal */}
-                <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
-                  <h4 className="text-xs font-bold text-purple-400 uppercase">Planilha Vendas (Canal)</h4>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência</label>
-                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Destino</label>
-                    <select value={canalAlvoDash} onChange={e => setCanalAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold">
-                      {canaisDashList.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <label className="block w-full text-center bg-purple-600 hover:bg-purple-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
-                    <span>Importar e Cruzar Vendas</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirVendasCanal} className="hidden" />
-                  </label>
+            {/* PASSO 2: VENDAS POR CANAL */}
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6 max-w-xl">
+              <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 2: Importar Vendas (Canal)</h3>
+              <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência</label>
+                  <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" />
                 </div>
-
-                {/* Débitos Frete FLEX */}
-                <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
-                  <h4 className="text-xs font-bold text-sky-400 uppercase">Débitos Frete FLEX</h4>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência para FLEX</label>
-                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" />
-                  </div>
-                  <p className="text-[10px] text-slate-400 leading-relaxed">Coluna A: ID do Pedido | Coluna B: Valor do Frete</p>
-                  <label className="block w-full text-center bg-sky-600 hover:bg-sky-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer mt-4">
-                    <span>Importar Frete Flex</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirFreteFlex} className="hidden" />
-                  </label>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Destino</label>
+                  <select value={canalAlvoDash} onChange={e => setCanalAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold">
+                    {canaisDashList.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
-
-                {/* Investimento ADS */}
-                <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
-                  <h4 className="text-xs font-bold text-amber-400 uppercase">Investimento ADS</h4>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência para ADS</label>
-                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" />
-                  </div>
-                  <p className="text-[10px] text-slate-400 leading-relaxed">Coluna A: Nome do Canal | Coluna B: Valor Gasto</p>
-                  <label className="block w-full text-center bg-amber-600 hover:bg-amber-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer mt-4">
-                    <span>Importar ADS</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirAds} className="hidden" />
-                  </label>
-                </div>
-
-              </div>
-
-              {/* Consulta Tarifas Site */}
-              <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3 max-w-md">
-                <h4 className="text-xs font-bold text-emerald-400 uppercase">Consulta Tarifas Site</h4>
-                <p className="text-[10px] text-slate-400">Cruza ID do Pedido com a tarifa para descontar do líquido final.</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col ID Pedido</label>
-                    <input type="text" value={colunaIdSite} onChange={e => setColunaIdSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col Valor Tarifa</label>
-                    <input type="text" value={colunaTarifaSite} onChange={e => setColunaTarifaSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
-                  </div>
-                </div>
-                <label className="block w-full text-center bg-indigo-600 hover:bg-indigo-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
-                  <span>Subir Tarifas do Site</span>
-                  <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirTarifasSite} className="hidden" />
+                <label className="block w-full text-center bg-purple-600 hover:bg-purple-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
+                  <span>Importar e Cruzar Vendas</span>
+                  <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirVendasCanal} className="hidden" />
                 </label>
               </div>
-
             </div>
 
             {/* ZONA DE LIMPEZA DE DADOS */}
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4">
-              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider flex items-center gap-2">
-                  <span>⚠️</span> Zona de Limpeza de Dados por Mês
-                </h3>
-                <div className="flex gap-4 items-center">
-                  <div>
-                    <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Mês Alvo</label>
-                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
-                  </div>
-                </div>
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
+                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2">
-                <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-800 font-bold py-2.5 px-4 rounded-xl text-xs transition cursor-pointer">
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
                   Apagar Faturados ({mesAlvoDash})
                 </button>
-                <button onClick={() => apagarDadosPorTipo('devolucoes')} className="bg-slate-950 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-800 font-bold py-2.5 px-4 rounded-xl text-xs transition cursor-pointer">
-                  Apagar Cancelados ({mesAlvoDash})
-                </button>
-                <button onClick={() => apagarDadosPorTipo('plp_pedidos')} className="bg-slate-950 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-800 font-bold py-2.5 px-4 rounded-xl text-xs transition cursor-pointer">
-                  Apagar FLEX ({mesAlvoDash})
-                </button>
-                <button onClick={() => apagarDadosPorTipo('ads_faturamento')} className="bg-slate-950 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-800 font-bold py-2.5 px-4 rounded-xl text-xs transition cursor-pointer">
-                  Apagar ADS ({mesAlvoDash})
+                <button onClick={() => apagarDadosPorTipo('vendas_lives')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
+                  Apagar Vendas ({mesAlvoDash})
                 </button>
               </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-end">
-                <button onClick={zerarBancoTotal} className="bg-rose-600 hover:bg-rose-500 text-white font-black py-3 px-6 rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-rose-950/50 cursor-pointer transition">
-                  🗑️ Apagar TODAS as Informações do Supabase (Zerar Banco)
+              <div className="pt-3 border-t border-slate-800 flex justify-end">
+                <button onClick={zerarBancoTotal} className="bg-rose-600 hover:bg-rose-500 text-white font-black py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer">
+                  🗑️ Zerar Banco Principal
                 </button>
               </div>
             </div>
