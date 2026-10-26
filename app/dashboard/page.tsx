@@ -22,6 +22,7 @@ export default function DashboardPage() {
   const [dbDevolucoes, setDbDevolucoes] = useState<any[]>([]);
   const [dbAds, setDbAds] = useState<any[]>([]);
   const [dbPlp, setDbPlp] = useState<any[]>([]);
+  const [dbFaturadosIds, setDbFaturadosIds] = useState<Set<string>>(new Set());
   const [configTarifas, setConfigTarifas] = useState<any[]>([]);
 
   const currentMonthDefault = new Date().toISOString().slice(0, 7);
@@ -68,25 +69,33 @@ export default function DashboardPage() {
         });
         setDbCustosMap(cMap);
 
-        // 2. Devoluções do Supabase
+        // 2. Faturados (Validação estricta por NFes Saída upadas na aba Admin)
+        try {
+          const { data: fatData } = await supabase.from('faturados').select('id_pedido');
+          if (fatData) {
+            setDbFaturadosIds(new Set(fatData.map((f: any) => String(f.id_pedido).trim())));
+          }
+        } catch (e) {}
+
+        // 3. Devoluções / Cancelados upados na aba Admin
         try {
           const { data: devData } = await supabase.from('devolucoes').select('*');
           if (devData) setDbDevolucoes(devData);
         } catch (e) {}
 
-        // 3. Adsense / Ads
+        // 4. Adsense / Investimento ADS upados
         try {
           const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*');
           if (adsDataDb) setDbAds(adsDataDb);
         } catch (e) {}
 
-        // 4. PLPs / Frete
+        // 5. PLPs / Frete FLEX upados
         try {
           const { data: plpData } = await supabase.from('plp_pedidos').select('*');
           if (plpData) setDbPlp(plpData);
         } catch (e) {}
 
-        // 5. Metas e Tarifas
+        // 6. Metas e Tarifas configuradas nas Regras
         try {
           const { data: metasDb } = await supabase.from('tb_metas').select('*');
           if (metasDb) setGoals(metasDb);
@@ -97,7 +106,7 @@ export default function DashboardPage() {
           if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
         } catch (e) {}
 
-        // 6. Canais salvos na aba Regras
+        // 7. Canais salvos na aba Regras
         try {
           const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
           if (regrasDb && regrasDb.length > 0) {
@@ -115,7 +124,7 @@ export default function DashboardPage() {
           }
         } catch (e) {}
 
-        // 7. Vendas Brutas
+        // 8. Vendas Brutas importadas via Admin
         try {
           const { data: vendasDb } = await supabase.from('vendas_lives').select('*');
           if (vendasDb) setSales(vendasDb);
@@ -166,6 +175,7 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
+  // Vendas filtradas e cruzadas estritamente com as planilhas upadas e regras vigentes
   const enrichedSales = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -174,6 +184,12 @@ export default function DashboardPage() {
 
     return safeSales.filter((s: any) => {
         if (!s) return false;
+        
+        // Validação estricta: Se houver lista de faturados na base, o pedido precisa constar nela para ser considerado faturado real
+        if (dbFaturadosIds.size > 0 && s.id_pedido && !dbFaturadosIds.has(String(s.id_pedido).trim())) {
+          return false;
+        }
+
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
 
         const fisico = isChannelFisico(s.canal);
@@ -216,7 +232,6 @@ export default function DashboardPage() {
           custoCMV = custoUnitarioPadrao * qtd;
         }
 
-        // Consulta de Frete / PLP por pedido
         const safePlp = Array.isArray(dbPlp) ? dbPlp : [];
         const plpOrder = safePlp.find((f: any) => f && String(f.id_pedido || f.pedido_id) === String(s.id_pedido));
         const custoPlp = plpOrder ? parseCurrency(plpOrder.valor_frete ?? plpOrder.frete ?? plpOrder.valor) : 0;
@@ -224,6 +239,7 @@ export default function DashboardPage() {
         const precoVenda = parseCurrency(s.preco_venda || s.pdv);
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
 
+        // Aplicação automática das regras de tarifação da aba Regras caso o repasse venha zerado
         if (repasseLiquido <= 0) {
           const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal);
           if (regraFaixa) {
@@ -248,7 +264,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
+  }, [sales, dbFaturadosIds, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
 
   const kpis = useMemo(() => {
     const safeCanais = Array.isArray(canais) ? canais : [];
