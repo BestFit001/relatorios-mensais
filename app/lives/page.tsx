@@ -59,18 +59,24 @@ export default function RelatorioLivesPage() {
   const [subAba, setSubAba] = useState<"dados" | "config">("dados");
   const [modoPainel, setModoPainel] = useState<"detalhado" | "compacto">("detalhado");
 
-  // Configurações
+  // Configurações e Mapeamentos
   const [linhaInicial, setLinhaInicial] = useState("3");
   const [colunaSku, setColunaSku] = useState("H");
   const [colunaStatus, setColunaStatus] = useState("C");
   const [colunaRepasse, setColunaRepasse] = useState("X");
   const [colunaPdv, setColunaPdv] = useState("N");
   const [colunaData, setColunaData] = useState("AD");
+  
+  // Configurações da segunda planilha (Métricas de Lives: Custo e ROI)
+  const [colunaCustosLive, setColunaCustosLive] = useState("F"); // Ex: F = Custo
+  const [colunaRoiLive, setColunaRoiLive] = useState("K");       // Ex: K = ROI
+
   const [percentualImposto, setPercentualImposto] = useState("9");
   const [percentualComissao, setPercentualComissao] = useState("14");
 
   // Dados
   const [dadosBrutos, setDadosBrutos] = useState<any[]>([]);
+  const [custosLiveBrutos, setCustosLiveBrutos] = useState<any[]>([]);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [paginaAtual, setPaginaAtual] = useState(1);
   const itensPorPagina = 10;
@@ -95,7 +101,7 @@ export default function RelatorioLivesPage() {
   const carregarTudoDoSupabase = async () => {
     setLoading(true);
     try {
-      // 1. Carregar custos
+      // 1. Carregar custos de SKUs
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -116,22 +122,24 @@ export default function RelatorioLivesPage() {
       });
       setCustosMap(cMap);
 
-      // 2. Carregar configurações (mapeando exatamente com as chaves unificadas)
+      // 2. Carregar configurações do Supabase
       const { data: configData } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
           if (cfg.campo === "linha_inicial") setLinhaInicial(cfg.coluna);
-          if (cfg.campo === "col_sku" || cfg.campo === "coluna_sku") setColunaSku(cfg.coluna);
-          if (cfg.campo === "col_status" || cfg.campo === "coluna_status") setColunaStatus(cfg.coluna);
-          if (cfg.campo === "col_repasse" || cfg.campo === "coluna_repasse") setColunaRepasse(cfg.coluna);
-          if (cfg.campo === "col_pdv" || cfg.campo === "coluna_pdv") setColunaPdv(cfg.coluna);
-          if (cfg.campo === "col_data" || cfg.campo === "coluna_data") setColunaData(cfg.coluna);
+          if (cfg.campo === "col_sku") setColunaSku(cfg.coluna);
+          if (cfg.campo === "col_status") setColunaStatus(cfg.coluna);
+          if (cfg.campo === "col_repasse") setColunaRepasse(cfg.coluna);
+          if (cfg.campo === "col_pdv") setColunaPdv(cfg.coluna);
+          if (cfg.campo === "col_data") setColunaData(cfg.coluna);
+          if (cfg.campo === "col_custo_live") setColunaCustosLive(cfg.coluna);
+          if (cfg.campo === "col_roi_live") setColunaRoiLive(cfg.coluna);
           if (cfg.campo === "imposto") setPercentualImposto(cfg.coluna);
           if (cfg.campo === "comissao") setPercentualComissao(cfg.coluna);
         });
       }
 
-      // 3. Carregar vendas salvas
+      // 3. Carregar vendas salvas do Supabase
       let allVendas: any[] = [];
       let vFrom = 0;
       let vKeep = true;
@@ -169,6 +177,8 @@ export default function RelatorioLivesPage() {
         { canal: "live_config", campo: "col_repasse", coluna: colunaRepasse },
         { canal: "live_config", campo: "col_pdv", coluna: colunaPdv },
         { canal: "live_config", campo: "col_data", coluna: colunaData },
+        { canal: "live_config", campo: "col_custo_live", coluna: colunaCustosLive },
+        { canal: "live_config", campo: "col_roi_live", coluna: colunaRoiLive },
         { canal: "live_config", campo: "imposto", coluna: percentualImposto },
         { canal: "live_config", campo: "comissao", coluna: percentualComissao },
       ];
@@ -177,7 +187,7 @@ export default function RelatorioLivesPage() {
         await supabase.from("config_regras_tiny").upsert(c, { onConflict: "canal,campo" });
       }
 
-      alert("✅ Configurações salvas no Supabase com sucesso!");
+      alert("✅ Configurações salvas permanentemente no Supabase!");
       setSubAba("dados");
     } catch (err: any) {
       alert("Erro ao salvar configurações: " + err.message);
@@ -185,21 +195,21 @@ export default function RelatorioLivesPage() {
   };
 
   const limparBaseSupabase = async () => {
-    if (!confirm("⚠️ Tem certeza absoluta que deseja limpar/zerar toda a base de Vendas de Lives gravada no Supabase?")) return;
+    if (!confirm("⚠️ Deseja limpar toda a base de Vendas de Lives gravada no Supabase?")) return;
     setLoading(true);
     try {
-      const { error } = await supabase.from("vendas_lives").delete().neq("id", 0);
-      if (error) throw error;
+      await supabase.from("vendas_lives").delete().neq("id", 0);
       setDadosBrutos([]);
+      setCustosLiveBrutos([]);
       setPaginaAtual(1);
-      alert("✅ Base de Vendas de Lives limpa com sucesso!");
+      alert("✅ Base limpa com sucesso!");
     } catch (err: any) {
       alert("Erro ao limpar base: " + err.message);
     }
     setLoading(false);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUploadVendas = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -271,9 +281,51 @@ export default function RelatorioLivesPage() {
 
         setDadosBrutos(novasLinhas);
         setPaginaAtual(1);
-        alert(`✅ Sucesso! ${novasLinhas.length} registos lidos e salvos no Supabase.`);
+        alert(`✅ Sucesso! ${novasLinhas.length} registos salvos no Supabase.`);
       } catch (err: any) {
-        alert("Erro ao processar e salvar planilha: " + err.message);
+        alert("Erro ao processar planilha: " + err.message);
+      }
+      setLoading(false);
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleFileUploadCustosRoi = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const buffer = evt.target?.result;
+        const wb = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
+
+        const idxCusto = colunaParaIndice(colunaCustosLive);
+        const idxRoi = colunaParaIndice(colunaRoiLive);
+
+        let custoTotalLives = 0;
+        let roiSoma = 0;
+        let countLives = 0;
+
+        for (let i = 1; i < rawData.length; i++) {
+          const row = rawData[i];
+          if (!row || row.length === 0) continue;
+          const c = parseNumeroBruto(row[idxCusto]);
+          const r = parseNumeroBruto(row[idxRoi]);
+          custoTotalLives += c;
+          if (r > 0) {
+            roiSoma += r;
+            countLives++;
+          }
+        }
+
+        setCustosLiveBrutos([{ custoTotal: custoTotalLives, roiMedio: countLives > 0 ? roiSoma / countLives : 0 }]);
+        alert(`✅ Métricas carregadas! Custo Total: R$ ${custoTotalLives.toFixed(2)} | ROI Médio: ${(countLives > 0 ? roiSoma / countLives : 0).toFixed(2)}x`);
+      } catch (err: any) {
+        alert("Erro ao ler planilha de métricas: " + err.message);
       }
       setLoading(false);
     };
@@ -298,7 +350,6 @@ export default function RelatorioLivesPage() {
 
     const valorPdv = pdv > 0 ? pdv : repasse;
     const percentualLucroPdv = valorPdv > 0 ? (liquidez / valorPdv) * 100 : 0;
-
     const dataCurta = formatarDataCurta(dataPagamento);
 
     return {
@@ -344,7 +395,12 @@ export default function RelatorioLivesPage() {
   const totalCusto = dadosProcessados.reduce((acc, cur) => acc + cur.custo, 0);
   const totalImposto = dadosProcessados.reduce((acc, cur) => acc + cur.imposto, 0);
   const totalComissaoVendedora = dadosProcessados.reduce((acc, cur) => acc + cur.comissaoVendedora, 0);
-  const totalLiquidez = dadosProcessados.reduce((acc, cur) => acc + cur.liquidez, 0);
+  
+  const custoTotalLivesImportado = custosLiveBrutos.reduce((acc, cur) => acc + (cur.custoTotal || 0), 0);
+  const roiMedioImportado = custosLiveBrutos.length > 0 ? custosLiveBrutos[0].roiMedio || 0 : 0;
+
+  const totalLiquidez = dadosProcessados.reduce((acc, cur) => acc + cur.liquidez, 0) - custoTotalLivesImportado;
+  
   const mediaLucroPdvGeral = dadosProcessados.length > 0 
     ? dadosProcessados.reduce((acc, cur) => acc + cur.percentualLucroPdv, 0) / dadosProcessados.length 
     : 0;
@@ -390,11 +446,12 @@ export default function RelatorioLivesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatório de Vendas via LIVES</h1>
-            <p className="text-sm font-medium text-slate-400">Supabase, comissão vendedora, filtro por mês e painel unificado</p>
+            <p className="text-sm font-medium text-slate-400">Custos de Lives, ROI, Supabase e painel unificado</p>
           </div>
           <Navbar />
         </div>
 
+        {/* UPLOADS DE PLANILHAS E ABAS */}
         <div className="flex justify-between items-center flex-wrap gap-4 bg-slate-900/90 p-3 rounded-2xl border border-slate-800/80 shadow-lg">
           <div className="flex gap-3">
             <button
@@ -415,23 +472,34 @@ export default function RelatorioLivesPage() {
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
-            <label className="text-xs text-indigo-400 font-bold">Carregar Planilha (Salva automático):</label>
-            <input
-              type="file"
-              accept=".xlsx, .xls, .csv"
-              onChange={handleFileUpload}
-              className="bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white cursor-pointer"
-            />
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] text-indigo-400 font-bold">1. Planilha Vendas:</label>
+              <input
+                type="file"
+                accept=".xlsx, .xls, .csv"
+                onChange={handleFileUploadVendas}
+                className="bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white cursor-pointer"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] text-cyan-400 font-bold">2. Planilha Métricas/Custo/ROI:</label>
+              <input
+                type="file"
+                accept=".xlsx, .xls, .csv"
+                onChange={handleFileUploadCustosRoi}
+                className="bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-cyan-600 file:text-white cursor-pointer"
+              />
+            </div>
           </div>
         </div>
 
         {subAba === "config" && (
-          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800/80 shadow-xl max-w-3xl mx-auto space-y-6">
+          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800/80 shadow-xl max-w-4xl mx-auto space-y-6">
             <div className="flex justify-between items-center">
               <div>
-                <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações e Limpeza da Base</h2>
-                <p className="text-xs text-slate-400 mt-1">Ajuste as colunas e gerencie os dados salvos.</p>
+                <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações e Mapeamento Completo</h2>
+                <p className="text-xs text-slate-400 mt-1">Defina as colunas e salve no Supabase.</p>
               </div>
               <button
                 type="button"
@@ -444,7 +512,7 @@ export default function RelatorioLivesPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 bg-slate-950 p-6 rounded-xl border border-slate-800/80">
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Linha Inicial dos Dados:</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Linha Inicial dos Dados (Vendas):</label>
                 <input
                   type="number"
                   value={linhaInicial}
@@ -504,6 +572,26 @@ export default function RelatorioLivesPage() {
               </div>
 
               <div>
+                <label className="block text-[10px] font-bold text-cyan-400 uppercase mb-1">Coluna Custo por Live (Planilha 2 - Letra ex: F):</label>
+                <input
+                  type="text"
+                  value={colunaCustosLive}
+                  onChange={(e) => setColunaCustosLive(e.target.value)}
+                  className="w-full bg-slate-900 border border-cyan-700/60 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-cyan-400 uppercase mb-1">Coluna ROI (Planilha 2 - Letra ex: K):</label>
+                <input
+                  type="text"
+                  value={colunaRoiLive}
+                  onChange={(e) => setColunaRoiLive(e.target.value)}
+                  className="w-full bg-slate-900 border border-cyan-700/60 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
+                />
+              </div>
+
+              <div>
                 <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Imposto (%):</label>
                 <input
                   type="number"
@@ -542,30 +630,38 @@ export default function RelatorioLivesPage() {
           <div className="space-y-6">
             
             {/* CARDS DE RESUMO */}
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-              <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
+            <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
+              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Total Repasse</span>
-                <span className="text-base font-black font-mono text-white mt-1 block">{formatarMoeda(totalRepasse)}</span>
+                <span className="text-sm font-black font-mono text-white mt-1 block">{formatarMoeda(totalRepasse)}</span>
               </div>
-              <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
+              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Custo Total (CMV)</span>
-                <span className="text-base font-black font-mono text-rose-400 mt-1 block">- {formatarMoeda(totalCusto)}</span>
+                <span className="text-sm font-black font-mono text-rose-400 mt-1 block">- {formatarMoeda(totalCusto)}</span>
               </div>
-              <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
+              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Impostos ({percentualImposto}%)</span>
-                <span className="text-base font-black font-mono text-amber-400 mt-1 block">- {formatarMoeda(totalImposto)}</span>
+                <span className="text-sm font-black font-mono text-amber-400 mt-1 block">- {formatarMoeda(totalImposto)}</span>
               </div>
-              <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
-                <span className="block text-[10px] font-bold text-slate-400 uppercase">Comissão Vendedora</span>
-                <span className="text-base font-black font-mono text-indigo-400 mt-1 block">- {formatarMoeda(totalComissaoVendedora)}</span>
+              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase">Comissão Vend.</span>
+                <span className="text-sm font-black font-mono text-indigo-400 mt-1 block">- {formatarMoeda(totalComissaoVendedora)}</span>
               </div>
-              <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
+              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase">Custo de Lives</span>
+                <span className="text-sm font-black font-mono text-cyan-400 mt-1 block">- {formatarMoeda(custoTotalLivesImportado)}</span>
+              </div>
+              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase">ROI Médio</span>
+                <span className="text-sm font-black font-mono text-indigo-300 mt-1 block">{roiMedioImportado.toFixed(2)}x</span>
+              </div>
+              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Liquidez Líquida</span>
-                <span className="text-base font-black font-mono text-emerald-400 mt-1 block">{formatarMoeda(totalLiquidez)}</span>
+                <span className="text-sm font-black font-mono text-emerald-400 mt-1 block">{formatarMoeda(totalLiquidez)}</span>
               </div>
-              <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
+              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">% Lucro sobre PDV</span>
-                <span className="text-base font-black font-mono text-cyan-400 mt-1 block">{(mediaLucroPdvGeral).toFixed(2)}%</span>
+                <span className="text-sm font-black font-mono text-cyan-400 mt-1 block">{(mediaLucroPdvGeral).toFixed(2)}%</span>
               </div>
             </div>
 
