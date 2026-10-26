@@ -47,7 +47,6 @@ function formatarDataCurta(dataStr: any): string {
       return d.toLocaleDateString("pt-BR");
     }
   } catch {}
-  // Se já for formato string com hora, pega apenas a primeira parte antes do espaço
   return s.split(" ")[0];
 }
 
@@ -58,6 +57,9 @@ export default function RelatorioLivesPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [subAba, setSubAba] = useState<"dados" | "config">("dados");
+
+  // Modo de visualização do painel unificado: "detalhado" ou "compacto"
+  const [modoPainel, setModoPainel] = useState<"detalhado" | "compacto">("detalhado");
 
   // Configurações por Letra de Coluna e Linha Inicial
   const [linhaInicial, setLinhaInicial] = useState("3");
@@ -80,7 +82,7 @@ export default function RelatorioLivesPage() {
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
-  const statusPermitidos = ["aguardando envio", "em trânsito", "concluído", "entregue", "enviado"];
+  const statusPermitidos = ["aguardando envio", "em trânsito", "concluído", "entregue", "enviado", "a ser enviado"];
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -150,7 +152,7 @@ export default function RelatorioLivesPage() {
         await supabase.from("config_regras_tiny").upsert(c, { onConflict: "canal,campo" });
       }
 
-      alert("✅ Configurações de Live salvas no Supabase com sucesso!");
+      alert("✅ Configurações salvas no Supabase com sucesso!");
       setSubAba("dados");
     } catch (err: any) {
       alert("Erro ao salvar configurações: " + err.message);
@@ -219,7 +221,6 @@ export default function RelatorioLivesPage() {
     const comissaoVendedoraVal = repasse * (parseFloat(percentualComissao) / 100 || 0);
     const liquidez = repasse - custoUnitario - impostoVal - comissaoVendedoraVal;
 
-    // Cálculo da % de lucro sobre o PDV de venda
     const valorPdv = pdv > 0 ? pdv : repasse;
     const percentualLucroPdv = valorPdv > 0 ? (liquidez / valorPdv) * 100 : 0;
 
@@ -263,23 +264,41 @@ export default function RelatorioLivesPage() {
     ? dadosProcessados.reduce((acc, cur) => acc + cur.percentualLucroPdv, 0) / dadosProcessados.length 
     : 0;
 
-  // Paginação de 10 em 10
-  const totalPaginas = Math.ceil(dadosProcessados.length / itensPorPagina) || 1;
+  // Montagem dos dados para a visão compacta (por SKU)
+  const compactoMap = new Map<string, { sku: string; nome: string; qtd: number; repasse: number; custo: number; comissaoVendedora: number; liquidez: number; percentualLucroPdv: number }>();
+  dadosProcessados.forEach(item => {
+    if (!compactoMap.has(item.skuNorm)) {
+      compactoMap.set(item.skuNorm, {
+        sku: item.sku,
+        nome: item.nomeProduto,
+        qtd: 0,
+        repasse: 0,
+        custo: 0,
+        comissaoVendedora: 0,
+        liquidez: 0,
+        percentualLucroPdv: 0,
+      });
+    }
+    const c = compactoMap.get(item.skuNorm)!;
+    c.qtd += 1;
+    c.repasse += item.repasse;
+    c.custo += item.custo;
+    c.comissaoVendedora += item.comissaoVendedora;
+    c.liquidez += item.liquidez;
+  });
+
+  const dadosCompactos = Array.from(compactoMap.values()).map(item => ({
+    ...item,
+    percentualLucroPdv: item.repasse > 0 ? (item.liquidez / item.repasse) * 100 : 0
+  })).sort((a, b) => b.qtd - a.qtd);
+
+  // Dados ativos com base na aba escolhida (detalhado ou compacto)
+  const itensAtivos = modoPainel === "detalhado" ? dadosProcessados : dadosCompactos;
+
+  const totalPaginas = Math.ceil(itensAtivos.length / itensPorPagina) || 1;
   const indexUltimoItem = paginaAtual * itensPorPagina;
   const indexPrimeiroItem = indexUltimoItem - itensPorPagina;
-  const itensPaginados = dadosProcessados.slice(indexPrimeiroItem, indexUltimoItem);
-
-  const rankingMap = new Map<string, { sku: string; nome: string; qtd: number; repasse: number; liquidez: number }>();
-  dadosProcessados.forEach(item => {
-    if (!rankingMap.has(item.skuNorm)) {
-      rankingMap.set(item.skuNorm, { sku: item.sku, nome: item.nomeProduto, qtd: 0, repasse: 0, liquidez: 0 });
-    }
-    const r = rankingMap.get(item.skuNorm)!;
-    r.qtd += 1;
-    r.repasse += item.repasse;
-    r.liquidez += item.liquidez;
-  });
-  const rankingProdutos = Array.from(rankingMap.values()).sort((a, b) => b.qtd - a.qtd);
+  const itensPaginados = itensAtivos.slice(indexPrimeiroItem, indexUltimoItem);
 
   return (
     <div className="min-h-screen bg-[#07090e] p-6 md:p-8 text-slate-100 font-sans">
@@ -288,7 +307,7 @@ export default function RelatorioLivesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatório de Vendas via LIVES</h1>
-            <p className="text-sm font-medium text-slate-400">Validação, comissão vendedora, % de lucro sobre PDV e paginação</p>
+            <p className="text-sm font-medium text-slate-400">Validação, comissão vendedora, % de lucro sobre PDV e painel unificado</p>
           </div>
           <Navbar />
         </div>
@@ -499,109 +518,116 @@ export default function RelatorioLivesPage() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
-              {/* RANKING */}
-              <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col">
-                <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">🏆 Ranking de Produtos (Live)</h3>
-                  <span className="text-xs text-slate-400">{rankingProdutos.length} SKU(s)</span>
-                </div>
-                <div className="overflow-y-auto max-h-[500px] divide-y divide-slate-800/60 p-2 space-y-2">
-                  {rankingProdutos.map((prod, idx) => (
-                    <div key={idx} className="bg-slate-950/40 p-3 rounded-xl border border-slate-800/50 space-y-1">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-mono font-bold text-indigo-400">{prod.sku}</span>
-                        <span className="text-[10px] font-bold bg-indigo-950 text-indigo-300 px-2 py-0.5 rounded">
-                          {prod.qtd} un. vendidas
-                        </span>
-                      </div>
-                      <p className="text-xs font-medium text-slate-200 truncate">{prod.nome}</p>
-                      <div className="flex justify-between text-[11px] font-mono pt-1 text-slate-400">
-                        <span>Repasse: <strong className="text-white">{formatarMoeda(prod.repasse)}</strong></span>
-                        <span>Liquidez: <strong className="text-emerald-400">{formatarMoeda(prod.liquidez)}</strong></span>
-                      </div>
-                    </div>
-                  ))}
-                  {rankingProdutos.length === 0 && (
-                    <p className="text-center text-slate-500 text-xs py-8">Nenhum produto válido encontrado.</p>
-                  )}
-                </div>
-              </div>
-
-              {/* DETALHAMENTO COM PAGINAÇÃO DE 10 EM 10 */}
-              <div className="lg:col-span-2 bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col justify-between">
-                <div>
-                  <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex justify-between items-center">
-                    <h3 className="text-sm font-bold text-white">📋 Detalhamento das Vendas (Live)</h3>
-                    <span className="text-xs text-slate-400">Total: {dadosProcessados.length} registo(s)</span>
+            {/* PAINEL UNIFICADO COM BOTÕES DE VISUALIZAÇÃO (DETALHADO / COMPACTO) */}
+            <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col justify-between">
+              <div>
+                <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex flex-wrap justify-between items-center gap-4">
+                  <h3 className="text-sm font-bold text-white">📋 Painel de Faturamento de Vendas (Live)</h3>
+                  
+                  {/* Botões para alternar entre Detalhado e Compacto */}
+                  <div className="flex gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                    <button
+                      onClick={() => { setModoPainel("detalhado"); setPaginaAtual(1); }}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                        modoPainel === "detalhado" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      📑 Detalhado (Individual)
+                    </button>
+                    <button
+                      onClick={() => { setModoPainel("compacto"); setPaginaAtual(1); }}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                        modoPainel === "compacto" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      📦 Compacto (Por SKU)
+                    </button>
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                        <tr>
-                          <th className="p-3">Data / Status</th>
-                          <th className="p-3">SKU / Produto</th>
-                          <th className="p-3 text-right">Repasse</th>
-                          <th className="p-3 text-right">Custo</th>
-                          <th className="p-3 text-right">Comissão Vend.</th>
-                          <th className="p-3 text-right">Liquidez (% PDV)</th>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                      <tr>
+                        <th className="p-3">{modoPainel === "detalhado" ? "DATA" : "QUANTIDADE"}</th>
+                        <th className="p-3">SKU / PRODUTO</th>
+                        <th className="p-3 text-right">REPASSE</th>
+                        <th className="p-3 text-right">CUSTO</th>
+                        <th className="p-3 text-right">COMISSÃO VEND.</th>
+                        <th className="p-3 text-right">LIQUIDEZ (% PDV)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                      {modoPainel === "detalhado" && itensPaginados.map((item: any, idx) => (
+                        <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3 font-mono text-white font-bold whitespace-nowrap">
+                            {item.data}
+                          </td>
+                          <td className="p-3">
+                            <span className="font-mono text-indigo-400 block">{item.sku}</span>
+                            <span className="text-slate-300 font-medium truncate block max-w-[280px]">{item.nomeProduto}</span>
+                          </td>
+                          <td className="p-3 text-right font-mono font-bold text-white">{formatarMoeda(item.repasse)}</td>
+                          <td className="p-3 text-right font-mono text-rose-400">- {formatarMoeda(item.custo)}</td>
+                          <td className="p-3 text-right font-mono text-indigo-300">- {formatarMoeda(item.comissaoVendedora)}</td>
+                          <td className="p-3 text-right font-mono">
+                            <span className="font-bold text-emerald-400 block">{formatarMoeda(item.liquidez)}</span>
+                            <span className="text-[10px] text-cyan-400 font-semibold">{item.percentualLucroPdv.toFixed(1)}% PDV</span>
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                        {itensPaginados.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                            <td className="p-3 font-mono text-slate-400 whitespace-nowrap">
-                              <span className="block text-white font-bold">{item.data}</span>
-                              <span className="text-[10px] text-emerald-400 uppercase">{item.status}</span>
-                            </td>
-                            <td className="p-3">
-                              <span className="font-mono text-indigo-400 block">{item.sku}</span>
-                              <span className="text-slate-300 font-medium truncate block max-w-[200px]">{item.nomeProduto}</span>
-                            </td>
-                            <td className="p-3 text-right font-mono font-bold text-white">{formatarMoeda(item.repasse)}</td>
-                            <td className="p-3 text-right font-mono text-rose-400">- {formatarMoeda(item.custo)}</td>
-                            <td className="p-3 text-right font-mono text-indigo-300">- {formatarMoeda(item.comissaoVendedora)}</td>
-                            <td className="p-3 text-right font-mono">
-                              <span className="font-bold text-emerald-400 block">{formatarMoeda(item.liquidez)}</span>
-                              <span className="text-[10px] text-cyan-400 font-semibold">{item.percentualLucroPdv.toFixed(1)}% PDV</span>
-                            </td>
-                          </tr>
-                        ))}
-                        {itensPaginados.length === 0 && (
-                          <tr>
-                            <td colSpan={6} className="p-8 text-center text-slate-500">Nenhum registo encontrado com os filtros atuais.</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                      ))}
 
-                {/* CONTROLES DE PAGINAÇÃO */}
-                <div className="p-4 border-t border-slate-800/80 bg-slate-950/60 flex justify-between items-center text-xs">
-                  <span className="text-slate-400">
-                    Página <strong>{paginaAtual}</strong> de <strong>{totalPaginas}</strong> ({dadosProcessados.length} itens)
-                  </span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setPaginaAtual(prev => Math.max(prev - 1, 1))}
-                      disabled={paginaAtual === 1}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed font-bold cursor-pointer"
-                    >
-                      ◀ Anterior
-                    </button>
-                    <button
-                      onClick={() => setPaginaAtual(prev => Math.min(prev + 1, totalPaginas))}
-                      disabled={paginaAtual === totalPaginas}
-                      className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed font-bold cursor-pointer"
-                    >
-                      Próxima ▶
-                    </button>
-                  </div>
+                      {modoPainel === "compacto" && itensPaginados.map((item: any, idx) => (
+                        <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3 font-mono text-indigo-300 font-bold whitespace-nowrap">
+                            {item.qtd} un. vendidas
+                          </td>
+                          <td className="p-3">
+                            <span className="font-mono text-indigo-400 block">{item.sku}</span>
+                            <span className="text-slate-300 font-medium truncate block max-w-[280px]">{item.nome}</span>
+                          </td>
+                          <td className="p-3 text-right font-mono font-bold text-white">{formatarMoeda(item.repasse)}</td>
+                          <td className="p-3 text-right font-mono text-rose-400">- {formatarMoeda(item.custo)}</td>
+                          <td className="p-3 text-right font-mono text-indigo-300">- {formatarMoeda(item.comissaoVendedora)}</td>
+                          <td className="p-3 text-right font-mono">
+                            <span className="font-bold text-emerald-400 block">{formatarMoeda(item.liquidez)}</span>
+                            <span className="text-[10px] text-cyan-400 font-semibold">{item.percentualLucroPdv.toFixed(1)}% PDV</span>
+                          </td>
+                        </tr>
+                      ))}
+
+                      {itensPaginados.length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="p-8 text-center text-slate-500">Nenhum registo encontrado com os filtros atuais.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
+              {/* CONTROLES DE PAGINAÇÃO DO PAINEL */}
+              <div className="p-4 border-t border-slate-800/80 bg-slate-950/60 flex justify-between items-center text-xs">
+                <span className="text-slate-400">
+                  Exibindo modo <strong>{modoPainel.toUpperCase()}</strong> — Página <strong>{paginaAtual}</strong> de <strong>{totalPaginas}</strong> ({itensAtivos.length} itens no total)
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPaginaAtual(prev => Math.max(prev - 1, 1))}
+                    disabled={paginaAtual === 1}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed font-bold cursor-pointer"
+                  >
+                    ◀ Anterior
+                  </button>
+                  <button
+                    onClick={() => setPaginaAtual(prev => Math.min(prev + 1, totalPaginas))}
+                    disabled={paginaAtual === totalPaginas}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed font-bold cursor-pointer"
+                  >
+                    Próxima ▶
+                  </button>
+                </div>
+              </div>
             </div>
 
           </div>
