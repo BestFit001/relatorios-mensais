@@ -240,7 +240,7 @@ export default function Navbar() {
                   )}
                   {temPermissao("/full") && (
                     <Link href="/full" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/full") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
-                      Fullfulfillment
+                      Fulfillment
                     </Link>
                   )}
                   {temPermissao("/lives") && (
