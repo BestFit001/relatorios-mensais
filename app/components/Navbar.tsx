@@ -46,7 +46,7 @@ export default function Navbar() {
             "/ads",
             "/devolucoes",
             "/full",
-            "/lives",
+            "/relatorios/lives",
             "/plp",
             "/agenda",
             "/regras",
@@ -205,7 +205,7 @@ export default function Navbar() {
           )}
 
           {/* RELATÓRIOS */}
-          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/lives")) && (
+          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/relatorios/lives")) && (
             <div>
               <button
                 onClick={() => sidebarAberta && toggleSecao("relatorios")}
@@ -243,8 +243,8 @@ export default function Navbar() {
                       Full / FBA
                     </Link>
                   )}
-                  {temPermissao("/lives") && (
-                    <Link href="/lives" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/lives") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
+                  {temPermissao("/relatorios/lives") && (
+                    <Link href="/relatorios/lives" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/relatorios/lives") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       🔴 Vendas via Lives
                     </Link>
                   )}
