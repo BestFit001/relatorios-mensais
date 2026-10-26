@@ -1,8 +1,8 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { supabase } from "../../../lib/supabase";
+import { supabase } from "../lib/supabase";
 import { useRouter } from "next/navigation";
-import Navbar from "../../components/Navbar";
+import Navbar from "./components/Navbar";
 import * as XLSX from "xlsx";
 
 function normalizarSku(valor: any): string {
@@ -37,7 +37,6 @@ export default function RelatorioLivesPage() {
   const [loading, setLoading] = useState(false);
   const [subAba, setSubAba] = useState<"dados" | "config">("dados");
 
-  // Configurações e Mapeamento
   const [colunaSku, setColunaSku] = useState("Seller SKU");
   const [colunaRepasse, setColunaRepasse] = useState("Order Amount");
   const [colunaPdv, setColunaPdv] = useState("SKU Unit Original Price");
@@ -46,11 +45,9 @@ export default function RelatorioLivesPage() {
   const [percentualImposto, setPercentualImposto] = useState("9");
   const [percentualComissao, setPercentualComissao] = useState("14");
 
-  // Dados
   const [dadosBrutos, setDadosBrutos] = useState<any[]>([]);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
 
-  // Filtros
   const [buscaSku, setBuscaSku] = useState("");
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
@@ -198,17 +195,14 @@ export default function RelatorioLivesPage() {
   }).filter(item => {
     if (!item.skuNorm) return false;
 
-    // Filtro estrito de status válidos
-    const statusLimpo = item.status.replace(/[\u0300-\u036f]/g, ""); // normaliza acentos se houver
+    const statusLimpo = item.status.replace(/[\u0300-\u036f]/g, "");
     const statusValido = statusPermitidos.some(st => statusLimpo.includes(st.toLowerCase()));
     if (!statusValido) return false;
 
-    // Filtro por SKU
     if (buscaSku && !item.skuNorm.includes(buscaSku.toLowerCase()) && !item.nomeProduto.toLowerCase().includes(buscaSku.toLowerCase())) {
       return false;
     }
 
-    // Filtro por Data
     if (dataInicio && item.data && item.data < dataInicio) return false;
     if (dataFim && item.data && item.data > dataFim) return false;
 
@@ -377,7 +371,6 @@ export default function RelatorioLivesPage() {
         {subAba === "dados" && (
           <div className="space-y-6">
             
-            {/* CARDS DE RESUMO */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Total Repasse</span>
@@ -401,7 +394,6 @@ export default function RelatorioLivesPage() {
               </div>
             </div>
 
-            {/* FILTROS DE PESQUISA E DATAS */}
             <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl flex flex-wrap gap-4 items-end">
               <div className="flex-1 min-w-[240px]">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Pesquisar por SKU ou Nome do Produto:</label>
@@ -443,10 +435,8 @@ export default function RelatorioLivesPage() {
               </button>
             </div>
 
-            {/* DUAS COLUNAS: RANKING DE PRODUTOS E ITENS DA LIVE */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
-              {/* RANKING DE MAIS VENDIDOS */}
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col">
                 <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex justify-between items-center">
                   <h3 className="text-sm font-bold text-white">🏆 Ranking de Produtos (Live)</h3>
@@ -474,7 +464,6 @@ export default function RelatorioLivesPage() {
                 </div>
               </div>
 
-              {/* TABELA DETALHADA DE VENDAS */}
               <div className="lg:col-span-2 bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col">
                 <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex justify-between items-center">
                   <h3 className="text-sm font-bold text-white">📋 Detalhamento das Vendas (Live)</h3>
