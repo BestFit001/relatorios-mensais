@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/app/components/Navbar";
 import * as XLSX from "xlsx";
 
-// Função para converter letra da coluna (ex: 'H' ou 'h') em índice numérico (0-based)
 function colunaParaIndice(letra: string): number {
   let l = letra.trim().toUpperCase();
   let num = 0;
@@ -39,6 +38,19 @@ function parseNumeroBruto(valor: any): number {
   return isNaN(num) ? 0 : num;
 }
 
+function formatarDataCurta(dataStr: any): string {
+  if (!dataStr) return "";
+  const s = String(dataStr).trim();
+  try {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString("pt-BR");
+    }
+  } catch {}
+  // Se já for formato string com hora, pega apenas a primeira parte antes do espaço
+  return s.split(" ")[0];
+}
+
 const formatarMoeda = (valor: number) =>
   "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -49,17 +61,19 @@ export default function RelatorioLivesPage() {
 
   // Configurações por Letra de Coluna e Linha Inicial
   const [linhaInicial, setLinhaInicial] = useState("3");
-  const [colunaSku, setColunaSku] = useState("H");       // Ex: Seller SKU
-  const [colunaStatus, setColunaStatus] = useState("C"); // Ex: Order Status
-  const [colunaRepasse, setColunaRepasse] = useState("X"); // Ex: Order Amount
-  const [colunaPdv, setColunaPdv] = useState("N");       // Ex: Price
-  const [colunaData, setColunaData] = useState("AD");    // Ex: Paid Time
+  const [colunaSku, setColunaSku] = useState("H");
+  const [colunaStatus, setColunaStatus] = useState("C");
+  const [colunaRepasse, setColunaRepasse] = useState("X");
+  const [colunaPdv, setColunaPdv] = useState("N");
+  const [colunaData, setColunaData] = useState("AD");
   const [percentualImposto, setPercentualImposto] = useState("9");
   const [percentualComissao, setPercentualComissao] = useState("14");
 
-  // Dados
+  // Dados e Paginação
   const [dadosBrutos, setDadosBrutos] = useState<any[]>([]);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
+  const [paginaAtual, setPaginaAtual] = useState(1);
+  const itensPorPagina = 10;
 
   // Filtros
   const [buscaSku, setBuscaSku] = useState("");
@@ -136,7 +150,7 @@ export default function RelatorioLivesPage() {
         await supabase.from("config_regras_tiny").upsert(c, { onConflict: "canal,campo" });
       }
 
-      alert("✅ Configurações de Live salvas com sucesso!");
+      alert("✅ Configurações de Live salvas no Supabase com sucesso!");
       setSubAba("dados");
     } catch (err: any) {
       alert("Erro ao salvar configurações: " + err.message);
@@ -174,12 +188,13 @@ export default function RelatorioLivesPage() {
             repasse: row[idxRepasse] || 0,
             pdv: row[idxPdv] || 0,
             data: row[idxData] || "",
-            productName: row[colunaParaIndice("I")] || "Produto", // Coluna I costuma ser o nome na Shopee/Plataformas
+            productName: row[colunaParaIndice("I")] || "Produto",
           });
         }
 
         setDadosBrutos(linhas);
-        alert(`✅ Planilha processada com sucesso! ${linhas.length} registos lidos a partir da linha ${linhaInicial}.`);
+        setPaginaAtual(1);
+        alert(`✅ Planilha processada com sucesso! ${linhas.length} registos lidos.`);
       } catch (err: any) {
         alert("Erro ao ler planilha: " + err.message);
       }
@@ -201,20 +216,25 @@ export default function RelatorioLivesPage() {
     const nomeProduto = custoObj ? (custoObj.produto || custoObj.descricao || "Produto Cadastrado") : (row.productName || "Produto Desconhecido");
 
     const impostoVal = repasse * (parseFloat(percentualImposto) / 100 || 0);
-    const comissaoVal = repasse * (parseFloat(percentualComissao) / 100 || 0);
-    const liquidez = repasse - custoUnitario - impostoVal - comissaoVal;
+    const comissaoVendedoraVal = repasse * (parseFloat(percentualComissao) / 100 || 0);
+    const liquidez = repasse - custoUnitario - impostoVal - comissaoVendedoraVal;
+
+    // Cálculo da % de lucro sobre o PDV de venda
+    const valorPdv = pdv > 0 ? pdv : repasse;
+    const percentualLucroPdv = valorPdv > 0 ? (liquidez / valorPdv) * 100 : 0;
 
     return {
       sku: skuRaw,
       skuNorm,
       nomeProduto,
       repasse,
-      pdv,
+      pdv: valorPdv,
       custo: custoUnitario,
       imposto: impostoVal,
-      comissao: comissaoVal,
+      comissaoVendedora: comissaoVendedoraVal,
       liquidez,
-      data: dataPagamento,
+      percentualLucroPdv,
+      data: formatarDataCurta(dataPagamento),
       status: statusVenda,
     };
   }).filter(item => {
@@ -237,8 +257,17 @@ export default function RelatorioLivesPage() {
   const totalRepasse = dadosProcessados.reduce((acc, cur) => acc + cur.repasse, 0);
   const totalCusto = dadosProcessados.reduce((acc, cur) => acc + cur.custo, 0);
   const totalImposto = dadosProcessados.reduce((acc, cur) => acc + cur.imposto, 0);
-  const totalComissao = dadosProcessados.reduce((acc, cur) => acc + cur.comissao, 0);
+  const totalComissaoVendedora = dadosProcessados.reduce((acc, cur) => acc + cur.comissaoVendedora, 0);
   const totalLiquidez = dadosProcessados.reduce((acc, cur) => acc + cur.liquidez, 0);
+  const mediaLucroPdvGeral = dadosProcessados.length > 0 
+    ? dadosProcessados.reduce((acc, cur) => acc + cur.percentualLucroPdv, 0) / dadosProcessados.length 
+    : 0;
+
+  // Paginação de 10 em 10
+  const totalPaginas = Math.ceil(dadosProcessados.length / itensPorPagina) || 1;
+  const indexUltimoItem = paginaAtual * itensPorPagina;
+  const indexPrimeiroItem = indexUltimoItem - itensPorPagina;
+  const itensPaginados = dadosProcessados.slice(indexPrimeiroItem, indexUltimoItem);
 
   const rankingMap = new Map<string, { sku: string; nome: string; qtd: number; repasse: number; liquidez: number }>();
   dadosProcessados.forEach(item => {
@@ -259,7 +288,7 @@ export default function RelatorioLivesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatório de Vendas via LIVES</h1>
-            <p className="text-sm font-medium text-slate-400">Validação por Letras de Coluna, Linha Inicial e Status</p>
+            <p className="text-sm font-medium text-slate-400">Validação, comissão vendedora, % de lucro sobre PDV e paginação</p>
           </div>
           <Navbar />
         </div>
@@ -297,13 +326,13 @@ export default function RelatorioLivesPage() {
         {subAba === "config" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800/80 shadow-xl max-w-3xl mx-auto space-y-6">
             <div>
-              <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações por Letras de Coluna</h2>
-              <p className="text-xs text-slate-400 mt-1">Informe a linha onde começam os dados e a letra correspondente a cada coluna na planilha.</p>
+              <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações e Persistência Supabase</h2>
+              <p className="text-xs text-slate-400 mt-1">Ajuste as colunas e salve as regras para todo o sistema.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 bg-slate-950 p-6 rounded-xl border border-slate-800/80">
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Linha Inicial dos Dados (Ex: 3):</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Linha Inicial dos Dados:</label>
                 <input
                   type="number"
                   value={linhaInicial}
@@ -313,7 +342,7 @@ export default function RelatorioLivesPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna SKU (Letra ex: H):</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna SKU (Letra):</label>
                 <input
                   type="text"
                   value={colunaSku}
@@ -323,7 +352,7 @@ export default function RelatorioLivesPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Status (Letra ex: C):</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Status (Letra):</label>
                 <input
                   type="text"
                   value={colunaStatus}
@@ -333,7 +362,7 @@ export default function RelatorioLivesPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Valor de Repasse (Letra ex: X):</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Valor de Repasse (Letra):</label>
                 <input
                   type="text"
                   value={colunaRepasse}
@@ -343,7 +372,7 @@ export default function RelatorioLivesPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Preço de Venda / PDV (Letra ex: N):</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna PDV / Preço Original (Letra):</label>
                 <input
                   type="text"
                   value={colunaPdv}
@@ -353,7 +382,7 @@ export default function RelatorioLivesPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Data de Pagamento (Letra ex: AD):</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Data de Pagamento (Letra):</label>
                 <input
                   type="text"
                   value={colunaData}
@@ -374,7 +403,7 @@ export default function RelatorioLivesPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Comissão (%):</label>
+                <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Comissão Vendedora (%):</label>
                 <input
                   type="number"
                   step="0.1"
@@ -391,7 +420,7 @@ export default function RelatorioLivesPage() {
                 onClick={salvarConfiguracoes}
                 className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg shadow-indigo-950/50"
               >
-                Salvar Configurações
+                Salvar no Supabase
               </button>
             </div>
           </div>
@@ -400,36 +429,42 @@ export default function RelatorioLivesPage() {
         {subAba === "dados" && (
           <div className="space-y-6">
             
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {/* CARDS DE RESUMO */}
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
               <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Total Repasse</span>
-                <span className="text-lg font-black font-mono text-white mt-1 block">{formatarMoeda(totalRepasse)}</span>
+                <span className="text-base font-black font-mono text-white mt-1 block">{formatarMoeda(totalRepasse)}</span>
               </div>
               <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Custo Total (CMV)</span>
-                <span className="text-lg font-black font-mono text-rose-400 mt-1 block">- {formatarMoeda(totalCusto)}</span>
+                <span className="text-base font-black font-mono text-rose-400 mt-1 block">- {formatarMoeda(totalCusto)}</span>
               </div>
               <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Impostos ({percentualImposto}%)</span>
-                <span className="text-lg font-black font-mono text-amber-400 mt-1 block">- {formatarMoeda(totalImposto)}</span>
+                <span className="text-base font-black font-mono text-amber-400 mt-1 block">- {formatarMoeda(totalImposto)}</span>
               </div>
               <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
-                <span className="block text-[10px] font-bold text-slate-400 uppercase">Comissões ({percentualComissao}%)</span>
-                <span className="text-lg font-black font-mono text-indigo-400 mt-1 block">- {formatarMoeda(totalComissao)}</span>
+                <span className="block text-[10px] font-bold text-slate-400 uppercase">Comissão Vendedora</span>
+                <span className="text-base font-black font-mono text-indigo-400 mt-1 block">- {formatarMoeda(totalComissaoVendedora)}</span>
               </div>
-              <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl col-span-2 md:col-span-1">
+              <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Liquidez Líquida</span>
-                <span className="text-lg font-black font-mono text-emerald-400 mt-1 block">{formatarMoeda(totalLiquidez)}</span>
+                <span className="text-base font-black font-mono text-emerald-400 mt-1 block">{formatarMoeda(totalLiquidez)}</span>
+              </div>
+              <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800/80 shadow-xl">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase">% Lucro sobre PDV</span>
+                <span className="text-base font-black font-mono text-cyan-400 mt-1 block">{(mediaLucroPdvGeral).toFixed(2)}%</span>
               </div>
             </div>
 
+            {/* FILTROS */}
             <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl flex flex-wrap gap-4 items-end">
               <div className="flex-1 min-w-[240px]">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Pesquisar por SKU ou Nome do Produto:</label>
                 <input
                   type="text"
                   value={buscaSku}
-                  onChange={(e) => setBuscaSku(e.target.value)}
+                  onChange={(e) => { setBuscaSku(e.target.value); setPaginaAtual(1); }}
                   placeholder="Ex: 22652042281 ou Garrafa..."
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-indigo-500"
                 />
@@ -440,7 +475,7 @@ export default function RelatorioLivesPage() {
                 <input
                   type="date"
                   value={dataInicio}
-                  onChange={(e) => setDataInicio(e.target.value)}
+                  onChange={(e) => { setDataInicio(e.target.value); setPaginaAtual(1); }}
                   className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none font-mono"
                 />
               </div>
@@ -450,14 +485,14 @@ export default function RelatorioLivesPage() {
                 <input
                   type="date"
                   value={dataFim}
-                  onChange={(e) => setDataFim(e.target.value)}
+                  onChange={(e) => { setDataFim(e.target.value); setPaginaAtual(1); }}
                   className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none font-mono"
                 />
               </div>
 
               <button
                 type="button"
-                onClick={() => { setBuscaSku(""); setDataInicio(""); setDataFim(""); }}
+                onClick={() => { setBuscaSku(""); setDataInicio(""); setDataFim(""); setPaginaAtual(1); }}
                 className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-4 py-2.5 rounded-xl text-xs uppercase cursor-pointer"
               >
                 Limpar Filtros
@@ -466,6 +501,7 @@ export default function RelatorioLivesPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
+              {/* RANKING */}
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col">
                 <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex justify-between items-center">
                   <h3 className="text-sm font-bold text-white">🏆 Ranking de Produtos (Live)</h3>
@@ -493,47 +529,76 @@ export default function RelatorioLivesPage() {
                 </div>
               </div>
 
-              <div className="lg:col-span-2 bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col">
-                <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-white">📋 Detalhamento das Vendas (Live)</h3>
-                  <span className="text-xs text-slate-400">Exibindo {dadosProcessados.length} registo(s) válidos</span>
-                </div>
-                <div className="overflow-x-auto max-h-[500px]">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                      <tr>
-                        <th className="p-3">Data / Status</th>
-                        <th className="p-3">SKU / Produto</th>
-                        <th className="p-3 text-right">Repasse</th>
-                        <th className="p-3 text-right">Custo</th>
-                        <th className="p-3 text-right">Comissão</th>
-                        <th className="p-3 text-right">Liquidez</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                      {dadosProcessados.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="p-3 font-mono text-slate-400 whitespace-nowrap">
-                            <span className="block text-white">{item.data}</span>
-                            <span className="text-[10px] text-emerald-400 uppercase">{item.status}</span>
-                          </td>
-                          <td className="p-3">
-                            <span className="font-mono text-indigo-400 block">{item.sku}</span>
-                            <span className="text-slate-300 font-medium truncate block max-w-[200px]">{item.nomeProduto}</span>
-                          </td>
-                          <td className="p-3 text-right font-mono font-bold text-white">{formatarMoeda(item.repasse)}</td>
-                          <td className="p-3 text-right font-mono text-rose-400">- {formatarMoeda(item.custo)}</td>
-                          <td className="p-3 text-right font-mono text-indigo-300">- {formatarMoeda(item.comissao)}</td>
-                          <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.liquidez)}</td>
-                        </tr>
-                      ))}
-                      {dadosProcessados.length === 0 && (
+              {/* DETALHAMENTO COM PAGINAÇÃO DE 10 EM 10 */}
+              <div className="lg:col-span-2 bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col justify-between">
+                <div>
+                  <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex justify-between items-center">
+                    <h3 className="text-sm font-bold text-white">📋 Detalhamento das Vendas (Live)</h3>
+                    <span className="text-xs text-slate-400">Total: {dadosProcessados.length} registo(s)</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-slate-500">Nenhum registo correspondente aos status válidos e filtros.</td>
+                          <th className="p-3">Data / Status</th>
+                          <th className="p-3">SKU / Produto</th>
+                          <th className="p-3 text-right">Repasse</th>
+                          <th className="p-3 text-right">Custo</th>
+                          <th className="p-3 text-right">Comissão Vend.</th>
+                          <th className="p-3 text-right">Liquidez (% PDV)</th>
                         </tr>
-                      )}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                        {itensPaginados.map((item, idx) => (
+                          <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="p-3 font-mono text-slate-400 whitespace-nowrap">
+                              <span className="block text-white font-bold">{item.data}</span>
+                              <span className="text-[10px] text-emerald-400 uppercase">{item.status}</span>
+                            </td>
+                            <td className="p-3">
+                              <span className="font-mono text-indigo-400 block">{item.sku}</span>
+                              <span className="text-slate-300 font-medium truncate block max-w-[200px]">{item.nomeProduto}</span>
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-white">{formatarMoeda(item.repasse)}</td>
+                            <td className="p-3 text-right font-mono text-rose-400">- {formatarMoeda(item.custo)}</td>
+                            <td className="p-3 text-right font-mono text-indigo-300">- {formatarMoeda(item.comissaoVendedora)}</td>
+                            <td className="p-3 text-right font-mono">
+                              <span className="font-bold text-emerald-400 block">{formatarMoeda(item.liquidez)}</span>
+                              <span className="text-[10px] text-cyan-400 font-semibold">{item.percentualLucroPdv.toFixed(1)}% PDV</span>
+                            </td>
+                          </tr>
+                        ))}
+                        {itensPaginados.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="p-8 text-center text-slate-500">Nenhum registo encontrado com os filtros atuais.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* CONTROLES DE PAGINAÇÃO */}
+                <div className="p-4 border-t border-slate-800/80 bg-slate-950/60 flex justify-between items-center text-xs">
+                  <span className="text-slate-400">
+                    Página <strong>{paginaAtual}</strong> de <strong>{totalPaginas}</strong> ({dadosProcessados.length} itens)
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setPaginaAtual(prev => Math.max(prev - 1, 1))}
+                      disabled={paginaAtual === 1}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed font-bold cursor-pointer"
+                    >
+                      ◀ Anterior
+                    </button>
+                    <button
+                      onClick={() => setPaginaAtual(prev => Math.min(prev + 1, totalPaginas))}
+                      disabled={paginaAtual === totalPaginas}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed font-bold cursor-pointer"
+                    >
+                      Próxima ▶
+                    </button>
+                  </div>
                 </div>
               </div>
 
