@@ -9,7 +9,6 @@ export default function DashboardPage() {
   const [sales, setSales] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
   
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
@@ -23,6 +22,7 @@ export default function DashboardPage() {
   const [dbDevolucoes, setDbDevolucoes] = useState<any[]>([]);
   const [dbAds, setDbAds] = useState<any[]>([]);
   const [dbPlp, setDbPlp] = useState<any[]>([]);
+  const [configTarifas, setConfigTarifas] = useState<any[]>([]);
 
   const currentMonthDefault = new Date().toISOString().slice(0, 7);
   const previousMonthDefault = useMemo(() => {
@@ -86,36 +86,39 @@ export default function DashboardPage() {
           if (plpData) setDbPlp(plpData);
         } catch (e) {}
 
-        // 5. Metas e Regras de Canais (Incluindo canais personalizados da aba Regras)
+        // 5. Metas e Tarifas
         try {
           const { data: metasDb } = await supabase.from('tb_metas').select('*');
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
         try {
+          const { data: tarifacaoDb } = await supabase.from('config_regras_tarifacao').select('*');
+          if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
+        } catch (e) {}
+
+        // 6. Canais salvos na aba Regras
+        try {
           const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
           if (regrasDb && regrasDb.length > 0) {
             setChannelRules(regrasDb);
-            
-            // Procura se o utilizador definiu canais personalizados na aba Regras
             const canalCfg = regrasDb.find((r: any) => r.campo === 'canais_dashboard');
             if (canalCfg && canalCfg.coluna) {
               try {
                 const parsedCanais = JSON.parse(canalCfg.coluna);
                 if (Array.isArray(parsedCanais) && parsedCanais.length > 0) {
-                  // Garante que Clube Hebraica e Clube Paineiras estejam sempre presentes
                   const baseObrigatoria = ['Clube Hebraica', 'Clube Paineiras'];
-                  const finalList = Array.from(new Set([...parsedCanais, ...baseObrigatoria]));
-                  setCanais(finalList);
+                  setCanais(Array.from(new Set([...parsedCanais, ...baseObrigatoria])));
                 }
               } catch (err) {}
             }
           }
         } catch (e) {}
 
+        // 7. Vendas Brutas
         try {
-          const { data: usersDb } = await supabase.from('tb_usuarios').select('*');
-          if (usersDb) setUsers(usersDb);
+          const { data: vendasDb } = await supabase.from('vendas_lives').select('*');
+          if (vendasDb) setSales(vendasDb);
         } catch (e) {}
 
       } catch (err) {
@@ -213,14 +216,24 @@ export default function DashboardPage() {
           custoCMV = custoUnitarioPadrao * qtd;
         }
 
+        // Consulta de Frete / PLP por pedido
         const safePlp = Array.isArray(dbPlp) ? dbPlp : [];
         const plpOrder = safePlp.find((f: any) => f && String(f.id_pedido || f.pedido_id) === String(s.id_pedido));
         const custoPlp = plpOrder ? parseCurrency(plpOrder.valor_frete ?? plpOrder.frete ?? plpOrder.valor) : 0;
         
         const precoVenda = parseCurrency(s.preco_venda || s.pdv);
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
-        if (repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
-          repasseLiquido = precoVenda;
+
+        if (repasseLiquido <= 0) {
+          const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal);
+          if (regraFaixa) {
+            const comissaoPct = Number(regraFaixa.comissao) || 0;
+            const tarifaFixa = Number(regraFaixa.tarifa_fixa) || 0;
+            const freteRegra = Number(regraFaixa.frete) || 0;
+            repasseLiquido = Math.max(0, precoVenda - (precoVenda * (comissaoPct / 100)) - tarifaFixa - freteRegra);
+          } else {
+            repasseLiquido = precoVenda;
+          }
         }
 
         const ganhoBruto = repasseLiquido - custoCMV; 
@@ -235,7 +248,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, currentMonthDefault, previousMonthDefault]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
 
   const kpis = useMemo(() => {
     const safeCanais = Array.isArray(canais) ? canais : [];
@@ -513,10 +526,7 @@ export default function DashboardPage() {
   }, [totalEcommerce, totalPhysical]);
 
   const handleEnviarEmailAlerta = () => {
-    const emailsCadastrados = users && users.length > 0 
-      ? users.map((u: any) => u?.username).filter(Boolean).join(';') 
-      : "gisele@usebestfit.com.br";
-    
+    const emailsCadastrados = "gisele@usebestfit.com.br";
     const dataHoje = new Date().toLocaleDateString('pt-BR');
     const assunto = encodeURIComponent(`📊 Resumo de Vendas - Lojas Físicas e Online (${dataHoje})`);
 
