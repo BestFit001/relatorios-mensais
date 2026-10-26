@@ -153,19 +153,19 @@ export default function Navbar() {
 
   return (
     <>
-      <aside className={`fixed top-0 left-0 h-full bg-[#0b0e14] border-r border-slate-800 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans transition-all duration-300 ${sidebarAberta ? 'w-60' : 'w-16'}`}>
+      <aside className={`fixed top-0 left-0 h-full bg-[#07090e] border-r border-slate-800/80 flex flex-col justify-between z-50 select-none print:hidden shadow-2xl font-sans transition-all duration-300 ${sidebarAberta ? 'w-60' : 'w-16'}`}>
         
-        <div className="p-2.5 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
-          <div className="flex items-center gap-2 overflow-hidden">
+        <div className="p-3 border-b border-slate-800/60 flex items-center justify-between bg-slate-950/60">
+          <div className="flex items-center gap-2.5 overflow-hidden">
             <label className="relative group cursor-pointer flex-shrink-0" title="Clique para alterar a imagem de perfil/logo no Supabase">
-              <div className="w-8 h-8 rounded-xl bg-purple-600 overflow-hidden flex items-center justify-center font-black text-white text-xs shadow-lg shadow-purple-900/40 border border-purple-500/30">
+              <div className="w-8 h-8 rounded-xl bg-indigo-600 overflow-hidden flex items-center justify-center font-black text-white text-xs shadow-lg shadow-indigo-950/50 border border-indigo-400/30">
                 {logoUrl ? (
                   <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
                 ) : (
                   <span>BF</span>
                 )}
               </div>
-              <div className="absolute inset-0 bg-black/60 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-[8px] text-white font-bold">
+              <div className="absolute inset-0 bg-black/70 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-[8px] text-white font-bold">
                 {uploadingLogo ? "..." : "Trocar"}
               </div>
               <input type="file" accept="image/*" onChange={handleUploadLogo} className="hidden" />
@@ -173,7 +173,7 @@ export default function Navbar() {
 
             {sidebarAberta && (
               <div className="overflow-hidden">
-                <h2 className="text-xs font-black text-white tracking-tight truncate">Hub Best Fit</h2>
+                <h2 className="text-xs font-extrabold text-white tracking-tight truncate">Hub Best Fit</h2>
                 <p className="text-[9px] text-slate-400 truncate">Performance</p>
               </div>
             )}
@@ -181,21 +181,21 @@ export default function Navbar() {
 
           <button
             onClick={toggleSidebar}
-            className="w-6 h-6 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center text-[10px] cursor-pointer transition-all flex-shrink-0"
+            className="w-6 h-6 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white flex items-center justify-center text-[10px] cursor-pointer transition-all flex-shrink-0"
             title={sidebarAberta ? "Recolher menu" : "Expandir menu"}
           >
             {sidebarAberta ? "◀" : "▶"}
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1 text-xs font-semibold">
+        <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1.5 text-xs font-semibold">
           
           {temPermissao("/marketing") && (
             <Link
               href="/marketing"
               title="Marketing"
-              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl transition-all ${
-                pathname?.includes("/marketing") ? "bg-purple-600 text-white shadow-md shadow-purple-900/30 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900"
+              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
+                pathname?.includes("/marketing") ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900/60"
               }`}
             >
               <span className="text-sm flex-shrink-0">📣</span>
@@ -209,36 +209,36 @@ export default function Navbar() {
               <button
                 onClick={() => sidebarAberta && toggleSecao("relatorios")}
                 title="Relatórios"
-                className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all cursor-pointer"
+                className="w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900/60 transition-all cursor-pointer"
               >
-                <span className="flex items-center gap-2.5"><span className="text-sm flex-shrink-0">📈</span> {sidebarAberta && <span className="truncate">Relatórios</span>}</span>
+                <span className="flex items-center gap-3"><span className="text-sm flex-shrink-0">📈</span> {sidebarAberta && <span className="truncate">Relatórios</span>}</span>
                 {sidebarAberta && <span className={`transform transition-transform text-[9px] ${menuExpandido === "relatorios" ? "rotate-180" : ""}`}>▼</span>}
               </button>
 
               {sidebarAberta && menuExpandido === "relatorios" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800 ml-3 py-1">
+                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
                   {temPermissao("/") && (
-                    <Link href="/" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/" ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/" ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Curva ABC
                     </Link>
                   )}
                   {temPermissao("/mapeamento") && (
-                    <Link href="/mapeamento" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/mapeamento") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/mapeamento" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/mapeamento") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Cadastros
                     </Link>
                   )}
                   {temPermissao("/ads") && (
-                    <Link href="/ads" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/ads") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/ads" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/ads") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Adsense / Ads
                     </Link>
                   )}
                   {temPermissao("/devolucoes") && (
-                    <Link href="/devolucoes" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/devolucoes") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/devolucoes" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/devolucoes") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Devoluções
                     </Link>
                   )}
                   {temPermissao("/full") && (
-                    <Link href="/full" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/full") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/full" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/full") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Full / FBA
                     </Link>
                   )}
@@ -253,31 +253,31 @@ export default function Navbar() {
               <button
                 onClick={() => sidebarAberta && toggleSecao("promocoes")}
                 title="Promoções"
-                className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all cursor-pointer"
+                className="w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900/60 transition-all cursor-pointer"
               >
-                <span className="flex items-center gap-2.5"><span className="text-sm flex-shrink-0">🏷️</span> {sidebarAberta && <span className="truncate">Promoções</span>}</span>
+                <span className="flex items-center gap-3"><span className="text-sm flex-shrink-0">🏷️</span> {sidebarAberta && <span className="truncate">Promoções</span>}</span>
                 {sidebarAberta && <span className={`transform transition-transform text-[9px] ${menuExpandido === "promocoes" ? "rotate-180" : ""}`}>▼</span>}
               </button>
 
               {sidebarAberta && menuExpandido === "promocoes" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800 ml-3 py-1">
+                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
                   {temPermissao("/promocoes/ml") && (
-                    <Link href="/promocoes/ml" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/ml") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/promocoes/ml" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/ml") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       🟡 Mercado Livre
                     </Link>
                   )}
                   {temPermissao("/promocoes/magalu") && (
-                    <Link href="/promocoes/magalu" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/magalu") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/promocoes/magalu" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/magalu") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       🔵 Magazine Luiza
                     </Link>
                   )}
                   {temPermissao("/promocoes/shopee") && (
-                    <Link href="/promocoes/shopee" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/shopee") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/promocoes/shopee" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/shopee") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       🟠 Shopee
                     </Link>
                   )}
                   {temPermissao("/promocoes/tiktok") && (
-                    <Link href="/promocoes/tiktok" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/tiktok") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/promocoes/tiktok" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/promocoes/tiktok") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       ⚫ TikTok Shop
                     </Link>
                   )}
@@ -292,31 +292,31 @@ export default function Navbar() {
               <button
                 onClick={() => sidebarAberta && toggleSecao("ferramentas")}
                 title="Ferramentas"
-                className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all cursor-pointer"
+                className="w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900/60 transition-all cursor-pointer"
               >
-                <span className="flex items-center gap-2.5"><span className="text-sm flex-shrink-0">🛠️</span> {sidebarAberta && <span className="truncate">Ferramentas</span>}</span>
+                <span className="flex items-center gap-3"><span className="text-sm flex-shrink-0">🛠️</span> {sidebarAberta && <span className="truncate">Ferramentas</span>}</span>
                 {sidebarAberta && <span className={`transform transition-transform text-[9px] ${menuExpandido === "ferramentas" ? "rotate-180" : ""}`}>▼</span>}
               </button>
 
               {sidebarAberta && menuExpandido === "ferramentas" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800 ml-3 py-1">
+                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
                   {temPermissao("/calculadora") && (
-                    <Link href="/calculadora" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/calculadora") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/calculadora" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/calculadora") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Calculadora
                     </Link>
                   )}
                   {temPermissao("/produtos") && (
-                    <Link href="/produtos" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/produtos") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/produtos" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/produtos") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Produtos & Vídeos
                     </Link>
                   )}
                   {temPermissao("/padronizacao") && (
-                    <Link href="/padronizacao" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/padronizacao") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/padronizacao" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/padronizacao") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Padronização IA
                     </Link>
                   )}
                   {temPermissao("/plp") && (
-                    <Link href="/plp" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/plp") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/plp" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/plp") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       PLPs (Expedição)
                     </Link>
                   )}
@@ -331,16 +331,16 @@ export default function Navbar() {
               <button
                 onClick={() => sidebarAberta && toggleSecao("config")}
                 title="Configurações"
-                className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition-all cursor-pointer"
+                className="w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900/60 transition-all cursor-pointer"
               >
-                <span className="flex items-center gap-2.5"><span className="text-sm flex-shrink-0">⚙️</span> {sidebarAberta && <span className="truncate">Configurações</span>}</span>
+                <span className="flex items-center gap-3"><span className="text-sm flex-shrink-0">⚙️</span> {sidebarAberta && <span className="truncate">Configurações</span>}</span>
                 {sidebarAberta && <span className={`transform transition-transform text-[9px] ${menuExpandido === "config" ? "rotate-180" : ""}`}>▼</span>}
               </button>
 
               {sidebarAberta && menuExpandido === "config" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800 ml-3 py-1">
+                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
                   {temPermissao("/regras") && (
-                    <Link href="/regras" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/regras") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/regras" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/regras") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Regras Gerais
                     </Link>
                   )}
@@ -350,7 +350,7 @@ export default function Navbar() {
                     </Link>
                   )}
                   {temPermissao("/admin") && (
-                    <Link href="/admin" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/admin") ? "text-purple-400 font-bold bg-purple-950/30" : "text-slate-400 hover:text-white"}`}>
+                    <Link href="/admin" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/admin") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Painel Admin
                     </Link>
                   )}
@@ -364,8 +364,8 @@ export default function Navbar() {
             <Link
               href="/agenda"
               title="Agenda"
-              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl transition-all ${
-                pathname?.includes("/agenda") ? "bg-purple-600 text-white shadow-md shadow-purple-900/30 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900"
+              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
+                pathname?.includes("/agenda") ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900/60"
               }`}
             >
               <span className="text-sm flex-shrink-0">📅</span>
@@ -375,25 +375,25 @@ export default function Navbar() {
 
         </div>
 
-        <div className="p-2.5 border-t border-slate-800/80 bg-slate-950/60 space-y-2">
+        <div className="p-3 border-t border-slate-800/80 bg-slate-950/80 space-y-2">
           <button
             onClick={alternarTema}
             title="Alternar Tema Claro / Escuro"
-            className="w-full bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 font-bold py-1.5 px-2 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1.5"
+            className="w-full bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 font-bold py-2 px-2 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-2"
           >
             <span>{modoEscuro ? "☀️" : "🌙"}</span> {sidebarAberta && <span>{modoEscuro ? "Modo Claro" : "Modo Escuro"}</span>}
           </button>
 
           {sidebarAberta ? (
-            <div className="overflow-hidden">
+            <div className="overflow-hidden px-1">
               <p className="text-[10px] font-bold text-white truncate">{emailUsuario || "Utilizador"}</p>
-              <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[8px] font-black uppercase bg-purple-950 text-purple-300 border border-purple-800/50">
+              <span className="inline-block mt-1 px-2 py-0.5 rounded text-[8px] font-black uppercase bg-indigo-950 text-indigo-300 border border-indigo-800/50">
                 {perfilUsuario}
               </span>
             </div>
           ) : (
             <div className="text-center">
-              <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-purple-950 text-purple-300 border border-purple-800/50">
+              <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-indigo-950 text-indigo-300 border border-indigo-800/50">
                 {perfilUsuario.substring(0, 3)}
               </span>
             </div>
@@ -402,7 +402,7 @@ export default function Navbar() {
           <button
             onClick={handleSair}
             title="Sair da Conta"
-            className="w-full bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-900/50 font-bold py-1.5 px-2 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-1.5"
+            className="w-full bg-rose-950/50 hover:bg-rose-900/70 text-rose-300 border border-rose-900/40 font-bold py-2 px-2 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer transition-all flex items-center justify-center gap-2"
           >
             <span>🚪</span> {sidebarAberta && <span>Sair</span>}
           </button>
@@ -412,10 +412,10 @@ export default function Navbar() {
 
       <style jsx global>{`
         body {
-          background-color: #0d0f18 !important;
+          background-color: #07090e !important;
         }
         .min-h-screen {
-          padding-left: ${sidebarAberta ? '14.5rem' : '4.5rem'} !important;
+          padding-left: ${sidebarAberta ? '15rem' : '4.5rem'} !important;
           transition: padding-left 0.3s ease !important;
         }
         @media (max-width: 768px) {
