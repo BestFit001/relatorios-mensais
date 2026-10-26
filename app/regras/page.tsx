@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
@@ -10,16 +10,15 @@ export default function RegrasPage() {
   const [salvando, setSalvando] = useState(false);
   const router = useRouter();
 
-  // Novo estado para o TACOS
+  // Estados originais do app de relatórios / tiny
   const [metaTacos, setMetaTacos] = useState("2"); 
-  
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [regrasCustos, setRegrasCustos] = useState({ sku: 'A', produto: 'B', custo: 'C', marca: 'D' });
   const [regrasMlCols, setRegrasMlCols] = useState({ mlb: 'A', sku: 'B', comissao: 'C', peso: '', altura: 'E', largura: 'F', comprimento: 'G' });
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
 
-  // Estados para nova regra de tarifação
+  // Estados de Tarifação
   const [novoCanal, setNovoCanal] = useState("Amazon");
   const [novaFaixa, setNovaFaixa] = useState("R$ 0.00 até R$ 78.99");
   const [novaComissao, setNovaComissao] = useState("14.00");
@@ -27,10 +26,10 @@ export default function RegrasPage() {
   const [novoFrete, setNovoFrete] = useState("0.00");
   const [salvandoTarifa, setSalvandoTarifa] = useState(false);
 
-  // Gestão de Inserção de Novos Canais no Dash
+  // NOVO: Gestão dos Canais Dinâmicos do Dashboard (Clube Hebraica, Clube Paineiras e outros)
   const [novoCanalDash, setNovoCanalDash] = useState("");
   const [listaCanaisDash, setListaCanaisDash] = useState<string[]>([
-    'Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro'
+    'Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu', 'Clube Hebraica', 'Clube Paineiras'
   ]);
 
   const canaisTarifacao = ["Amazon", "Centauro", "Magalu", "Netshoes", "Shein", "Shopee", "Site", "TikTok Shop", "Clube Hebraica", "Clube Paineiras"];
@@ -54,12 +53,15 @@ export default function RegrasPage() {
       const tacosSalvo = configs.find((t: any) => t.campo === 'meta_tacos')?.coluna || "2";
       setMetaTacos(tacosSalvo);
 
-      // Carrega canais salvos dinamicamente se houver
+      // Carrega canais dinâmicos salvos para o Dashboard
       const canaisSalvos = configs.find((t: any) => t.campo === 'canais_dashboard');
       if (canaisSalvos && canaisSalvos.coluna) {
         try {
           const parsed = JSON.parse(canaisSalvos.coluna);
-          if (Array.isArray(parsed) && parsed.length > 0) setListaCanaisDash(parsed);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const baseObrigatoria = ['Clube Hebraica', 'Clube Paineiras'];
+            setListaCanaisDash(Array.from(new Set([...parsed, ...baseObrigatoria])));
+          }
         } catch (e) {}
       }
 
@@ -96,7 +98,7 @@ export default function RegrasPage() {
       coluna: JSON.stringify(novaLista)
     }, { onConflict: 'campo' });
 
-    alert(`✅ Canal "${nomeFormatado}" inserido com sucesso para o Dashboard!`);
+    alert(`✅ Canal "${nomeFormatado}" adicionado ao Dashboard com sucesso!`);
   };
 
   const removerCanalDash = async (canalRemover: string) => {
@@ -142,7 +144,7 @@ export default function RegrasPage() {
       await supabase.from('config_regras_tiny').upsert(cfg, { onConflict: 'campo' });
     }
 
-    alert("✅ Configurações e canais salvos com sucesso!");
+    alert("✅ Configurações e regras salvas com sucesso!");
     setSalvando(false);
   };
 
@@ -187,7 +189,7 @@ export default function RegrasPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Central de Regras</h1>
-            <p className="text-sm font-medium text-slate-400">Configure canais do dash, visibilidade, colunas e tarifação</p>
+            <p className="text-sm font-medium text-slate-400">Configure os canais do Dash, colunas brutas e tarifação por canal</p>
           </div>
 
           <Navbar />
@@ -198,17 +200,17 @@ export default function RegrasPage() {
         ) : (
           <div className="space-y-8">
 
-            {/* GESTÃO DE CANAIS DO DASHBOARD (INCLUINDO CLUBE HEBRAICA E PAINEIRAS) */}
+            {/* GESTÃO DOS CANAIS DO DASHBOARD */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-4">
               <h2 className="text-lg font-bold text-white">Canais Ativos no Dashboard Omnichannel</h2>
-              <p className="text-xs text-slate-400">Insira ou remova canais que aparecerão no painel de faturamento (Lojas físicas como Clube Hebraica e Clube Paineiras são fixas).</p>
+              <p className="text-xs text-slate-400">Adicione ou remova canais que aparecerão no seletor do Dashboard (*Clube Hebraica* e *Clube Paineiras* são fixos e obrigatórios).</p>
               
               <div className="flex gap-2 max-w-md">
                 <input 
                   type="text" 
                   value={novoCanalDash} 
                   onChange={e => setNovoCanalDash(e.target.value)} 
-                  placeholder="Nome do novo canal (ex: Dafiti)..." 
+                  placeholder="Nome do novo canal..." 
                   className="flex-1 bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none"
                 />
                 <button 
@@ -332,7 +334,6 @@ export default function RegrasPage() {
                   <p className="text-xs text-slate-400">Defina metas do sistema e colunas correspondentes de importação.</p>
                 </div>
                 
-                {/* CAMPO DE META TACOS GLOBAL */}
                 <div className="bg-purple-950/30 border border-purple-800/50 p-3 rounded-xl flex items-center gap-4">
                   <div>
                     <label className="block text-[10px] font-bold text-purple-300 uppercase tracking-wider mb-1">🎯 Meta TACOS Global (%)</label>
