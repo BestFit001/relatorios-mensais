@@ -77,6 +77,7 @@ export default function RelatorioLivesPage() {
 
   // Filtros
   const [buscaSku, setBuscaSku] = useState("");
+  const [filtroMes, setFiltroMes] = useState(""); // Formato AAAA-MM
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
@@ -94,7 +95,6 @@ export default function RelatorioLivesPage() {
   const carregarTudoDoSupabase = async () => {
     setLoading(true);
     try {
-      // 1. Carregar custos
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -115,7 +115,6 @@ export default function RelatorioLivesPage() {
       });
       setCustosMap(cMap);
 
-      // 2. Carregar configurações
       const { data: configData } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
@@ -130,7 +129,6 @@ export default function RelatorioLivesPage() {
         });
       }
 
-      // 3. Carregar dados salvos de vendas de lives do Supabase
       let allVendas: any[] = [];
       let vFrom = 0;
       let vKeep = true;
@@ -183,6 +181,21 @@ export default function RelatorioLivesPage() {
     }
   };
 
+  const limparBaseSupabase = async () => {
+    if (!confirm("⚠️ Tem certeza absoluta que deseja limpar/zerar toda a base de Vendas de Lives gravada no Supabase?")) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase.from("vendas_lives").delete().neq("id", 0);
+      if (error) throw error;
+      setDadosBrutos([]);
+      setPaginaAtual(1);
+      alert("✅ Base de Vendas de Lives limpa com sucesso!");
+    } catch (err: any) {
+      alert("Erro ao limpar base: " + err.message);
+    }
+    setLoading(false);
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -219,10 +232,8 @@ export default function RelatorioLivesPage() {
           });
         }
 
-        // Limpar tabela anterior no Supabase e inserir os novos dados
         await supabase.from("vendas_lives").delete().neq("id", 0);
 
-        // Inserir em lotes de 500 para evitar timeout
         const registrosParaSalvar = novasLinhas.map(row => {
           const skuNorm = normalizarSku(row.sku);
           const custoObj = custosMap.get(skuNorm);
@@ -257,7 +268,7 @@ export default function RelatorioLivesPage() {
 
         setDadosBrutos(novasLinhas);
         setPaginaAtual(1);
-        alert(`✅ Sucesso! ${novasLinhas.length} registos lidos e salvos permanentemente no Supabase.`);
+        alert(`✅ Sucesso! ${novasLinhas.length} registos lidos e salvos no Supabase.`);
       } catch (err: any) {
         alert("Erro ao processar e salvar planilha: " + err.message);
       }
@@ -285,6 +296,8 @@ export default function RelatorioLivesPage() {
     const valorPdv = pdv > 0 ? pdv : repasse;
     const percentualLucroPdv = valorPdv > 0 ? (liquidez / valorPdv) * 100 : 0;
 
+    const dataCurta = formatarDataCurta(dataPagamento);
+
     return {
       sku: skuRaw,
       skuNorm,
@@ -296,7 +309,7 @@ export default function RelatorioLivesPage() {
       comissaoVendedora: comissaoVendedoraVal,
       liquidez,
       percentualLucroPdv,
-      data: formatarDataCurta(dataPagamento),
+      data: dataCurta,
       status: statusVenda,
     };
   }).filter(item => {
@@ -308,6 +321,16 @@ export default function RelatorioLivesPage() {
 
     if (buscaSku && !item.skuNorm.includes(buscaSku.toLowerCase()) && !item.nomeProduto.toLowerCase().includes(buscaSku.toLowerCase())) {
       return false;
+    }
+
+    // Filtro por Mês (Ex: 2026-10)
+    if (filtroMes && item.data) {
+      // item.data está no formato DD/MM/AAAA, convertemos para testar AAAA-MM
+      const partes = item.data.split("/");
+      if (partes.length === 3) {
+        const mesAno = `${partes[2]}-${partes[1]}`;
+        if (mesAno !== filtroMes) return false;
+      }
     }
 
     if (dataInicio && item.data && item.data < dataInicio) return false;
@@ -325,7 +348,6 @@ export default function RelatorioLivesPage() {
     ? dadosProcessados.reduce((acc, cur) => acc + cur.percentualLucroPdv, 0) / dadosProcessados.length 
     : 0;
 
-  // Montagem da visão compacta por SKU
   const compactoMap = new Map<string, { sku: string; nome: string; qtd: number; repasse: number; custo: number; comissaoVendedora: number; liquidez: number; percentualLucroPdv: number }>();
   dadosProcessados.forEach(item => {
     if (!compactoMap.has(item.skuNorm)) {
@@ -367,7 +389,7 @@ export default function RelatorioLivesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatório de Vendas via LIVES</h1>
-            <p className="text-sm font-medium text-slate-400">Persistência no Supabase, comissão vendedora e painel unificado</p>
+            <p className="text-sm font-medium text-slate-400">Supabase, comissão vendedora, filtro por mês e painel unificado</p>
           </div>
           <Navbar />
         </div>
@@ -393,7 +415,7 @@ export default function RelatorioLivesPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <label className="text-xs text-indigo-400 font-bold">Carregar Planilha (Salva automático no Supabase):</label>
+            <label className="text-xs text-indigo-400 font-bold">Carregar Planilha (Salva automático):</label>
             <input
               type="file"
               accept=".xlsx, .xls, .csv"
@@ -405,9 +427,18 @@ export default function RelatorioLivesPage() {
 
         {subAba === "config" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800/80 shadow-xl max-w-3xl mx-auto space-y-6">
-            <div>
-              <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações e Persistência Supabase</h2>
-              <p className="text-xs text-slate-400 mt-1">Ajuste as colunas e salve as regras.</p>
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações e Limpeza da Base</h2>
+                <p className="text-xs text-slate-400 mt-1">Ajuste as colunas e gerencie os dados salvos.</p>
+              </div>
+              <button
+                type="button"
+                onClick={limparBaseSupabase}
+                className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase cursor-pointer transition-all shadow-md"
+              >
+                🗑️ Limpar Base Inteira
+              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 bg-slate-950 p-6 rounded-xl border border-slate-800/80">
@@ -537,9 +568,9 @@ export default function RelatorioLivesPage() {
               </div>
             </div>
 
-            {/* FILTROS */}
+            {/* FILTROS (INCLUINDO FILTRO POR MÊS) */}
             <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl flex flex-wrap gap-4 items-end">
-              <div className="flex-1 min-w-[240px]">
+              <div className="flex-1 min-w-[220px]">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Pesquisar por SKU ou Nome do Produto:</label>
                 <input
                   type="text"
@@ -547,6 +578,16 @@ export default function RelatorioLivesPage() {
                   onChange={(e) => { setBuscaSku(e.target.value); setPaginaAtual(1); }}
                   placeholder="Ex: 22652042281 ou Garrafa..."
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Filtrar por Mês:</label>
+                <input
+                  type="month"
+                  value={filtroMes}
+                  onChange={(e) => { setFiltroMes(e.target.value); setPaginaAtual(1); }}
+                  className="bg-slate-950 border border-indigo-900/60 rounded-xl p-2.5 text-xs text-indigo-300 outline-none font-mono"
                 />
               </div>
 
@@ -572,7 +613,7 @@ export default function RelatorioLivesPage() {
 
               <button
                 type="button"
-                onClick={() => { setBuscaSku(""); setDataInicio(""); setDataFim(""); setPaginaAtual(1); }}
+                onClick={() => { setBuscaSku(""); setFiltroMes(""); setDataInicio(""); setDataFim(""); setPaginaAtual(1); }}
                 className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-4 py-2.5 rounded-xl text-xs uppercase cursor-pointer"
               >
                 Limpar Filtros
@@ -585,7 +626,6 @@ export default function RelatorioLivesPage() {
                 <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex flex-wrap justify-between items-center gap-4">
                   <h3 className="text-sm font-bold text-white">📋 Painel de Faturamento de Vendas (Live)</h3>
                   
-                  {/* Botões para alternar entre Detalhado e Compacto */}
                   <div className="flex gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800">
                     <button
                       onClick={() => { setModoPainel("detalhado"); setPaginaAtual(1); }}
@@ -667,7 +707,7 @@ export default function RelatorioLivesPage() {
                 </div>
               </div>
 
-              {/* CONTROLES DE PAGINAÇÃO DO PAINEL */}
+              {/* PAGINAÇÃO */}
               <div className="p-4 border-t border-slate-800/80 bg-slate-950/60 flex justify-between items-center text-xs">
                 <span className="text-slate-400">
                   Exibindo modo <strong>{modoPainel.toUpperCase()}</strong> — Página <strong>{paginaAtual}</strong> de <strong>{totalPaginas}</strong> ({itensAtivos.length} itens no total)
