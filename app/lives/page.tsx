@@ -59,18 +59,15 @@ export default function RelatorioLivesPage() {
   const [subAba, setSubAba] = useState<"dados" | "config">("dados");
   const [modoPainel, setModoPainel] = useState<"detalhado" | "compacto">("detalhado");
 
-  // Configurações e Mapeamentos
+  // Configurações
   const [linhaInicial, setLinhaInicial] = useState("3");
   const [colunaSku, setColunaSku] = useState("H");
   const [colunaStatus, setColunaStatus] = useState("C");
   const [colunaRepasse, setColunaRepasse] = useState("X");
   const [colunaPdv, setColunaPdv] = useState("N");
   const [colunaData, setColunaData] = useState("AD");
-  
-  // Configurações da segunda planilha (Métricas de Lives: Custo e ROI)
-  const [colunaCustosLive, setColunaCustosLive] = useState("F"); // Ex: F = Custo
-  const [colunaRoiLive, setColunaRoiLive] = useState("K");       // Ex: K = ROI
-
+  const [colunaCustosLive, setColunaCustosLive] = useState("F");
+  const [colunaRoiLive, setColunaRoiLive] = useState("K");
   const [percentualImposto, setPercentualImposto] = useState("9");
   const [percentualComissao, setPercentualComissao] = useState("14");
 
@@ -101,7 +98,6 @@ export default function RelatorioLivesPage() {
   const carregarTudoDoSupabase = async () => {
     setLoading(true);
     try {
-      // 1. Carregar custos de SKUs
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -122,9 +118,11 @@ export default function RelatorioLivesPage() {
       });
       setCustosMap(cMap);
 
-      // 2. Carregar configurações do Supabase
-      const { data: configData } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
-      if (configData && configData.length > 0) {
+      // Carregar configurações do Supabase
+      const { data: configData, error: configError } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
+      if (configError) {
+        console.error("Erro ao carregar configs:", configError.message);
+      } else if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
           if (cfg.campo === "linha_inicial") setLinhaInicial(cfg.coluna);
           if (cfg.campo === "col_sku") setColunaSku(cfg.coluna);
@@ -139,7 +137,7 @@ export default function RelatorioLivesPage() {
         });
       }
 
-      // 3. Carregar vendas salvas do Supabase
+      // Carregar vendas salvas
       let allVendas: any[] = [];
       let vFrom = 0;
       let vKeep = true;
@@ -171,26 +169,27 @@ export default function RelatorioLivesPage() {
   const salvarConfiguracoes = async () => {
     try {
       const configs = [
-        { canal: "live_config", campo: "linha_inicial", coluna: linhaInicial },
-        { canal: "live_config", campo: "col_sku", coluna: colunaSku },
-        { canal: "live_config", campo: "col_status", coluna: colunaStatus },
-        { canal: "live_config", campo: "col_repasse", coluna: colunaRepasse },
-        { canal: "live_config", campo: "col_pdv", coluna: colunaPdv },
-        { canal: "live_config", campo: "col_data", coluna: colunaData },
-        { canal: "live_config", campo: "col_custo_live", coluna: colunaCustosLive },
-        { canal: "live_config", campo: "col_roi_live", coluna: colunaRoiLive },
-        { canal: "live_config", campo: "imposto", coluna: percentualImposto },
-        { canal: "live_config", campo: "comissao", coluna: percentualComissao },
+        { canal: "live_config", campo: "linha_inicial", coluna: String(linhaInicial) },
+        { canal: "live_config", campo: "col_sku", coluna: String(colunaSku) },
+        { canal: "live_config", campo: "col_status", coluna: String(colunaStatus) },
+        { canal: "live_config", campo: "col_repasse", coluna: String(colunaRepasse) },
+        { canal: "live_config", campo: "col_pdv", coluna: String(colunaPdv) },
+        { canal: "live_config", campo: "col_data", coluna: String(colunaData) },
+        { canal: "live_config", campo: "col_custo_live", coluna: String(colunaCustosLive) },
+        { canal: "live_config", campo: "col_roi_live", coluna: String(colunaRoiLive) },
+        { canal: "live_config", campo: "imposto", coluna: String(percentualImposto) },
+        { canal: "live_config", campo: "comissao", coluna: String(percentualComissao) },
       ];
 
       for (const c of configs) {
-        await supabase.from("config_regras_tiny").upsert(c, { onConflict: "canal,campo" });
+        const { error } = await supabase.from("config_regras_tiny").upsert(c, { onConflict: "canal,campo" });
+        if (error) throw error;
       }
 
-      alert("✅ Configurações salvas permanentemente no Supabase!");
+      alert("✅ Configurações salvas com sucesso no Supabase!");
       setSubAba("dados");
     } catch (err: any) {
-      alert("Erro ao salvar configurações: " + err.message);
+      alert("❌ Erro ao salvar configurações: " + err.message);
     }
   };
 
@@ -198,7 +197,8 @@ export default function RelatorioLivesPage() {
     if (!confirm("⚠️ Deseja limpar toda a base de Vendas de Lives gravada no Supabase?")) return;
     setLoading(true);
     try {
-      await supabase.from("vendas_lives").delete().neq("id", 0);
+      const { error } = await supabase.from("vendas_lives").delete().neq("id", 0);
+      if (error) throw error;
       setDadosBrutos([]);
       setCustosLiveBrutos([]);
       setPaginaAtual(1);
@@ -276,7 +276,8 @@ export default function RelatorioLivesPage() {
 
         for (let i = 0; i < registrosParaSalvar.length; i += 500) {
           const lote = registrosParaSalvar.slice(i, i + 500);
-          await supabase.from("vendas_lives").insert(lote);
+          const { error } = await supabase.from("vendas_lives").insert(lote);
+          if (error) throw error;
         }
 
         setDadosBrutos(novasLinhas);
