@@ -5,12 +5,11 @@ import Navbar from '@/app/components/Navbar';
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
-  const [canais, setCanais] = useState<string[]>([]);
+  const [canais, setCanais] = useState<string[]>(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu', 'Clube Hebraica', 'Clube Paineiras']);
   const [sales, setSales] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
-  const [channelLogos, setChannelLogos] = useState<Record<string, string>>({});
   
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
@@ -24,6 +23,7 @@ export default function DashboardPage() {
   const [dbDevolucoes, setDbDevolucoes] = useState<any[]>([]);
   const [dbAds, setDbAds] = useState<any[]>([]);
   const [dbPlp, setDbPlp] = useState<any[]>([]);
+  const [configTarifas, setConfigTarifas] = useState<any[]>([]);
 
   const currentMonthDefault = new Date().toISOString().slice(0, 7);
   const previousMonthDefault = useMemo(() => {
@@ -47,6 +47,7 @@ export default function DashboardPage() {
       try {
         setLoading(true);
 
+        // 1. Custos de SKUs
         let allCustos: any[] = [];
         let from = 0;
         const step = 1000;
@@ -68,68 +69,57 @@ export default function DashboardPage() {
         });
         setDbCustosMap(cMap);
 
+        // 2. Devoluções
         try {
           const { data: devData } = await supabase.from('devolucoes').select('*');
           if (devData) setDbDevolucoes(devData);
         } catch (e) {}
 
+        // 3. Adsense / Ads
         try {
           const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*');
           if (adsDataDb) setDbAds(adsDataDb);
-          else {
-            const { data: adsAlt } = await supabase.from('ads').select('*');
-            if (adsAlt) setDbAds(adsAlt);
-          }
         } catch (e) {}
 
+        // 4. PLPs / Frete
         try {
           const { data: plpData } = await supabase.from('plp_pedidos').select('*');
           if (plpData) setDbPlp(plpData);
-          else {
-            const { data: plpAlt } = await supabase.from('plp').select('*');
-            if (plpAlt) setDbPlp(plpAlt);
-          }
         } catch (e) {}
 
-        let allSales: any[] = [];
-        let sFrom = 0;
-        let sKeep = true;
-        while (sKeep) {
-          try {
-            const { data } = await supabase.from('vendas_lives').select('*').range(sFrom, sFrom + step - 1);
-            if (data && data.length > 0) {
-              allSales = [...allSales, ...data];
-              sFrom += step;
-              if (data.length < step) sKeep = false;
-            } else sKeep = false;
-          } catch (e) {
-            sKeep = false;
-          }
-        }
-        setSales(allSales);
-
+        // 5. Metas e Tarifas configuradas nas Regras
         try {
           const { data: metasDb } = await supabase.from('tb_metas').select('*');
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
         try {
+          const { data: tarifacaoDb } = await supabase.from('config_regras_tarifacao').select('*');
+          if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
+        } catch (e) {}
+
+        try {
           const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
           if (regrasDb && regrasDb.length > 0) {
             setChannelRules(regrasDb);
-            const cList = Array.from(new Set(regrasDb.map((r: any) => r.canal).filter(Boolean))) as string[];
-            if (cList.length > 0) setCanais(cList);
-            else setCanais(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu']);
-          } else {
-            setCanais(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu']);
+            const canalCfg = regrasDb.find((r: any) => r.campo === 'canais_dashboard');
+            if (canalCfg && canalCfg.coluna) {
+              try {
+                const parsedCanais = JSON.parse(canalCfg.coluna);
+                if (Array.isArray(parsedCanais) && parsedCanais.length > 0) {
+                  const baseObrigatoria = ['Clube Hebraica', 'Clube Paineiras'];
+                  const finalList = Array.from(new Set([...parsedCanais, ...baseObrigatoria]));
+                  setCanais(finalList);
+                }
+              } catch (err) {}
+            }
           }
-        } catch (e) {
-          setCanais(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu']);
-        }
+        } catch (e) {}
 
+        // 6. Vendas brutas
         try {
-          const { data: usersDb } = await supabase.from('tb_usuarios').select('*');
-          if (usersDb) setUsers(usersDb);
+          const { data: vendasDb } = await supabase.from('vendas_lives').select('*');
+          if (vendasDb) setSales(vendasDb);
         } catch (e) {}
 
       } catch (err) {
@@ -177,6 +167,7 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
+  // Aplica as regras e fórmulas de cálculo de repasse/comissão de acordo com a aba de Regras
   const enrichedSales = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -233,8 +224,18 @@ export default function DashboardPage() {
         
         const precoVenda = parseCurrency(s.preco_venda || s.pdv);
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
-        if (repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
-          repasseLiquido = precoVenda;
+
+        // Se o repasse não estiver preenchido, aplica a regra de tarifação cadastrada no painel de Regras
+        if (repasseLiquido <= 0) {
+          const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal);
+          if (regraFaixa) {
+            const comissaoPct = Number(regraFaixa.comissao) || 0;
+            const tarifaFixa = Number(regraFaixa.tarifa_fixa) || 0;
+            const freteRegra = Number(regraFaixa.frete) || 0;
+            repasseLiquido = Math.max(0, precoVenda - (precoVenda * (comissaoPct / 100)) - tarifaFixa - freteRegra);
+          } else {
+            repasseLiquido = precoVenda;
+          }
         }
 
         const ganhoBruto = repasseLiquido - custoCMV; 
@@ -249,12 +250,11 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, currentMonthDefault, previousMonthDefault]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
 
   const kpis = useMemo(() => {
     const safeCanais = Array.isArray(canais) ? canais : [];
-    const safeRules = Array.isArray(channelRules) ? channelRules : [];
-    const activeChannels = Array.from(new Set([...safeCanais, ...safeRules.map((r: any) => r?.canal).filter(Boolean)]));
+    const activeChannels = Array.from(new Set([...safeCanais, 'Clube Hebraica', 'Clube Paineiras']));
     
     let faturamentoBrutoVendas = 0;
     let faturamentoLiquidoRepasse = 0;
@@ -268,10 +268,9 @@ export default function DashboardPage() {
     let cmvDigital = 0;
 
     const safeDevs = Array.isArray(dbDevolucoes) ? dbDevolucoes : [];
-    const totalDevolucoesValor = safeDevs.reduce((sum: number, c: any) => sum + parseCurrency(c?.valor ?? c?.valor_devolucao), 0);
+    const totalDevolucoesValor = safeDevs.reduce((sum: number, c: any) => sum + parseCurrency(c?.valor ?? c?.valor_devolucao ?? c?.preco_venda), 0);
     const lojasFisicasDetalhes: any[] = [];
     const lojasFisicasRepasse: any[] = [];
-
     const safeGoals = Array.isArray(goals) ? goals : [];
 
     activeChannels.forEach(channelName => {
@@ -397,8 +396,7 @@ export default function DashboardPage() {
 
   const channelAnalytics = useMemo(() => {
     const safeCanais = Array.isArray(canais) ? canais : [];
-    const safeRules = Array.isArray(channelRules) ? channelRules : [];
-    const activeChannels = Array.from(new Set([...safeCanais, ...safeRules.map((r: any) => r?.canal).filter(Boolean)]));
+    const activeChannels = Array.from(new Set([...safeCanais, 'Clube Hebraica', 'Clube Paineiras']));
     
     let channelsToAnalyze = appliedChannelFilter === 'TODOS' ? activeChannels : activeChannels.filter(c => c === appliedChannelFilter);
 
@@ -428,6 +426,7 @@ export default function DashboardPage() {
     const safeDevs = Array.isArray(dbDevolucoes) ? dbDevolucoes : [];
     const safeAds = Array.isArray(dbAds) ? dbAds : [];
     const safeGoals = Array.isArray(goals) ? goals : [];
+    const safeRules = Array.isArray(channelRules) ? channelRules : [];
 
     return channelsToAnalyze.map(channelName => {
       const chSales = enrichedSales.filter((s: any) => s && s.canal === channelName);
