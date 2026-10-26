@@ -5,6 +5,16 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/app/components/Navbar";
 import * as XLSX from "xlsx";
 
+// Função para converter letra da coluna (ex: 'H' ou 'h') em índice numérico (0-based)
+function colunaParaIndice(letra: string): number {
+  let l = letra.trim().toUpperCase();
+  let num = 0;
+  for (let i = 0; i < l.length; i++) {
+    num = num * 26 + (l.charCodeAt(i) - 64);
+  }
+  return num - 1;
+}
+
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "");
@@ -37,22 +47,26 @@ export default function RelatorioLivesPage() {
   const [loading, setLoading] = useState(false);
   const [subAba, setSubAba] = useState<"dados" | "config">("dados");
 
-  const [colunaSku, setColunaSku] = useState("Seller SKU");
-  const [colunaRepasse, setColunaRepasse] = useState("Order Amount");
-  const [colunaPdv, setColunaPdv] = useState("SKU Unit Original Price");
-  const [colunaData, setColunaData] = useState("Paid Time");
-  const [colunaStatus, setColunaStatus] = useState("Order Status");
+  // Configurações por Letra de Coluna e Linha Inicial
+  const [linhaInicial, setLinhaInicial] = useState("3");
+  const [colunaSku, setColunaSku] = useState("H");       // Ex: Seller SKU
+  const [colunaStatus, setColunaStatus] = useState("C"); // Ex: Order Status
+  const [colunaRepasse, setColunaRepasse] = useState("X"); // Ex: Order Amount
+  const [colunaPdv, setColunaPdv] = useState("N");       // Ex: Price
+  const [colunaData, setColunaData] = useState("AD");    // Ex: Paid Time
   const [percentualImposto, setPercentualImposto] = useState("9");
   const [percentualComissao, setPercentualComissao] = useState("14");
 
+  // Dados
   const [dadosBrutos, setDadosBrutos] = useState<any[]>([]);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
 
+  // Filtros
   const [buscaSku, setBuscaSku] = useState("");
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
-  const statusPermitidos = ["aguardando envio", "em trânsito", "concluído", "entregue"];
+  const statusPermitidos = ["aguardando envio", "em trânsito", "concluído", "entregue", "enviado"];
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -60,10 +74,10 @@ export default function RelatorioLivesPage() {
       router.push("/login");
       return;
     }
-    carregarCustosECarregamentosSalvos();
+    carregarCustosEConfigSalvas();
   }, []);
 
-  const carregarCustosECarregamentosSalvos = async () => {
+  const carregarCustosEConfigSalvas = async () => {
     setLoading(true);
     try {
       let allCustos: any[] = [];
@@ -89,11 +103,12 @@ export default function RelatorioLivesPage() {
       const { data: configData } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
-          if (cfg.campo === "coluna_sku") setColunaSku(cfg.coluna);
-          if (cfg.campo === "coluna_repasse") setColunaRepasse(cfg.coluna);
-          if (cfg.campo === "coluna_pdv") setColunaPdv(cfg.coluna);
-          if (cfg.campo === "coluna_data") setColunaData(cfg.coluna);
-          if (cfg.campo === "coluna_status") setColunaStatus(cfg.coluna);
+          if (cfg.campo === "linha_inicial") setLinhaInicial(cfg.coluna);
+          if (cfg.campo === "col_sku") setColunaSku(cfg.coluna);
+          if (cfg.campo === "col_status") setColunaStatus(cfg.coluna);
+          if (cfg.campo === "col_repasse") setColunaRepasse(cfg.coluna);
+          if (cfg.campo === "col_pdv") setColunaPdv(cfg.coluna);
+          if (cfg.campo === "col_data") setColunaData(cfg.coluna);
           if (cfg.campo === "imposto") setPercentualImposto(cfg.coluna);
           if (cfg.campo === "comissao") setPercentualComissao(cfg.coluna);
         });
@@ -107,11 +122,12 @@ export default function RelatorioLivesPage() {
   const salvarConfiguracoes = async () => {
     try {
       const configs = [
-        { canal: "live_config", campo: "coluna_sku", coluna: colunaSku },
-        { canal: "live_config", campo: "coluna_repasse", coluna: colunaRepasse },
-        { canal: "live_config", campo: "coluna_pdv", coluna: colunaPdv },
-        { canal: "live_config", campo: "coluna_data", coluna: colunaData },
-        { canal: "live_config", campo: "coluna_status", coluna: colunaStatus },
+        { canal: "live_config", campo: "linha_inicial", coluna: linhaInicial },
+        { canal: "live_config", campo: "col_sku", coluna: colunaSku },
+        { canal: "live_config", campo: "col_status", coluna: colunaStatus },
+        { canal: "live_config", campo: "col_repasse", coluna: colunaRepasse },
+        { canal: "live_config", campo: "col_pdv", coluna: colunaPdv },
+        { canal: "live_config", campo: "col_data", coluna: colunaData },
         { canal: "live_config", campo: "imposto", coluna: percentualImposto },
         { canal: "live_config", campo: "comissao", coluna: percentualComissao },
       ];
@@ -140,21 +156,30 @@ export default function RelatorioLivesPage() {
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
 
-        if (rawData.length > 2) {
-          const headers = rawData[0].map((h: any) => String(h || "").trim());
-          const linhas = [];
-          for (let i = 2; i < rawData.length; i++) {
-            const row = rawData[i];
-            if (!row || row.length === 0) continue;
-            const obj: any = {};
-            headers.forEach((h, idx) => {
-              obj[h] = row[idx] || "";
-            });
-            linhas.push(obj);
-          }
-          setDadosBrutos(linhas);
-          alert(`✅ Planilha de LIVES carregada com sucesso! ${linhas.length} registos encontrados.`);
+        const startRow = Math.max(0, parseInt(linhaInicial) - 1);
+        const idxSku = colunaParaIndice(colunaSku);
+        const idxStatus = colunaParaIndice(colunaStatus);
+        const idxRepasse = colunaParaIndice(colunaRepasse);
+        const idxPdv = colunaParaIndice(colunaPdv);
+        const idxData = colunaParaIndice(colunaData);
+
+        const linhas = [];
+        for (let i = startRow; i < rawData.length; i++) {
+          const row = rawData[i];
+          if (!row || row.length === 0) continue;
+
+          linhas.push({
+            sku: row[idxSku] || "",
+            status: row[idxStatus] || "",
+            repasse: row[idxRepasse] || 0,
+            pdv: row[idxPdv] || 0,
+            data: row[idxData] || "",
+            productName: row[colunaParaIndice("I")] || "Produto", // Coluna I costuma ser o nome na Shopee/Plataformas
+          });
         }
+
+        setDadosBrutos(linhas);
+        alert(`✅ Planilha processada com sucesso! ${linhas.length} registos lidos a partir da linha ${linhaInicial}.`);
       } catch (err: any) {
         alert("Erro ao ler planilha: " + err.message);
       }
@@ -164,16 +189,16 @@ export default function RelatorioLivesPage() {
   };
 
   const dadosProcessados = dadosBrutos.map((row) => {
-    const skuRaw = row[colunaSku] || "";
+    const skuRaw = row.sku;
     const skuNorm = normalizarSku(skuRaw);
-    const repasse = parseNumeroBruto(row[colunaRepasse]);
-    const pdv = parseNumeroBruto(row[colunaPdv]);
-    const dataPagamento = row[colunaData] || "";
-    const statusVenda = String(row[colunaStatus] || "").trim().toLowerCase();
+    const repasse = parseNumeroBruto(row.repasse);
+    const pdv = parseNumeroBruto(row.pdv);
+    const dataPagamento = row.data;
+    const statusVenda = String(row.status || "").trim().toLowerCase();
 
     const custoObj = custosMap.get(skuNorm);
     const custoUnitario = custoObj ? parseNumeroBruto(custoObj.custo_unitario ?? custoObj.custo ?? 0) : 0;
-    const nomeProduto = custoObj ? (custoObj.produto || custoObj.descricao || "Produto Cadastrado") : (row["Product Name"] || "Produto Desconhecido");
+    const nomeProduto = custoObj ? (custoObj.produto || custoObj.descricao || "Produto Cadastrado") : (row.productName || "Produto Desconhecido");
 
     const impostoVal = repasse * (parseFloat(percentualImposto) / 100 || 0);
     const comissaoVal = repasse * (parseFloat(percentualComissao) / 100 || 0);
@@ -234,7 +259,7 @@ export default function RelatorioLivesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatório de Vendas via LIVES</h1>
-            <p className="text-sm font-medium text-slate-400">Validação filtrada por status, repasses, custos, comissões fixas e liquidez</p>
+            <p className="text-sm font-medium text-slate-400">Validação por Letras de Coluna, Linha Inicial e Status</p>
           </div>
           <Navbar />
         </div>
@@ -272,88 +297,92 @@ export default function RelatorioLivesPage() {
         {subAba === "config" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800/80 shadow-xl max-w-3xl mx-auto space-y-6">
             <div>
-              <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações de Mapeamento da Live</h2>
-              <p className="text-xs text-slate-400 mt-1">Defina colunas, status válidos e taxas aplicadas.</p>
+              <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações por Letras de Coluna</h2>
+              <p className="text-xs text-slate-400 mt-1">Informe a linha onde começam os dados e a letra correspondente a cada coluna na planilha.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 bg-slate-950 p-6 rounded-xl border border-slate-800/80">
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna SKU do Vendedor:</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Linha Inicial dos Dados (Ex: 3):</label>
+                <input
+                  type="number"
+                  value={linhaInicial}
+                  onChange={(e) => setLinhaInicial(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna SKU (Letra ex: H):</label>
                 <input
                   type="text"
                   value={colunaSku}
                   onChange={(e) => setColunaSku(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Status do Pedido:</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Status (Letra ex: C):</label>
                 <input
                   type="text"
                   value={colunaStatus}
                   onChange={(e) => setColunaStatus(e.target.value)}
-                  placeholder="Ex: Order Status"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Valor de Repasse:</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Valor de Repasse (Letra ex: X):</label>
                 <input
                   type="text"
                   value={colunaRepasse}
                   onChange={(e) => setColunaRepasse(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Preço de Venda (PDV):</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Preço de Venda / PDV (Letra ex: N):</label>
                 <input
                   type="text"
                   value={colunaPdv}
                   onChange={(e) => setColunaPdv(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Data de Pagamento:</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Data de Pagamento (Letra ex: AD):</label>
                 <input
                   type="text"
                   value={colunaData}
                   onChange={(e) => setColunaData(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Imposto (%):</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={percentualImposto}
-                    onChange={(e) => setPercentualImposto(e.target.value)}
-                    className="w-full bg-slate-900 border border-amber-600/50 rounded-xl p-3 text-xs text-amber-300 font-bold outline-none font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Comissão (%):</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={percentualComissao}
-                    onChange={(e) => setPercentualComissao(e.target.value)}
-                    className="w-full bg-slate-900 border border-emerald-600/50 rounded-xl p-3 text-xs text-emerald-300 font-bold outline-none font-mono"
-                  />
-                </div>
+              <div>
+                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Imposto (%):</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={percentualImposto}
+                  onChange={(e) => setPercentualImposto(e.target.value)}
+                  className="w-full bg-slate-900 border border-amber-600/50 rounded-xl p-3 text-xs text-amber-300 font-bold outline-none font-mono"
+                />
               </div>
-            </div>
 
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-[11px] text-slate-400">
-              ℹ️ A aba considerará automaticamente apenas os status: <strong className="text-emerald-400">Aguardando envio</strong>, <strong className="text-emerald-400">Em trânsito</strong>, <strong className="text-emerald-400">Concluído</strong> e <strong className="text-emerald-400">Entregue</strong>.
+              <div>
+                <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Comissão (%):</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={percentualComissao}
+                  onChange={(e) => setPercentualComissao(e.target.value)}
+                  className="w-full bg-slate-900 border border-emerald-600/50 rounded-xl p-3 text-xs text-emerald-300 font-bold outline-none font-mono"
+                />
+              </div>
             </div>
 
             <div className="flex justify-end">
