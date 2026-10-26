@@ -119,10 +119,8 @@ export default function RelatorioLivesPage() {
       setCustosMap(cMap);
 
       // Carregar configurações do Supabase
-      const { data: configData, error: configError } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
-      if (configError) {
-        console.error("Erro ao carregar configs:", configError.message);
-      } else if (configData && configData.length > 0) {
+      const { data: configData } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
+      if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
           if (cfg.campo === "linha_inicial") setLinhaInicial(cfg.coluna);
           if (cfg.campo === "col_sku") setColunaSku(cfg.coluna);
@@ -168,6 +166,9 @@ export default function RelatorioLivesPage() {
 
   const salvarConfiguracoes = async () => {
     try {
+      // Estratégia robusta: apagar as configs antigas de live_config e inserir as novas limpas
+      await supabase.from("config_regras_tiny").delete().eq("canal", "live_config");
+
       const configs = [
         { canal: "live_config", campo: "linha_inicial", coluna: String(linhaInicial) },
         { canal: "live_config", campo: "col_sku", coluna: String(colunaSku) },
@@ -181,10 +182,8 @@ export default function RelatorioLivesPage() {
         { canal: "live_config", campo: "comissao", coluna: String(percentualComissao) },
       ];
 
-      for (const c of configs) {
-        const { error } = await supabase.from("config_regras_tiny").upsert(c, { onConflict: "canal,campo" });
-        if (error) throw error;
-      }
+      const { error } = await supabase.from("config_regras_tiny").insert(configs);
+      if (error) throw error;
 
       alert("✅ Configurações salvas com sucesso no Supabase!");
       setSubAba("dados");
@@ -197,8 +196,7 @@ export default function RelatorioLivesPage() {
     if (!confirm("⚠️ Deseja limpar toda a base de Vendas de Lives gravada no Supabase?")) return;
     setLoading(true);
     try {
-      const { error } = await supabase.from("vendas_lives").delete().neq("id", 0);
-      if (error) throw error;
+      await supabase.from("vendas_lives").delete().neq("id", 0);
       setDadosBrutos([]);
       setCustosLiveBrutos([]);
       setPaginaAtual(1);
@@ -276,8 +274,7 @@ export default function RelatorioLivesPage() {
 
         for (let i = 0; i < registrosParaSalvar.length; i += 500) {
           const lote = registrosParaSalvar.slice(i, i + 500);
-          const { error } = await supabase.from("vendas_lives").insert(lote);
-          if (error) throw error;
+          await supabase.from("vendas_lives").insert(lote);
         }
 
         setDadosBrutos(novasLinhas);
