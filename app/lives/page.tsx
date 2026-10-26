@@ -28,7 +28,7 @@ function normalizarSku(valor: any): string {
 function parseNumeroBruto(valor: any): number {
   if (valor === null || valor === undefined || valor === "") return 0;
   if (typeof valor === "number") return valor;
-  let s = String(valor).replace(/R\$/g, "").replace(/\$/g, "").replace(/\s/g, "").trim();
+  let s = String(valor).replace(/R\$/g, "").replace(/BRL/g, "").replace(/\$/g, "").replace(/\s/g, "").trim();
   if (s.includes(",") && s.includes(".")) {
     s = s.replace(/\./g, "").replace(",", ".");
   } else if (s.includes(",")) {
@@ -118,7 +118,6 @@ export default function RelatorioLivesPage() {
       });
       setCustosMap(cMap);
 
-      // Carregar configurações do Supabase (buscando pelos prefixos "live_")
       const { data: configData } = await supabase.from("config_regras_tiny").select("*").like("campo", "live_%");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
@@ -135,7 +134,6 @@ export default function RelatorioLivesPage() {
         });
       }
 
-      // Carregar vendas salvas
       let allVendas: any[] = [];
       let vFrom = 0;
       let vKeep = true;
@@ -166,6 +164,8 @@ export default function RelatorioLivesPage() {
 
   const salvarConfiguracoes = async () => {
     try {
+      await supabase.from("config_regras_tiny").delete().like("campo", "live_%");
+
       const configs = [
         { campo: "live_linha_inicial", coluna: String(linhaInicial) },
         { campo: "live_col_sku", coluna: String(colunaSku) },
