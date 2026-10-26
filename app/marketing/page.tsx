@@ -96,15 +96,16 @@ export default function MarketingPage() {
       const timestampEnvio = new Date().toISOString();
       const novosRegistros: any[] = [];
 
+      // Envia cada ficheiro individualmente para evitar estouro de tamanho de payload no Storage
       for (let i = 0; i < arquivos.length; i++) {
         const file = arquivos[i];
         const fileExt = file.name.split(".").pop();
-        const fileName = `mkt_${Date.now()}_${Math.random().toString(36).substring(2)}.${fileExt}`;
+        const fileName = `mkt_${Date.now()}_${i}_${Math.random().toString(36).substring(2)}.${fileExt}`;
         const filePath = `evidencias/${fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from("anexos")
-          .upload(filePath, file);
+          .upload(filePath, file, { upsert: true });
 
         if (uploadError) throw uploadError;
 
@@ -120,7 +121,7 @@ export default function MarketingPage() {
           tipo_midia: tipoMidia,
           url_arquivo: urlPublica,
           legenda: legenda.trim(),
-          created_at: timestampEnvio, // Força a mesma data/hora exata para agrupar as mídias no carrossel
+          created_at: timestampEnvio,
         });
       }
 
@@ -327,7 +328,6 @@ export default function MarketingPage() {
     return semanaReal === filtroSemanaVisualizacao;
   });
 
-  // Agrupa os posts por carimbo de data/hora exato de criação (created_at) para formar o carrossel sem precisar de alteração no SQL
   const agruparPostsDoDia = (dia: string) => {
     const itensDoDia = postagensFiltradasPorSemana.filter((p) => p.dia_semana === dia);
     const gruposMap: { [key: string]: any[] } = {};
