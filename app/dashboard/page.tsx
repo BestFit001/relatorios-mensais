@@ -9,6 +9,8 @@ export default function DashboardPage() {
   const [sales, setSales] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
+  const [channelLogos, setChannelLogos] = useState<Record<string, string>>({});
   
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
@@ -23,7 +25,6 @@ export default function DashboardPage() {
   const [dbDevolucoes, setDbDevolucoes] = useState<any[]>([]);
   const [dbAds, setDbAds] = useState<any[]>([]);
   const [dbPlp, setDbPlp] = useState<any[]>([]);
-  const [tarifasSiteMap, setTarifasSiteMap] = useState<Record<string, number>>({});
 
   const currentMonthDefault = new Date().toISOString().slice(0, 7);
   const previousMonthDefault = useMemo(() => {
@@ -71,44 +72,74 @@ export default function DashboardPage() {
         setDbCustosMap(cMap);
 
         // 2. Devoluções do Supabase
-        const { data: devData } = await supabase.from('devolucoes').select('*');
-        if (devData) setDbDevolucoes(devData);
+        try {
+          const { data: devData } = await supabase.from('devolucoes').select('*');
+          if (devData) setDbDevolucoes(devData);
+        } catch (e) {}
 
         // 3. Adsense / Ads
-        const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*').catch(() => supabase.from('ads').select('*'));
-        if (adsDataDb) setDbAds(adsDataDb);
+        try {
+          const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*');
+          if (adsDataDb) setDbAds(adsDataDb);
+          else {
+            const { data: adsAlt } = await supabase.from('ads').select('*');
+            if (adsAlt) setDbAds(adsAlt);
+          }
+        } catch (e) {}
 
         // 4. PLPs / Frete
-        const { data: plpData } = await supabase.from('plp_pedidos').select('*').catch(() => supabase.from('plp').select('*'));
-        if (plpData) setDbPlp(plpData);
+        try {
+          const { data: plpData } = await supabase.from('plp_pedidos').select('*');
+          if (plpData) setDbPlp(plpData);
+          else {
+            const { data: plpAlt } = await supabase.from('plp').select('*');
+            if (plpAlt) setDbPlp(plpAlt);
+          }
+        } catch (e) {}
 
-        // 5. Vendas (tabela vendas_lives ou equivalentes do projeto)
+        // 5. Vendas
         let allSales: any[] = [];
         let sFrom = 0;
         let sKeep = true;
         while (sKeep) {
-          const { data } = await supabase.from('vendas_lives').select('*').range(sFrom, sFrom + step - 1).catch(() => ({ data: [] }));
-          if (data && data.length > 0) {
-            allSales = [...allSales, ...data];
-            sFrom += step;
-            if (data.length < step) sKeep = false;
-          } else sKeep = false;
+          try {
+            const { data } = await supabase.from('vendas_lives').select('*').range(sFrom, sFrom + step - 1);
+            if (data && data.length > 0) {
+              allSales = [...allSales, ...data];
+              sFrom += step;
+              if (data.length < step) sKeep = false;
+            } else sKeep = false;
+          } catch (e) {
+            sKeep = false;
+          }
         }
         setSales(allSales);
 
         // 6. Metas e Regras de Canal
-        const { data: metasDb } = await supabase.from('tb_metas').select('*').catch(() => ({ data: [] }));
-        if (metasDb) setGoals(metasDb);
+        try {
+          const { data: metasDb } = await supabase.from('tb_metas').select('*');
+          if (metasDb) setGoals(metasDb);
+        } catch (e) {}
 
-        const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*').catch(() => ({ data: [] }));
-        if (regrasDb) {
-          setChannelRules(regrasDb);
-          const cList = Array.from(new Set(regrasDb.map((r: any) => r.canal).filter(Boolean))) as string[];
-          if (cList.length > 0) setCanais(cList);
-          else setCanais(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu']);
-        } else {
+        try {
+          const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
+          if (regrasDb) {
+            setChannelRules(regrasDb);
+            const cList = Array.from(new Set(regrasDb.map((r: any) => r.canal).filter(Boolean))) as string[];
+            if (cList.length > 0) setCanais(cList);
+            else setCanais(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu']);
+          } else {
+            setCanais(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu']);
+          }
+        } catch (e) {
           setCanais(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu']);
         }
+
+        // 7. Utilizadores
+        try {
+          const { data: usersDb } = await supabase.from('tb_usuarios').select('*');
+          if (usersDb) setUsers(usersDb);
+        } catch (e) {}
 
       } catch (err) {
         console.error("Erro ao carregar dados do Supabase:", err);
@@ -454,7 +485,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, dbAds, dbDevolucoes, appliedChannelFilter, appliedModalidadeFilter, channelRules, currentRefMonth, canais, targetDateStr]);
+  }, [enrichedSales, goals, dbAds, dbDevolucoes, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, targetDateStr]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
