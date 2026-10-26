@@ -77,7 +77,7 @@ export default function RelatorioLivesPage() {
 
   // Filtros
   const [buscaSku, setBuscaSku] = useState("");
-  const [filtroMes, setFiltroMes] = useState(""); // Formato AAAA-MM
+  const [filtroMes, setFiltroMes] = useState("");
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
@@ -95,6 +95,7 @@ export default function RelatorioLivesPage() {
   const carregarTudoDoSupabase = async () => {
     setLoading(true);
     try {
+      // 1. Carregar custos
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -115,20 +116,22 @@ export default function RelatorioLivesPage() {
       });
       setCustosMap(cMap);
 
+      // 2. Carregar configurações (mapeando exatamente com as chaves unificadas)
       const { data: configData } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
           if (cfg.campo === "linha_inicial") setLinhaInicial(cfg.coluna);
-          if (cfg.campo === "col_sku") setColunaSku(cfg.coluna);
-          if (cfg.campo === "col_status") setColunaStatus(cfg.coluna);
-          if (cfg.campo === "col_repasse") setColunaRepasse(cfg.coluna);
-          if (cfg.campo === "col_pdv") setColunaPdv(cfg.coluna);
-          if (cfg.campo === "col_data") setColunaData(cfg.coluna);
+          if (cfg.campo === "col_sku" || cfg.campo === "coluna_sku") setColunaSku(cfg.coluna);
+          if (cfg.campo === "col_status" || cfg.campo === "coluna_status") setColunaStatus(cfg.coluna);
+          if (cfg.campo === "col_repasse" || cfg.campo === "coluna_repasse") setColunaRepasse(cfg.coluna);
+          if (cfg.campo === "col_pdv" || cfg.campo === "coluna_pdv") setColunaPdv(cfg.coluna);
+          if (cfg.campo === "col_data" || cfg.campo === "coluna_data") setColunaData(cfg.coluna);
           if (cfg.campo === "imposto") setPercentualImposto(cfg.coluna);
           if (cfg.campo === "comissao") setPercentualComissao(cfg.coluna);
         });
       }
 
+      // 3. Carregar vendas salvas
       let allVendas: any[] = [];
       let vFrom = 0;
       let vKeep = true;
@@ -323,9 +326,7 @@ export default function RelatorioLivesPage() {
       return false;
     }
 
-    // Filtro por Mês (Ex: 2026-10)
     if (filtroMes && item.data) {
-      // item.data está no formato DD/MM/AAAA, convertemos para testar AAAA-MM
       const partes = item.data.split("/");
       if (partes.length === 3) {
         const mesAno = `${partes[2]}-${partes[1]}`;
@@ -568,7 +569,7 @@ export default function RelatorioLivesPage() {
               </div>
             </div>
 
-            {/* FILTROS (INCLUINDO FILTRO POR MÊS) */}
+            {/* FILTROS */}
             <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl flex flex-wrap gap-4 items-end">
               <div className="flex-1 min-w-[220px]">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Pesquisar por SKU ou Nome do Produto:</label>
@@ -620,7 +621,7 @@ export default function RelatorioLivesPage() {
               </button>
             </div>
 
-            {/* PAINEL UNIFICADO COM BOTÕES DE VISUALIZAÇÃO (DETALHADO / COMPACTO) */}
+            {/* PAINEL UNIFICADO */}
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col justify-between">
               <div>
                 <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex flex-wrap justify-between items-center gap-4">
