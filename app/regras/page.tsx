@@ -17,7 +17,7 @@ export default function RegrasPage() {
   const [canalSelecionado, setCanalSelecionado] = useState('Mercado Livre 1');
   const [novoCanalInput, setNovoCanalInput] = useState('');
 
-  // Estado unificado da regra do canal selecionado (exatamente conforme a sua imagem)
+  // Estado da regra do canal selecionado (exatamente conforme a sua imagem)
   const [metaMes, setMetaMes] = useState('outubro de 2026');
   const [metaValor, setMetaValor] = useState<number | string>(0);
   const [responsavelCanal, setResponsavelCanal] = useState('Equipe Best Fit');
@@ -31,13 +31,23 @@ export default function RegrasPage() {
     quantidade: 'G'
   });
 
-  // Estados originais do seu outro app mantidos intactos (Tiny, Custos e ML)
+  // Estados do outro app mantidos (Tiny, Custos e ML)
   const [metaTacos, setMetaTacos] = useState("2"); 
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [regrasCustos, setRegrasCustos] = useState({ sku: 'A', produto: 'B', custo: 'C', marca: 'D' });
   const [regrasMlCols, setRegrasMlCols] = useState({ mlb: 'A', sku: 'B', comissao: 'C', peso: '', altura: 'E', largura: 'F', comprimento: 'G' });
   const [regrasCanaisAds, setRegrasCanaisAds] = useState<any[]>([]);
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
+
+  // Estados de Tarifação
+  const [novoCanal, setNovoCanal] = useState("Amazon");
+  const [novaFaixa, setNovaFaixa] = useState("R$ 0.00 até R$ 78.99");
+  const [novaComissao, setNovaComissao] = useState("14.00");
+  const [novaTarifaFixa, setNovaTarifaFixa] = useState("4.00");
+  const [novoFrete, setNovoFrete] = useState("0.00");
+  const [salvandoTarifa, setSalvandoTarifa] = useState(false);
+
+  const canaisTarifacao = ["Amazon", "Centauro", "Magalu", "Netshoes", "Shein", "Shopee", "Site", "TikTok Shop", "Clube Hebraica", "Clube Paineiras"];
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -57,7 +67,6 @@ export default function RegrasPage() {
   const carregarDadosGlobais = async () => {
     setLoading(true);
     
-    // Carrega configurações gerais do Tiny e Custos
     const { data: configs } = await supabase.from('config_regras_tiny').select('*');
     if (configs) {
       const getCol = (campo: string, def: string) => configs.find((t: any) => t.campo === campo)?.coluna || def;
@@ -94,7 +103,6 @@ export default function RegrasPage() {
   };
 
   const carregarRegrasCanalEspecifico = async (canal: string) => {
-    // 1. Carrega regra do canal (Mapeamento colunas, fórmula, responsável, logo)
     const { data: regraDb } = await supabase.from('config_regras_canais').select('*').eq('canal', canal).maybeSingle();
     if (regraDb) {
       setFormulaApuracao(regraDb.formula_excel || 'D2 - (D2 * 12%)');
@@ -114,7 +122,6 @@ export default function RegrasPage() {
       setColunasFoco({ idPedido: 'A', sku: 'B', cupomEstado: 'C', precoVenda: 'D', quantidade: 'G' });
     }
 
-    // 2. Carrega meta do canal
     const { data: metaDb } = await supabase.from('tb_metas').select('*').eq('canal', canal).maybeSingle();
     if (metaDb) {
       setMetaValor(metaDb.meta_valor || 0);
@@ -136,7 +143,6 @@ export default function RegrasPage() {
   const salvarRegrasCanalAtual = async () => {
     setSalvando(true);
     try {
-      // Salva dados específicos do canal na tabela config_regras_canais
       await supabase.from('config_regras_canais').upsert([{
         canal: canalSelecionado,
         formula_excel: formulaApuracao,
@@ -149,7 +155,6 @@ export default function RegrasPage() {
         col_quantidade: colunasFoco.quantidade.toUpperCase()
       }], { onConflict: 'canal' });
 
-      // Salva a meta na tabela tb_metas
       await supabase.from('tb_metas').upsert([{
         canal: canalSelecionado,
         mes_referencia: metaMes,
@@ -223,6 +228,7 @@ export default function RegrasPage() {
 
   const adicionarRegraTarifacao = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSalvandoTarifa(true);
     const { error } = await supabase.from('config_regras_tarifacao').insert([{
       canal: novoCanal,
       faixa_preco: novaFaixa,
@@ -236,6 +242,7 @@ export default function RegrasPage() {
       carregarDadosGlobais();
       alert("✅ Regra de tarifação adicionada!");
     }
+    setSalvandoTarifa(false);
   };
 
   const removerRegraTarifacao = async (id: number) => {
@@ -305,7 +312,6 @@ export default function RegrasPage() {
                 <span className="text-xs text-slate-400 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">Parâmetros do Dash</span>
               </div>
 
-              {/* 1. Logo e Mês Referência */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-slate-300">Logo do Canal</label>
@@ -333,7 +339,6 @@ export default function RegrasPage() {
                 </div>
               </div>
 
-              {/* 2. Responsável e Meta */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-slate-300">Responsável pelo Canal:</label>
@@ -358,7 +363,6 @@ export default function RegrasPage() {
                 </div>
               </div>
 
-              {/* 3. Fórmula de Apuração */}
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-slate-300">Fórmula de Apuração (Ex: D2 - (D2 * 12%)):</label>
                 <input 
@@ -369,7 +373,6 @@ export default function RegrasPage() {
                 />
               </div>
 
-              {/* 4. Mapeamento das 5 Colunas Foco */}
               <div className="space-y-3 pt-2">
                 <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Mapeamento das 5 Colunas Foco:</label>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
@@ -430,7 +433,76 @@ export default function RegrasPage() {
               </div>
             </div>
 
-            {/* CONFIGURAÇÕES GERAIS TNY & CUSTOS (DO SEU OUTRO APP) */}
+            {/* REGRAS DE TARIFAÇÃO POR CANAL */}
+            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+              <div>
+                <h2 className="text-lg font-bold mb-1 text-white">Regras de Tarifação por Canal</h2>
+                <p className="text-xs text-slate-400">Defina comissão, tarifa fixa e frete por faixa de preço para os marketplaces.</p>
+              </div>
+
+              <form onSubmit={adicionarRegraTarifacao} className="bg-slate-950 p-6 rounded-xl border border-slate-800 grid grid-cols-1 sm:grid-cols-6 gap-4 items-end">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal</label>
+                  <select value={novoCanal} onChange={(e) => setNovoCanal(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none">
+                    {canaisTarifacao.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Faixa de Preço</label>
+                  <input type="text" value={novaFaixa} onChange={(e) => setNovaFaixa(e.target.value)} placeholder="Ex: R$ 0.00 até R$ 78.99" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" required />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Comissão (%)</label>
+                  <input type="number" step="0.01" value={novaComissao} onChange={(e) => setNovaComissao(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" required />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Tarifa Fixa (R$)</label>
+                  <input type="number" step="0.01" value={novaTarifaFixa} onChange={(e) => setNovaTarifaFixa(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" required />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Frete (R$)</label>
+                  <input type="number" step="0.01" value={novoFrete} onChange={(e) => setNovoFrete(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" required />
+                </div>
+                <div>
+                  <button type="submit" disabled={salvandoTarifa} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 rounded-lg text-xs uppercase tracking-wider cursor-pointer">
+                    + Adicionar
+                  </button>
+                </div>
+              </form>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[400px]">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                    <tr>
+                      <th className="p-3.5">Canal</th>
+                      <th className="p-3.5">Faixa de Preço</th>
+                      <th className="p-3.5 text-center">Comissão</th>
+                      <th className="p-3.5 text-right">Tarifa Fixa</th>
+                      <th className="p-3.5 text-right">Frete</th>
+                      <th className="p-3.5 text-center">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {regrasTarifacao.map((item) => (
+                      <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3.5 font-bold text-white">{item.canal}</td>
+                        <td className="p-3.5 text-slate-300">{item.faixa_preco}</td>
+                        <td className="p-3.5 text-center font-bold text-indigo-400">{Number(item.comissao).toFixed(2)}%</td>
+                        <td className="p-3.5 text-right font-mono text-slate-300">R$ {Number(item.tarifa_fixa).toFixed(2)}</td>
+                        <td className="p-3.5 text-right font-mono text-emerald-400">R$ {Number(item.frete).toFixed(2)}</td>
+                        <td className="p-3.5 text-center">
+                          <button onClick={() => removerRegraTarifacao(item.id)} className="bg-rose-950/60 text-rose-400 px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer">
+                            Remover
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* CONFIGURAÇÕES GERAIS TNY & CUSTOS */}
             <form onSubmit={salvarConfiguracoesGeraisTiny} className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
               
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
