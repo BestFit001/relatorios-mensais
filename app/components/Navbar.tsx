@@ -46,6 +46,7 @@ export default function Navbar() {
             "/ads",
             "/devolucoes",
             "/full",
+            "/lives",
             "/plp",
             "/agenda",
             "/regras",
@@ -287,7 +288,7 @@ export default function Navbar() {
           )}
 
           {/* FERRAMENTAS */}
-          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp")) && (
+          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp") || temPermissao("/lives")) && (
             <div>
               <button
                 onClick={() => sidebarAberta && toggleSecao("ferramentas")}
@@ -318,6 +319,11 @@ export default function Navbar() {
                   {temPermissao("/plp") && (
                     <Link href="/plp" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/plp") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       PLPs (Expedição)
+                    </Link>
+                  )}
+                  {temPermissao("/lives") && (
+                    <Link href="/lives" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/lives") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
+                      🔴 Vendas via Lives
                     </Link>
                   )}
                 </div>
