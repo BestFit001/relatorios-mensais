@@ -20,7 +20,7 @@ export default function MarketingPage() {
   const [arquivos, setArquivos] = useState<FileList | null>(null);
   const [postagens, setPostagens] = useState<any[]>([]);
 
-  // Filtro de Semana para visualização
+  // Filtro de Semana para visualização (padrão "atual")
   const [filtroSemanaVisualizacao, setFiltroSemanaVisualizacao] = useState<"anterior" | "atual" | "proxima">("atual");
 
   // Índices do carrossel de posts para cada dia da semana (setinhas inferiores)
@@ -120,7 +120,7 @@ export default function MarketingPage() {
           tipo_midia: tipoMidia,
           url_arquivo: urlPublica,
           legenda: legenda.trim(),
-          batch_id: batchId, // Identificador único para agrupar as mídias da mesma postagem
+          batch_id: batchId,
         });
       }
 
@@ -162,7 +162,6 @@ export default function MarketingPage() {
     }
   };
 
-  // Fallback caso algum registro antigo não tenha batch_id
   const excluirItemUnico = async (id: number, urlArquivo: string) => {
     if (!confirm("Deseja apagar este item?")) return;
     try {
@@ -305,9 +304,12 @@ export default function MarketingPage() {
   const percentualUso = Math.min((tamanhoStorageMb / limiteStorageMb) * 100, 100);
   const mbDisponiveis = Math.max(limiteStorageMb - tamanhoStorageMb, 0);
 
-  const postagensFiltradasPorSemana = postagens.filter(p => (p.semana_tipo || "atual") === filtroSemanaVisualizacao);
+  // Filtro rigoroso pela semana selecionada
+  const postagensFiltradasPorSemana = postagens.filter(p => {
+    const tipo = (p.semana_tipo || "atual").toLowerCase().trim();
+    return tipo === filtroSemanaVisualizacao.toLowerCase().trim();
+  });
 
-  // Função auxiliar para agrupar postagens por batch_id (ou id caso antigo) para cada dia
   const agruparPostsDoDia = (dia: string) => {
     const itensDoDia = postagensFiltradasPorSemana.filter((p) => p.dia_semana === dia);
     const gruposMap: { [key: string]: any[] } = {};
@@ -320,7 +322,7 @@ export default function MarketingPage() {
       gruposMap[chave].push(item);
     });
 
-    return Object.values(gruposMap); // Retorna uma lista de posts (cada post pode ter 1 ou N mídias)
+    return Object.values(gruposMap);
   };
 
   return (
@@ -470,7 +472,7 @@ export default function MarketingPage() {
               {diasSemana.map((dia, idx) => {
                 const postsDoDia = agruparPostsDoDia(dia);
                 const currentPostIndex = indicesCarrosselPost[dia] || 0;
-                const postAtual = postsDoDia[currentPostIndex]; // Esse post é um array de mídias (carrossel)
+                const postAtual = postsDoDia[currentPostIndex];
 
                 const batchIdAtual = postAtual && postAtual.length > 0 ? (postAtual[0].batch_id || `single_${postAtual[0].id}`) : "";
                 const currentMidiaIndex = indicesMidiaPost[batchIdAtual] || 0;
@@ -624,7 +626,7 @@ export default function MarketingPage() {
                 <p className="text-xs text-slate-400 mt-1">Apague registos por período ou limpe toda a base de postagens de uma só vez.</p>
               </div>
 
-      <div className="space-y-4">
+              <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-6 rounded-xl border border-slate-800">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Inicial:</label>
