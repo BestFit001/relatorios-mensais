@@ -93,7 +93,7 @@ export default function MarketingPage() {
 
     setSalvando(true);
     try {
-      const batchId = `post_${Date.now()}`;
+      const timestampEnvio = new Date().toISOString();
       const novosRegistros: any[] = [];
 
       for (let i = 0; i < arquivos.length; i++) {
@@ -120,7 +120,7 @@ export default function MarketingPage() {
           tipo_midia: tipoMidia,
           url_arquivo: urlPublica,
           legenda: legenda.trim(),
-          batch_id: batchId,
+          created_at: timestampEnvio, // Força a mesma data/hora exata para agrupar as mídias no carrossel
         });
       }
 
@@ -138,7 +138,7 @@ export default function MarketingPage() {
     setSalvando(false);
   };
 
-  const excluirPostagemGrupo = async (batchId: string, itensGrupo: any[]) => {
+  const excluirPostagemGrupo = async (itensGrupo: any[]) => {
     if (!confirm("Deseja apagar esta postagem completa (incluindo todos os ficheiros do carrossel)?")) return;
     
     try {
@@ -152,28 +152,10 @@ export default function MarketingPage() {
         }
       }
 
-      const { error } = await supabase.from("marketing_postagens").delete().eq("batch_id", batchId);
+      const ids = itensGrupo.map(i => i.id);
+      const { error } = await supabase.from("marketing_postagens").delete().in("id", ids);
       if (error) throw error;
 
-      carregarPostagens();
-      calcularUsoArmazenamento();
-    } catch (err: any) {
-      alert("Erro ao excluir: " + err.message);
-    }
-  };
-
-  const excluirItemUnico = async (id: number, urlArquivo: string) => {
-    if (!confirm("Deseja apagar este item?")) return;
-    try {
-      if (urlArquivo) {
-        const partesUrl = urlArquivo.split("/anexos/");
-        if (partesUrl.length > 1) {
-          const caminhoRelativo = decodeURIComponent(partesUrl[1]);
-          await supabase.storage.from("anexos").remove([caminhoRelativo]);
-        }
-      }
-      const { error } = await supabase.from("marketing_postagens").delete().eq("id", id);
-      if (error) throw error;
       carregarPostagens();
       calcularUsoArmazenamento();
     } catch (err: any) {
@@ -304,31 +286,26 @@ export default function MarketingPage() {
   const percentualUso = Math.min((tamanhoStorageMb / limiteStorageMb) * 100, 100);
   const mbDisponiveis = Math.max(limiteStorageMb - tamanhoStorageMb, 0);
 
-  // Função para determinar a semana real com base na data de criação (created_at) comparada ao calendário atual
   const obterSemanaRealPorData = (createdAtStr: string) => {
     if (!createdAtStr) return "atual";
     const dataPost = new Date(createdAtStr);
     if (isNaN(dataPost.getTime())) return "atual";
 
     const hoje = new Date();
-    // Início da semana atual (Segunda-feira)
     const diaSemanaHoje = hoje.getDay() === 0 ? 6 : hoje.getDay() - 1;
     const inicioSemanaAtual = new Date(hoje);
     inicioSemanaAtual.setDate(hoje.getDate() - diaSemanaHoje);
     inicioSemanaAtual.setHours(0, 0, 0, 0);
 
-    // Fim da semana atual (Domingo)
     const fimSemanaAtual = new Date(inicioSemanaAtual);
     fimSemanaAtual.setDate(inicioSemanaAtual.getDate() + 6);
     fimSemanaAtual.setHours(23, 59, 59, 999);
 
-    // Semana Anterior
     const inicioSemanaAnterior = new Date(inicioSemanaAtual);
     inicioSemanaAnterior.setDate(inicioSemanaAtual.getDate() - 7);
     const fimSemanaAnterior = new Date(fimSemanaAtual);
     fimSemanaAnterior.setDate(fimSemanaAtual.getDate() - 7);
 
-    // Próxima Semana
     const inicioProximaSemana = new Date(inicioSemanaAtual);
     inicioProximaSemana.setDate(inicioSemanaAtual.getDate() + 7);
     const fimProximaSemana = new Date(fimSemanaAtual);
@@ -342,22 +319,21 @@ export default function MarketingPage() {
       return "atual";
     }
 
-    // Se estiver fora por muito tempo, usa o campo cadastrado ou classifica por proximidade
     return dataPost < inicioSemanaAtual ? "anterior" : "proxima";
   };
 
-  // Filtro rigoroso pela semana real calculada pelo calendário do sistema
   const postagensFiltradasPorSemana = postagens.filter(p => {
     const semanaReal = obterSemanaRealPorData(p.created_at);
     return semanaReal === filtroSemanaVisualizacao;
   });
 
+  // Agrupa os posts por carimbo de data/hora exato de criação (created_at) para formar o carrossel sem precisar de alteração no SQL
   const agruparPostsDoDia = (dia: string) => {
     const itensDoDia = postagensFiltradasPorSemana.filter((p) => p.dia_semana === dia);
     const gruposMap: { [key: string]: any[] } = {};
 
     itensDoDia.forEach(item => {
-      const chave = item.batch_id || `single_${item.id}`;
+      const chave = item.created_at || `single_${item.id}`;
       if (!gruposMap[chave]) {
         gruposMap[chave] = [];
       }
@@ -516,8 +492,8 @@ export default function MarketingPage() {
                 const currentPostIndex = indicesCarrosselPost[dia] || 0;
                 const postAtual = postsDoDia[currentPostIndex];
 
-                const batchIdAtual = postAtual && postAtual.length > 0 ? (postAtual[0].batch_id || `single_${postAtual[0].id}`) : "";
-                const currentMidiaIndex = indicesMidiaPost[batchIdAtual] || 0;
+                const postIdKey = postAtual && postAtual.length > 0 ? (postAtual[0].created_at || `single_${postAtual[0].id}`) : "";
+                const currentMidiaIndex = indicesMidiaPost[postIdKey] || 0;
                 const midiaAtual = postAtual && postAtual.length > 0 ? postAtual[currentMidiaIndex] || postAtual[0] : null;
 
                 return (
@@ -548,7 +524,7 @@ export default function MarketingPage() {
                               {postAtual.map((_, mIdx) => (
                                 <button
                                   key={mIdx}
-                                  onClick={() => mudarMidiaPost(batchIdAtual, mIdx)}
+                                  onClick={() => mudarMidiaPost(postIdKey, mIdx)}
                                   className={`w-5 h-5 rounded text-[10px] font-bold flex items-center justify-center cursor-pointer transition-all ${
                                     currentMidiaIndex === mIdx
                                       ? "bg-purple-600 text-white shadow-md scale-105"
@@ -575,7 +551,7 @@ export default function MarketingPage() {
 
                           {/* BOTÃO DE EXCLUIR POST COMPLETO */}
                           <button
-                            onClick={() => postAtual[0].batch_id ? excluirPostagemGrupo(postAtual[0].batch_id, postAtual) : excluirItemUnico(midiaAtual.id, midiaAtual.url_arquivo)}
+                            onClick={() => excluirPostagemGrupo(postAtual)}
                             className="absolute top-2 right-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10"
                             title="Apagar post completo"
                           >
