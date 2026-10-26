@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
@@ -14,6 +14,9 @@ export default function AgendaPage() {
   const [filtroAssunto, setFiltroAssunto] = useState("");
   const [filtroPrioridade, setFiltroPrioridade] = useState("");
   const [assuntosDisponiveis, setAssuntosDisponiveis] = useState<string[]>([]);
+  
+  // Novo Estado de Filtro de Status (Inicia sempre em "pendentes")
+  const [filtroStatus, setFiltroStatus] = useState<"pendentes" | "entregues" | "todas">("pendentes");
 
   // Estado do Formulário de Inserção
   const hoje = new Date().toISOString().split('T')[0];
@@ -177,10 +180,19 @@ export default function AgendaPage() {
     else carregarTarefas();
   };
 
+  // Filtragem combinada (Assunto, Prioridade e Status da Aba)
   const dadosFiltrados = tarefas.filter(t => {
     const matchAssunto = filtroAssunto === "" || t.assunto === filtroAssunto;
     const matchPrioridade = filtroPrioridade === "" || t.prioridade === filtroPrioridade;
-    return matchAssunto && matchPrioridade;
+    
+    let matchStatus = true;
+    if (filtroStatus === "pendentes") {
+      matchStatus = !t.finalizado;
+    } else if (filtroStatus === "entregues") {
+      matchStatus = !!t.finalizado;
+    }
+
+    return matchAssunto && matchPrioridade && matchStatus;
   });
 
   return (
@@ -251,8 +263,45 @@ export default function AgendaPage() {
 
         {/* LISTAGEM DE TAREFAS */}
         <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden mb-8">
+          
+          {/* ABAS / FILTROS DE STATUS E OUTROS FILTROS */}
           <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
+            
+            {/* Abas de Navegação de Status */}
+            <div className="flex gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+              <button
+                onClick={() => setFiltroStatus("pendentes")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                  filtroStatus === "pendentes" 
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-950/50" 
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                ⏳ Tarefas em Aberto
+              </button>
+              <button
+                onClick={() => setFiltroStatus("entregues")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                  filtroStatus === "entregues" 
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-950/50" 
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                ✅ Tarefas Entregues
+              </button>
+              <button
+                onClick={() => setFiltroStatus("todas")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                  filtroStatus === "todas" 
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-950/50" 
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                📁 Todas as Tarefas
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4">
               <div>
                 <select value={filtroAssunto} onChange={e => setFiltroAssunto(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer">
                   <option value="">Todos os Assuntos</option>
@@ -267,20 +316,21 @@ export default function AgendaPage() {
                   <option value="Baixa">Baixa</option>
                 </select>
               </div>
+
+              <button 
+                onClick={() => setVisaoSimplificada(!visaoSimplificada)} 
+                className={`bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2.5 px-5 rounded-xl text-[11px] uppercase tracking-wider cursor-pointer transition-all`}
+              >
+                {visaoSimplificada ? "👁️ Mostrar Todas as Colunas" : "👁️ Visão Simplificada"}
+              </button>
             </div>
 
-            <button 
-              onClick={() => setVisaoSimplificada(!visaoSimplificada)} 
-              className={`bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2.5 px-5 rounded-xl text-[11px] uppercase tracking-wider cursor-pointer transition-all`}
-            >
-              {visaoSimplificada ? "👁️ Mostrar Todas as Colunas" : "👁️ Visão Simplificada"}
-            </button>
           </div>
 
           {loading ? (
             <p className="p-8 text-center text-slate-400">A carregar agenda...</p>
           ) : dadosFiltrados.length === 0 ? (
-            <p className="p-8 text-center text-slate-500">Nenhuma solicitação encontrada.</p>
+            <p className="p-8 text-center text-slate-500">Nenhuma solicitação encontrada para este filtro.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
