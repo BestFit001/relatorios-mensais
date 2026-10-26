@@ -57,11 +57,9 @@ export default function RelatorioLivesPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [subAba, setSubAba] = useState<"dados" | "config">("dados");
-
-  // Modo de visualização do painel unificado: "detalhado" ou "compacto"
   const [modoPainel, setModoPainel] = useState<"detalhado" | "compacto">("detalhado");
 
-  // Configurações por Letra de Coluna e Linha Inicial
+  // Configurações
   const [linhaInicial, setLinhaInicial] = useState("3");
   const [colunaSku, setColunaSku] = useState("H");
   const [colunaStatus, setColunaStatus] = useState("C");
@@ -71,7 +69,7 @@ export default function RelatorioLivesPage() {
   const [percentualImposto, setPercentualImposto] = useState("9");
   const [percentualComissao, setPercentualComissao] = useState("14");
 
-  // Dados e Paginação
+  // Dados
   const [dadosBrutos, setDadosBrutos] = useState<any[]>([]);
   const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [paginaAtual, setPaginaAtual] = useState(1);
@@ -82,7 +80,7 @@ export default function RelatorioLivesPage() {
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
-  const statusPermitidos = ["aguardando envio", "em trânsito", "concluído", "entregue", "enviado", "a ser enviado"];
+  const statusPermitidos = ["aguardando envio", "em trânsito", "concluído", "entregue", "enviado", "a ser enviado", "paid", "completed"];
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -90,12 +88,13 @@ export default function RelatorioLivesPage() {
       router.push("/login");
       return;
     }
-    carregarCustosEConfigSalvas();
+    carregarTudoDoSupabase();
   }, []);
 
-  const carregarCustosEConfigSalvas = async () => {
+  const carregarTudoDoSupabase = async () => {
     setLoading(true);
     try {
+      // 1. Carregar custos
       let allCustos: any[] = [];
       let from = 0;
       const step = 1000;
@@ -116,6 +115,7 @@ export default function RelatorioLivesPage() {
       });
       setCustosMap(cMap);
 
+      // 2. Carregar configurações
       const { data: configData } = await supabase.from("config_regras_tiny").select("*").eq("canal", "live_config");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
@@ -129,8 +129,32 @@ export default function RelatorioLivesPage() {
           if (cfg.campo === "comissao") setPercentualComissao(cfg.coluna);
         });
       }
+
+      // 3. Carregar dados salvos de vendas de lives do Supabase
+      let allVendas: any[] = [];
+      let vFrom = 0;
+      let vKeep = true;
+      while (vKeep) {
+        const { data } = await supabase.from("vendas_lives").select("*").range(vFrom, vFrom + step - 1);
+        if (data && data.length > 0) {
+          allVendas = [...allVendas, ...data];
+          vFrom += step;
+          if (data.length < step) vKeep = false;
+        } else vKeep = false;
+      }
+
+      if (allVendas.length > 0) {
+        setDadosBrutos(allVendas.map(v => ({
+          sku: v.sku,
+          status: v.status,
+          repasse: v.repasse,
+          pdv: v.pdv,
+          data: v.data_venda,
+          productName: v.nome_produto
+        })));
+      }
     } catch (e) {
-      console.error("Erro ao carregar bases:", e);
+      console.error("Erro ao carregar do Supabase:", e);
     }
     setLoading(false);
   };
@@ -165,7 +189,7 @@ export default function RelatorioLivesPage() {
 
     setLoading(true);
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         const buffer = evt.target?.result;
         const wb = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
@@ -178,27 +202,64 @@ export default function RelatorioLivesPage() {
         const idxRepasse = colunaParaIndice(colunaRepasse);
         const idxPdv = colunaParaIndice(colunaPdv);
         const idxData = colunaParaIndice(colunaData);
+        const idxNomeProd = colunaParaIndice("I");
 
-        const linhas = [];
+        const novasLinhas = [];
         for (let i = startRow; i < rawData.length; i++) {
           const row = rawData[i];
           if (!row || row.length === 0) continue;
 
-          linhas.push({
-            sku: row[idxSku] || "",
-            status: row[idxStatus] || "",
-            repasse: row[idxRepasse] || 0,
-            pdv: row[idxPdv] || 0,
-            data: row[idxData] || "",
-            productName: row[colunaParaIndice("I")] || "Produto",
+          novasLinhas.push({
+            sku: String(row[idxSku] || "").trim(),
+            status: String(row[idxStatus] || "").trim(),
+            repasse: parseNumeroBruto(row[idxRepasse]),
+            pdv: parseNumeroBruto(row[idxPdv]),
+            data: String(row[idxData] || "").trim(),
+            productName: String(row[idxNomeProd] || "Produto Live").trim(),
           });
         }
 
-        setDadosBrutos(linhas);
+        // Limpar tabela anterior no Supabase e inserir os novos dados
+        await supabase.from("vendas_lives").delete().neq("id", 0);
+
+        // Inserir em lotes de 500 para evitar timeout
+        const registrosParaSalvar = novasLinhas.map(row => {
+          const skuNorm = normalizarSku(row.sku);
+          const custoObj = custosMap.get(skuNorm);
+          const custoUnit = custoObj ? parseNumeroBruto(custoObj.custo_unitario ?? custoObj.custo ?? 0) : 0;
+          const nomeProd = custoObj ? (custoObj.produto || custoObj.descricao || row.productName) : row.productName;
+          
+          const impVal = row.repasse * (parseFloat(percentualImposto) / 100 || 0);
+          const comVal = row.repasse * (parseFloat(percentualComissao) / 100 || 0);
+          const liq = row.repasse - custoUnit - impVal - comVal;
+          const vPdv = row.pdv > 0 ? row.pdv : row.repasse;
+          const pctPdv = vPdv > 0 ? (liq / vPdv) * 100 : 0;
+
+          return {
+            sku: row.sku,
+            nome_produto: nomeProd,
+            repasse: row.repasse,
+            pdv: vPdv,
+            custo: custoUnit,
+            imposto: impVal,
+            comissao_vendedora: comVal,
+            liquidez: liq,
+            percentual_lucro_pdv: pctPdv,
+            data_venda: formatarDataCurta(row.data),
+            status: row.status
+          };
+        });
+
+        for (let i = 0; i < registrosParaSalvar.length; i += 500) {
+          const lote = registrosParaSalvar.slice(i, i + 500);
+          await supabase.from("vendas_lives").insert(lote);
+        }
+
+        setDadosBrutos(novasLinhas);
         setPaginaAtual(1);
-        alert(`✅ Planilha processada com sucesso! ${linhas.length} registos lidos.`);
+        alert(`✅ Sucesso! ${novasLinhas.length} registos lidos e salvos permanentemente no Supabase.`);
       } catch (err: any) {
-        alert("Erro ao ler planilha: " + err.message);
+        alert("Erro ao processar e salvar planilha: " + err.message);
       }
       setLoading(false);
     };
@@ -241,7 +302,7 @@ export default function RelatorioLivesPage() {
   }).filter(item => {
     if (!item.skuNorm) return false;
 
-    const statusLimpo = item.status.replace(/[\u0300-\u036f]/g, "");
+    const statusLimpo = item.status.replace(/[\u0300-\u036f]/g, "").toLowerCase();
     const statusValido = statusPermitidos.some(st => statusLimpo.includes(st.toLowerCase()));
     if (!statusValido) return false;
 
@@ -264,7 +325,7 @@ export default function RelatorioLivesPage() {
     ? dadosProcessados.reduce((acc, cur) => acc + cur.percentualLucroPdv, 0) / dadosProcessados.length 
     : 0;
 
-  // Montagem dos dados para a visão compacta (por SKU)
+  // Montagem da visão compacta por SKU
   const compactoMap = new Map<string, { sku: string; nome: string; qtd: number; repasse: number; custo: number; comissaoVendedora: number; liquidez: number; percentualLucroPdv: number }>();
   dadosProcessados.forEach(item => {
     if (!compactoMap.has(item.skuNorm)) {
@@ -292,7 +353,6 @@ export default function RelatorioLivesPage() {
     percentualLucroPdv: item.repasse > 0 ? (item.liquidez / item.repasse) * 100 : 0
   })).sort((a, b) => b.qtd - a.qtd);
 
-  // Dados ativos com base na aba escolhida (detalhado ou compacto)
   const itensAtivos = modoPainel === "detalhado" ? dadosProcessados : dadosCompactos;
 
   const totalPaginas = Math.ceil(itensAtivos.length / itensPorPagina) || 1;
@@ -307,7 +367,7 @@ export default function RelatorioLivesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatório de Vendas via LIVES</h1>
-            <p className="text-sm font-medium text-slate-400">Validação, comissão vendedora, % de lucro sobre PDV e painel unificado</p>
+            <p className="text-sm font-medium text-slate-400">Persistência no Supabase, comissão vendedora e painel unificado</p>
           </div>
           <Navbar />
         </div>
@@ -333,6 +393,7 @@ export default function RelatorioLivesPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <label className="text-xs text-indigo-400 font-bold">Carregar Planilha (Salva automático no Supabase):</label>
             <input
               type="file"
               accept=".xlsx, .xls, .csv"
@@ -346,7 +407,7 @@ export default function RelatorioLivesPage() {
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800/80 shadow-xl max-w-3xl mx-auto space-y-6">
             <div>
               <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações e Persistência Supabase</h2>
-              <p className="text-xs text-slate-400 mt-1">Ajuste as colunas e salve as regras para todo o sistema.</p>
+              <p className="text-xs text-slate-400 mt-1">Ajuste as colunas e salve as regras.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 bg-slate-950 p-6 rounded-xl border border-slate-800/80">
@@ -439,7 +500,7 @@ export default function RelatorioLivesPage() {
                 onClick={salvarConfiguracoes}
                 className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all shadow-lg shadow-indigo-950/50"
               >
-                Salvar no Supabase
+                Salvar Configurações no Supabase
               </button>
             </div>
           </div>
