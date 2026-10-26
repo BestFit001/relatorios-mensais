@@ -23,10 +23,13 @@ export default function MarketingPage() {
   // Filtro de Semana para visualização
   const [filtroSemanaVisualizacao, setFiltroSemanaVisualizacao] = useState<"anterior" | "atual" | "proxima">("atual");
 
-  // Índices do carrossel para cada dia da semana
-  const [indicesCarrossel, setIndicesCarrossel] = useState<{ [dia: string]: number }>({
+  // Índices do carrossel de posts para cada dia da semana (setinhas inferiores)
+  const [indicesCarrosselPost, setIndicesCarrosselPost] = useState<{ [dia: string]: number }>({
     Segunda: 0, Terça: 0, Quarta: 0, Quinta: 0, Sexta: 0, Sábado: 0, Domingo: 0
   });
+
+  // Índices internos de mídias/carrossel para cada post agrupado (quadradinhos superiores 1, 2, 3...)
+  const [indicesMidiaPost, setIndicesMidiaPost] = useState<{ [postId: string]: number }>({});
 
   // Estados da Gerência e Armazenamento
   const [dataInicioLimpeza, setDataInicioLimpeza] = useState("");
@@ -90,6 +93,7 @@ export default function MarketingPage() {
 
     setSalvando(true);
     try {
+      const batchId = `post_${Date.now()}`;
       const novosRegistros: any[] = [];
 
       for (let i = 0; i < arquivos.length; i++) {
@@ -116,13 +120,14 @@ export default function MarketingPage() {
           tipo_midia: tipoMidia,
           url_arquivo: urlPublica,
           legenda: legenda.trim(),
+          batch_id: batchId, // Identificador único para agrupar as mídias da mesma postagem
         });
       }
 
       const { error } = await supabase.from("marketing_postagens").insert(novosRegistros);
       if (error) throw error;
 
-      alert(`✅ ${novosRegistros.length} item(ns) adicionado(s) para ${diaSelecionado} (${semanaSelecionadaEnvio}) com sucesso!`);
+      alert(`✅ Postagem com ${novosRegistros.length} ficheiro(s) adicionada para ${diaSelecionado} (${semanaSelecionadaEnvio}) com sucesso!`);
       setLegenda("");
       setArquivos(null);
       carregarPostagens();
@@ -133,9 +138,33 @@ export default function MarketingPage() {
     setSalvando(false);
   };
 
-  const excluirPostagem = async (id: number, urlArquivo: string) => {
-    if (!confirm("Deseja apagar este item do calendário?")) return;
+  const excluirPostagemGrupo = async (batchId: string, itensGrupo: any[]) => {
+    if (!confirm("Deseja apagar esta postagem completa (incluindo todos os ficheiros do carrossel)?")) return;
     
+    try {
+      for (const item of itensGrupo) {
+        if (item.url_arquivo) {
+          const partesUrl = item.url_arquivo.split("/anexos/");
+          if (partesUrl.length > 1) {
+            const caminhoRelativo = decodeURIComponent(partesUrl[1]);
+            await supabase.storage.from("anexos").remove([caminhoRelativo]);
+          }
+        }
+      }
+
+      const { error } = await supabase.from("marketing_postagens").delete().eq("batch_id", batchId);
+      if (error) throw error;
+
+      carregarPostagens();
+      calcularUsoArmazenamento();
+    } catch (err: any) {
+      alert("Erro ao excluir: " + err.message);
+    }
+  };
+
+  // Fallback caso algum registro antigo não tenha batch_id
+  const excluirItemUnico = async (id: number, urlArquivo: string) => {
+    if (!confirm("Deseja apagar este item?")) return;
     try {
       if (urlArquivo) {
         const partesUrl = urlArquivo.split("/anexos/");
@@ -144,10 +173,8 @@ export default function MarketingPage() {
           await supabase.storage.from("anexos").remove([caminhoRelativo]);
         }
       }
-
       const { error } = await supabase.from("marketing_postagens").delete().eq("id", id);
       if (error) throw error;
-
       carregarPostagens();
       calcularUsoArmazenamento();
     } catch (err: any) {
@@ -169,22 +196,28 @@ export default function MarketingPage() {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
-      // Fallback abrindo em nova aba se o CORS bloquear o blob
       window.open(url, "_blank");
     }
   };
 
-  const proximoItem = (dia: string, total: number) => {
-    setIndicesCarrossel(prev => ({
+  const proximoPost = (dia: string, total: number) => {
+    setIndicesCarrosselPost(prev => ({
       ...prev,
       [dia]: (prev[dia] + 1) % total
     }));
   };
 
-  const anteriorItem = (dia: string, total: number) => {
-    setIndicesCarrossel(prev => ({
+  const anteriorPost = (dia: string, total: number) => {
+    setIndicesCarrosselPost(prev => ({
       ...prev,
       [dia]: (prev[dia] - 1 + total) % total
+    }));
+  };
+
+  const mudarMidiaPost = (keyId: string, index: number) => {
+    setIndicesMidiaPost(prev => ({
+      ...prev,
+      [keyId]: index
     }));
   };
 
@@ -274,6 +307,22 @@ export default function MarketingPage() {
 
   const postagensFiltradasPorSemana = postagens.filter(p => (p.semana_tipo || "atual") === filtroSemanaVisualizacao);
 
+  // Função auxiliar para agrupar postagens por batch_id (ou id caso antigo) para cada dia
+  const agruparPostsDoDia = (dia: string) => {
+    const itensDoDia = postagensFiltradasPorSemana.filter((p) => p.dia_semana === dia);
+    const gruposMap: { [key: string]: any[] } = {};
+
+    itensDoDia.forEach(item => {
+      const chave = item.batch_id || `single_${item.id}`;
+      if (!gruposMap[chave]) {
+        gruposMap[chave] = [];
+      }
+      gruposMap[chave].push(item);
+    });
+
+    return Object.values(gruposMap); // Retorna uma lista de posts (cada post pode ter 1 ou N mídias)
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -281,7 +330,7 @@ export default function MarketingPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Marketing — Hub Best Fit</h1>
-            <p className="text-sm font-medium text-slate-400">Calendário de postagens com suporte a 3 semanas e formatos (Story, Reels, Feed)</p>
+            <p className="text-sm font-medium text-slate-400">Calendário de postagens com suporte a carrossel de imagens e múltiplos formatos</p>
           </div>
           <Navbar />
         </div>
@@ -383,7 +432,7 @@ export default function MarketingPage() {
                 </div>
 
                 <div className="md:col-span-3">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ficheiro(s) (Múltiplos para carrossel):</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ficheiro(s) (Múltiplos para carrossel do post):</label>
                   <input
                     type="file"
                     multiple
@@ -419,60 +468,85 @@ export default function MarketingPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               {diasSemana.map((dia, idx) => {
-                const itensDoDia = postagensFiltradasPorSemana.filter((p) => p.dia_semana === dia);
-                const currentIndex = indicesCarrossel[dia] || 0;
-                const postAtual = itensDoDia[currentIndex];
+                const postsDoDia = agruparPostsDoDia(dia);
+                const currentPostIndex = indicesCarrosselPost[dia] || 0;
+                const postAtual = postsDoDia[currentPostIndex]; // Esse post é um array de mídias (carrossel)
+
+                const batchIdAtual = postAtual && postAtual.length > 0 ? (postAtual[0].batch_id || `single_${postAtual[0].id}`) : "";
+                const currentMidiaIndex = indicesMidiaPost[batchIdAtual] || 0;
+                const midiaAtual = postAtual && postAtual.length > 0 ? postAtual[currentMidiaIndex] || postAtual[0] : null;
 
                 return (
                   <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-5 flex flex-col justify-between space-y-4">
                     <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
                       <h3 className="text-sm font-black text-purple-400 uppercase">{dia}</h3>
                       <span className="text-[10px] bg-slate-950 px-2 py-0.5 rounded text-slate-400 font-mono">
-                        {itensDoDia.length > 0 ? `${currentIndex + 1} de ${itensDoDia.length}` : "0 item"}
+                        {postsDoDia.length > 0 ? `Post ${currentPostIndex + 1} de ${postsDoDia.length}` : "0 post"}
                       </span>
                     </div>
 
                     <div className="relative flex items-center justify-center min-h-[200px]">
-                      {itensDoDia.length > 0 && postAtual ? (
+                      {postsDoDia.length > 0 && midiaAtual ? (
                         <div className="w-full bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 relative group">
                           {/* ETIQUETA DE FORMATO */}
                           <div className="absolute top-2 left-2 z-10">
                             <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase shadow-md ${
-                              postAtual.formato === 'Story' ? 'bg-amber-600 text-white' :
-                              postAtual.formato === 'Reels' ? 'bg-rose-600 text-white' : 'bg-indigo-600 text-white'
+                              midiaAtual.formato === 'Story' ? 'bg-amber-600 text-white' :
+                              midiaAtual.formato === 'Reels' ? 'bg-rose-600 text-white' : 'bg-indigo-600 text-white'
                             }`}>
-                              {postAtual.formato === 'Story' ? '📱 Story' : postAtual.formato === 'Reels' ? '🎬 Reels' : '🖼️ Feed'}
+                              {midiaAtual.formato === 'Story' ? '📱 Story' : midiaAtual.formato === 'Reels' ? '🎬 Reels' : '🖼️ Feed'}
                             </span>
                           </div>
+
+                          {/* QUADRADINHOS NO CANTO SUPERIOR PARA CARROSSEL DE MÍDIAS (1, 2, 3...) */}
+                          {postAtual.length > 1 && (
+                            <div className="absolute top-2 right-16 z-10 flex gap-1">
+                              {postAtual.map((_, mIdx) => (
+                                <button
+                                  key={mIdx}
+                                  onClick={() => mudarMidiaPost(batchIdAtual, mIdx)}
+                                  className={`w-5 h-5 rounded text-[10px] font-bold flex items-center justify-center cursor-pointer transition-all ${
+                                    currentMidiaIndex === mIdx
+                                      ? "bg-purple-600 text-white shadow-md scale-105"
+                                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                                  }`}
+                                  title={`Ver mídia ${mIdx + 1}`}
+                                >
+                                  {mIdx + 1}
+                                </button>
+                              ))}
+                            </div>
+                          )}
 
                           {/* BOTÃO DE DOWNLOAD RÁPIDO */}
                           <div className="absolute top-2 right-9 z-10">
                             <button
-                              onClick={() => baixarFicheiro(postAtual.url_arquivo, postAtual.formato)}
+                              onClick={() => baixarFicheiro(midiaAtual.url_arquivo, midiaAtual.formato)}
                               className="bg-emerald-800 hover:bg-emerald-700 text-white w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center shadow-md cursor-pointer transition-all"
-                              title="Descarregar ficheiro"
+                              title="Descarregar ficheiro atual"
                             >
                               ⬇️
                             </button>
                           </div>
 
+                          {/* BOTÃO DE EXCLUIR POST COMPLETO */}
                           <button
-                            onClick={() => excluirPostagem(postAtual.id, postAtual.url_arquivo)}
+                            onClick={() => postAtual[0].batch_id ? excluirPostagemGrupo(postAtual[0].batch_id, postAtual) : excluirItemUnico(midiaAtual.id, midiaAtual.url_arquivo)}
                             className="absolute top-2 right-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10"
-                            title="Apagar item"
+                            title="Apagar post completo"
                           >
                             ✕
                           </button>
 
-                          {postAtual.tipo_midia === "video" ? (
-                            <video src={postAtual.url_arquivo} controls className="w-full h-44 object-cover rounded-lg bg-black pt-5" />
+                          {midiaAtual.tipo_midia === "video" ? (
+                            <video src={midiaAtual.url_arquivo} controls className="w-full h-44 object-cover rounded-lg bg-black pt-5" />
                           ) : (
-                            <img src={postAtual.url_arquivo} alt="Post" className="w-full h-44 object-cover rounded-lg bg-black pt-5" />
+                            <img src={midiaAtual.url_arquivo} alt="Post" className="w-full h-44 object-cover rounded-lg bg-black pt-5" />
                           )}
 
-                          {postAtual.legenda && (
+                          {midiaAtual.legenda && (
                             <p className="text-[11px] text-slate-300 leading-relaxed font-mono bg-slate-900 p-2 rounded-lg max-h-20 overflow-y-auto">
-                              {postAtual.legenda}
+                              {midiaAtual.legenda}
                             </p>
                           )}
                         </div>
@@ -481,16 +555,18 @@ export default function MarketingPage() {
                       )}
                     </div>
 
-                    {itensDoDia.length > 1 && (
+                    {/* SETINHAS INFERIORES PARA ALTERNAR ENTRE POSTS DIFERENTES DO DIA */}
+                    {postsDoDia.length > 1 && (
                       <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
                         <button
-                          onClick={() => anteriorItem(dia, itensDoDia.length)}
+                          onClick={() => anteriorPost(dia, postsDoDia.length)}
                           className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer"
                         >
                           ◀ Anterior
                         </button>
+                        <span className="text-[10px] text-slate-500 font-mono">Post {currentPostIndex + 1}/{postsDoDia.length}</span>
                         <button
-                          onClick={() => proximoItem(dia, itensDoDia.length)}
+                          onClick={() => proximoPost(dia, postsDoDia.length)}
                           className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer"
                         >
                           Próxima ▶
@@ -548,7 +624,7 @@ export default function MarketingPage() {
                 <p className="text-xs text-slate-400 mt-1">Apague registos por período ou limpe toda a base de postagens de uma só vez.</p>
               </div>
 
-              <div className="space-y-4">
+      <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-6 rounded-xl border border-slate-800">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Inicial:</label>
