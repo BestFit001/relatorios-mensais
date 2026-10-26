@@ -204,7 +204,7 @@ export default function Navbar() {
             </Link>
           )}
 
-          {/* RELATÓRIOS (INCLUINDO RELATÓRIO DE LIVE) */}
+          {/* RELATÓRIOS */}
           {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/lives")) && (
             <div>
               <button
@@ -230,7 +230,7 @@ export default function Navbar() {
                   )}
                   {temPermissao("/ads") && (
                     <Link href="/ads" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/ads") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
-                      Adsense / Ads
+                      Adsense
                     </Link>
                   )}
                   {temPermissao("/devolucoes") && (
@@ -240,12 +240,12 @@ export default function Navbar() {
                   )}
                   {temPermissao("/full") && (
                     <Link href="/full" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/full") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
-                      Full / FBA
+                      Fullfulfillment
                     </Link>
                   )}
                   {temPermissao("/lives") && (
                     <Link href="/lives" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/lives") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
-                      🔴 Relatório de Live
+                      Lives
                     </Link>
                   )}
                 </div>
