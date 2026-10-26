@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../lib/supabase";
 
 export default function Navbar() {
   const router = useRouter();
@@ -46,7 +46,6 @@ export default function Navbar() {
             "/ads",
             "/devolucoes",
             "/full",
-            "/lives",
             "/plp",
             "/agenda",
             "/regras",
@@ -205,7 +204,7 @@ export default function Navbar() {
           )}
 
           {/* RELATÓRIOS */}
-          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/lives")) && (
+          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full")) && (
             <div>
               <button
                 onClick={() => sidebarAberta && toggleSecao("relatorios")}
@@ -241,11 +240,6 @@ export default function Navbar() {
                   {temPermissao("/full") && (
                     <Link href="/full" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/full") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
                       Full / FBA
-                    </Link>
-                  )}
-                  {temPermissao("/lives") && (
-                    <Link href="/lives" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname?.includes("/lives") ? "text-indigo-400 font-bold bg-indigo-950/40" : "text-slate-400 hover:text-white"}`}>
-                      🔴 Vendas via Lives
                     </Link>
                   )}
                 </div>
