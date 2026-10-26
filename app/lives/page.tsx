@@ -118,6 +118,7 @@ export default function RelatorioLivesPage() {
       });
       setCustosMap(cMap);
 
+      // Carregar configurações do Supabase
       const { data: configData } = await supabase.from("config_regras_tiny").select("*").like("campo", "live_%");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
@@ -134,6 +135,7 @@ export default function RelatorioLivesPage() {
         });
       }
 
+      // Carregar vendas salvas
       let allVendas: any[] = [];
       let vFrom = 0;
       let vKeep = true;
@@ -154,6 +156,15 @@ export default function RelatorioLivesPage() {
           pdv: v.pdv,
           data: v.data_venda,
           productName: v.nome_produto
+        })));
+      }
+
+      // Carregar métricas salvas do segundo ficheiro
+      const { data: metricasData } = await supabase.from("metricas_lives").select("*");
+      if (metricasData && metricasData.length > 0) {
+        setCustosLiveBrutos(metricasData.map(m => ({
+          custoTotal: Number(m.custo_total) || 0,
+          roiMedio: Number(m.roi_medio) || 0
         })));
       }
     } catch (e) {
@@ -192,10 +203,11 @@ export default function RelatorioLivesPage() {
   };
 
   const limparBaseSupabase = async () => {
-    if (!confirm("⚠️ Deseja limpar toda a base de Vendas de Lives gravada no Supabase?")) return;
+    if (!confirm("⚠️ Deseja limpar toda a base de Vendas e Métricas de Lives gravada no Supabase?")) return;
     setLoading(true);
     try {
       await supabase.from("vendas_lives").delete().neq("id", 0);
+      await supabase.from("metricas_lives").delete().neq("id", 0);
       setDadosBrutos([]);
       setCustosLiveBrutos([]);
       setPaginaAtual(1);
@@ -278,7 +290,7 @@ export default function RelatorioLivesPage() {
 
         setDadosBrutos(novasLinhas);
         setPaginaAtual(1);
-        alert(`✅ Sucesso! ${novasLinhas.length} registos salvos no Supabase.`);
+        alert(`✅ Sucesso! ${novasLinhas.length} registos de vendas salvos no Supabase.`);
       } catch (err: any) {
         alert("Erro ao processar planilha: " + err.message);
       }
@@ -293,7 +305,7 @@ export default function RelatorioLivesPage() {
 
     setLoading(true);
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         const buffer = evt.target?.result;
         const wb = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
@@ -319,10 +331,19 @@ export default function RelatorioLivesPage() {
           }
         }
 
-        setCustosLiveBrutos([{ custoTotal: custoTotalLives, roiMedio: countLives > 0 ? roiSoma / countLives : 0 }]);
-        alert(`✅ Métricas carregadas! Custo Total: R$ ${custoTotalLives.toFixed(2)} | ROI Médio: ${(countLives > 0 ? roiSoma / countLives : 0).toFixed(2)}x`);
+        const roiMedioCalc = countLives > 0 ? roiSoma / countLives : 0;
+
+        // Salvar permanentemente no Supabase na tabela metricas_lives
+        await supabase.from("metricas_lives").delete().neq("id", 0);
+        await supabase.from("metricas_lives").insert({
+          custo_total: custoTotalLives,
+          roi_medio: roiMedioCalc
+        });
+
+        setCustosLiveBrutos([{ custoTotal: custoTotalLives, roiMedio: roiMedioCalc }]);
+        alert(`✅ Métricas carregadas e salvas no Supabase! Custo Total: R$ ${custoTotalLives.toFixed(2)} | ROI Médio: ${roiMedioCalc.toFixed(2)}x`);
       } catch (err: any) {
-        alert("Erro ao ler planilha de métricas: " + err.message);
+        alert("Erro ao ler/salvar planilha de métricas: " + err.message);
       }
       setLoading(false);
     };
