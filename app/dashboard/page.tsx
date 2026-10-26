@@ -22,7 +22,6 @@ export default function DashboardPage() {
   const [dbDevolucoes, setDbDevolucoes] = useState<any[]>([]);
   const [dbAds, setDbAds] = useState<any[]>([]);
   const [dbPlp, setDbPlp] = useState<any[]>([]);
-  const [dbFaturadosIds, setDbFaturadosIds] = useState<Set<string>>(new Set());
   const [configTarifas, setConfigTarifas] = useState<any[]>([]);
 
   const currentMonthDefault = new Date().toISOString().slice(0, 7);
@@ -47,7 +46,7 @@ export default function DashboardPage() {
       try {
         setLoading(true);
 
-        // 1. Custos de SKUs
+        // 1. Custos de SKUs cadastrados na aba de Custos
         let allCustos: any[] = [];
         let from = 0;
         const step = 1000;
@@ -64,43 +63,36 @@ export default function DashboardPage() {
         const cMap = new Map();
         allCustos.forEach((c: any) => {
           const skuNorm = String(c.sku || '').trim().toLowerCase();
-          const custoUni = Number(c.custo_unitario ?? c.custo ?? ((Number(c.preco_custo) || 0) + (Number(c.custo_embalagem) || 0))) || 0;
+          const custoUni = Number(c.custo_unitario ?? c.custo ?? 0) || 0;
           if (skuNorm) cMap.set(skuNorm, custoUni);
         });
         setDbCustosMap(cMap);
 
-        // 2. Faturados (Validação estricta por NFes Saída upadas na aba Admin)
-        try {
-          const { data: fatData } = await supabase.from('faturados').select('id_pedido');
-          if (fatData) {
-            setDbFaturadosIds(new Set(fatData.map((f: any) => String(f.id_pedido).trim())));
-          }
-        } catch (e) {}
-
-        // 3. Devoluções / Cancelados upados na aba Admin
+        // 2. Devoluções / Cancelados alimentados pelas outras abas
         try {
           const { data: devData } = await supabase.from('devolucoes').select('*');
           if (devData) setDbDevolucoes(devData);
         } catch (e) {}
 
-        // 4. Adsense / Investimento ADS upados
+        // 3. Adsense / Ads
         try {
           const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*');
           if (adsDataDb) setDbAds(adsDataDb);
         } catch (e) {}
 
-        // 5. PLPs / Frete FLEX upados
+        // 4. PLPs / Frete
         try {
           const { data: plpData } = await supabase.from('plp_pedidos').select('*');
           if (plpData) setDbPlp(plpData);
         } catch (e) {}
 
-        // 6. Metas e Tarifas configuradas nas Regras
+        // 5. Metas da aba Regras
         try {
           const { data: metasDb } = await supabase.from('tb_metas').select('*');
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
+        // 6. Tarifas da aba Regras
         try {
           const { data: tarifacaoDb } = await supabase.from('config_regras_tarifacao').select('*');
           if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
@@ -124,7 +116,7 @@ export default function DashboardPage() {
           }
         } catch (e) {}
 
-        // 8. Vendas Brutas importadas via Admin
+        // 8. Vendas faturadas das outras abas
         try {
           const { data: vendasDb } = await supabase.from('vendas_lives').select('*');
           if (vendasDb) setSales(vendasDb);
@@ -175,7 +167,6 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
-  // Vendas filtradas e cruzadas estritamente com as planilhas upadas e regras vigentes
   const enrichedSales = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -184,12 +175,6 @@ export default function DashboardPage() {
 
     return safeSales.filter((s: any) => {
         if (!s) return false;
-        
-        // Validação estricta: Se houver lista de faturados na base, o pedido precisa constar nela para ser considerado faturado real
-        if (dbFaturadosIds.size > 0 && s.id_pedido && !dbFaturadosIds.has(String(s.id_pedido).trim())) {
-          return false;
-        }
-
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
 
         const fisico = isChannelFisico(s.canal);
@@ -239,7 +224,6 @@ export default function DashboardPage() {
         const precoVenda = parseCurrency(s.preco_venda || s.pdv);
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
 
-        // Aplicação automática das regras de tarifação da aba Regras caso o repasse venha zerado
         if (repasseLiquido <= 0) {
           const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal);
           if (regraFaixa) {
@@ -264,7 +248,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, dbFaturadosIds, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
 
   const kpis = useMemo(() => {
     const safeCanais = Array.isArray(canais) ? canais : [];
@@ -679,7 +663,6 @@ export default function DashboardPage() {
         {/* 4 CARDS PRINCIPAIS */}
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           
-          {/* 1. FATURAMENTO BRUTO */}
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 flex flex-col justify-between text-center shadow-xl">
             <div>
               <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Bruto</span>
@@ -716,7 +699,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* 2. REPASSE TOTAL */}
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 flex flex-col justify-between text-center shadow-xl">
             <div>
               <span className="text-[10px] font-bold text-slate-400 uppercase">Repasse Total das Plataformas</span>
@@ -734,7 +716,6 @@ export default function DashboardPage() {
             </div>
           </div>
           
-          {/* 3. CMV TOTAL */}
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 flex flex-col justify-between text-center shadow-xl">
             <div>
               <span className="text-[10px] font-bold text-slate-400 uppercase">CMV Total (Padrão Atual)</span>
@@ -752,7 +733,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* 4. LUCRO LÍQUIDO REAL */}
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-emerald-500/30 flex flex-col justify-between text-center shadow-xl">
             <div>
               <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
