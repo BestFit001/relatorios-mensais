@@ -21,7 +21,6 @@ export default function AdminPage() {
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   
-  // Seleção da Conta de Mercado Livre
   const [contaMlSelecionada, setContaMlSelecionada] = useState<"Mercado Livre 1" | "Mercado Livre 2">("Mercado Livre 1");
 
   const [colunasPorConta, setColunasPorConta] = useState<{ [key: string]: { ml_mlb: string, ml_sku: string, ml_comissao: string, ml_peso: string, ml_altura: string, ml_largura: string, ml_comprimento: string } }>({
@@ -53,6 +52,8 @@ export default function AdminPage() {
   ]);
   const [colunaIdFaturados, setColunaIdFaturados] = useState("AI");
   const [colunaDataFaturados, setColunaDataFaturados] = useState("D");
+  const [colunaIdSite, setColunaIdSite] = useState("A");
+  const [colunaTarifaSite, setColunaTarifaSite] = useState("E");
 
   const mesReferencia = mes && ano ? `${mes}/${ano}` : "";
   const meses = [
@@ -216,7 +217,7 @@ export default function AdminPage() {
     return s;
   };
 
-  // Funções de Upload simplificadas e otimizadas
+  // Funções de Upload
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -321,6 +322,53 @@ export default function AdminPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // Restaura a função de subida de Tarifas do Site
+  const handleSubirTarifasSite = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
+        const idxId = letraParaIndice(colunaIdSite);
+        const idxTarifa = letraParaIndice(colunaTarifaSite);
+
+        const registros = [];
+        for (let i = 1; i < json.length; i++) {
+          const row = json[i];
+          if (!row) continue;
+          const idPedido = String(row[idxId] || "").trim();
+          const valorTarifa = Number(String(row[idxTarifa] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
+
+          if (idPedido) {
+            registros.push({
+              id_pedido: idPedido,
+              tarifa_site: valorTarifa,
+              mes_referencia: mesAlvoDash
+            });
+          }
+        }
+
+        if (registros.length > 0) {
+          await supabase.from('config_regras_tarifacao').upsert(registros, { onConflict: 'id_pedido' });
+        }
+
+        alert(`✅ Tarifas do Site importadas! Total: ${registros.length} registos.`);
+        setLoading(false);
+      } catch (err: any) {
+        alert("Erro ao importar Tarifas do Site: " + err.message);
+        setLoading(false);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   const apagarDadosPorTipo = async (tabela: string) => {
     if (!confirm(`Deseja limpar os registros de [${tabela}] para o mês [${mesAlvoDash}]?`)) return;
     setLoading(true);
@@ -384,7 +432,7 @@ export default function AdminPage() {
         setDadosABC(formatado);
         alert(`Curva ABC processada: ${formatado.length} produtos válidos.`);
       } catch (err: any) {
-        alert("Erro: " + err.message);
+        alert("Erro ao ler Curva ABC: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -433,7 +481,7 @@ export default function AdminPage() {
         setDadosInvBruto(formatado);
         alert(`Inventário processado: ${formatado.length} SKUs identificados.`);
       } catch (err: any) {
-        alert("Erro: " + err.message);
+        alert("Erro ao ler Inventário: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -479,12 +527,6 @@ export default function AdminPage() {
     if (!confirm("Apagar todos os custos?")) return;
     await supabase.from('tabela_custos_skus').delete().neq('id', 0);
     setListaCustosFiltrados([]);
-  };
-
-  const limparRegrasMl = async () => {
-    if (!confirm(`Apagar regras de "${contaMlSelecionada}"?`)) return;
-    await supabase.from('ml_anuncios_regras').delete().eq('canal', contaMlSelecionada);
-    setListaRegrasMlFiltradas([]);
   };
 
   const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
@@ -1005,7 +1047,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ABA: ALIMENTA DASHBOARD (ADMIN) [Limpado sem os campos manuais de frete, ads e cancelamentos] */}
+        {/* ABA: ALIMENTA DASHBOARD (ADMIN) [Com Faturados, Vendas Canal e Tarifas do Site] */}
         {abaAtiva === "dashboard_admin" && (
           <div className="space-y-6">
             
@@ -1053,6 +1095,28 @@ export default function AdminPage() {
                 <label className="block w-full text-center bg-purple-600 hover:bg-purple-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
                   <span>Importar e Cruzar Vendas</span>
                   <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirVendasCanal} className="hidden" />
+                </label>
+              </div>
+            </div>
+
+            {/* CONSULTA TARIFAS SITE (RESTAURADO) */}
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6 max-w-xl">
+              <h3 className="text-sm font-black text-emerald-400 uppercase tracking-wider">Consulta Tarifas Site</h3>
+              <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
+                <p className="text-[10px] text-slate-400">Cruza ID do Pedido com a tarifa para descontar do líquido final.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col ID Pedido</label>
+                    <input type="text" value={colunaIdSite} onChange={e => setColunaIdSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col Valor Tarifa</label>
+                    <input type="text" value={colunaTarifaSite} onChange={e => setColunaTarifaSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                  </div>
+                </div>
+                <label className="block w-full text-center bg-indigo-600 hover:bg-indigo-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
+                  <span>Subir Tarifas do Site</span>
+                  <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirTarifasSite} className="hidden" />
                 </label>
               </div>
             </div>
