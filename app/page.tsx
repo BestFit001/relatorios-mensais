@@ -7,7 +7,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [canais, setCanais] = useState<string[]>(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu', 'Clube Hebraica', 'Clube Paineiras']);
   const [adminSales, setAdminSales] = useState<any[]>([]);
-  const [faturadosIds, setFaturadosIds] = useState<Set<string>>(new Set());
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
   
@@ -47,7 +46,7 @@ export default function DashboardPage() {
       try {
         setLoading(true);
 
-        // 1. Custos de SKUs cadastrados na aba de Custos
+        // 1. Custos de SKUs
         let allCustos: any[] = [];
         let from = 0;
         const step = 1000;
@@ -69,52 +68,43 @@ export default function DashboardPage() {
         });
         setDbCustosMap(cMap);
 
-        // 2. PASSO 1: Buscar IDs dos Faturados (NFes Saída)
-        try {
-          const { data: fatData } = await supabase.from('faturados').select('id_pedido');
-          if (fatData) {
-            setFaturadosIds(new Set(fatData.map((f: any) => String(f.id_pedido).trim())));
-          }
-        } catch (e) {}
-
-        // 3. PASSO 2: Buscar Vendas Importadas (Tabela de upload de canais)
-        // Certifique-se de alterar 'vendas_lives' abaixo para outra tabela caso tenha criado uma específica para uploads padrão.
+        // 2. Vendas Importadas (Passo 2 / Tabela de Canais)
         try {
           const { data: vendasAdmin } = await supabase.from('vendas_lives').select('*');
           if (vendasAdmin) setAdminSales(vendasAdmin);
         } catch (e) {}
 
-        // 4. Devoluções / Cancelados
+        // 3. Devoluções
         try {
           const { data: devData } = await supabase.from('devolucoes').select('*');
           if (devData) setDbDevolucoes(devData);
         } catch (e) {}
 
-        // 5. Adsense / Ads
+        // 4. Ads
         try {
           const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*');
           if (adsDataDb) setDbAds(adsDataDb);
         } catch (e) {}
 
-        // 6. PLPs / Frete
+        // 5. PLP
         try {
           const { data: plpData } = await supabase.from('plp_pedidos').select('*');
           if (plpData) setDbPlp(plpData);
         } catch (e) {}
 
-        // 7. Metas da aba Regras
+        // 6. Metas
         try {
           const { data: metasDb } = await supabase.from('tb_metas').select('*');
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
-        // 8. Tarifas do Site / Tarifação
+        // 7. Tarifas
         try {
           const { data: tarifacaoDb } = await supabase.from('config_regras_tarifacao').select('*');
           if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
         } catch (e) {}
 
-        // 9. Canais ativos
+        // 8. Canais
         try {
           const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
           if (regrasDb && regrasDb.length > 0) {
@@ -133,7 +123,7 @@ export default function DashboardPage() {
         } catch (e) {}
 
       } catch (err) {
-        console.error("Erro ao carregar dados para o Dashboard:", err);
+        console.error("Erro ao carregar dados:", err);
       } finally {
         setLoading(false);
       }
@@ -185,12 +175,6 @@ export default function DashboardPage() {
 
     return safeSales.filter((s: any) => {
         if (!s) return false;
-
-        // FILTRAGEM OBRIGATÓRIA: O pedido precisa existir na tabela de Faturados (Passo 1)
-        if (faturadosIds.size > 0 && s.id_pedido && !faturadosIds.has(String(s.id_pedido).trim())) {
-          return false;
-        }
-
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
 
         const fisico = isChannelFisico(s.canal);
@@ -270,7 +254,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [adminSales, faturadosIds, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
+  }, [adminSales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
 
   const kpis = useMemo(() => {
     const safeCanais = Array.isArray(canais) ? canais : [];
@@ -566,7 +550,7 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Dashboard Omnichannel</h1>
-            <p className="text-sm font-medium text-slate-400">Visão consolidada cruzando Faturados (Passo 1) com Uploads de Vendas (Passo 2)</p>
+            <p className="text-sm font-medium text-slate-400">Visão consolidada utilizando diretamente os uploads de Vendas (Passo 2)</p>
           </div>
           <Navbar />
         </div>
@@ -655,7 +639,7 @@ export default function DashboardPage() {
               <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Bruto</span>
               <h3 className="text-2xl font-black text-white mt-1">R$ {kpis.faturamentoBrutoVendas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
               <p className="text-[10px] text-slate-500 mt-1">
-                {kpis.totalPedidos} itens validados (Faturados)
+                {kpis.totalPedidos} itens validados
                 {kpis.totalDevolucoesValor > 0 && <span className="text-rose-400 block mt-0.5">Devoluções Supabase: - R$ {kpis.totalDevolucoesValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>}
               </p>
             </div>
