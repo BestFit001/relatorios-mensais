@@ -357,7 +357,7 @@ export default function DashboardPage() {
     const safeCanais = Array.isArray(canais) ? canais : [];
     const activeChannels = Array.from(new Set([...safeCanais, 'Clube Hebraica', 'Clube Paineiras']));
     
-    let channelsToAnalyze = appliedChannelFilter === 'TODOS' ? activeChannels : activeChannels.filter(c => c === activeChannels);
+    let channelsToAnalyze = appliedChannelFilter === 'TODOS' ? activeChannels : activeChannels.filter(c => c === appliedChannelFilter);
 
     if (appliedModalidadeFilter === 'FISICO') {
       channelsToAnalyze = channelsToAnalyze.filter(c => isChannelFisico(c));
