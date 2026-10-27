@@ -182,6 +182,17 @@ export default function UpdatesPage() {
     setLoading(false);
   };
 
+  const limparTabelaCustos = async () => {
+    if (!confirm("Apagar todos os custos guardados?")) return;
+    try {
+      await supabase.from('tabela_custos_skus').delete().neq('id', 0);
+      setListaCustosFiltrados([]);
+      alert("✅ Custos limpos com sucesso.");
+    } catch (err: any) {
+      alert("Erro ao limpar custos: " + err.message);
+    }
+  };
+
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
