@@ -38,7 +38,8 @@ const TABELAS = [
 ] as const;
 
 /* ------------------------------ helpers ------------------------------ */
-const norm = (v: any) => String(v ?? '').trim().toLowerCase();
+const norm = (v: any) =>
+  String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
 const normPedido = (v: any) => String(v ?? '').trim().replace(/\.0$/, '').replace(/\D/g, '');
 const pad = (n: number) => String(n).padStart(2, '0');
 const isoLocal = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -468,15 +469,16 @@ export default function DashboardPage() {
   const canaisLista = useMemo(() => {
     const mapa = new Map<string, string>();
     const add = (n: any) => { const k = norm(n); if (k && !mapa.has(k)) mapa.set(k, String(n).trim()); };
+    // Fonte única: aba de Regras. Mesma lista que a aba Ads usa (config_regras_canais),
+    // mais os canais salvos em "canais_dashboard". Nomes idênticos aos de "Configurando Canal".
+    (db.config_regras_canais || []).forEach((r: any) => add(r.canal));
     const cfg = (db.config_regras_tiny || []).find((t: any) => t.campo === 'canais_dashboard');
     if (cfg?.coluna) {
       try { const p = JSON.parse(cfg.coluna); if (Array.isArray(p)) p.forEach(add); } catch { /* ignora */ }
     }
-    (db.config_regras_canais || []).forEach((r: any) => add(r.canal));
-    new Set((db.vendas_padrao_lancamentos || []).map((v: any) => v.canal)).forEach(add);
     CANAIS_FISICOS_PADRAO.forEach(add);
     return Array.from(mapa.values());
-  }, [db.config_regras_tiny, db.config_regras_canais, db.vendas_padrao_lancamentos]);
+  }, [db.config_regras_tiny, db.config_regras_canais]);
 
   /* ------------------------------ métricas ------------------------------ */
   const channelAnalytics = useMemo(() => {
@@ -492,8 +494,7 @@ export default function DashboardPage() {
       .filter((c) => passaFiltros(c))
       .sort((a, b) => {
         const fa = isChannelFisico(a), fb = isChannelFisico(b);
-        if (fa !== fb) return fa ? -1 : 1;
-        return a.localeCompare(b);
+        return fa === fb ? 0 : fa ? -1 : 1; // ordem original da aba de Regras
       })
       .map((canal): Metricas => {
         const k = norm(canal);
@@ -551,9 +552,18 @@ export default function DashboardPage() {
     }
     const skusSemCusto = new Set(vendasPeriodo.filter((v) => v.semCusto).map((v) => v.sku));
     if (skusSemCusto.size > 0) lista.push(`${skusSemCusto.size} SKUs vendidos sem custo cadastrado — o CMV está subestimado.`);
+    const nomesRegras = new Set(canaisLista.map(norm));
+    const vendasForaLista = new Set(vendasPeriodo.filter((v) => !nomesRegras.has(v.canalNorm)).map((v) => v.canal));
+    if (vendasForaLista.size > 0) {
+      lista.push(`Vendas em canais que não existem na aba Regras (não entram nos totais): ${Array.from(vendasForaLista).join(', ')}.`);
+    }
+    const adsForaLista = Array.from(adsPorCanal.entries()).filter(([k, v]) => v > 0 && !nomesRegras.has(k)).map(([k]) => k);
+    if (adsForaLista.length > 0) {
+      lista.push(`Ads lançado em canais com nome diferente da aba Regras (não debitado): ${adsForaLista.join(', ')}.`);
+    }
     if (flex.semVendaQtd > 0) lista.push(`${flex.semVendaQtd} pedidos FLEX (R$ ${brl(flex.semVendaValor)}) sem venda correspondente no período — frete não descontado.`);
     return lista;
-  }, [vendasPeriodo, flex]);
+  }, [vendasPeriodo, flex, canaisLista, adsPorCanal]);
 
   /* -------------------------------- e-mail -------------------------------- */
   const handleEnviarEmailAlerta = () => {
