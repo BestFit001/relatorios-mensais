@@ -86,6 +86,9 @@ export default function RelatorioLivesPage() {
 
   const statusPermitidos = ["aguardando envio", "em trânsito", "concluído", "entregue", "enviado", "a ser enviado", "paid", "completed"];
 
+  // TABELA ISOLADA PARA AS LIVES (NÃO AFETA O DASHBOARD)
+  const TABELA_DESTINO_LIVES = "vendas_lives_separadas";
+
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
     if (!usuarioLogado) {
@@ -118,7 +121,6 @@ export default function RelatorioLivesPage() {
       });
       setCustosMap(cMap);
 
-      // Carregar configurações do Supabase
       const { data: configData } = await supabase.from("config_regras_tiny").select("*").like("campo", "live_%");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
@@ -135,12 +137,12 @@ export default function RelatorioLivesPage() {
         });
       }
 
-      // Carregar vendas salvas
+      // Carregar exclusivamente da tabela isolada de lives
       let allVendas: any[] = [];
       let vFrom = 0;
       let vKeep = true;
       while (vKeep) {
-        const { data } = await supabase.from("vendas_lives").select("*").range(vFrom, vFrom + step - 1);
+        const { data } = await supabase.from(TABELA_DESTINO_LIVES).select("*").range(vFrom, vFrom + step - 1);
         if (data && data.length > 0) {
           allVendas = [...allVendas, ...data];
           vFrom += step;
@@ -159,7 +161,6 @@ export default function RelatorioLivesPage() {
         })));
       }
 
-      // Carregar métricas salvas do segundo ficheiro
       const { data: metricasData } = await supabase.from("metricas_lives").select("*");
       if (metricasData && metricasData.length > 0) {
         setCustosLiveBrutos(metricasData.map(m => ({
@@ -203,15 +204,15 @@ export default function RelatorioLivesPage() {
   };
 
   const limparBaseSupabase = async () => {
-    if (!confirm("⚠️ Deseja limpar toda a base de Vendas e Métricas de Lives gravada no Supabase?")) return;
+    if (!confirm("⚠️ Deseja limpar toda a base de Vendas e Métricas de Lives gravada na tabela isolada?")) return;
     setLoading(true);
     try {
-      await supabase.from("vendas_lives").delete().neq("id", 0);
+      await supabase.from(TABELA_DESTINO_LIVES).delete().neq("id", 0);
       await supabase.from("metricas_lives").delete().neq("id", 0);
       setDadosBrutos([]);
       setCustosLiveBrutos([]);
       setPaginaAtual(1);
-      alert("✅ Base limpa com sucesso!");
+      alert("✅ Base isolada de lives limpa com sucesso!");
     } catch (err: any) {
       alert("Erro ao limpar base: " + err.message);
     }
@@ -254,7 +255,8 @@ export default function RelatorioLivesPage() {
           });
         }
 
-        await supabase.from("vendas_lives").delete().neq("id", 0);
+        // SALVA EXCLUSIVAMENTE NA TABELA ISOLADA, SEM MEXER NO DASHBOARD
+        await supabase.from(TABELA_DESTINO_LIVES).delete().neq("id", 0);
 
         const registrosParaSalvar = novasLinhas.map(row => {
           const skuNorm = normalizarSku(row.sku);
@@ -285,12 +287,12 @@ export default function RelatorioLivesPage() {
 
         for (let i = 0; i < registrosParaSalvar.length; i += 500) {
           const lote = registrosParaSalvar.slice(i, i + 500);
-          await supabase.from("vendas_lives").insert(lote);
+          await supabase.from(TABELA_DESTINO_LIVES).insert(lote);
         }
 
         setDadosBrutos(novasLinhas);
         setPaginaAtual(1);
-        alert(`✅ Sucesso! ${novasLinhas.length} registos de vendas salvos no Supabase.`);
+        alert(`✅ Sucesso! ${novasLinhas.length} registos de lives salvos na tabela isolada (${TABELA_DESTINO_LIVES}).`);
       } catch (err: any) {
         alert("Erro ao processar planilha: " + err.message);
       }
@@ -333,7 +335,6 @@ export default function RelatorioLivesPage() {
 
         const roiMedioCalc = countLives > 0 ? roiSoma / countLives : 0;
 
-        // Salvar permanentemente no Supabase na tabela metricas_lives
         await supabase.from("metricas_lives").delete().neq("id", 0);
         await supabase.from("metricas_lives").insert({
           custo_total: custoTotalLives,
@@ -341,7 +342,7 @@ export default function RelatorioLivesPage() {
         });
 
         setCustosLiveBrutos([{ custoTotal: custoTotalLives, roiMedio: roiMedioCalc }]);
-        alert(`✅ Métricas carregadas e salvas no Supabase! Custo Total: R$ ${custoTotalLives.toFixed(2)} | ROI Médio: ${roiMedioCalc.toFixed(2)}x`);
+        alert(`✅ Métricas carregadas! Custo Total: R$ ${custoTotalLives.toFixed(2)} | ROI Médio: ${roiMedioCalc.toFixed(2)}x`);
       } catch (err: any) {
         alert("Erro ao ler/salvar planilha de métricas: " + err.message);
       }
@@ -464,12 +465,11 @@ export default function RelatorioLivesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatório de Vendas via LIVES</h1>
-            <p className="text-sm font-medium text-slate-400">Custos de Lives, ROI, Supabase e painel unificado</p>
+            <p className="text-sm font-medium text-slate-400">Salvo na tabela isolada ({TABELA_DESTINO_LIVES}) — Sem interferir no Dashboard</p>
           </div>
           <Navbar />
         </div>
 
-        {/* UPLOADS DE PLANILHAS E ABAS */}
         <div className="flex justify-between items-center flex-wrap gap-4 bg-slate-900/90 p-3 rounded-2xl border border-slate-800/80 shadow-lg">
           <div className="flex gap-3">
             <button
@@ -647,7 +647,6 @@ export default function RelatorioLivesPage() {
         {subAba === "dados" && (
           <div className="space-y-6">
             
-            {/* CARDS DE RESUMO */}
             <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
               <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Total Repasse</span>
@@ -683,7 +682,6 @@ export default function RelatorioLivesPage() {
               </div>
             </div>
 
-            {/* FILTROS */}
             <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl flex flex-wrap gap-4 items-end">
               <div className="flex-1 min-w-[220px]">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Pesquisar por SKU ou Nome do Produto:</label>
@@ -735,7 +733,6 @@ export default function RelatorioLivesPage() {
               </button>
             </div>
 
-            {/* PAINEL UNIFICADO */}
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col justify-between">
               <div>
                 <div className="p-4 border-b border-slate-800/80 bg-slate-950/60 flex flex-wrap justify-between items-center gap-4">
@@ -822,7 +819,6 @@ export default function RelatorioLivesPage() {
                 </div>
               </div>
 
-              {/* PAGINAÇÃO */}
               <div className="p-4 border-t border-slate-800/80 bg-slate-950/60 flex justify-between items-center text-xs">
                 <span className="text-slate-400">
                   Exibindo modo <strong>{modoPainel.toUpperCase()}</strong> — Página <strong>{paginaAtual}</strong> de <strong>{totalPaginas}</strong> ({itensAtivos.length} itens no total)
