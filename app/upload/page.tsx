@@ -287,7 +287,6 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        // Busca os faturados guardados para o mês selecionado para fazer o cruzamento obrigatório
         const { data: faturadosBanco } = await supabase
           .from('faturados')
           .select('id_pedido')
@@ -300,12 +299,16 @@ export default function UpdatesPage() {
           return;
         }
 
-        // Busca as regras salvas do canal na tabela config_regras_canais (ou usa colunas padrão: A=ID, X=SKU, I=PDV, H=Qtd)
         const { data: regraData } = await supabase
           .from('config_regras_canais')
           .select('*')
           .eq('canal', canalAlvoDash)
           .single();
+
+        const regraCanalSku = (nome: string) => {
+          const reg = regrasCanais.find(r => r.canal === nome);
+          return reg ? reg.coluna_sku : 'X';
+        };
 
         const idxId = letraParaIndice(regraData?.coluna_id || 'A');
         const idxSku = letraParaIndice(regraCanalSku(canalAlvoDash));
@@ -320,9 +323,8 @@ export default function UpdatesPage() {
           if (!row || row.length === 0) continue;
 
           let rawId = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
-          rawId = rawId.replace(/\.0$/, '').replace(/\D/g, ''); // Limpa ID do pedido
+          rawId = rawId.replace(/\.0$/, '').replace(/\D/g, '');
 
-          // CRUZAMENTO OBRIGATÓRIO: Só aceita se constar na planilha de faturados
           if (!rawId || !idsFaturadosSet.has(rawId)) {
             ignoradosNaoFaturados++;
             continue;
@@ -331,8 +333,6 @@ export default function UpdatesPage() {
           const sku = idxSku >= 0 && row[idxSku] ? normalizarSku(row[idxSku]) : 'SKU-GERAL';
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : row[3]);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] ? row[idxQtd] : (row[4] || 1)) || 1;
-          
-          // Aplicação de fórmula / cálculo de repasse líquido (exemplo padrão de desconto de comissão se aplicável)
           const repasseLiquido = precoVenda - (precoVenda * 0.09);
 
           novasVendas.push({
@@ -347,7 +347,6 @@ export default function UpdatesPage() {
         }
 
         if (novasVendas.length > 0) {
-          // Gravação na tabela oficial do banco: vendas_padrao_lancamentos
           await supabase.from('vendas_padrao_lancamentos').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
           for (let i = 0; i < novasVendas.length; i += 500) {
             const { error } = await supabase.from('vendas_padrao_lancamentos').insert(novasVendas.slice(i, i + 500));
@@ -363,16 +362,6 @@ export default function UpdatesPage() {
       }
     };
     reader.readAsArrayBuffer(file);
-  };
-
-  const canalCanalSkuDefault = (nome: string) => {
-    const reg = regrasCanais.find(r => r.canal === nome);
-    return reg ? reg.coluna_sku : 'X';
-  };
-
-  const canalCanalSkuDefault = (nome: string) => {
-    const reg = regrasCanais.find(r => r.canal === nome);
-    return reg ? reg.coluna_sku : 'X';
   };
 
   const handleSubirTarifasSite = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -751,11 +740,6 @@ export default function UpdatesPage() {
     } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
   };
 
-  const canalCanalSkuDefault = (nome: string) => {
-    const reg = regrasCanais.find(r => r.canal === nome);
-    return reg ? reg.coluna_sku : 'X';
-  };
-
   const pesquisarCustosNoBanco = async () => {
     if (!pesquisaCusto || pesquisaCusto.trim() === "") { setListaCustosFiltrados([]); return; }
     const termo = pesquisaCusto.trim();
@@ -1098,7 +1082,7 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
