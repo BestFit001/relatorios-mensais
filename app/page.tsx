@@ -7,6 +7,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [canais, setCanais] = useState<string[]>(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu', 'Clube Hebraica', 'Clube Paineiras']);
   const [adminSales, setAdminSales] = useState<any[]>([]);
+  const [faturadosIds, setFaturadosIds] = useState<Set<string>>(new Set());
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
   
@@ -68,43 +69,51 @@ export default function DashboardPage() {
         });
         setDbCustosMap(cMap);
 
-        // 2. Puxa as vendas importadas estritamente pela aba Admin (Passo 2)
+        // 2. Puxa os IDs de faturados upados no Admin (Passo 1) para validação estricta
+        try {
+          const { data: fatData } = await supabase.from('faturados').select('id_pedido');
+          if (fatData) {
+            setFaturadosIds(new Set(fatData.map((f: any) => String(f.id_pedido).trim())));
+          }
+        } catch (e) {}
+
+        // 3. Puxa as vendas importadas no Admin (Passo 2)
         try {
           const { data: vendasAdmin } = await supabase.from('vendas_lives').select('*');
           if (vendasAdmin) setAdminSales(vendasAdmin);
         } catch (e) {}
 
-        // 3. Devoluções / Cancelados
+        // 4. Devoluções / Cancelados
         try {
           const { data: devData } = await supabase.from('devolucoes').select('*');
           if (devData) setDbDevolucoes(devData);
         } catch (e) {}
 
-        // 4. Adsense / Ads
+        // 5. Adsense / Ads
         try {
           const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*');
           if (adsDataDb) setDbAds(adsDataDb);
         } catch (e) {}
 
-        // 5. PLPs / Frete
+        // 6. PLPs / Frete
         try {
           const { data: plpData } = await supabase.from('plp_pedidos').select('*');
           if (plpData) setDbPlp(plpData);
         } catch (e) {}
 
-        // 6. Metas da aba Regras
+        // 7. Metas da aba Regras
         try {
           const { data: metasDb } = await supabase.from('tb_metas').select('*');
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
-        // 7. Tarifas da aba Regras e Site
+        // 8. Tarifas da aba Regras e Site
         try {
           const { data: tarifacaoDb } = await supabase.from('config_regras_tarifacao').select('*');
           if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
         } catch (e) {}
 
-        // 8. Canais salvos na aba Regras
+        // 9. Canais salvos na aba Regras
         try {
           const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
           if (regrasDb && regrasDb.length > 0) {
@@ -167,7 +176,7 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
-  // Cruzamento estricto com os dados upados na aba Admin
+  // Cruzamento rigoroso com os dados upados na aba Admin (Faturados e Vendas)
   const enrichedSales = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -176,6 +185,12 @@ export default function DashboardPage() {
 
     return safeSales.filter((s: any) => {
         if (!s) return false;
+
+        // Validação estricta de faturados upados no Passo 1 (se houver registros na tabela faturados)
+        if (faturadosIds.size > 0 && s.id_pedido && !faturadosIds.has(String(s.id_pedido).trim())) {
+          return false;
+        }
+
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
 
         const fisico = isChannelFisico(s.canal);
@@ -225,13 +240,20 @@ export default function DashboardPage() {
         const precoVenda = parseCurrency(s.preco_venda || s.pdv);
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
 
+        // Cruza com as regras de tarifação do site ou comissões cadastradas
         if (repasseLiquido <= 0) {
-          const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal);
+          const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal || t.id_pedido === s.id_pedido);
           if (regraFaixa) {
+            const tarifaSiteVal = Number(regraFaixa.tarifa_site) || 0;
             const comissaoPct = Number(regraFaixa.comissao) || 0;
             const tarifaFixa = Number(regraFaixa.tarifa_fixa) || 0;
             const freteRegra = Number(regraFaixa.frete) || 0;
-            repasseLiquido = Math.max(0, precoVenda - (precoVenda * (comissaoPct / 100)) - tarifaFixa - freteRegra);
+            
+            if (tarifaSiteVal > 0) {
+              repasseLiquido = Math.max(0, precoVenda - tarifaSiteVal);
+            } else {
+              repasseLiquido = Math.max(0, precoVenda - (precoVenda * (comissaoPct / 100)) - tarifaFixa - freteRegra);
+            }
           } else {
             repasseLiquido = precoVenda;
           }
@@ -249,7 +271,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [adminSales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
+  }, [adminSales, faturadosIds, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
 
   const kpis = useMemo(() => {
     const safeCanais = Array.isArray(canais) ? canais : [];
@@ -573,7 +595,7 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Dashboard Omnichannel</h1>
-            <p className="text-sm font-medium text-slate-400">Visão consolidada alimentada pelas importações da aba Admin (Faturados e Vendas por Canal)</p>
+            <p className="text-sm font-medium text-slate-400">Visão consolidada consultando Supabase (Faturados do Admin, Custos e Tarifas)</p>
           </div>
           <Navbar />
         </div>

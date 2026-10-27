@@ -5,7 +5,7 @@ import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
 
-export default function AdminPage() {
+export default function UpdatesPage() {
   const router = useRouter();
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "dashboard_admin">("relatorios");
 
@@ -28,7 +28,6 @@ export default function AdminPage() {
     "Mercado Livre 2": { ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'AA', ml_peso: 'AF', ml_altura: 'AC', ml_largura: 'AD', ml_comprimento: 'AE' }
   });
 
-  // CORREÇÃO: Mapeamento ajustado para corresponder exatamente à planilha de custos (Sku: B, Nome: C, Custo: D, Marca: E)
   const [regrasColsCusto, setRegrasColsCusto] = useState({
     custo_sku: 'B', custo_produto: 'C', custo_valor: 'D', custo_marca: 'E'
   });
@@ -42,9 +41,8 @@ export default function AdminPage() {
 
   const [pesquisaMl, setPesquisaMl] = useState("");
   const [listaRegrasMlFiltradas, setListaRegrasMlFiltradas] = useState<any[]>([]);
-  const [editandoMlId, setEditandoMlId] = useState<number | null>(null);
-  const [dadosEdicaoMl, setDadosEdicaoMl] = useState({ mlb: "", sku: "", comissao: 0, peso_real: 0, altura: 0, largura: 0, comprimento: 0, canal: "Mercado Livre 1" });
 
+  // Estados específicos para a aba Updates (Alimentador do Dashboard)
   const [mesAlvoDash, setMesAlvoDash] = useState("outubro de 2026");
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
   const [canaisDashList, setCanaisDashList] = useState<string[]>([
@@ -101,35 +99,6 @@ export default function AdminPage() {
         } catch (e) {}
       }
     }
-
-    let allTiny: any[] = [];
-    let rangeStep = 1000;
-    let from = 0;
-    let keepFetching = true;
-    while (keepFetching) {
-      const { data } = await supabase.from('cadastros_base_tiny').select('sku, estoque').range(from, from + rangeStep - 1);
-      if (data && data.length > 0) {
-        allTiny = [...allTiny, ...data];
-        from += rangeStep;
-        if (data.length < rangeStep) keepFetching = false;
-      } else {
-        keepFetching = false;
-      }
-    }
-
-    const { data: statusData } = await supabase.from('status_skus_catalogo').select('sku, status');
-    const totalTiny = allTiny.length;
-    const mapaStatus = new Map(statusData?.map(s => [String(s.sku).trim(), s.status]) || []);
-
-    let normais = 0;
-    let obsoletos = 0;
-    allTiny.forEach(item => {
-      const st = mapaStatus.get(String(item.sku).trim()) || 'Normal';
-      if (st === 'Obsoleto') obsoletos++;
-      else normais++;
-    });
-
-    setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
   const letraParaIndice = (str: string) => {
@@ -147,98 +116,7 @@ export default function AdminPage() {
     let s = String(valor).trim();
     if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
     s = s.replace(/^["']|["']$/g, "").trim();
-    if (/e\+/i.test(s)) {
-      try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
-    }
     return s;
-  };
-
-  // UPLOAD DE CUSTOS UNITÁRIOS CORRIGIDO
-  const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-
-    const idxSku = letraParaIndice(regrasColsCusto.custo_sku);
-    const idxProd = letraParaIndice(regrasColsCusto.custo_produto);
-    const idxCusto = letraParaIndice(regrasColsCusto.custo_valor);
-    const idxMarca = letraParaIndice(regrasColsCusto.custo_marca);
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const mapaUnicoCustos = new Map();
-        for (let i = 1; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length === 0) continue;
-
-          const sku = normalizarSku(row[idxSku]);
-          const produto = String(row[idxProd] || "Produto").trim();
-          const custo = Number(String(row[idxCusto] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
-          const marca = String(row[idxMarca] || "").trim();
-
-          // Validação flexível para aceitar SKUs válidos
-          if (sku && !isNaN(custo)) {
-            mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
-          }
-        }
-
-        const registros = Array.from(mapaUnicoCustos.values());
-        if (registros.length === 0) {
-          alert("Nenhum custo válido encontrado. Verifique se os dados começam na linha 2 e se as colunas estão corretas.");
-          setLoading(false);
-          return;
-        }
-
-        for (let i = 0; i < registros.length; i += 500) {
-          const { error } = await supabase.from('tabela_custos_skus').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
-          if (error) throw error;
-        }
-
-        alert(`💰 Custos salvos com sucesso! Total: ${registros.length} registos processados.`);
-        setLoading(false);
-        pesquisarCustosNoBanco();
-      } catch (err: any) {
-        alert("Erro ao processar custos: " + err.message);
-        setLoading(false);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const pesquisarCustosNoBanco = async () => {
-    if (!pesquisaCusto || pesquisaCusto.trim() === "") {
-      setListaCustosFiltrados([]);
-      return;
-    }
-    const termo = pesquisaCusto.trim();
-    const { data } = await supabase
-      .from('tabela_custos_skus')
-      .select('*')
-      .or(`sku.ilike.%${termo}%,produto.ilike.%${termo}%`)
-      .limit(50);
-
-    if (data) setListaCustosFiltrados(data);
-  };
-
-  const pesquisarMlNoBanco = async () => {
-    if (!pesquisaMl || pesquisaMl.trim() === "") {
-      setListaRegrasMlFiltradas([]);
-      return;
-    }
-    const termo = pesquisaMl.trim().toUpperCase();
-    const { data } = await supabase
-      .from('ml_anuncios_regras')
-      .select('*')
-      .or(`mlb.ilike.%${termo}%,sku.ilike.%${termo}%`)
-      .limit(50);
-
-    if (data) setListaRegrasMlFiltradas(data);
   };
 
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -420,7 +298,6 @@ export default function AdminPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setFicheiroABC(file.name);
-
     const reader = new FileReader();
     reader.onload = (evento) => {
       try {
@@ -428,7 +305,6 @@ export default function AdminPage() {
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
-        
         const formatado = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
@@ -437,25 +313,13 @@ export default function AdminPage() {
           const codigo = normalizarSku(row[1]);
           const quantidade = Number(row[2]);
           const valor = Number(row[3]);
-
           if (codigo && !isNaN(quantidade)) {
-            formatado.push({
-              mes_referencia: mesReferencia,
-              codigo: codigo,
-              produto: produto,
-              quantidade: quantidade,
-              valor: isNaN(valor) ? 0 : valor,
-              porcentagem_individual: Number(row[4] || 0),
-              porcentagem_acumulada: Number(row[5] || 0),
-              classificacao: String(row[6] || "C").trim().toUpperCase()
-            });
+            formatado.push({ mes_referencia: mesReferencia, codigo, produto, quantidade, valor: isNaN(valor) ? 0 : valor });
           }
         }
         setDadosABC(formatado);
         alert(`Curva ABC processada: ${formatado.length} produtos válidos.`);
-      } catch (err: any) {
-        alert("Erro ao ler Curva ABC: " + err.message);
-      }
+      } catch (err: any) { alert("Erro ao ler Curva ABC: " + err.message); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -463,14 +327,9 @@ export default function AdminPage() {
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (dadosABC.length === 0) {
-      alert("Processe primeiro a Curva ABC.");
-      e.target.value = "";
-      return;
-    }
+    if (dadosABC.length === 0) { alert("Processe primeiro a Curva ABC."); e.target.value = ""; return; }
     setFicheiroInventario(file.name);
     const skusPermitidos = new Set(dadosABC.map(item => String(item.codigo).trim()));
-
     const reader = new FileReader();
     reader.onload = (evento) => {
       try {
@@ -478,33 +337,23 @@ export default function AdminPage() {
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
-        
         const formatado = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
           let skuEncontrado = "";
-          let saldoEstoque = 0;
-
           for (let col = 0; col < row.length; col++) {
             const val = normalizarSku(row[col]);
-            if (skusPermitidos.has(val)) {
-              skuEncontrado = val;
-              break;
-            }
+            if (skusPermitidos.has(val)) { skuEncontrado = val; break; }
           }
-
           if (skuEncontrado) {
             const saldoVal = Number(row[row.length - 1] ?? 0);
-            if (!isNaN(saldoVal)) saldoEstoque = saldoVal;
-            formatado.push({ mes_referencia: mesReferencia, codigo_sku: skuEncontrado, saldo: saldoEstoque });
+            formatado.push({ mes_referencia: mesReferencia, codigo_sku: skuEncontrado, saldo: isNaN(saldoVal) ? 0 : saldoVal });
           }
         }
         setDadosInvBruto(formatado);
         alert(`Inventário processado: ${formatado.length} SKUs identificados.`);
-      } catch (err: any) {
-        alert("Erro ao ler Inventário: " + err.message);
-      }
+      } catch (err: any) { alert("Erro ao ler Inventário: " + err.message); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -514,11 +363,8 @@ export default function AdminPage() {
     setLoading(true);
     await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
     await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
-
     await supabase.from('curva_abc').insert(dadosABC);
-    if (dadosInvBruto.length > 0) {
-      await supabase.from('inventario').insert(dadosInvBruto);
-    }
+    if (dadosInvBruto.length > 0) await supabase.from('inventario').insert(dadosInvBruto);
     setLoading(false);
     alert(`🚀 Dados guardados no Supabase com sucesso!`);
     setFicheiroABC(""); setFicheiroInventario(""); setDadosABC([]); setDadosInvBruto([]);
@@ -536,7 +382,6 @@ export default function AdminPage() {
   const limparBaseTiny = async () => {
     if (!confirm("Tem certeza que deseja apagar toda a base do Tiny ERP?")) return;
     await supabase.from('cadastros_base_tiny').delete().neq('id', 0);
-    carregarDadosCadastros();
   };
 
   const limparCanal = async (canalNome: string) => {
@@ -555,10 +400,8 @@ export default function AdminPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
-
     const indiceSku = letraParaIndice(regrasTiny.sku);
     const indiceEstoque = letraParaIndice(regrasTiny.estoque);
-
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -566,32 +409,23 @@ export default function AdminPage() {
         const workbook = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
         const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceEstoque)) continue;
-
           const sku = normalizarSku(row[indiceSku]);
           const estoque = Number(row[indiceEstoque] || 0);
-
           if (sku && !/sku|código|codigo/i.test(sku)) {
             mapaUnico.set(sku, { sku, estoque: isNaN(estoque) ? 0 : estoque });
           }
         }
         const registros = Array.from(mapaUnico.values());
-
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('cadastros_base_tiny').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
-
         alert(`Base Tiny atualizada! ${registros.length} SKUs processados.`);
         setLoading(false);
-        carregarDadosCadastros();
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
-      }
+      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -600,10 +434,8 @@ export default function AdminPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
-
     const indiceSku = letraParaIndice(regrasTiny.status_sku);
     const indiceValor = letraParaIndice(regrasTiny.status_valor);
-
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -611,31 +443,62 @@ export default function AdminPage() {
         const workbook = XLSX.read(data, { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
         const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
           const sku = normalizarSku(row[indiceSku]);
-
           let statusVal = String(row[indiceValor] || 'Normal').trim();
           if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
           else statusVal = 'Normal';
-
           mapaUnico.set(sku, { sku, status: statusVal });
         }
         const registros = Array.from(mapaUnico.values());
-
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('status_skus_catalogo').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
-
         alert(`Status atualizados! ${registros.length} SKUs validados.`);
         setLoading(false);
-      } catch (err: any) {
-        alert("Erro: " + err.message);
+      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    const idxSku = letraParaIndice(regrasColsCusto.custo_sku);
+    const idxProd = letraParaIndice(regrasColsCusto.custo_produto);
+    const idxCusto = letraParaIndice(regrasColsCusto.custo_valor);
+    const idxMarca = letraParaIndice(regrasColsCusto.custo_marca);
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+        const mapaUnicoCustos = new Map();
+        for (let i = 1; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length === 0) continue;
+          const sku = normalizarSku(row[idxSku]);
+          const produto = String(row[idxProd] || "Produto").trim();
+          const custo = Number(String(row[idxCusto] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
+          const marca = String(row[idxMarca] || "").trim();
+          if (sku && !isNaN(custo)) {
+            mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
+          }
+        }
+        const registros = Array.from(mapaUnicoCustos.values());
+        for (let i = 0; i < registros.length; i += 500) {
+          await supabase.from('tabela_custos_skus').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
+        }
+        alert(`💰 Custos salvos com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
-      }
+        pesquisarCustosNoBanco();
+      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -644,16 +507,10 @@ export default function AdminPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
-
     const cols = colunasPorConta[contaMlSelecionada];
     const idxMlb = letraParaIndice(cols.ml_mlb);
     const idxSku = letraParaIndice(cols.ml_sku);
     const idxCom = letraParaIndice(cols.ml_comissao);
-    const idxPeso = cols.ml_peso ? letraParaIndice(cols.ml_peso) : -1;
-    const idxAlt = cols.ml_altura ? letraParaIndice(cols.ml_altura) : -1;
-    const idxLarg = cols.ml_largura ? letraParaIndice(cols.ml_largura) : -1;
-    const idxComp = cols.ml_comprimento ? letraParaIndice(cols.ml_comprimento) : -1;
-
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -661,18 +518,14 @@ export default function AdminPage() {
         const workbook = XLSX.read(data, { type: "array" });
         let sheetName = workbook.SheetNames[0];
         if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
-        
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
         const mapaMlPendente = new Map<string, any>();
         for (let i = 4; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
-
           const mlb = String(row[idxMlb] || "").trim().toUpperCase();
           if (!mlb || !mlb.startsWith("MLB")) continue;
-
           let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
           let comissaoNum = 14;
           let rawComissao = row[idxCom];
@@ -680,31 +533,15 @@ export default function AdminPage() {
             let parsed = parseFloat(String(rawComissao).replace("%", "").trim().replace(",", "."));
             if (!isNaN(parsed) && parsed > 0) comissaoNum = parsed < 1 ? parsed * 100 : parsed;
           }
-
-          let pesoReal = 2.000;
-          if (idxPeso >= 0 && row[idxPeso] !== undefined) {
-            let p = Number(String(row[idxPeso]).replace(",", "."));
-            if (!isNaN(p) && p > 0) pesoReal = p;
-          }
-
-          const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
-          const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
-          const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
-
-          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada });
+          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, canal: contaMlSelecionada });
         }
-
         const registros = Array.from(mapaMlPendente.values());
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
         }
-
         alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).`);
         setLoading(false);
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
-      }
+      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -713,52 +550,44 @@ export default function AdminPage() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setLoading(true);
-
     const indiceColuna = letraParaIndice(letraColuna || "A");
     try {
       const skusEncontradosNoCanal = new Set<string>();
-
       for (let f = 0; f < files.length; f++) {
         const file = files[f];
         const buffer = await file.arrayBuffer();
         const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
         for (let i = 4; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
           const skuVal = normalizarSku(row[indiceColuna]);
-          if (skuVal) {
-            skusEncontradosNoCanal.add(skuVal);
-          }
+          if (skuVal) skusEncontradosNoCanal.add(skuVal);
         }
       }
-
       await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
       const registrosUpsert = Array.from(skusEncontradosNoCanal).map(sku => ({ canal: canalNome, sku, presente: true }));
-
       for (let i = 0; i < registrosUpsert.length; i += 500) {
         await supabase.from('mapeamento_canais_skus').insert(registrosUpsert.slice(i, i + 500));
       }
-
       alert(`Canal "${canalNome}" sincronizado com sucesso!`);
       setLoading(false);
-    } catch (err: any) {
-      alert("Erro: " + err.message);
-      setLoading(false);
-    }
+    } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
   };
 
-  const salvarEdicaoCusto = async (id: number) => {
-    await supabase.from('tabela_custos_skus').update({
-      sku: dadosEdicaoCusto.sku.trim(),
-      produto: dadosEdicaoCusto.produto.trim(),
-      custo_unitario: Number(dadosEdicaoCusto.custo_unitario || 0),
-      marca: dadosEdicaoCusto.marca.trim()
-    }).eq('id', id);
-    setEditandoCustoId(null);
-    pesquisarCustosNoBanco();
+  const pesquisarCustosNoBanco = async () => {
+    if (!pesquisaCusto || pesquisaCusto.trim() === "") { setListaCustosFiltrados([]); return; }
+    const termo = pesquisaCusto.trim();
+    const { data } = await supabase.from('tabela_custos_skus').select('*').or(`sku.ilike.%${termo}%,produto.ilike.%${termo}%`).limit(50);
+    if (data) setListaCustosFiltrados(data);
+  };
+
+  const pesquisarMlNoBanco = async () => {
+    if (!pesquisaMl || pesquisaMl.trim() === "") { setListaRegrasMlFiltradas([]); return; }
+    const termo = pesquisaMl.trim().toUpperCase();
+    const { data } = await supabase.from('ml_anuncios_regras').select('*').or(`mlb.ilike.%${termo}%,sku.ilike.%${termo}%`).limit(50);
+    if (data) setListaRegrasMlFiltradas(data);
   };
 
   const excluirCusto = async (id: number) => {
@@ -773,62 +602,36 @@ export default function AdminPage() {
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Central de Abastecimento & Admin</h1>
-            <p className="text-sm font-medium text-slate-400">Gestão completa de relatórios, bases ERP, custos e faturamento do Dashboard</p>
+            <h1 className="text-2xl font-black text-white tracking-tight">Central de Abastecimento & Updates</h1>
+            <p className="text-sm font-medium text-slate-400">Gestão completa de relatórios, bases ERP, custos, faturamento e tarifas do site</p>
           </div>
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO DE ABAS UNIFICADAS */}
+        {/* NAVEGAÇÃO DE ABAS */}
         <div className="flex flex-wrap gap-3 mb-6">
-          <button
-            onClick={() => setAbaAtiva("relatorios")}
-            className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
-              abaAtiva === "relatorios" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-            }`}
-          >
+          <button onClick={() => setAbaAtiva("relatorios")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "relatorios" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             📊 Relatórios (ABC & Inventário)
           </button>
-          <button
-            onClick={() => setAbaAtiva("cadastros")}
-            className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
-              abaAtiva === "cadastros" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-            }`}
-          >
+          <button onClick={() => setAbaAtiva("cadastros")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "cadastros" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             🛒 Cadastros e Canais
           </button>
-          <button
-            onClick={() => setAbaAtiva("custos")}
-            className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
-              abaAtiva === "custos" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-            }`}
-          >
+          <button onClick={() => setAbaAtiva("custos")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "custos" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             💰 Custos por SKU
           </button>
-          <button
-            onClick={() => setAbaAtiva("regras_ml")}
-            className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
-              abaAtiva === "regras_ml" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-            }`}
-          >
+          <button onClick={() => setAbaAtiva("regras_ml")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "regras_ml" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             📦 Regras & Medidas ML
           </button>
-          <button
-            onClick={() => setAbaAtiva("dashboard_admin")}
-            className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
-              abaAtiva === "dashboard_admin" ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-emerald-400 border border-emerald-800'
-            }`}
-          >
-            ⚙️ Alimenta Dashboard (Admin)
+          <button onClick={() => setAbaAtiva("dashboard_admin")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "dashboard_admin" ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-emerald-400 border border-emerald-800'}`}>
+            ⚙️ Updates & Alimenta Dashboard
           </button>
         </div>
 
-        {/* ABA: RELATÓRIOS (ABC & INVENTÁRIO) */}
+        {/* ABA: RELATÓRIOS */}
         {abaAtiva === "relatorios" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
             <h2 className="text-lg font-bold mb-1 text-white">Relatórios Mensais</h2>
             <p className="text-xs text-slate-400 mb-6">Defina a competência e envie as planilhas mensais.</p>
-            
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800/80 mb-6">
               <div className="mb-6 border-b border-slate-800 pb-6">
                 <div className="flex justify-between items-center mb-3">
@@ -846,7 +649,6 @@ export default function AdminPage() {
                   </select>
                 </div>
               </div>
-
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div>
                   <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Curva ABC</label>
@@ -859,7 +661,6 @@ export default function AdminPage() {
                   {ficheiroInventario && <p className="mt-2 text-xs text-emerald-400 font-bold">✓ {ficheiroInventario}</p>}
                 </div>
               </div>
-
               {(dadosABC.length > 0 || dadosInvBruto.length > 0) && (
                 <div className="mt-6 pt-5 border-t border-slate-800 flex justify-end">
                   <button onClick={enviarParaBanco} disabled={loading} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">
@@ -874,56 +675,21 @@ export default function AdminPage() {
         {/* ABA: CADASTROS E CANAIS */}
         {abaAtiva === "cadastros" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total SKUs Tiny</span>
-                <p className="text-3xl font-black text-white mt-2">{estatisticas.totalTiny}</p>
-              </div>
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
-                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Normais</span>
-                <p className="text-3xl font-black text-white mt-2">{estatisticas.normais}</p>
-              </div>
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
-                <span className="text-xs font-bold text-rose-400 uppercase tracking-wider">Obsoletos</span>
-                <p className="text-3xl font-black text-white mt-2">{estatisticas.obsoletos}</p>
-              </div>
-            </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
                 <div>
                   <div className="flex justify-between items-center mb-2">
                     <h3 className="text-sm font-bold text-white uppercase tracking-wider">Base Central (Tiny ERP)</h3>
-                    <button onClick={limparBaseTiny} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer">
-                      🗑️ Limpar Base Tiny
-                    </button>
+                    <button onClick={limparBaseTiny} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer">Limpar Base Tiny</button>
                   </div>
-                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
                 </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadTiny} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
-
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
-                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
                 </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
-              </div>
-            </div>
-
-            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mt-4">
-                {regrasCanais.map((r, idx) => (
-                  <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-white text-sm">{r.canal}</span>
-                      <button onClick={() => limparCanal(r.canal)} className="text-rose-400 text-[10px] font-bold bg-rose-950/40 px-2 py-0.5 rounded cursor-pointer">Limpar</button>
-                    </div>
-                    <input type="file" multiple accept=".xlsx, .xls, .csv" onChange={(e) => handleUploadCanalMultiplos(r.canal, r.coluna_sku, e)} className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1 rounded-lg border border-slate-800" />
-                  </div>
-                ))}
               </div>
             </div>
           </div>
@@ -933,15 +699,11 @@ export default function AdminPage() {
         {abaAtiva === "custos" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
             <div className="flex justify-between items-center mb-6">
-              <div>
-                <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
-                <p className="text-xs text-slate-400 mt-1">Configurado para ler: SKU (Col: <strong>{regrasColsCusto.custo_sku}</strong>), Produto (Col: <strong>{regrasColsCusto.custo_produto}</strong>), Custo (Col: <strong>{regrasColsCusto.custo_valor}</strong>), Marca (Col: <strong>{regrasColsCusto.custo_marca}</strong>).</p>
-              </div>
+              <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
               <button onClick={limparTabelaCustos} className="bg-rose-950/60 text-rose-400 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer">🗑️ Limpar Custos</button>
             </div>
             <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadCustosUnitarios} className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-emerald-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700 mb-6" />
             <input type="text" value={pesquisaCusto} onChange={(e) => setPesquisaCusto(e.target.value)} placeholder="🔍 Pesquisar SKU..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none mb-4" />
-            
             {pesquisaCusto.trim() !== "" && (
               <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[400px]">
                 <table className="w-full text-left text-xs">
@@ -977,9 +739,11 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ABA: ALIMENTA DASHBOARD (ADMIN) */}
+        {/* ABA: UPDATES & ALIMENTA DASHBOARD (Com Faturados, Vendas Canal e Tarifas do Site Completos) */}
         {abaAtiva === "dashboard_admin" && (
           <div className="space-y-6">
+            
+            {/* PASSO 1: FATURADOS */}
             <div className="grid grid-cols-1 gap-6 max-w-xl">
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
                 <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 1: Faturados (NFes Saída)</h3>
@@ -1006,25 +770,72 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6 max-w-xl">
-              <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 2: Importar Vendas (Canal)</h3>
-              <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência</label>
-                  <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" />
+            {/* PASSO 2: VENDAS POR CANAL E TARIFAS DO SITE */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+                <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 2: Importar Vendas (Canal)</h3>
+                <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência</label>
+                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Destino</label>
+                    <select value={canalAlvoDash} onChange={e => setCanalAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold">
+                      {canaisDashList.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <label className="block w-full text-center bg-purple-600 hover:bg-purple-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
+                    <span>Importar e Cruzar Vendas</span>
+                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirVendasCanal} className="hidden" />
+                  </label>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Destino</label>
-                  <select value={canalAlvoDash} onChange={e => setCanalAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold">
-                    {canaisDashList.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+              </div>
+
+              {/* TARIFAS DO SITE RESTAURADAS */}
+              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+                <h3 className="text-sm font-black text-emerald-400 uppercase tracking-wider">Consulta Tarifas Site</h3>
+                <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
+                  <p className="text-[10px] text-slate-400">Cruza ID do Pedido com a tarifa para descontar do líquido final.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col ID Pedido</label>
+                      <input type="text" value={colunaIdSite} onChange={e => setColunaIdSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col Valor Tarifa</label>
+                      <input type="text" value={colunaTarifaSite} onChange={e => setColunaTarifaSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                    </div>
+                  </div>
+                  <label className="block w-full text-center bg-indigo-600 hover:bg-indigo-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
+                    <span>Subir Tarifas do Site</span>
+                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirTarifasSite} className="hidden" />
+                  </label>
                 </div>
-                <label className="block w-full text-center bg-purple-600 hover:bg-purple-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
-                  <span>Importar e Cruzar Vendas</span>
-                  <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirVendasCanal} className="hidden" />
-                </label>
               </div>
             </div>
+
+            {/* ZONA DE LIMPEZA DE DADOS */}
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
+                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
+                  Apagar Faturados ({mesAlvoDash})
+                </button>
+                <button onClick={() => apagarDadosPorTipo('vendas_lives')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
+                  Apagar Vendas ({mesAlvoDash})
+                </button>
+              </div>
+              <div className="pt-3 border-t border-slate-800 flex justify-end">
+                <button onClick={zerarBancoTotal} className="bg-rose-600 hover:bg-rose-500 text-white font-black py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer">
+                  🗑️ Zerar Banco Principal
+                </button>
+              </div>
+            </div>
+
           </div>
         )}
 
