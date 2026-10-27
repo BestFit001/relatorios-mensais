@@ -147,7 +147,7 @@ export default function UpdatesPage() {
     setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
-  const atualizarColunaSkuCanal = async (id: number, canalNome: novaLetraCol, novaLetraCol: string) => {
+  const atualizarColunaSkuCanal = async (id: number, novaLetraCol: string) => {
     const letraUpper = novaLetraCol.toUpperCase().trim();
     const atualizadas = regrasCanais.map(r => r.id === id ? { ...r, coluna_sku: letraUpper } : r);
     setRegrasCanais(atualizadas);
@@ -451,12 +451,6 @@ export default function UpdatesPage() {
     if (!confirm(`Apagar canal "${canalNome}"?`)) return;
     await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
     alert(`Canal limpo.`);
-  };
-
-  const limparTabelaCustos = async () => {
-    if (!confirm("Apagar todos os custos?")) return;
-    await supabase.from('tabela_custos_skus').delete().neq('id', 0);
-    setListaCustosFiltrados([]);
   };
 
   const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
@@ -816,8 +810,7 @@ export default function UpdatesPage() {
                       <input 
                         type="text" 
                         value={r.coluna_sku || "A"} 
-                        onChange={(e) => atualizarColunaConfigML(r.id, r.canal, e.target.value)} 
-                        onBlur={(e) => atualizarColunaSkuCanal(r.id, r.canal, e.target.value)}
+                        onChange={(e) => atualizarColunaSkuCanal(r.id, e.target.value)}
                         className="w-14 bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" 
                       />
                     </div>
