@@ -5,6 +5,39 @@ import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
 
+function letraParaIndice(letra: string): number {
+  let l = letra.trim().toUpperCase();
+  let num = 0;
+  for (let i = 0; i < l.length; i++) {
+    num = num * 26 + (l.charCodeAt(i) - 64);
+  }
+  return num - 1;
+}
+
+function normalizarSku(valor: any): string {
+  if (valor === null || valor === undefined) return "";
+  let s = String(valor).trim().replace(/^['"]/, "");
+  if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
+  s = s.replace(/^["']|["']$/g, "").trim();
+  if (/e\+/i.test(s)) {
+    try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
+  }
+  return s.toLowerCase();
+}
+
+function parseNumeroBruto(valor: any): number {
+  if (valor === null || valor === undefined || valor === "") return 0;
+  if (typeof valor === "number") return valor;
+  let s = String(valor).replace(/R\$/g, "").replace(/BRL/g, "").replace(/\$/g, "").replace(/\s/g, "").trim();
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  }
+  const num = parseFloat(s);
+  return isNaN(num) ? 0 : num;
+}
+
 export default function UpdatesPage() {
   const router = useRouter();
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "dashboard_admin">("relatorios");
@@ -126,80 +159,6 @@ export default function UpdatesPage() {
     });
 
     setEstatisticas({ totalTiny, normais, obsoletos });
-  };
-
-  const atualizarColunaConfigML = async (campo: string, coluna: string) => {
-    const novasColunasConta = {
-      ...colunasPorConta,
-      [contaMlSelecionada]: {
-        ...colunasPorConta[contaMlSelecionada],
-        [campo]: coluna
-      }
-    };
-    setColunasPorConta(novasColunasConta);
-
-    const prefixoDb = contaMlSelecionada === "Mercado Livre 1" ? "ml_1_" : "ml_2_";
-    const chaveDb = prefixoDb + campo.replace("ml_", "");
-
-    try {
-      await supabase.from('config_regras_tiny').upsert(
-        { campo: chaveDb, coluna: coluna },
-        { onConflict: 'campo' }
-      );
-    } catch (err) {
-      console.error("Erro ao salvar configuração da coluna:", err);
-    }
-  };
-
-  const pesquisarCustosNoBanco = async () => {
-    if (!pesquisaCusto || pesquisaCusto.trim() === "") {
-      setListaCustosFiltrados([]);
-      return;
-    }
-    const termo = pesquisaCusto.trim();
-    const { data } = await supabase
-      .from('tabela_custos_skus')
-      .select('*')
-      .or(`sku.ilike.%${termo}%,produto.ilike.%${termo}%`)
-      .limit(50);
-
-    if (data) setListaCustosFiltrados(data);
-  };
-
-  const pesquisarMlNoBanco = async () => {
-    if (!pesquisaMl || pesquisaMl.trim() === "") {
-      setListaRegrasMlFiltradas([]);
-      return;
-    }
-    const termo = pesquisaMl.trim().toUpperCase();
-    const { data } = await supabase
-      .from('ml_anuncios_regras')
-      .select('*')
-      .or(`mlb.ilike.%${termo}%,sku.ilike.%${termo}%`)
-      .limit(50);
-
-    if (data) setListaRegrasMlFiltradas(data);
-  };
-
-  const letraParaIndice = (str: string) => {
-    if (!str) return 0;
-    let base = str.toUpperCase().trim();
-    let coluna = 0;
-    for (let i = 0; i < base.length; i++) {
-      coluna = coluna * 26 + (base.charCodeAt(i) - 64);
-    }
-    return coluna - 1;
-  };
-
-  const normalizarSku = (valor: any): string => {
-    if (valor === null || valor === undefined) return "";
-    let s = String(valor).trim();
-    if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-    s = s.replace(/^["']|["']$/g, "").trim();
-    if (/e\+/i.test(s)) {
-      try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
-    }
-    return s;
   };
 
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -381,7 +340,6 @@ export default function UpdatesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setFicheiroABC(file.name);
-
     const reader = new FileReader();
     reader.onload = (evento) => {
       try {
@@ -389,7 +347,6 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
-        
         const formatado = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
@@ -398,25 +355,13 @@ export default function UpdatesPage() {
           const codigo = normalizarSku(row[1]);
           const quantidade = Number(row[2]);
           const valor = Number(row[3]);
-
           if (codigo && !isNaN(quantidade)) {
-            formatado.push({
-              mes_referencia: mesReferencia,
-              codigo: codigo,
-              produto: produto,
-              quantidade: quantidade,
-              valor: isNaN(valor) ? 0 : valor,
-              porcentagem_individual: Number(row[4] || 0),
-              porcentagem_acumulada: Number(row[5] || 0),
-              classificacao: String(row[6] || "C").trim().toUpperCase()
-            });
+            formatado.push({ mes_referencia: mesReferencia, codigo, produto, quantidade, valor: isNaN(valor) ? 0 : valor });
           }
         }
         setDadosABC(formatado);
         alert(`Curva ABC processada: ${formatado.length} produtos válidos.`);
-      } catch (err: any) {
-        alert("Erro ao ler Curva ABC: " + err.message);
-      }
+      } catch (err: any) { alert("Erro ao ler Curva ABC: " + err.message); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -424,14 +369,9 @@ export default function UpdatesPage() {
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (dadosABC.length === 0) {
-      alert("Processe primeiro a Curva ABC.");
-      e.target.value = "";
-      return;
-    }
+    if (dadosABC.length === 0) { alert("Processe primeiro a Curva ABC."); e.target.value = ""; return; }
     setFicheiroInventario(file.name);
     const skusPermitidos = new Set(dadosABC.map(item => String(item.codigo).trim()));
-
     const reader = new FileReader();
     reader.onload = (evento) => {
       try {
@@ -439,33 +379,23 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
-        
         const formatado = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
           let skuEncontrado = "";
-          let saldoEstoque = 0;
-
           for (let col = 0; col < row.length; col++) {
             const val = normalizarSku(row[col]);
-            if (skusPermitidos.has(val)) {
-              skuEncontrado = val;
-              break;
-            }
+            if (skusPermitidos.has(val)) { skuEncontrado = val; break; }
           }
-
           if (skuEncontrado) {
             const saldoVal = Number(row[row.length - 1] ?? 0);
-            if (!isNaN(saldoVal)) saldoEstoque = saldoVal;
-            formatado.push({ mes_referencia: mesReferencia, codigo_sku: skuEncontrado, saldo: saldoEstoque });
+            formatado.push({ mes_referencia: mesReferencia, codigo_sku: skuEncontrado, saldo: isNaN(saldoVal) ? 0 : saldoVal });
           }
         }
         setDadosInvBruto(formatado);
         alert(`Inventário processado: ${formatado.length} SKUs identificados.`);
-      } catch (err: any) {
-        alert("Erro ao ler Inventário: " + err.message);
-      }
+      } catch (err: any) { alert("Erro ao ler Inventário: " + err.message); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -475,11 +405,8 @@ export default function UpdatesPage() {
     setLoading(true);
     await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
     await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
-
     await supabase.from('curva_abc').insert(dadosABC);
-    if (dadosInvBruto.length > 0) {
-      await supabase.from('inventario').insert(dadosInvBruto);
-    }
+    if (dadosInvBruto.length > 0) await supabase.from('inventario').insert(dadosInvBruto);
     setLoading(false);
     alert(`🚀 Dados guardados no Supabase com sucesso!`);
     setFicheiroABC(""); setFicheiroInventario(""); setDadosABC([]); setDadosInvBruto([]);
@@ -497,7 +424,6 @@ export default function UpdatesPage() {
   const limparBaseTiny = async () => {
     if (!confirm("Tem certeza que deseja apagar toda a base do Tiny ERP?")) return;
     await supabase.from('cadastros_base_tiny').delete().neq('id', 0);
-    carregarDadosCadastros();
   };
 
   const limparCanal = async (canalNome: string) => {
@@ -506,20 +432,12 @@ export default function UpdatesPage() {
     alert(`Canal limpo.`);
   };
 
-  const limparTabelaCustos = async () => {
-    if (!confirm("Apagar todos os custos?")) return;
-    await supabase.from('tabela_custos_skus').delete().neq('id', 0);
-    setListaCustosFiltrados([]);
-  };
-
   const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
-
     const indiceSku = letraParaIndice(regrasTiny.sku);
     const indiceEstoque = letraParaIndice(regrasTiny.estoque);
-
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -527,32 +445,23 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
         const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceEstoque)) continue;
-
           const sku = normalizarSku(row[indiceSku]);
           const estoque = Number(row[indiceEstoque] || 0);
-
-          if (sku && sku.length >= 10 && !/sku|código|codigo/i.test(sku)) {
+          if (sku && !/sku|código|codigo/i.test(sku)) {
             mapaUnico.set(sku, { sku, estoque: isNaN(estoque) ? 0 : estoque });
           }
         }
         const registros = Array.from(mapaUnico.values());
-
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('cadastros_base_tiny').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
-
         alert(`Base Tiny atualizada! ${registros.length} SKUs processados.`);
         setLoading(false);
-        carregarDadosCadastros();
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
-      }
+      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -561,10 +470,8 @@ export default function UpdatesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
-
     const indiceSku = letraParaIndice(regrasTiny.status_sku);
     const indiceValor = letraParaIndice(regrasTiny.status_valor);
-
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -572,48 +479,23 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        let allTiny: any[] = [];
-        let from = 0;
-        let keepFetching = true;
-        while (keepFetching) {
-          const { data } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + 999);
-          if (data && data.length > 0) {
-            allTiny = [...allTiny, ...data];
-            from += 1000;
-            if (data.length < 1000) keepFetching = false;
-          } else {
-            keepFetching = false;
-          }
-        }
-        const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
-
         const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
           const sku = normalizarSku(row[indiceSku]);
-          if (!skusTinySet.has(sku)) continue;
-
           let statusVal = String(row[indiceValor] || 'Normal').trim();
           if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
           else statusVal = 'Normal';
-
           mapaUnico.set(sku, { sku, status: statusVal });
         }
         const registros = Array.from(mapaUnico.values());
-
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('status_skus_catalogo').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
-
         alert(`Status atualizados! ${registros.length} SKUs validados.`);
         setLoading(false);
-        carregarDadosCadastros();
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
-      }
+      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -622,12 +504,10 @@ export default function UpdatesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
-
     const idxSku = letraParaIndice(regrasColsCusto.custo_sku);
     const idxProd = letraParaIndice(regrasColsCusto.custo_produto);
     const idxCusto = letraParaIndice(regrasColsCusto.custo_valor);
     const idxMarca = letraParaIndice(regrasColsCusto.custo_marca);
-
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -635,34 +515,26 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
         const mapaUnicoCustos = new Map();
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
-          if (!row || row.length <= Math.max(idxSku, idxCusto)) continue;
-
+          if (!row || row.length === 0) continue;
           const sku = normalizarSku(row[idxSku]);
           const produto = String(row[idxProd] || "Produto").trim();
           const custo = Number(String(row[idxCusto] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
           const marca = String(row[idxMarca] || "").trim();
-
-          if (sku && sku.length >= 10 && !isNaN(custo)) {
+          if (sku && !isNaN(custo)) {
             mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
           }
         }
-
         const registros = Array.from(mapaUnicoCustos.values());
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('tabela_custos_skus').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
-
         alert(`💰 Custos salvos com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
         pesquisarCustosNoBanco();
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
-      }
+      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -671,16 +543,10 @@ export default function UpdatesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
-
     const cols = colunasPorConta[contaMlSelecionada];
     const idxMlb = letraParaIndice(cols.ml_mlb);
     const idxSku = letraParaIndice(cols.ml_sku);
     const idxCom = letraParaIndice(cols.ml_comissao);
-    const idxPeso = cols.ml_peso ? letraParaIndice(cols.ml_peso) : -1;
-    const idxAlt = cols.ml_altura ? letraParaIndice(cols.ml_altura) : -1;
-    const idxLarg = cols.ml_largura ? letraParaIndice(cols.ml_largura) : -1;
-    const idxComp = cols.ml_comprimento ? letraParaIndice(cols.ml_comprimento) : -1;
-
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -688,65 +554,30 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array" });
         let sheetName = workbook.SheetNames[0];
         if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
-        
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const mapSkuPorMlb = new Map<string, string>();
-        for (let i = 4; i < json.length; i++) {
-          const row = json[i];
-          if (!row) continue;
-          const mlbVal = String(row[idxMlb] || "").trim().toUpperCase();
-          const skuVal = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-          if (mlbVal && mlbVal.startsWith("MLB") && skuVal && skuVal.length >= 10 && !mapSkuPorMlb.has(mlbVal)) {
-            mapSkuPorMlb.set(mlbVal, skuVal);
-          }
-        }
-
         const mapaMlPendente = new Map<string, any>();
         for (let i = 4; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
-
           const mlb = String(row[idxMlb] || "").trim().toUpperCase();
           if (!mlb || !mlb.startsWith("MLB")) continue;
-
           let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-          if ((!sku || sku === "-" || sku.length < 10) && mapSkuPorMlb.has(mlb)) {
-            sku = mapSkuPorMlb.get(mlb)!;
-          }
-
           let comissaoNum = 14;
           let rawComissao = row[idxCom];
           if (rawComissao !== undefined && rawComissao !== "") {
             let parsed = parseFloat(String(rawComissao).replace("%", "").trim().replace(",", "."));
             if (!isNaN(parsed) && parsed > 0) comissaoNum = parsed < 1 ? parsed * 100 : parsed;
           }
-
-          let pesoReal = 2.000;
-          if (idxPeso >= 0 && row[idxPeso] !== undefined) {
-            let p = Number(String(row[idxPeso]).replace(",", "."));
-            if (!isNaN(p) && p > 0) pesoReal = p;
-          }
-
-          const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
-          const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
-          const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
-
-          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada });
+          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, canal: contaMlSelecionada });
         }
-
         const registros = Array.from(mapaMlPendente.values());
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
         }
-
         alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).`);
         setLoading(false);
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
-      }
+      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -755,7 +586,6 @@ export default function UpdatesPage() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setLoading(true);
-
     const indiceColuna = letraParaIndice(letraColuna || "A");
     try {
       let allTiny: any[] = [];
@@ -780,12 +610,11 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
         for (let i = 4; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
           const skuVal = normalizarSku(row[indiceColuna]);
-          if (skuVal && skuVal.length >= 10 && skusTinySet.has(skuVal)) {
+          if (skuVal && skusTinySet.has(skuVal)) {
             skusEncontradosNoCanal.add(skuVal);
           }
         }
@@ -793,17 +622,12 @@ export default function UpdatesPage() {
 
       await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
       const registrosUpsert = Array.from(skusEncontradosNoCanal).map(sku => ({ canal: canalNome, sku, presente: true }));
-
       for (let i = 0; i < registrosUpsert.length; i += 500) {
         await supabase.from('mapeamento_canais_skus').insert(registrosUpsert.slice(i, i + 500));
       }
-
       alert(`Canal "${canalNome}" sincronizado com sucesso!`);
       setLoading(false);
-    } catch (err: any) {
-      alert("Erro: " + err.message);
-      setLoading(false);
-    }
+    } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
   };
 
   const pesquisarCustosNoBanco = async () => {
@@ -922,7 +746,6 @@ export default function UpdatesPage() {
                       🗑️ Limpar Base Tiny
                     </button>
                   </div>
-                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
                 </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadTiny} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
@@ -930,7 +753,6 @@ export default function UpdatesPage() {
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
-                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
                 </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
@@ -1082,7 +904,7 @@ export default function UpdatesPage() {
                       <input type="text" value={colunaIdFaturados} onChange={e => setColunaIdFaturados(e.target.value.toUpperCase())} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Data (D)</label>
+                      <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Data (D)</label>
                       <input type="text" value={colunaDataFaturados} onChange={e => setColunaDataFaturados(e.target.value.toUpperCase())} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-emerald-400 font-mono font-bold text-center uppercase outline-none" />
                     </div>
                   </div>
