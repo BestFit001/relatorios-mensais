@@ -116,10 +116,15 @@ export default function DashboardPage() {
           }
         } catch (e) {}
 
-        // 8. VENDAS BRUTAS DA ABA DE UPLOADS (Apenas tabela de pedidos/vendas oficiais)
+        // 8. VENDAS EXCLUSIVAS DA ABA DE UPLOADS (Tabela padrão de pedidos importados)
         try {
           const { data: vendasDb } = await supabase.from('vendas_pedidos').select('*');
-          if (vendasDb) setSales(vendasDb);
+          if (vendasDb && vendasDb.length > 0) {
+            setSales(vendasDb);
+          } else {
+            const { data: fallbackDb } = await supabase.from('vendas').select('*');
+            if (fallbackDb) setSales(fallbackDb);
+          }
         } catch (e) {
           try {
             const { data: fallbackDb } = await supabase.from('vendas').select('*');
