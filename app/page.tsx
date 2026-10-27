@@ -495,11 +495,19 @@ export default function DashboardPage() {
     return out;
   }, [db.ads_faturamento_canal, db.ads_campanhas_lancamentos, periodo]);
 
-  /* -------------------------------- canais -------------------------------- */
+  /* -------------------------------- canais (FONTE: ABA REGRAS + OUTROS) -------------------------------- */
   const canaisLista = useMemo(() => {
     const mapa = new Map<string, string>();
-    const add = (n: any) => { const k = norm(n); if (k && !mapa.has(k)) mapa.set(k, String(n).trim()); };
+    const add = (n: any) => {
+      const nomeLimpo = String(n || '').trim();
+      const k = norm(nomeLimpo);
+      if (k && !mapa.has(k)) mapa.set(k, nomeLimpo);
+    };
+
+    // Fonte principal: Configuração de Regras de Canais (aba Regras)
     (db.config_regras_canais || []).forEach((r: any) => add(r.canal));
+
+    // Outras fontes secundárias de apoio
     const cfg = (db.config_regras_tiny || []).find((t: any) => t.campo === 'canais_dashboard');
     if (cfg?.coluna) {
       try { const p = JSON.parse(cfg.coluna); if (Array.isArray(p)) p.forEach(add); } catch {}
@@ -510,6 +518,7 @@ export default function DashboardPage() {
     (db.ads_faturamento_canal || []).forEach((r: any) => add(r.canal));
     (db.ads_campanhas_lancamentos || []).forEach((r: any) => add(r.canal));
     (db.plp_pedidos || []).forEach((r: any) => add(r.canal));
+
     return Array.from(mapa.values());
   }, [db.config_regras_tiny, db.config_regras_canais, db.vendas_padrao_lancamentos, db.devolucoes, db.ads_faturamento_canal, db.ads_campanhas_lancamentos, db.plp_pedidos]);
 
