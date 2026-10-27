@@ -273,7 +273,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // CRUZAMENTO COM FATURADOS E LEITURA EXATA DAS COLUNAS DA ABA DE REGRAS
+  // CRUZAMENTO COM FATURADOS E GRAVAÇÃO NA TABELA 'vendas_padrao_lancamentos'
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -299,7 +299,6 @@ export default function UpdatesPage() {
           return;
         }
 
-        // Busca as regras do canal cadastrado (ID na Coluna A, SKU na X, PDV em I, Qtd em H por defeito ou conforme configurado)
         const { data: regraData } = await supabase
           .from('config_regras_canais')
           .select('*')
@@ -311,22 +310,21 @@ export default function UpdatesPage() {
           return reg ? reg.coluna_sku : 'X';
         };
 
-        const idxId = letraParaIndice(regraData?.coluna_id || 'A'); // Coluna A (0) para ID do Pedido
-        const idxSku = letraParaIndice(regraCanalSku(canalAlvoDash)); // Coluna configurada para SKU (ex: X)
-        const idxPdv = letraParaIndice(regraData?.coluna_pdv || 'I'); // Coluna I para Preço Venda
-        const idxQtd = letraParaIndice(regraData?.coluna_quantidade || 'H'); // Coluna H para Quantidade
+        const idxId = letraParaIndice(regraData?.coluna_id || 'A');
+        const idxSku = letraParaIndice(regraCanalSku(canalAlvoDash));
+        const idxPdv = letraParaIndice(regraData?.coluna_pdv || 'I');
+        const idxQtd = letraParaIndice(regraData?.coluna_quantidade || 'H');
 
         const novasVendas = [];
         let ignoradosNaoFaturados = 0;
 
-        for (let i = 7; i < json.length; i++) { // Começa a partir da linha 7 (ignora cabeçalhos do Mercado Livre)
+        for (let i = 7; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
 
           let rawId = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
           rawId = rawId.replace(/\.0$/, '').replace(/\D/g, '');
 
-          // CRUZAMENTO OBRIGATÓRIO: Só guarda se o pedido constar nos faturados
           if (!rawId || !idsFaturadosSet.has(rawId)) {
             ignoradosNaoFaturados++;
             continue;
@@ -335,7 +333,7 @@ export default function UpdatesPage() {
           const sku = idxSku >= 0 && row[idxSku] ? normalizarSku(row[idxSku]) : 'SKU-GERAL';
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : row[8]);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] ? row[idxQtd] : (row[7] || 1)) || 1;
-          const repasseLiquido = precoVenda - (precoVenda * 0.09); // Aplicação de apuração / desconto
+          const repasseLiquido = precoVenda - (precoVenda * 0.09);
 
           novasVendas.push({
             id_pedido: rawId,
