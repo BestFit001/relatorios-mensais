@@ -161,6 +161,29 @@ export default function UpdatesPage() {
     setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
+  const salvarRegrasMlSupabase = async () => {
+    try {
+      setLoading(true);
+      for (const conta of ["Mercado Livre 1", "Mercado Livre 2"]) {
+        const c = colunasPorConta[conta];
+        await supabase.from('config_regras_canais').upsert({
+          conta,
+          coluna_mlb: c.ml_mlb,
+          coluna_sku: c.ml_sku,
+          coluna_comissao: c.ml_comissao,
+          coluna_peso: c.ml_peso,
+          coluna_altura: c.ml_altura,
+          coluna_largura: c.ml_largura,
+          coluna_comprimento: c.ml_comprimento,
+        }, { onConflict: 'conta' });
+      }
+      alert("✅ Regras de Mercado Livre salvas com sucesso!");
+    } catch (err: any) {
+      alert("Erro ao salvar: " + err.message);
+    }
+    setLoading(false);
+  };
+
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -432,6 +455,12 @@ export default function UpdatesPage() {
     alert(`Canal limpo.`);
   };
 
+  const limparTabelaCustos = async () => {
+    if (!confirm("Apagar todos os custos?")) return;
+    await supabase.from('tabela_custos_skus').delete().neq('id', 0);
+    setListaCustosFiltrados([]);
+  };
+
   const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -547,6 +576,11 @@ export default function UpdatesPage() {
     const idxMlb = letraParaIndice(cols.ml_mlb);
     const idxSku = letraParaIndice(cols.ml_sku);
     const idxCom = letraParaIndice(cols.ml_comissao);
+    const idxPeso = cols.ml_peso ? letraParaIndice(cols.ml_peso) : -1;
+    const idxAlt = cols.ml_altura ? letraParaIndice(cols.ml_altura) : -1;
+    const idxLarg = cols.ml_largura ? letraParaIndice(cols.ml_largura) : -1;
+    const idxComp = cols.ml_comprimento ? letraParaIndice(cols.ml_comprimento) : -1;
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -569,7 +603,16 @@ export default function UpdatesPage() {
             let parsed = parseFloat(String(rawComissao).replace("%", "").trim().replace(",", "."));
             if (!isNaN(parsed) && parsed > 0) comissaoNum = parsed < 1 ? parsed * 100 : parsed;
           }
-          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, canal: contaMlSelecionada });
+          let pesoReal = 2.000;
+          if (idxPeso >= 0 && row[idxPeso] !== undefined) {
+            let p = Number(String(row[idxPeso]).replace(",", "."));
+            if (!isNaN(p) && p > 0) pesoReal = p;
+          }
+          const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
+          const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
+          const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
+
+          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada });
         }
         const registros = Array.from(mapaMlPendente.values());
         for (let i = 0; i < registros.length; i += 500) {
@@ -635,6 +678,13 @@ export default function UpdatesPage() {
     const termo = pesquisaCusto.trim();
     const { data } = await supabase.from('tabela_custos_skus').select('*').or(`sku.ilike.%${termo}%,produto.ilike.%${termo}%`).limit(50);
     if (data) setListaCustosFiltrados(data);
+  };
+
+  const pesquisarMlNoBanco = async () => {
+    if (!pesquisaMl || pesquisaMl.trim() === "") { setListaRegrasMlFiltradas([]); return; }
+    const termo = pesquisaMl.trim().toUpperCase();
+    const { data } = await supabase.from('ml_anuncios_regras').select('*').or(`mlb.ilike.%${termo}%,sku.ilike.%${termo}%`).limit(50);
+    if (data) setListaRegrasMlFiltradas(data);
   };
 
   const excluirCusto = async (id: number) => {
@@ -746,6 +796,7 @@ export default function UpdatesPage() {
                       🗑️ Limpar Base Tiny
                     </button>
                   </div>
+                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
                 </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadTiny} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
@@ -753,6 +804,7 @@ export default function UpdatesPage() {
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
+                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
                 </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
@@ -904,7 +956,7 @@ export default function UpdatesPage() {
                       <input type="text" value={colunaIdFaturados} onChange={e => setColunaIdFaturados(e.target.value.toUpperCase())} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
                     </div>
                     <div>
-                      <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Data (D)</label>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Data (D)</label>
                       <input type="text" value={colunaDataFaturados} onChange={e => setColunaDataFaturados(e.target.value.toUpperCase())} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-emerald-400 font-mono font-bold text-center uppercase outline-none" />
                     </div>
                   </div>
