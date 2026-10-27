@@ -1,137 +1,265 @@
 'use client';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import Navbar from '@/app/components/Navbar';
 
+/* =====================================================================
+   DASHBOARD OMNICHANNEL — app/dashboard/page.tsx
+
+   Fluxo de dados:
+   1. Vendas      -> vendas_padrao_lancamentos (gravadas pela aba Updates e Alimenta)
+                     + faturados (data de faturamento de cada pedido)
+   2. Regras      -> config_regras_canais ("Configurando Canal: <canal>"):
+                     formula_excel + colunas col_pdv / col_quantidade
+   3. Devoluções  -> devolucoes (abate bruto e líquido; "Troca" não abate)
+   4. Ads         -> ads_faturamento_canal.gasto_ads (fallback: soma de
+                     ads_campanhas_lancamentos.investimento)
+   5. Frete FLEX  -> plp_pedidos (modalidade FLEX, cruzado pelo nº do pedido)
+
+   Lucro líquido real = Faturamento líquido (fórmula do canal)
+                        - devoluções (líquido) - CMV - Ads - frete FLEX
+   ===================================================================== */
+
+const MODALIDADE_FRETE_DESCONTADO = 'flex';
+const CANAIS_FISICOS_PADRAO = ['Clube Hebraica', 'Clube Paineiras'];
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+const TABELAS = [
+  'vendas_padrao_lancamentos',
+  'faturados',
+  'tabela_custos_skus',
+  'config_regras_canais',
+  'config_regras_tiny',
+  'tb_metas',
+  'devolucoes',
+  'ads_faturamento_canal',
+  'ads_campanhas_lancamentos',
+  'plp_pedidos',
+] as const;
+
+/* ------------------------------ helpers ------------------------------ */
+const norm = (v: any) => String(v ?? '').trim().toLowerCase();
+const normPedido = (v: any) => String(v ?? '').trim().replace(/\.0$/, '').replace(/\D/g, '');
+const pad = (n: number) => String(n).padStart(2, '0');
+const isoLocal = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const labelMes = (d: Date) => `${MESES[d.getMonth()]} de ${d.getFullYear()}`;
+const brl = (v: number) => (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const num = (val: any): number => {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  let s = String(val).trim().replace('R$', '').trim();
+  if (s.includes('.') && s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  else if (s.includes(',')) s = s.replace(',', '.');
+  const n = Number(s);
+  return isNaN(n) ? 0 : n;
+};
+
+const isChannelFisico = (canal: string) => {
+  const n = norm(canal);
+  return n.includes('clube') || n.includes('loja') || n.includes('paineiras') || n.includes('hebraica');
+};
+
+const matchCanal = (canalNorm: string, filtro: string) => {
+  if (filtro === 'TODOS') return true;
+  if (filtro === 'ML_GERAL') return canalNorm.startsWith('mercado livre');
+  return canalNorm === norm(filtro);
+};
+
+// Aceita 2026-10-27, 27/10/2026 (com ou sem hora) e número serial do Excel
+function parseData(v: any): string | null {
+  if (v === null || v === undefined || v === '') return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : isoLocal(v);
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${pad(Number(m[2]))}-${pad(Number(m[1]))}`;
+  if (/^\d{5}(\.\d+)?$/.test(s)) {
+    const d = new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
+    return d.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+// Meses (MM/AAAA) que o período toca, com a fração de dias de cada um
+function mesesDoPeriodo(ini: string, fim: string) {
+  const out: { chave: string; fracao: number }[] = [];
+  let [y, m] = ini.split('-').map(Number);
+  const [yf, mf] = fim.split('-').map(Number);
+  while (y < yf || (y === yf && m <= mf)) {
+    const diasMes = new Date(y, m, 0).getDate();
+    const mIni = `${y}-${pad(m)}-01`;
+    const mFim = `${y}-${pad(m)}-${pad(diasMes)}`;
+    const a = ini > mIni ? ini : mIni;
+    const b = fim < mFim ? fim : mFim;
+    const dias = Math.round((new Date(b + 'T00:00:00').getTime() - new Date(a + 'T00:00:00').getTime()) / 86400000) + 1;
+    out.push({ chave: `${pad(m)}/${y}`, fracao: Math.max(0, dias) / diasMes });
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
+// Lê todas as linhas da tabela (o Supabase limita 1000 por consulta)
+async function buscarTudo(tabela: string): Promise<{ dados: any[]; erro: string | null }> {
+  const passo = 1000;
+  let from = 0;
+  const acc: any[] = [];
+  for (;;) {
+    let { data, error } = await supabase.from(tabela).select('*').order('id', { ascending: true }).range(from, from + passo - 1);
+    if (error) ({ data, error } = await supabase.from(tabela).select('*').range(from, from + passo - 1));
+    if (error) return { dados: acc, erro: `${tabela}: ${error.message}` };
+    if (!data || data.length === 0) break;
+    acc.push(...data);
+    if (data.length < passo) break;
+    from += passo;
+  }
+  return { dados: acc, erro: null };
+}
+
+/* ------------- avaliador seguro da fórmula (ex.: D2 - (D2 * 12%)) ------------- */
+type Ctx = Record<string, number>;
+type Node = (c: Ctx) => number;
+type Formula = { fn: Node; refs: string[] };
+
+function compilarFormula(src: any): Formula | null {
+  const texto = String(src || '').trim().replace(/^=/, '');
+  if (!texto) return null;
+  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?\d*|[-+*/^()%]/g);
+  if (!tokens || tokens.join('') !== texto.replace(/\s+/g, '')) return null;
+
+  let i = 0;
+  const refs: string[] = [];
+  const peek = () => tokens[i];
+  const next = () => tokens[i++];
+
+  const expr = (): Node => {
+    let l = term();
+    while (peek() === '+' || peek() === '-') {
+      const op = next();
+      const r = term();
+      const a = l;
+      l = op === '+' ? (c) => a(c) + r(c) : (c) => a(c) - r(c);
+    }
+    return l;
+  };
+  const term = (): Node => {
+    let l = power();
+    while (peek() === '*' || peek() === '/') {
+      const op = next();
+      const r = power();
+      const a = l;
+      l = op === '*' ? (c) => a(c) * r(c) : (c) => a(c) / r(c);
+    }
+    return l;
+  };
+  const power = (): Node => {
+    const base = unary();
+    if (peek() === '^') {
+      next();
+      const e = power();
+      return (c) => Math.pow(base(c), e(c));
+    }
+    return base;
+  };
+  const unary = (): Node => {
+    if (peek() === '-') { next(); const x = unary(); return (c) => -x(c); }
+    if (peek() === '+') { next(); return unary(); }
+    return postfix();
+  };
+  const postfix = (): Node => {
+    let n = primary();
+    while (peek() === '%') { next(); const a = n; n = (c) => a(c) / 100; }
+    return n;
+  };
+  const primary = (): Node => {
+    const t = next();
+    if (t === undefined) throw new Error('fim inesperado');
+    if (t === '(') {
+      const e = expr();
+      if (next() !== ')') throw new Error('parêntese');
+      return e;
+    }
+    if (/^\d/.test(t)) { const v = Number(t.replace(',', '.')); return () => v; }
+    if (/^\$?[A-Za-z]/.test(t)) {
+      if (peek() === '(') throw new Error('função não suportada');
+      const col = t.replace(/[^A-Za-z]/g, '').toUpperCase();
+      refs.push(col);
+      return (c) => c[col];
+    }
+    throw new Error('token inválido');
+  };
+
+  try {
+    const root = expr();
+    if (i !== tokens.length) return null;
+    return { fn: root, refs };
+  } catch {
+    return null;
+  }
+}
+
+type RegraCanal = { formula: Formula | null; colPdv: string; colQtd: string; ok: boolean; responsavel: string; logo: string | null };
+
+type Metricas = {
+  canal: string; canalNorm: string; isFisico: boolean; responsavel: string; logoUrl: string | null;
+  metaValor: number; vendasDoDia: number;
+  bruto: number; devBruto: number; fatBruto: number;
+  liqVendas: number; devLiq: number; fatLiquido: number;
+  cmv: number; ads: number; flex: number; lucro: number; margemPct: number;
+  progressoMetaPct: number; valorFaltante: number; mediaDiariaNecessaria: number; projecao: number;
+  itens: number;
+};
+
+const somar = (lista: Metricas[]) =>
+  lista.reduce(
+    (a, c) => ({
+      metaValor: a.metaValor + c.metaValor, vendasDoDia: a.vendasDoDia + c.vendasDoDia,
+      bruto: a.bruto + c.bruto, devBruto: a.devBruto + c.devBruto, fatBruto: a.fatBruto + c.fatBruto,
+      liqVendas: a.liqVendas + c.liqVendas, devLiq: a.devLiq + c.devLiq, fatLiquido: a.fatLiquido + c.fatLiquido,
+      cmv: a.cmv + c.cmv, ads: a.ads + c.ads, flex: a.flex + c.flex, lucro: a.lucro + c.lucro,
+      projecao: a.projecao + c.projecao, itens: a.itens + c.itens,
+    }),
+    { metaValor: 0, vendasDoDia: 0, bruto: 0, devBruto: 0, fatBruto: 0, liqVendas: 0, devLiq: 0, fatLiquido: 0, cmv: 0, ads: 0, flex: 0, lucro: 0, projecao: 0, itens: 0 }
+  );
+
+/* ================================ página ================================ */
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
-  const [vendas, setVendas] = useState<any[]>([]);
-  const [dbCustosMap, setDbCustosMap] = useState<Map<string, number>>(new Map());
-  const [dbDevolucoes, setDbDevolucoes] = useState<any[]>([]);
-  const [dbAds, setDbAds] = useState<any[]>([]);
-  const [dbPlp, setDbPlp] = useState<any[]>([]);
-  const [goals, setGoals] = useState<any[]>([]);
-  const [channelRules, setChannelRules] = useState<any[]>([]);
-  
-  // Lista dinâmica de canais puxada direto da tabela de regras do Supabase
-  const [canaisDinamicos, setCanaisDinamicos] = useState<string[]>([
-    'Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro'
-  ]);
-  
+  const [db, setDb] = useState<Record<string, any[]>>({});
+  const [erros, setErros] = useState<string[]>([]);
+
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
-  
   const [modalidadeFilter, setModalidadeFilter] = useState('SELECIONE');
   const [appliedModalidadeFilter, setAppliedModalidadeFilter] = useState('SELECIONE');
-
   const [viewMode, setViewMode] = useState<'cards' | 'linhas'>('cards');
 
-  const currentMonthDefault = "outubro de 2026";
-  const previousMonthDefault = "setembro de 2026";
-
+  const hojeIso = isoLocal(new Date());
+  const inicioMesIso = hojeIso.slice(0, 8) + '01';
   const [dateFilter, setDateFilter] = useState('MES_ATUAL');
-  const [customStartDate, setCustomStartDate] = useState('2026-10-01');
-  const [customEndDate, setCustomEndDate] = useState('2026-10-31');
-  
+  const [customStartDate, setCustomStartDate] = useState(inicioMesIso);
+  const [customEndDate, setCustomEndDate] = useState(hojeIso);
   const [appliedDateFilter, setAppliedDateFilter] = useState('MES_ATUAL');
-  const [appliedStartDate, setAppliedStartDate] = useState('2026-10-01');
-  const [appliedEndDate, setAppliedEndDate] = useState('2026-10-31');
-  
+  const [appliedStartDate, setAppliedStartDate] = useState(inicioMesIso);
+  const [appliedEndDate, setAppliedEndDate] = useState(hojeIso);
   const [isRecalculating, setIsRecalculating] = useState(false);
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        setLoading(true);
-
-        // 1. Custos de SKUs
-        let allCustos: any[] = [];
-        let from = 0;
-        const step = 1000;
-        let keep = true;
-        while (keep) {
-          const { data } = await supabase.from('tabela_custos_skus').select('*').range(from, from + step - 1);
-          if (data && data.length > 0) {
-            allCustos = [...allCustos, ...data];
-            from += step;
-            if (data.length < step) keep = false;
-          } else keep = false;
-        }
-
-        const cMap = new Map();
-        allCustos.forEach((c: any) => {
-          const skuNorm = String(c.sku || '').trim().toLowerCase();
-          const custoUni = Number(c.custo_unitario ?? c.custo ?? 0) || 0;
-          if (skuNorm) cMap.set(skuNorm, custoUni);
-        });
-        setDbCustosMap(cMap);
-
-        // 2. Vendas da tabela oficial vendas_padrao_lancamentos (em lotes)
-        let allVendas: any[] = [];
-        let vFrom = 0;
-        let vKeep = true;
-        while (vKeep) {
-          const { data } = await supabase.from('vendas_padrao_lancamentos').select('*').range(vFrom, vFrom + step - 1);
-          if (data && data.length > 0) {
-            allVendas = [...allVendas, ...data];
-            vFrom += step;
-            if (data.length < step) vKeep = false;
-          } else vKeep = false;
-        }
-        setVendas(allVendas);
-
-        // 3. Devoluções
-        try {
-          const { data: devData } = await supabase.from('devolucoes').select('*');
-          if (devData) setDbDevolucoes(devData);
-        } catch (e) {}
-
-        // 4. Ads
-        try {
-          const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*');
-          if (adsDataDb) setDbAds(adsDataDb);
-        } catch (e) {}
-
-        // 5. PLPs
-        try {
-          const { data: plpData } = await supabase.from('plp_pedidos').select('*');
-          if (plpData) setDbPlp(plpData);
-        } catch (e) {}
-
-        // 6. Metas
-        try {
-          const { data: metasDb } = await supabase.from('tb_metas').select('*');
-          if (metasDb) setGoals(metasDb);
-        } catch (e) {}
-
-        // 7. Puxa os canais dinâmicos diretamente da tabela de regras (config_regras_tiny)
-        try {
-          const { data: configs } = await supabase.from('config_regras_tiny').select('*');
-          if (configs) {
-            const canaisSalvos = configs.find((t: any) => t.campo === 'canais_dashboard');
-            if (canaisSalvos && canaisSalvos.coluna) {
-              const parsed = JSON.parse(canaisSalvos.coluna);
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                const baseObrigatoria = ['Clube Hebraica', 'Clube Paineiras'];
-                setCanaisDinamicos(Array.from(new Set([...parsed, ...baseObrigatoria])));
-              }
-            }
-          }
-        } catch (e) {}
-
-        // 8. Regras de canais
-        try {
-          const { data: regrasDb } = await supabase.from('config_regras_canais').select('*');
-          if (regrasDb) setChannelRules(regrasDb);
-        } catch (e) {}
-
-      } catch (err) {
-        console.error("Erro ao carregar dados do Supabase:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchData();
+    (async () => {
+      setLoading(true);
+      const resultados = await Promise.all(TABELAS.map((t) => buscarTudo(t)));
+      const novo: Record<string, any[]> = {};
+      const falhas: string[] = [];
+      resultados.forEach((r, idx) => {
+        novo[TABELAS[idx]] = r.dados;
+        if (r.erro) falhas.push(r.erro);
+      });
+      setDb(novo);
+      setErros(falhas);
+      setLoading(false);
+    })();
   }, []);
 
   const handleRecalculate = () => {
@@ -143,326 +271,304 @@ export default function DashboardPage() {
       setAppliedStartDate(customStartDate);
       setAppliedEndDate(customEndDate);
       setIsRecalculating(false);
-    }, 300);
+    }, 200);
   };
 
-  const isChannelFisico = (canalName: string) => {
-    const nome = String(canalName || '').toLowerCase();
-    return nome.includes('clube') || nome.includes('loja') || nome.includes('paineiras') || nome.includes('hebraica');
-  };
-
-  const parseCurrency = (val: any) => {
-    if (typeof val === 'number') return isNaN(val) ? 0 : val;
-    if (!val) return 0;
-    let s = String(val).trim().replace('R$', '').replace('R', '').trim();
-    if (s.includes('.') && s.includes(',')) {
-      s = s.replace(/\./g, '').replace(',', '.');
-    } else if (s.includes(',')) {
-      s = s.replace(',', '.');
+  /* ------------------------------ período ------------------------------ */
+  const periodo = useMemo(() => {
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    const addDias = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+    const iniMes = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
+    const fimMes = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    let ini: Date;
+    let fim: Date;
+    let modoMes = false;
+    switch (appliedDateFilter) {
+      case 'MES_ANTERIOR': {
+        const ref = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+        ini = iniMes(ref); fim = fimMes(ref); modoMes = true; break;
+      }
+      case 'HOJE': ini = hoje; fim = hoje; break;
+      case 'SEMANA': ini = addDias(hoje, -6); fim = hoje; break;
+      case 'QUINZENA': ini = addDias(hoje, -14); fim = hoje; break;
+      case 'PERSONALIZADO':
+        ini = new Date((appliedStartDate || isoLocal(hoje)) + 'T00:00:00');
+        fim = new Date((appliedEndDate || isoLocal(hoje)) + 'T00:00:00');
+        break;
+      default: ini = iniMes(hoje); fim = fimMes(hoje); modoMes = true;
     }
-    const num = Number(s);
-    return isNaN(num) ? 0 : num;
-  };
+    const ontem = addDias(hoje, -1);
+    return {
+      ini: isoLocal(ini), fim: isoLocal(fim), modoMes,
+      mesLabel: labelMes(fim),
+      isMesAtual: appliedDateFilter === 'MES_ATUAL',
+      diasPassados: Math.max(1, hoje.getDate()),
+      totalDiasMes: new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate(),
+      ontemIso: isoLocal(ontem),
+      ontemDia: pad(ontem.getDate()),
+    };
+  }, [appliedDateFilter, appliedStartDate, appliedEndDate]);
 
-  const currentRefMonth = useMemo(() => {
-    return currentMonthDefault;
-  }, [currentMonthDefault]);
-
-  const matchesChannelFilter = (canalVenda: string, filtro: string) => {
-    if (filtro === 'TODOS') return true;
-    const cV = String(canalVenda || '').trim().toLowerCase();
-    const fV = String(filtro || '').trim().toLowerCase();
-    if (cV === fV) return true;
-    if (fV.includes('mercado livre') && cV.includes('mercado livre')) return true;
-    return false;
-  };
-
-  const activeCancelados = useMemo(() => {
-    if (!dbDevolucoes) return [];
-    return dbDevolucoes.filter((c: any) => {
-      if (appliedChannelFilter !== 'TODOS' && !matchesChannelFilter(c.canal, appliedChannelFilter)) return false;
-      return true;
+  /* --------------------------- regras por canal --------------------------- */
+  const regrasPorCanal = useMemo(() => {
+    const m = new Map<string, RegraCanal>();
+    (db.config_regras_canais || []).forEach((r: any) => {
+      const colPdv = String(r.col_pdv || r.col_preco_venda || 'D').toUpperCase();
+      const colQtd = String(r.col_quantidade || 'G').toUpperCase();
+      const formula = compilarFormula(r.formula_excel);
+      const ok = !!formula && formula.refs.every((c) => c === colPdv || c === colQtd);
+      m.set(norm(r.canal), { formula, colPdv, colQtd, ok, responsavel: r.responsavel || '', logo: r.logo_url || null });
     });
-  }, [dbDevolucoes, appliedChannelFilter]);
+    return m;
+  }, [db.config_regras_canais]);
 
-  const enrichedSales = useMemo(() => {
-    return (vendas || []).filter((s: any) => {
-        if (!s) return false;
-        if (s.mes_referencia && s.mes_referencia.toLowerCase() !== currentRefMonth.toLowerCase()) return false;
-        if (!matchesChannelFilter(s.canal, appliedChannelFilter)) return false;
+  // Aplica a fórmula do canal. "valor" é exatamente o que está na célula do PDV da planilha.
+  // Se a fórmula usa a coluna de quantidade, o PDV é unitário (bruto = PDV x qtd);
+  // caso contrário o PDV já é o total da linha.
+  const calcularLinha = (canal: string, valor: number, qtd: number, liquidoFallback?: number) => {
+    const r = regrasPorCanal.get(norm(canal));
+    const unitario = !!(r && r.ok && r.formula && r.formula.refs.includes(r.colQtd));
+    const bruto = unitario ? valor * qtd : valor;
+    if (r && r.ok && r.formula) {
+      const liq = r.formula.fn({ [r.colPdv]: valor, [r.colQtd]: qtd });
+      if (Number.isFinite(liq)) return { bruto, liquido: liq, comRegra: true };
+    }
+    return { bruto, liquido: liquidoFallback && liquidoFallback > 0 ? liquidoFallback : bruto, comRegra: false };
+  };
 
-        const fisico = isChannelFisico(s.canal);
-        if (appliedModalidadeFilter === 'FISICO' && !fisico) return false;
-        if (appliedModalidadeFilter === 'DIGITAL' && fisico) return false;
+  /* ------------------------------- vendas ------------------------------- */
+  const dataPorPedido = useMemo(() => {
+    const m = new Map<string, string>();
+    (db.faturados || []).forEach((f: any) => {
+      const k = normPedido(f.id_pedido);
+      const d = parseData(f.data_faturamento);
+      if (k && d) m.set(k, d);
+    });
+    return m;
+  }, [db.faturados]);
 
-        return true;
+  const custosMap = useMemo(() => {
+    const m = new Map<string, number>();
+    (db.tabela_custos_skus || []).forEach((c: any) => {
+      const k = norm(c.sku);
+      if (k) m.set(k, num(c.custo_unitario ?? c.custo));
+    });
+    return m;
+  }, [db.tabela_custos_skus]);
+
+  const passaFiltros = (canal: string) => {
+    if (!matchCanal(norm(canal), appliedChannelFilter)) return false;
+    const fisico = isChannelFisico(canal);
+    if (appliedModalidadeFilter === 'FISICO' && !fisico) return false;
+    if (appliedModalidadeFilter === 'DIGITAL' && fisico) return false;
+    return true;
+  };
+
+  const vendasPeriodo = useMemo(() => {
+    const out: any[] = [];
+    for (const s of db.vendas_padrao_lancamentos || []) {
+      if (!passaFiltros(s.canal)) continue;
+      const pedido = normPedido(s.id_pedido);
+      const data = dataPorPedido.get(pedido) || null;
+
+      let dentro: boolean;
+      if (periodo.modoMes && s.mes_referencia) dentro = norm(s.mes_referencia) === norm(periodo.mesLabel);
+      else dentro = !!data && data >= periodo.ini && data <= periodo.fim;
+      if (!dentro) continue;
+
+      const qtd = num(s.quantidade) || 1;
+      const valor = num(s.valor ?? s.preco_venda);
+      const { bruto, liquido, comRegra } = calcularLinha(s.canal, valor, qtd, num(s.repasse_liquido ?? s.repasse));
+      const k = norm(s.sku);
+      const custoUni = custosMap.get(k) ?? 0;
+      out.push({ canal: s.canal, canalNorm: norm(s.canal), pedido, data, bruto, liquido, comRegra, cmv: custoUni * qtd, semCusto: custoUni <= 0, sku: k });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db.vendas_padrao_lancamentos, dataPorPedido, custosMap, regrasPorCanal, periodo, appliedChannelFilter, appliedModalidadeFilter]);
+
+  /* --------------------------- frete FLEX (PLP) --------------------------- */
+  const flex = useMemo(() => {
+    const porPedido = new Map<string, { valor: number; canal: string; data: string | null }>();
+    (db.plp_pedidos || []).forEach((p: any) => {
+      if (norm(p.modalidade) !== MODALIDADE_FRETE_DESCONTADO) return;
+      const k = normPedido(p.numero_pedido ?? p.id_pedido ?? p.pedido);
+      if (k && !porPedido.has(k)) porPedido.set(k, { valor: num(p.valor_frete), canal: p.canal, data: parseData(p.data_envio) });
+    });
+
+    const porCanal = new Map<string, number>();
+    const usados = new Set<string>();
+    vendasPeriodo.forEach((v) => {
+      const f = porPedido.get(v.pedido);
+      if (!f || usados.has(v.pedido)) return; // um frete por pedido, mesmo com vários itens
+      usados.add(v.pedido);
+      porCanal.set(v.canalNorm, (porCanal.get(v.canalNorm) || 0) + f.valor);
+    });
+
+    let semVendaQtd = 0;
+    let semVendaValor = 0;
+    porPedido.forEach((f, k) => {
+      if (usados.has(k) || !f.data || f.data < periodo.ini || f.data > periodo.fim) return;
+      if (!passaFiltros(f.canal)) return;
+      semVendaQtd++;
+      semVendaValor += f.valor;
+    });
+    return { porCanal, semVendaQtd, semVendaValor };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db.plp_pedidos, vendasPeriodo, periodo, appliedChannelFilter, appliedModalidadeFilter]);
+
+  /* ------------------------------ devoluções ------------------------------ */
+  const devolucoes = useMemo(() => {
+    const m = new Map<string, { bruto: number; liquido: number }>();
+    (db.devolucoes || []).forEach((d: any) => {
+      if (norm(d.solicitacao).includes('troca')) return; // troca não reduz a venda
+      if (!d.canal || !passaFiltros(d.canal)) return;
+      const data = parseData(d.data_retorno);
+      if (!data || data < periodo.ini || data > periodo.fim) return;
+      const qtd = Math.max(1, num(d.quantidade) || 1);
+      const { bruto, liquido } = calcularLinha(d.canal, num(d.pdv), qtd);
+      const k = norm(d.canal);
+      const atual = m.get(k) || { bruto: 0, liquido: 0 };
+      m.set(k, { bruto: atual.bruto + bruto, liquido: atual.liquido + liquido });
+    });
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db.devolucoes, regrasPorCanal, periodo, appliedChannelFilter, appliedModalidadeFilter]);
+
+  /* ---------------------------------- Ads ---------------------------------- */
+  const adsPorCanal = useMemo(() => {
+    const gasto = new Map<string, number>();
+    const invest = new Map<string, number>();
+    (db.ads_faturamento_canal || []).forEach((a: any) => {
+      const k = `${norm(a.canal)}|${String(a.mes_referencia).trim()}`;
+      gasto.set(k, (gasto.get(k) || 0) + num(a.gasto_ads));
+    });
+    (db.ads_campanhas_lancamentos || []).forEach((a: any) => {
+      const k = `${norm(a.canal)}|${String(a.mes_referencia).trim()}`;
+      invest.set(k, (invest.get(k) || 0) + num(a.investimento));
+    });
+    const canais = new Set<string>();
+    [...gasto.keys(), ...invest.keys()].forEach((k) => canais.add(k.split('|')[0]));
+
+    const meses = mesesDoPeriodo(periodo.ini, periodo.fim);
+    const out = new Map<string, number>();
+    canais.forEach((c) => {
+      let total = 0;
+      meses.forEach(({ chave, fracao }) => {
+        const g = gasto.get(`${c}|${chave}`) || 0;
+        total += (g > 0 ? g : invest.get(`${c}|${chave}`) || 0) * fracao;
+      });
+      out.set(c, total);
+    });
+    return out;
+  }, [db.ads_faturamento_canal, db.ads_campanhas_lancamentos, periodo]);
+
+  /* -------------------------------- canais -------------------------------- */
+  const canaisLista = useMemo(() => {
+    const mapa = new Map<string, string>();
+    const add = (n: any) => { const k = norm(n); if (k && !mapa.has(k)) mapa.set(k, String(n).trim()); };
+    const cfg = (db.config_regras_tiny || []).find((t: any) => t.campo === 'canais_dashboard');
+    if (cfg?.coluna) {
+      try { const p = JSON.parse(cfg.coluna); if (Array.isArray(p)) p.forEach(add); } catch { /* ignora */ }
+    }
+    (db.config_regras_canais || []).forEach((r: any) => add(r.canal));
+    new Set((db.vendas_padrao_lancamentos || []).map((v: any) => v.canal)).forEach(add);
+    CANAIS_FISICOS_PADRAO.forEach(add);
+    return Array.from(mapa.values());
+  }, [db.config_regras_tiny, db.config_regras_canais, db.vendas_padrao_lancamentos]);
+
+  /* ------------------------------ métricas ------------------------------ */
+  const channelAnalytics = useMemo(() => {
+    const porCanal = new Map<string, any[]>();
+    vendasPeriodo.forEach((v) => {
+      const arr = porCanal.get(v.canalNorm) || [];
+      arr.push(v);
+      porCanal.set(v.canalNorm, arr);
+    });
+    const metas: any[] = db.tb_metas || [];
+
+    return canaisLista
+      .filter((c) => passaFiltros(c))
+      .sort((a, b) => {
+        const fa = isChannelFisico(a), fb = isChannelFisico(b);
+        if (fa !== fb) return fa ? -1 : 1;
+        return a.localeCompare(b);
       })
-      .map((s: any) => {
-        const skuNorm = String(s.sku || '').trim().toLowerCase();
-        const qtd = parseCurrency(s.quantidade) || 1;
-        const custoUni = dbCustosMap.get(skuNorm) || 0;
-        const custoCMV = custoUni * qtd;
+      .map((canal): Metricas => {
+        const k = norm(canal);
+        const vs = porCanal.get(k) || [];
+        const regra = regrasPorCanal.get(k);
+        const dev = devolucoes.get(k) || { bruto: 0, liquido: 0 };
 
-        const flexOrder = dbPlp.find((f: any) => String(f.id_pedido) === String(s.id_pedido));
-        const custoFlex = flexOrder ? parseCurrency(flexOrder.valor_frete ?? flexOrder.frete ?? flexOrder.valor) : 0;
-        
-        const precoVenda = parseCurrency(s.valor || s.preco_venda);
-        let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
-        if (repasseLiquido <= 0) {
-          repasseLiquido = precoVenda;
-        }
+        const bruto = vs.reduce((s, v) => s + v.bruto, 0);
+        const liqVendas = vs.reduce((s, v) => s + v.liquido, 0);
+        const cmv = vs.reduce((s, v) => s + v.cmv, 0);
+        const vendasDoDia = vs.filter((v) => v.data === periodo.ontemIso).reduce((s, v) => s + v.bruto, 0);
+        const fatBruto = bruto - dev.bruto;
+        const fatLiquido = liqVendas - dev.liquido;
+        const ads = adsPorCanal.get(k) || 0;
+        const fl = flex.porCanal.get(k) || 0;
+        const lucro = fatLiquido - cmv - fl - ads;
 
-        const ganhoBruto = repasseLiquido - custoCMV; 
-        const ganhoLiquido = ganhoBruto - custoFlex;
-        
-        return { 
-          ...s, 
-          preco_venda: precoVenda,
-          custoCMV, 
-          custoFlex, 
-          ganhoLiquido, 
-          repasse_liquido: repasseLiquido 
+        const metaObj = metas.find((g) => norm(g.canal) === k && norm(g.mes_referencia) === norm(periodo.mesLabel)) || metas.find((g) => norm(g.canal) === k);
+        const metaValor = num(metaObj?.meta_valor);
+        const valorFaltante = Math.max(0, metaValor - fatBruto);
+        const projecao = periodo.isMesAtual ? (fatBruto / periodo.diasPassados) * periodo.totalDiasMes : fatBruto;
+        const diasRestantes = Math.max(1, periodo.totalDiasMes - periodo.diasPassados);
+
+        return {
+          canal, canalNorm: k, isFisico: isChannelFisico(canal),
+          responsavel: regra?.responsavel || metaObj?.responsavel || 'Equipe Best Fit',
+          logoUrl: regra?.logo || null,
+          metaValor, vendasDoDia, bruto, devBruto: dev.bruto, fatBruto, liqVendas, devLiq: dev.liquido, fatLiquido,
+          cmv, ads, flex: fl, lucro,
+          margemPct: fatBruto > 0 ? (lucro / fatBruto) * 100 : 0,
+          progressoMetaPct: metaValor > 0 ? (fatBruto / metaValor) * 100 : 0,
+          valorFaltante,
+          mediaDiariaNecessaria: periodo.isMesAtual && valorFaltante > 0 ? valorFaltante / diasRestantes : 0,
+          projecao, itens: vs.length,
         };
       });
-  }, [vendas, appliedChannelFilter, appliedModalidadeFilter, dbCustosMap, dbPlp, currentRefMonth]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canaisLista, vendasPeriodo, devolucoes, adsPorCanal, flex, regrasPorCanal, db.tb_metas, periodo, appliedChannelFilter, appliedModalidadeFilter]);
 
-  const kpis = useMemo(() => {
-    const activeChannels = canaisDinamicos;
-    
-    let faturamentoBrutoVendas = 0;
-    let faturamentoLiquidoRepasse = 0;
-    let metaDigitalTotal = 0;
-    let fatBrutoFisico = 0;
-    let fatBrutoDigital = 0;
-    let repasseFisico = 0;
-    let repasseDigital = 0;
-    let custoTotalCMV = 0;
-    let cmvFisico = 0;
-    let cmvDigital = 0;
+  const ecommerce = useMemo(() => channelAnalytics.filter((c) => !c.isFisico), [channelAnalytics]);
+  const fisicas = useMemo(() => channelAnalytics.filter((c) => c.isFisico), [channelAnalytics]);
+  const totE = useMemo(() => somar(ecommerce), [ecommerce]);
+  const totF = useMemo(() => somar(fisicas), [fisicas]);
+  const totG = useMemo(() => somar(channelAnalytics), [channelAnalytics]);
 
-    const totalCancelamentosValor = activeCancelados.reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-    const lojasFisicasDetalhes: any[] = [];
-    const lojasFisicasRepasse: any[] = [];
+  const progressoDigital = totE.metaValor > 0 ? (totE.fatBruto / totE.metaValor) * 100 : 0;
 
-    activeChannels.forEach(channelName => {
-      const fisico = isChannelFisico(channelName);
-      const goalObj = goals.find((g: any) => matchesChannelFilter(g.canal, channelName) && g.mes_referencia === currentRefMonth) 
-                   || goals.find((g: any) => matchesChannelFilter(g.canal, channelName)) 
-                   || { meta_valor: 0 };
-      const metaCanal = parseCurrency(goalObj.meta_valor);
-
-      const chSales = enrichedSales.filter((s: any) => matchesChannelFilter(s.canal, channelName));
-      
-      const cancelamentosCanal = activeCancelados
-        .filter((c: any) => matchesChannelFilter(c.canal, channelName))
-        .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-
-      const faturadoPuroCanal = chSales.reduce((sum: number, s: any) => sum + (s.preco_venda * (parseCurrency(s.quantidade) || 1)), 0);
-      const faturadoEfetivoCanal = Math.max(0, faturadoPuroCanal - cancelamentosCanal);
-      const repasseCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
-
-      let nomeLimpo = channelName.replace(/clube|loja/gi, '').trim();
-      if (!nomeLimpo) nomeLimpo = channelName;
-
-      if (fisico) {
-        const progresso = metaCanal > 0 ? (faturadoEfetivoCanal / metaCanal) * 100 : 0;
-        const diff = Math.abs(progresso - 100);
-
-        lojasFisicasDetalhes.push({
-          nome: nomeLimpo,
-          faturado: faturadoEfetivoCanal,
-          progresso,
-          diff,
-          abaixo: progresso < 100
-        });
-
-        lojasFisicasRepasse.push({
-          nome: nomeLimpo,
-          repasse: repasseCanal
-        });
-      } else {
-        metaDigitalTotal += metaCanal;
-      }
-    });
-
-    enrichedSales.forEach((s: any) => {
-      const fisico = isChannelFisico(s.canal);
-      const qtd = parseCurrency(s.quantidade) || 1;
-      const valBruto = s.preco_venda * qtd;
-      const valRepasse = s.repasse_liquido;
-      const valCmv = s.custoCMV;
-
-      faturamentoBrutoVendas += valBruto;
-      faturamentoLiquidoRepasse += valRepasse;
-      custoTotalCMV += valCmv;
-
-      if (fisico) {
-        fatBrutoFisico += valBruto;
-        repasseFisico += valRepasse;
-        cmvFisico += valCmv;
-      } else {
-        fatBrutoDigital += valBruto;
-        repasseDigital += valRepasse;
-        cmvDigital += valCmv;
-      }
-    });
-
-    faturamentoBrutoVendas = Math.max(0, faturamentoBrutoVendas - totalCancelamentosValor);
-
-    const canceladosDigitais = activeCancelados
-        .filter((c: any) => !isChannelFisico(c.canal))
-        .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-    
-    fatBrutoDigital = Math.max(0, fatBrutoDigital - canceladosDigitais);
-
-    const progressoDigitalPct = metaDigitalTotal > 0 ? (fatBrutoDigital / metaDigitalTotal) * 100 : 0;
-    const diffDigital = Math.abs(progressoDigitalPct - 100);
-
-    const totalFlexCost = enrichedSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
-    
-    const filteredAds = dbAds.filter((a: any) => matchesChannelFilter(a.canal, appliedChannelFilter));
-    const totalAdsCost = filteredAds.reduce((sum: number, a: any) => sum + parseCurrency(a.custo_ads), 0);
-    
-    const lucroLiquidoReal = faturamentoLiquidoRepasse - custoTotalCMV - totalFlexCost - totalAdsCost;
-    const lucroFisico = repasseFisico - cmvFisico;
-    const lucroDigital = repasseDigital - cmvDigital - totalFlexCost - totalAdsCost;
-
-    return { 
-      faturamentoBrutoVendas, 
-      fatBrutoFisico,
-      fatBrutoDigital,
-      faturamentoLiquidoRepasse, 
-      repasseFisico,
-      repasseDigital,
-      custoTotalCMV, 
-      cmvFisico,
-      cmvDigital,
-      lucroLiquidoReal, 
-      lucroFisico,
-      lucroDigital,
-      totalPedidos: enrichedSales.length,
-      lojasFisicasDetalhes,
-      lojasFisicasRepasse,
-      progressoDigitalPct,
-      diffDigital,
-      totalCancelamentosValor
-    };
-  }, [enrichedSales, dbAds, appliedChannelFilter, canaisDinamicos, channelRules, goals, currentRefMonth, activeCancelados]);
-
-  const channelAnalytics = useMemo(() => {
-    const activeChannels = canaisDinamicos;
-    
-    let channelsToAnalyze = appliedChannelFilter === 'TODOS' 
-      ? activeChannels 
-      : activeChannels.filter(c => matchesChannelFilter(c, appliedChannelFilter));
-
-    if (appliedModalidadeFilter === 'FISICO') {
-      channelsToAnalyze = channelsToAnalyze.filter(c => isChannelFisico(c));
-    } else if (appliedModalidadeFilter === 'DIGITAL') {
-      channelsToAnalyze = channelsToAnalyze.filter(c => !isChannelFisico(c));
+  /* ------------------------------ diagnóstico ------------------------------ */
+  const avisos = useMemo(() => {
+    const lista: string[] = [];
+    const semRegra = new Map<string, number>();
+    vendasPeriodo.filter((v) => !v.comRegra).forEach((v) => semRegra.set(v.canal, (semRegra.get(v.canal) || 0) + 1));
+    if (semRegra.size > 0) {
+      lista.push(`Sem fórmula válida em "Configurando Canal" (usado o repasse gravado no upload): ${Array.from(semRegra.entries()).map(([c, n]) => `${c} (${n} itens)`).join(', ')}.`);
     }
+    const skusSemCusto = new Set(vendasPeriodo.filter((v) => v.semCusto).map((v) => v.sku));
+    if (skusSemCusto.size > 0) lista.push(`${skusSemCusto.size} SKUs vendidos sem custo cadastrado — o CMV está subestimado.`);
+    if (flex.semVendaQtd > 0) lista.push(`${flex.semVendaQtd} pedidos FLEX (R$ ${brl(flex.semVendaValor)}) sem venda correspondente no período — frete não descontado.`);
+    return lista;
+  }, [vendasPeriodo, flex]);
 
-    channelsToAnalyze.sort((a, b) => {
-      const aFisico = isChannelFisico(a);
-      const bFisico = isChannelFisico(b);
-      if (aFisico && !bFisico) return -1;
-      if (!aFisico && bFisico) return 1;
-      return a.localeCompare(b);
-    });
-
-    return channelsToAnalyze.map(channelName => {
-      const chSales = enrichedSales.filter((s: any) => matchesChannelFilter(s.canal, channelName));
-      
-      const vendasDoDia = chSales.reduce((sum: number, s: any) => sum + (s.preco_venda * (parseCurrency(s.quantidade) || 1)), 0);
-
-      const ruleObj = channelRules.find((r: any) => matchesChannelFilter(r.canal, channelName)) || {};
-      const goalObj = goals.find((g: any) => matchesChannelFilter(g.canal, channelName)) || { meta_valor: 0, responsavel: 'Equipe Best Fit' };
-
-      const cancelamentosMes = activeCancelados
-        .filter((c: any) => matchesChannelFilter(c.canal, channelName))
-        .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-
-      const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + (s.preco_venda * (parseCurrency(s.quantidade) || 1)), 0);
-      const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - cancelamentosMes);
-      const repasseTotal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
-      
-      const canalAds = dbAds
-        .filter((a: any) => matchesChannelFilter(a.canal, channelName))
-        .reduce((sum: number, a: any) => sum + parseCurrency(a.custo_ads), 0);
-
-      const cmvCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0);
-      const flexCanal = chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
-
-      const lucroLiquidoFinal = repasseTotal - cmvCanal - flexCanal - canalAds;
-      
-      const metaBase = parseCurrency(goalObj.meta_valor);
-      const progressoMetaPct = metaBase > 0 ? (faturadoComRedutor / metaBase) * 100 : 0;
-      
-      const margemBrutaPct = faturadoBrutoPuro > 0 ? (repasseTotal / faturadoBrutoPuro) * 100 : 0;
-      const margemLiquidaPct = faturadoBrutoPuro > 0 ? (lucroLiquidoFinal / faturadoBrutoPuro) * 100 : 0;
-
-      const projecaoFaturamento = faturadoComRedutor;
-      const valorFaltante = Math.max(0, metaBase - faturadoComRedutor);
-
-      return { 
-        canal: channelName, 
-        responsavel: ruleObj.responsavel || goalObj.responsavel || 'Equipe Best Fit', 
-        metaValor: metaBase,
-        vendasDoDia,
-        faturadoBruto: faturadoBrutoPuro,
-        faturadoComRedutor, 
-        lucroLiquidoFinal, 
-        progressoMetaPct, 
-        margemBrutaPct, 
-        margemLiquidaPct, 
-        projecaoFaturamento,
-        valorFaltante,
-        cancelamentosMes,
-        isCurrentMonth: true,
-        logoUrl: ruleObj.logo_url || null,
-        isFisico: isChannelFisico(channelName)
-      };
-    });
-  }, [enrichedSales, goals, dbAds, appliedChannelFilter, appliedModalidadeFilter, channelRules, canaisDinamicos, activeCancelados]);
-
-  const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
-  const physicalChannels = channelAnalytics.filter(c => c.isFisico);
-
-  const totalEcommerce = useMemo(() => {
-    return ecommerceChannels.reduce((acc, curr) => ({
-      vendasDoDia: acc.vendasDoDia + curr.vendasDoDia,
-      faturadoComRedutor: acc.faturadoComRedutor + curr.faturadoComRedutor,
-      metaValor: acc.metaValor + curr.metaValor,
-      projecaoFaturamento: acc.projecaoFaturamento + curr.projecaoFaturamento,
-      lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoFinal
-    }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoFinal: 0 });
-  }, [ecommerceChannels]);
-
-  const totalPhysical = useMemo(() => {
-    return physicalChannels.reduce((acc, curr) => ({
-      vendasDoDia: acc.vendasDoDia + curr.vendasDoDia,
-      faturadoComRedutor: acc.faturadoComRedutor + curr.faturadoComRedutor,
-      metaValor: acc.metaValor + curr.metaValor,
-      projecaoFaturamento: acc.projecaoFaturamento + curr.projecaoFaturamento,
-      lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoFinal
-    }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoFinal: 0 });
-  }, [physicalChannels]);
-
-  const totalGeral = useMemo(() => {
-    return {
-      vendasDoDia: totalEcommerce.vendasDoDia + totalPhysical.vendasDoDia,
-      faturadoComRedutor: totalEcommerce.faturadoComRedutor + totalPhysical.faturadoComRedutor,
-      metaValor: totalEcommerce.metaValor + totalPhysical.metaValor,
-      projecaoFaturamento: totalEcommerce.projecaoFaturamento + totalPhysical.projecaoFaturamento,
-      lucroLiquidoFinal: totalEcommerce.lucroLiquidoFinal + totalPhysical.lucroLiquidoFinal
-    };
-  }, [totalEcommerce, totalPhysical]);
-
+  /* -------------------------------- e-mail -------------------------------- */
   const handleEnviarEmailAlerta = () => {
-    const emailsCadastrados = "gisele@usebestfit.com.br";
+    const email = 'gisele@usebestfit.com.br';
     const dataHoje = new Date().toLocaleDateString('pt-BR');
     const assunto = encodeURIComponent(`📊 Resumo de Vendas - Lojas Físicas e Online (${dataHoje})`);
-    window.location.href = `mailto:${emailsCadastrados}?subject=${assunto}`;
+    const linhaLoja = (nome: string) => {
+      const c = channelAnalytics.find((x) => norm(x.canal).includes(nome));
+      return `${nome.charAt(0).toUpperCase() + nome.slice(1)}: R$ ${brl(c?.fatBruto || 0)} (${(c?.progressoMetaPct || 0).toFixed(1)}% da meta)\n`;
+    };
+    let corpo = `Olá, tudo bem? Segue resumo das vendas das lojas fisica e onlines do dia ${dataHoje}.\n\n`;
+    corpo += linhaLoja('hebraica') + linhaLoja('paineiras');
+    corpo += `E-commerce: R$ ${brl(totE.fatBruto)} (${progressoDigital.toFixed(1)}% da meta)\n\n`;
+    corpo += `Caso queiram visualiza-lo, acessem o link a seguir: https://dashboard-e-commerce-nine.vercel.app/\n`;
+    window.location.href = `mailto:${email}?subject=${assunto}&body=${encodeURIComponent(corpo)}`;
   };
 
   if (loading) {
@@ -470,68 +576,147 @@ export default function DashboardPage() {
       <div className="min-h-screen bg-[#07090e] p-8 text-slate-100 flex items-center justify-center">
         <div className="text-center space-y-3">
           <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="text-sm font-bold text-slate-400">A carregar dados do Supabase...</p>
+          <p className="text-sm font-bold text-slate-400">Carregando dados do Supabase...</p>
         </div>
       </div>
     );
   }
 
+  const dash = (v: number) => (v > 0 ? `− R$ ${brl(v)}` : `R$ ${brl(0)}`);
+
+  const BlocoModalidade = ({ fisico, digital, cor = 'text-slate-200' }: { fisico: number; digital: number; cor?: string }) => (
+    <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
+      <div>
+        <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-1">Lojas Físicas</span>
+        <span className={`text-xs font-bold block ${cor}`}>R$ {brl(fisico)}</span>
+      </div>
+      <div className="pt-2 border-t border-slate-800/50">
+        <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
+        <span className={`text-xs font-bold block ${cor}`}>R$ {brl(digital)}</span>
+      </div>
+    </div>
+  );
+
+  const Deducao = ({ rotulo, valor }: { rotulo: string; valor: number }) => (
+    <div className="flex justify-between text-[10px] text-slate-400">
+      <span>{rotulo}</span>
+      <span className={valor > 0 ? 'text-rose-400 font-bold' : ''}>{dash(valor)}</span>
+    </div>
+  );
+
+  const LinhaTabela = ({ item, cor }: { item: Metricas; cor: string }) => (
+    <tr className="hover:bg-slate-900/60 transition border-b border-slate-800/50">
+      <td className="py-3.5 px-6">
+        <span className="block font-bold text-white">{item.canal}</span>
+        <span className="text-[10px] text-slate-400">{item.responsavel}</span>
+      </td>
+      <td className="py-3.5 px-4 text-right font-mono text-slate-300">R$ {brl(item.vendasDoDia)}</td>
+      <td className="py-3.5 px-4 text-right font-bold text-white">R$ {brl(item.fatBruto)}</td>
+      <td className="py-3.5 px-4 text-right font-bold text-purple-300">R$ {brl(item.fatLiquido)}</td>
+      <td className="py-3.5 px-4 text-right text-rose-300">R$ {brl(item.ads)}</td>
+      <td className="py-3.5 px-4 text-right text-rose-300">R$ {brl(item.flex)}</td>
+      <td className={`py-3.5 px-4 text-right font-bold ${item.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>R$ {brl(item.lucro)}</td>
+      <td className="py-3.5 px-4 text-right font-mono text-slate-400">R$ {brl(item.metaValor)}</td>
+      <td className={`py-3.5 px-4 text-center font-black ${item.progressoMetaPct >= 100 ? 'text-emerald-400' : cor}`}>{item.progressoMetaPct.toFixed(1)}%</td>
+      <td className="py-3.5 px-6 text-right font-black text-emerald-400">{item.margemPct.toFixed(1)}%</td>
+    </tr>
+  );
+
+  const TotalTabela = ({ titulo, t, cor }: { titulo: string; t: ReturnType<typeof somar>; cor: string }) => (
+    <tr className="bg-slate-950 font-black border-b border-slate-800">
+      <td className={`py-3 px-6 ${cor}`}>{titulo}</td>
+      <td className={`py-3 px-4 text-right font-mono ${cor}`}>R$ {brl(t.vendasDoDia)}</td>
+      <td className={`py-3 px-4 text-right ${cor}`}>R$ {brl(t.fatBruto)}</td>
+      <td className={`py-3 px-4 text-right ${cor}`}>R$ {brl(t.fatLiquido)}</td>
+      <td className={`py-3 px-4 text-right ${cor}`}>R$ {brl(t.ads)}</td>
+      <td className={`py-3 px-4 text-right ${cor}`}>R$ {brl(t.flex)}</td>
+      <td className={`py-3 px-4 text-right ${cor}`}>R$ {brl(t.lucro)}</td>
+      <td className="py-3 px-4 text-right font-mono text-slate-400">R$ {brl(t.metaValor)}</td>
+      <td className={`py-3 px-4 text-center ${cor}`}>{t.metaValor > 0 ? ((t.fatBruto / t.metaValor) * 100).toFixed(1) + '%' : '-'}</td>
+      <td className={`py-3 px-6 text-right ${cor}`}>{t.fatBruto > 0 ? ((t.lucro / t.fatBruto) * 100).toFixed(1) + '%' : '-'}</td>
+    </tr>
+  );
+
   return (
     <div className="min-h-screen bg-[#07090e] p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
-        
+
         {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Dashboard Omnichannel</h1>
-            <p className="text-sm font-medium text-slate-400">Visão consolidada consultando Supabase (vendas_padrao_lancamentos)</p>
+            <p className="text-sm font-medium text-slate-400">Visão consolidada consultando Supabase (Vendas, Regras do Canal, Devoluções, Adsense, PLP e Custos)</p>
           </div>
           <Navbar />
         </div>
+
+        {/* AVISOS DE QUALIDADE DOS DADOS */}
+        {(erros.length > 0 || avisos.length > 0) && (
+          <div className="space-y-2">
+            {erros.length > 0 && (
+              <div className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-4 text-xs text-rose-200 space-y-1">
+                <strong className="block text-rose-300">Falha ao carregar do Supabase (os valores abaixo podem estar incompletos):</strong>
+                {erros.map((e) => <span key={e} className="block">• {e}</span>)}
+              </div>
+            )}
+            {avisos.length > 0 && (
+              <div className="rounded-2xl border border-amber-500/30 bg-amber-950/20 p-4 text-xs text-amber-200 space-y-1">
+                <strong className="block text-amber-300">Atenção aos dados do período:</strong>
+                {avisos.map((a) => <span key={a} className="block">• {a}</span>)}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* BARRA DE FILTROS SUPERIOR */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl gap-4">
           <div>
             <h2 className="text-base font-bold text-white tracking-tight">Dashboard Best Fit</h2>
-            <p className="text-xs text-slate-400 mt-0.5">Cálculo de Margem Real = Repasse Líq - CMV - PLP - Adsense</p>
+            <p className="text-xs text-slate-400 mt-0.5">Lucro real = Fat. líquido (fórmula do canal) − Devoluções − CMV − Adsense − Frete FLEX</p>
           </div>
-          
+
           <div className="flex flex-wrap gap-3 items-center w-full lg:w-auto">
-            <button 
-              onClick={handleEnviarEmailAlerta} 
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-2 cursor-pointer"
-            >
-              <i className="fa-solid fa-envelope"></i> Enviar Relatório por E-mail
+            <button onClick={handleEnviarEmailAlerta} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg cursor-pointer">
+              Enviar Relatório por E-mail
             </button>
 
             <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
-              <i className="fa-regular fa-calendar text-indigo-400 pl-2 text-xs"></i>
-              <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="bg-transparent text-indigo-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
+              <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="bg-transparent text-indigo-300 font-bold text-xs focus:outline-none px-2 cursor-pointer">
                 <option value="MES_ATUAL" className="bg-slate-900 text-white">Mês Atual (Padrão Metas)</option>
+                <option value="MES_ANTERIOR" className="bg-slate-900 text-white">Mês Anterior</option>
+                <option value="HOJE" className="bg-slate-900 text-white">Hoje</option>
+                <option value="SEMANA" className="bg-slate-900 text-white">Últimos 7 dias</option>
+                <option value="QUINZENA" className="bg-slate-900 text-white">Últimos 15 dias</option>
+                <option value="PERSONALIZADO" className="bg-slate-900 text-white">Personalizado</option>
               </select>
             </div>
+            {dateFilter === 'PERSONALIZADO' && (
+              <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-700">
+                <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="bg-transparent text-slate-300 font-bold text-xs focus:outline-none" />
+                <span className="text-slate-500 text-xs font-bold">até</span>
+                <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="bg-transparent text-slate-300 font-bold text-xs focus:outline-none" />
+              </div>
+            )}
 
             <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
-              <i className="fa-solid fa-layer-group text-emerald-400 pl-2 text-xs"></i>
-              <select value={modalidadeFilter} onChange={(e) => setModalidadeFilter(e.target.value)} className="bg-transparent text-emerald-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
+              <select value={modalidadeFilter} onChange={(e) => setModalidadeFilter(e.target.value)} className="bg-transparent text-emerald-300 font-bold text-xs focus:outline-none px-2 cursor-pointer">
                 <option value="SELECIONE" className="bg-slate-900 text-slate-500">Selecione...</option>
-                <option value="TODOS" className="bg-slate-900 text-white">Todas as Modalidades</option>
+                <option value="TODAS" className="bg-slate-900 text-white">Todas as Modalidades</option>
                 <option value="FISICO" className="bg-slate-900 text-white">Lojas Físicas</option>
                 <option value="DIGITAL" className="bg-slate-900 text-white">E-commerce / Marketplaces</option>
               </select>
             </div>
 
             <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
-              <i className="fa-solid fa-store text-purple-400 pl-2 text-xs"></i>
-              <select value={selectedChannelFilter} onChange={(e) => setSelectedChannelFilter(e.target.value)} className="bg-transparent text-purple-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
+              <select value={selectedChannelFilter} onChange={(e) => setSelectedChannelFilter(e.target.value)} className="bg-transparent text-purple-300 font-bold text-xs focus:outline-none px-2 cursor-pointer">
                 <option value="TODOS" className="bg-slate-900 text-white">Todos os Canais</option>
-                <option value="Mercado Livre" className="bg-slate-900 text-white">Mercado Livre (Geral)</option>
-                {canaisDinamicos.map((ch: string) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
+                <option value="ML_GERAL" className="bg-slate-900 text-white">Mercado Livre (Geral)</option>
+                {canaisLista.map((ch) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
               </select>
             </div>
 
             <button onClick={handleRecalculate} className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg cursor-pointer">
-              {isRecalculating ? 'A calcular...' : 'Recalcular'}
+              {isRecalculating ? 'Calculando...' : 'Recalcular'}
             </button>
           </div>
         </div>
@@ -541,329 +726,214 @@ export default function DashboardPage() {
           <span className="text-xs text-slate-300 font-bold">Modo de Visualização dos Canais:</span>
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-200 select-none">
-              <input 
-                type="checkbox" 
-                checked={viewMode === 'cards'} 
-                onChange={() => setViewMode('cards')} 
-                className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-purple-500 cursor-pointer"
-              />
-              <i className="fa-solid fa-grip text-purple-400"></i> Visualização em Cards
+              <input type="checkbox" checked={viewMode === 'cards'} onChange={() => setViewMode('cards')} className="w-4 h-4 rounded bg-slate-950 border-slate-700 cursor-pointer" />
+              Visualização em Cards
             </label>
             <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-200 select-none">
-              <input 
-                type="checkbox" 
-                checked={viewMode === 'linhas'} 
-                onChange={() => setViewMode('linhas')} 
-                className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-purple-500 cursor-pointer"
-              />
-              <i className="fa-solid fa-table-list text-emerald-400"></i> Visualização em Linhas (Tabela Executiva)
+              <input type="checkbox" checked={viewMode === 'linhas'} onChange={() => setViewMode('linhas')} className="w-4 h-4 rounded bg-slate-950 border-slate-700 cursor-pointer" />
+              Visualização em Linhas (Tabela Executiva)
             </label>
           </div>
         </div>
 
         {/* 4 CARDS PRINCIPAIS */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-          
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 flex flex-col justify-between text-center shadow-xl">
-            <div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+
+          {/* FATURAMENTO BRUTO */}
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 flex flex-col justify-between shadow-xl">
+            <div className="text-center">
               <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Bruto</span>
-              <h3 className="text-2xl font-black text-white mt-1">R$ {kpis.faturamentoBrutoVendas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-              <p className="text-[10px] text-slate-500 mt-1">
-                {kpis.totalPedidos} itens validados
-                {kpis.totalCancelamentosValor > 0 && <span className="text-rose-400 block mt-0.5">Redutor Supabase: - R$ {kpis.totalCancelamentosValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>}
-              </p>
+              <h3 className="text-2xl font-black text-white mt-1">R$ {brl(totG.fatBruto)}</h3>
+              <p className="text-[10px] text-slate-500 mt-1">{totG.itens} itens validados</p>
             </div>
-            
-            <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
+            <div className="mt-3 space-y-1">
+              <div className="flex justify-between text-[10px] text-slate-400"><span>Vendas</span><span>R$ {brl(totG.bruto)}</span></div>
+              <Deducao rotulo="Devoluções / cancelamentos" valor={totG.devBruto} />
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3 text-center">
               <div>
                 <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-2">Lojas Físicas</span>
                 <div className="grid grid-cols-2 gap-2">
-                  {kpis.lojasFisicasDetalhes.map((loja: any) => (
-                    <div key={loja.nome} className="bg-slate-950/60 p-2 rounded-xl border border-slate-800/80">
-                      <span className="font-bold text-slate-200 text-xs block">{loja.nome}</span>
-                      <span className="text-xs font-black text-white block mt-0.5">R$ {loja.faturado.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      <span className={`text-[9px] font-black block mt-0.5 ${loja.abaixo ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        {loja.abaixo ? `▼ ${loja.diff.toFixed(1)}% abaixo` : `▲ ${loja.diff.toFixed(1)}% acima`}
-                      </span>
-                    </div>
-                  ))}
+                  {fisicas.map((loja) => {
+                    const diff = Math.abs(loja.progressoMetaPct - 100);
+                    const abaixo = loja.progressoMetaPct < 100;
+                    return (
+                      <div key={loja.canal} className="bg-slate-950/60 p-2 rounded-xl border border-slate-800/80">
+                        <span className="font-bold text-slate-200 text-xs block">{loja.canal.replace(/clube|loja/gi, '').trim() || loja.canal}</span>
+                        <span className="text-xs font-black text-white block mt-0.5">R$ {brl(loja.fatBruto)}</span>
+                        <span className={`text-[9px] font-black block mt-0.5 ${abaixo ? 'text-rose-400' : 'text-emerald-400'}`}>
+                          {abaixo ? `▼ ${diff.toFixed(1)}% abaixo` : `▲ ${diff.toFixed(1)}% acima`}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-
               <div className="pt-2 border-t border-slate-800/50">
                 <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
-                <span className="text-xs font-bold text-slate-200 block">R$ {kpis.fatBrutoDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                <span className={`text-[10px] font-black block mt-0.5 ${kpis.progressoDigitalPct >= 100 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {kpis.progressoDigitalPct >= 100 ? `▲ ${kpis.diffDigital.toFixed(1)}% acima` : `▼ ${kpis.diffDigital.toFixed(1)}% abaixo`}
+                <span className="text-xs font-bold text-slate-200 block">R$ {brl(totE.fatBruto)}</span>
+                <span className={`text-[10px] font-black block mt-0.5 ${progressoDigital >= 100 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {progressoDigital >= 100 ? `▲ ${(progressoDigital - 100).toFixed(1)}% acima` : `▼ ${(100 - progressoDigital).toFixed(1)}% abaixo`}
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 flex flex-col justify-between text-center shadow-xl">
-            <div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Repasse Total das Plataformas</span>
-              <h3 className="text-2xl font-black text-purple-400 mt-1">R$ {kpis.faturamentoLiquidoRepasse.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          {/* FATURAMENTO LÍQUIDO */}
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 flex flex-col justify-between shadow-xl">
+            <div className="text-center">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Líquido (Repasse)</span>
+              <h3 className="text-2xl font-black text-purple-400 mt-1">R$ {brl(totG.fatLiquido)}</h3>
+              <p className="text-[10px] text-slate-500 mt-1">Após fórmula de cada canal</p>
             </div>
-            <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
-              <div>
-                <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-1">Lojas Físicas</span>
-                <span className="text-xs font-bold text-slate-200 block">R$ {kpis.repasseFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-              <div className="pt-2 border-t border-slate-800/50">
-                <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
-                <span className="text-xs font-bold text-slate-200 block">R$ {kpis.repasseDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
+            <div className="mt-3 space-y-1">
+              <div className="flex justify-between text-[10px] text-slate-400"><span>Repasse das vendas</span><span>R$ {brl(totG.liqVendas)}</span></div>
+              <Deducao rotulo="Devoluções (líquido)" valor={totG.devLiq} />
             </div>
+            <BlocoModalidade fisico={totF.fatLiquido} digital={totE.fatLiquido} />
           </div>
-          
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 flex flex-col justify-between text-center shadow-xl">
-            <div>
+
+          {/* CMV */}
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 flex flex-col justify-between shadow-xl">
+            <div className="text-center">
               <span className="text-[10px] font-bold text-slate-400 uppercase">CMV Total (Padrão Atual)</span>
-              <h3 className="text-2xl font-black text-amber-400 mt-1">R$ {kpis.custoTotalCMV.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+              <h3 className="text-2xl font-black text-amber-400 mt-1">R$ {brl(totG.cmv)}</h3>
+              <p className="text-[10px] text-slate-500 mt-1">Custo unitário x quantidade</p>
             </div>
-            <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
-              <div>
-                <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-1">Lojas Físicas</span>
-                <span className="text-xs font-bold text-slate-200 block">R$ {kpis.cmvFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-              <div className="pt-2 border-t border-slate-800/50">
-                <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
-                <span className="text-xs font-bold text-slate-200 block">R$ {kpis.cmvDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-            </div>
+            <BlocoModalidade fisico={totF.cmv} digital={totE.cmv} />
           </div>
 
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-emerald-500/30 flex flex-col justify-between text-center shadow-xl">
-            <div>
+          {/* LUCRO LÍQUIDO REAL */}
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-emerald-500/30 flex flex-col justify-between shadow-xl">
+            <div className="text-center">
               <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
-              <h3 className="text-2xl font-black text-emerald-400 mt-1">R$ {kpis.lucroLiquidoReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+              <h3 className={`text-2xl font-black mt-1 ${totG.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>R$ {brl(totG.lucro)}</h3>
+              <p className="text-[10px] text-slate-500 mt-1">Fat. líquido − CMV − Ads − FLEX</p>
             </div>
-            <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
-              <div>
-                <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-1">Lojas Físicas</span>
-                <span className="text-xs font-bold text-slate-200 block">R$ {kpis.lucroFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-              <div className="pt-2 border-t border-slate-800/50">
-                <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
-                <span className="text-xs font-bold text-slate-200 block">R$ {kpis.lucroDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
+            <div className="mt-3 space-y-1">
+              <Deducao rotulo="CMV" valor={totG.cmv} />
+              <Deducao rotulo="Adsense (investimento)" valor={totG.ads} />
+              <Deducao rotulo="Frete FLEX (PLP)" valor={totG.flex} />
             </div>
+            <BlocoModalidade fisico={totF.lucro} digital={totE.lucro} />
           </div>
-
         </div>
 
         {/* LISTAGEM DE CANAIS / LOJAS */}
         {appliedModalidadeFilter === 'SELECIONE' ? (
           <div className="flex flex-col items-center justify-center py-16 px-6 bg-slate-900/60 rounded-2xl border border-slate-800 border-dashed shadow-xl">
-            <i className="fa-solid fa-layer-group text-4xl text-slate-700 mb-4"></i>
             <p className="text-slate-400 text-sm font-bold text-center leading-relaxed">
-              Selecione uma modalidade (Todas, Lojas Físicas ou E-commerce)<br/> 
+              Selecione uma modalidade (Todas, Lojas Físicas ou E-commerce)<br />
               no filtro acima e clique em "Recalcular" para ver o detalhamento por canal.
             </p>
           </div>
         ) : viewMode === 'cards' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {channelAnalytics.map((item: any) => {
+            {channelAnalytics.map((item) => {
               const metaBatida = item.progressoMetaPct >= 100;
               return (
                 <div key={item.canal} className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 space-y-4 flex flex-col justify-between shadow-xl">
-                   <div className="flex justify-between items-start border-b border-slate-800 pb-3 gap-3">
-                     <div className="flex items-center gap-3">
-                       {item.logoUrl ? <img src={item.logoUrl} alt={item.canal} className="w-11 h-11 rounded-xl bg-white object-contain p-1 border border-slate-700 shadow" /> : <div className="w-11 h-11 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[10px] font-bold">Logo</div>}
-                       <div>
-                         <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wide">{item.responsavel || 'Equipe'}</span>
-                         <h4 className="font-black text-white text-sm tracking-tight">{item.canal}</h4>
-                       </div>
-                     </div>
-                     
-                     <div className="flex flex-col items-end gap-1">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 whitespace-nowrap ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
-                          {metaBatida ? <i className="fa-solid fa-arrow-trend-up"></i> : <i className="fa-solid fa-arrow-trend-down"></i>}
-                          {item.progressoMetaPct.toFixed(1)}% da meta atingida
-                        </span>
-                        <span className="text-[9px] font-bold text-slate-400 tracking-tight">
-                          Meta: R$ {item.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </span>
-                     </div>
-                   </div>
-                   
-                   <div className="grid grid-cols-3 gap-2 bg-slate-950 p-3.5 rounded-xl border border-slate-800/80">
-                     <div>
-                       <span className="text-[9px] text-slate-400 block font-bold tracking-wider mb-0.5">FAT. BRUTO</span>
-                       <strong className="text-xs font-black text-white">R$ {item.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-                     </div>
-                     <div>
-                       <span className="text-[9px] text-sky-300 block font-bold tracking-wider mb-0.5">C/ REDUTOR</span>
-                       <strong className="text-xs font-black text-sky-400">R$ {item.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-                     </div>
-                     <div>
-                       <span className="text-[9px] text-purple-300 block font-bold tracking-wider mb-0.5">MARGEM LÍQ.</span>
-                       <strong className="text-xs font-black text-purple-400">{item.margemLiquidaPct.toFixed(1)}%</strong>
-                     </div>
-                   </div>
-
-                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs">
-                     <div className="flex justify-between items-center">
-                       <span className="text-[10px] text-slate-400 font-bold uppercase">Faturamento Final:</span>
-                       <strong className="text-xs font-black text-indigo-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-                     </div>
-
-                     <div className="flex justify-between items-center pt-1 border-t border-slate-900">
-                       {item.valorFaltante === 0 ? (
-                         <span className="w-full text-center text-xs font-black text-emerald-400 py-0.5">🎉 Parabéns, meta batida!</span>
-                       ) : (
-                         <>
-                           <span className="text-[10px] text-slate-400 font-bold uppercase">Faltou para a Meta:</span>
-                           <strong className="text-xs font-black text-amber-400">
-                              R$ {item.valorFaltante.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                           </strong>
-                         </>
-                       )}
-                     </div>
-                   </div>
-                   
-                   <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-800/80">
+                  <div className="flex justify-between items-start border-b border-slate-800 pb-3 gap-3">
+                    <div className="flex items-center gap-3">
+                      {item.logoUrl
+                        ? <img src={item.logoUrl} alt={item.canal} className="w-11 h-11 rounded-xl bg-white object-contain p-1 border border-slate-700 shadow" />
+                        : <div className="w-11 h-11 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[10px] font-bold">Logo</div>}
                       <div>
-                        <span className="text-[10px] text-slate-400 block font-bold mb-0.5">Margem Bruta</span>
-                        <strong className="text-sm font-black text-blue-400">{item.margemBrutaPct.toFixed(1)}%</strong>
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wide">{item.responsavel}</span>
+                        <h4 className="font-black text-white text-sm tracking-tight">{item.canal}</h4>
                       </div>
-                      <div>
-                        <span className="text-[10px] text-slate-400 block font-bold mb-0.5">Margem Líquida</span>
-                        <strong className="text-sm font-black text-emerald-400">{item.margemLiquidaPct.toFixed(1)}%</strong>
-                      </div>
-                   </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border whitespace-nowrap ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
+                        {item.progressoMetaPct.toFixed(1)}% da meta atingida
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 tracking-tight">Meta: R$ {brl(item.metaValor)}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 bg-slate-950 p-3.5 rounded-xl border border-slate-800/80">
+                    <div>
+                      <span className="text-[9px] text-slate-400 block font-bold tracking-wider mb-0.5">FAT. BRUTO</span>
+                      <strong className="text-xs font-black text-white">R$ {brl(item.fatBruto)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[9px] text-purple-300 block font-bold tracking-wider mb-0.5">FAT. LÍQUIDO</span>
+                      <strong className="text-xs font-black text-purple-400">R$ {brl(item.fatLiquido)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[9px] text-emerald-300 block font-bold tracking-wider mb-0.5">MARGEM LÍQ.</span>
+                      <strong className="text-xs font-black text-emerald-400">{item.margemPct.toFixed(1)}%</strong>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs">
+                    <Deducao rotulo="Devoluções (bruto)" valor={item.devBruto} />
+                    <Deducao rotulo="CMV" valor={item.cmv} />
+                    <Deducao rotulo="Adsense" valor={item.ads} />
+                    <Deducao rotulo="Frete FLEX" valor={item.flex} />
+                    <div className="flex justify-between items-center pt-1.5 border-t border-slate-900">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">Lucro líquido:</span>
+                      <strong className={`text-xs font-black ${item.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>R$ {brl(item.lucro)}</strong>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">{periodo.isMesAtual ? 'Projeção do mês:' : 'Faturamento final:'}</span>
+                      <strong className="text-xs font-black text-indigo-300">R$ {brl(item.projecao)}</strong>
+                    </div>
+                    <div className="flex justify-between items-center pt-1 border-t border-slate-900">
+                      {item.metaValor > 0 && item.valorFaltante === 0 ? (
+                        <span className="w-full text-center text-xs font-black text-emerald-400 py-0.5">🎉 Parabéns, meta batida!</span>
+                      ) : (
+                        <>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase">Faltou para a meta:</span>
+                          <strong className="text-xs font-black text-amber-400">
+                            R$ {brl(item.valorFaltante)}
+                            {item.mediaDiariaNecessaria > 0 && <span className="block text-[9px] text-slate-400 font-bold text-right">{brl(item.mediaDiariaNecessaria)} / dia</span>}
+                          </strong>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </div>
               );
             })}
           </div>
         ) : (
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 overflow-hidden shadow-2xl">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-200">
-                <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800 tracking-wider">
-                  <tr>
-                    <th className="py-4 px-6">Canal / Responsável</th>
-                    <th className="py-4 px-4 text-right">Total Vendas do Mês</th>
-                    <th className="py-4 px-4 text-right">Meta do Mês</th>
-                    <th className="py-4 px-4 text-right">Projeção do Mês</th>
-                    <th className="py-4 px-4 text-center">Meta Atingida</th>
-                    <th className="py-4 px-6 text-right text-emerald-400">Margem Líq.</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 font-medium">
-                  
-                  {ecommerceChannels.length > 0 && (
-                    <>
-                      <tr className="bg-slate-950/80 font-black text-white text-xs border-y border-slate-800">
-                        <td colSpan={6} className="py-3 px-6 text-indigo-400 flex items-center gap-2">
-                          <i className="fa-solid fa-globe"></i> E-COMMERCE
-                        </td>
-                      </tr>
-                      {ecommerceChannels.map((item: any) => {
-                        const metaBatida = item.progressoMetaPct >= 100;
-                        return (
-                          <tr key={item.canal} className="hover:bg-slate-800/40 transition">
-                            <td className="py-3.5 px-6">
-                              <div className="flex items-center gap-3">
-                                {item.logoUrl ? <img src={item.logoUrl} alt={item.canal} className="w-8 h-8 rounded-lg bg-white object-contain p-0.5 border border-slate-700" /> : <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[9px] font-bold">Logo</div>}
-                                <div>
-                                  <span className="font-bold text-white text-xs block">{item.canal}</span>
-                                  <span className="text-[9px] uppercase font-bold text-slate-400">{item.responsavel}</span>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4 text-right font-bold text-white">R$ {item.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            <td className="py-3.5 px-4 text-right font-mono text-slate-400">R$ {item.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            <td className="py-3.5 px-4 text-right font-bold text-indigo-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            <td className="py-3.5 px-4 text-center">
-                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
-                                {metaBatida ? <i className="fa-solid fa-arrow-trend-up"></i> : <i className="fa-solid fa-arrow-trend-down"></i>}
-                                {item.progressoMetaPct.toFixed(1)}%
-                              </span>
-                            </td>
-                            <td className="py-3.5 px-6 text-right font-black text-emerald-400">{item.margemLiquidaPct.toFixed(1)}%</td>
-                          </tr>
-                        );
-                      })}
-                      <tr className="bg-slate-950/40 font-bold text-xs text-white border-t border-slate-800">
-                        <td className="py-3 px-6 text-indigo-300">Total E-Commerce</td>
-                        <td className="py-3 px-4 text-right text-indigo-300">R$ {totalEcommerce.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-4 text-right font-mono text-slate-400">R$ {totalEcommerce.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-4 text-right text-indigo-300">R$ {totalEcommerce.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-4 text-center text-indigo-300">
-                          {totalEcommerce.metaValor > 0 ? ((totalEcommerce.faturadoComRedutor / totalEcommerce.metaValor) * 100).toFixed(1) : '0.0'}%
-                        </td>
-                        <td className="py-3 px-6 text-right text-emerald-400">-</td>
-                      </tr>
-                    </>
-                  )}
-
-                  {physicalChannels.length > 0 && (
-                    <>
-                      <tr className="bg-slate-950/80 font-black text-white text-xs border-y border-slate-800">
-                        <td colSpan={6} className="py-3 px-6 text-emerald-400 flex items-center gap-2">
-                          <i className="fa-solid fa-store"></i> LOJAS FÍSICAS
-                        </td>
-                      </tr>
-                      {physicalChannels.map((item: any) => {
-                        const metaBatida = item.progressoMetaPct >= 100;
-                        return (
-                          <tr key={item.canal} className="hover:bg-slate-800/40 transition">
-                            <td className="py-3.5 px-6">
-                              <div className="flex items-center gap-3">
-                                {item.logoUrl ? <img src={item.logoUrl} alt={item.canal} className="w-8 h-8 rounded-lg bg-white object-contain p-0.5 border border-slate-700" /> : <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[9px] font-bold">Logo</div>}
-                                <div>
-                                  <span className="font-bold text-white text-xs block">{item.canal}</span>
-                                  <span className="text-[9px] uppercase font-bold text-slate-400">{item.responsavel}</span>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4 text-right font-bold text-white">R$ {item.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            <td className="py-3.5 px-4 text-right font-mono text-slate-400">R$ {item.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            <td className="py-3.5 px-4 text-right font-bold text-emerald-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            <td className="py-3.5 px-4 text-center">
-                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
-                                {metaBatida ? <i className="fa-solid fa-arrow-trend-up"></i> : <i className="fa-solid fa-arrow-trend-down"></i>}
-                                {item.progressoMetaPct.toFixed(1)}%
-                              </span>
-                            </td>
-                            <td className="py-3.5 px-6 text-right font-black text-emerald-400">{item.margemLiquidaPct.toFixed(1)}%</td>
-                          </tr>
-                        );
-                      })}
-                      <tr className="bg-slate-950/40 font-bold text-xs text-white border-t border-slate-800">
-                        <td className="py-3 px-6 text-emerald-300">Total Lojas Físicas</td>
-                        <td className="py-3 px-4 text-right text-emerald-300">R$ {totalPhysical.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-4 text-right font-mono text-slate-400">R$ {totalPhysical.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-4 text-right text-emerald-300">R$ {totalPhysical.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-4 text-center text-emerald-300">
-                          {totalPhysical.metaValor > 0 ? ((totalPhysical.faturadoComRedutor / totalPhysical.metaValor) * 100).toFixed(1) : '0.0'}%
-                        </td>
-                        <td className="py-3 px-6 text-right text-emerald-400">-</td>
-                      </tr>
-                    </>
-                  )}
-
-                </tbody>
-
-                <tfoot className="bg-slate-950 text-white font-black text-xs border-t-2 border-slate-700">
-                  <tr>
-                    <td className="py-4 px-6">TOTAL GERAL</td>
-                    <td className="py-4 px-4 text-right text-white">R$ {totalGeral.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="py-4 px-4 text-right font-mono text-slate-300">R$ {totalGeral.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="py-4 px-4 text-right text-emerald-400">R$ {totalGeral.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="py-4 px-4 text-center text-purple-400">
-                      {totalGeral.metaValor > 0 ? ((totalGeral.faturadoComRedutor / totalGeral.metaValor) * 100).toFixed(1) : '0.0'}%
-                    </td>
-                    <td className="py-4 px-6 text-right text-emerald-400">-</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+          <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-200">
+              <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800 tracking-wider">
+                <tr>
+                  <th className="py-4 px-6">Canal / Responsável</th>
+                  <th className="py-4 px-4 text-right">Vendas do Dia {periodo.ontemDia}</th>
+                  <th className="py-4 px-4 text-right">Fat. Bruto</th>
+                  <th className="py-4 px-4 text-right">Fat. Líquido</th>
+                  <th className="py-4 px-4 text-right">Adsense</th>
+                  <th className="py-4 px-4 text-right">Frete FLEX</th>
+                  <th className="py-4 px-4 text-right">Lucro Líq.</th>
+                  <th className="py-4 px-4 text-right">Meta</th>
+                  <th className="py-4 px-4 text-center">Meta Atingida</th>
+                  <th className="py-4 px-6 text-right text-emerald-400">Margem Líq.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ecommerce.length > 0 && (
+                  <>
+                    <tr className="bg-slate-950/70"><td colSpan={10} className="py-3 px-6 text-indigo-400 font-black">E-commerce / Marketplaces</td></tr>
+                    {ecommerce.map((item) => <LinhaTabela key={item.canal} item={item} cor="text-rose-400" />)}
+                    <TotalTabela titulo="Total E-Commerce" t={totE} cor="text-indigo-300" />
+                  </>
+                )}
+                {fisicas.length > 0 && (
+                  <>
+                    <tr className="bg-slate-950/70"><td colSpan={10} className="py-3 px-6 text-emerald-400 font-black">Lojas Físicas</td></tr>
+                    {fisicas.map((item) => <LinhaTabela key={item.canal} item={item} cor="text-rose-400" />)}
+                    <TotalTabela titulo="Total Lojas Físicas" t={totF} cor="text-emerald-300" />
+                  </>
+                )}
+                <TotalTabela titulo="TOTAL GERAL" t={totG} cor="text-white" />
+              </tbody>
+            </table>
           </div>
         )}
-
       </div>
     </div>
   );
