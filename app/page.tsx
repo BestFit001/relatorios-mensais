@@ -43,11 +43,11 @@ export default function DashboardPage() {
   const [isRecalculating, setIsRecalculating] = useState(false);
 
   useEffect(() => {
-    async function fetchAdminData() {
+    async function fetchDashboardData() {
       try {
         setLoading(true);
 
-        // 1. Custos de SKUs cadastrados na aba de Custos
+        // 1. Custos unitários por SKU cadastrados na aba de Custos
         let allCustos: any[] = [];
         let from = 0;
         const step = 1000;
@@ -69,7 +69,7 @@ export default function DashboardPage() {
         });
         setDbCustosMap(cMap);
 
-        // 2. Puxa os IDs de faturados upados no Admin (Passo 1) para validação estricta
+        // 2. Faturados upados na aba Updates (Passo 1)
         try {
           const { data: fatData } = await supabase.from('faturados').select('id_pedido');
           if (fatData) {
@@ -77,13 +77,13 @@ export default function DashboardPage() {
           }
         } catch (e) {}
 
-        // 3. Puxa as vendas importadas no Admin (Passo 2)
+        // 3. Vendas por canal upadas na aba Updates (Passo 2)
         try {
           const { data: vendasAdmin } = await supabase.from('vendas_lives').select('*');
           if (vendasAdmin) setAdminSales(vendasAdmin);
         } catch (e) {}
 
-        // 4. Devoluções / Cancelados
+        // 4. Devoluções
         try {
           const { data: devData } = await supabase.from('devolucoes').select('*');
           if (devData) setDbDevolucoes(devData);
@@ -107,13 +107,13 @@ export default function DashboardPage() {
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
-        // 8. Tarifas da aba Regras e Site
+        // 8. Tarifas da aba Regras e Tarifas do Site
         try {
           const { data: tarifacaoDb } = await supabase.from('config_regras_tarifacao').select('*');
           if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
         } catch (e) {}
 
-        // 9. Canais salvos na aba Regras
+        // 9. Canais ativos salvos na aba Regras
         try {
           const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
           if (regrasDb && regrasDb.length > 0) {
@@ -132,12 +132,12 @@ export default function DashboardPage() {
         } catch (e) {}
 
       } catch (err) {
-        console.error("Erro ao carregar dados do Supabase:", err);
+        console.error("Erro ao carregar dados para o Dashboard:", err);
       } finally {
         setLoading(false);
       }
     }
-    fetchAdminData();
+    fetchDashboardData();
   }, []);
 
   const handleRecalculate = () => {
@@ -176,7 +176,7 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
-  // Cruzamento rigoroso com os dados upados na aba Admin (Faturados e Vendas)
+  // Cruzamento estricto com as vendas e faturados da aba Updates
   const enrichedSales = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -186,7 +186,6 @@ export default function DashboardPage() {
     return safeSales.filter((s: any) => {
         if (!s) return false;
 
-        // Validação estricta de faturados upados no Passo 1 (se houver registros na tabela faturados)
         if (faturadosIds.size > 0 && s.id_pedido && !faturadosIds.has(String(s.id_pedido).trim())) {
           return false;
         }
@@ -240,7 +239,6 @@ export default function DashboardPage() {
         const precoVenda = parseCurrency(s.preco_venda || s.pdv);
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
 
-        // Cruza com as regras de tarifação do site ou comissões cadastradas
         if (repasseLiquido <= 0) {
           const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal || t.id_pedido === s.id_pedido);
           if (regraFaixa) {
