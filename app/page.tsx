@@ -12,7 +12,6 @@ export default function DashboardPage() {
   const [dbPlp, setDbPlp] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
-  const [configTarifas, setConfigTarifas] = useState<any[]>([]);
   
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
@@ -28,8 +27,8 @@ export default function DashboardPage() {
     'Clube Hebraica', 'Clube Paineiras'
   ];
 
-  const currentMonthDefault = "10/2026";
-  const previousMonthDefault = "09/2026";
+  const currentMonthDefault = "outubro de 2026";
+  const previousMonthDefault = "setembro de 2026";
 
   const [dateFilter, setDateFilter] = useState('MES_ATUAL');
   const [customStartDate, setCustomStartDate] = useState('2026-10-01');
@@ -68,7 +67,7 @@ export default function DashboardPage() {
         });
         setDbCustosMap(cMap);
 
-        // 2. Vendas da tabela oficial vendas_padrao_lancamentos (em lotes)
+        // 2. Vendas da tabela oficial vendas_padrao_lancamentos (em lotes para trazer tudo)
         let allVendas: any[] = [];
         let vFrom = 0;
         let vKeep = true;
@@ -106,13 +105,7 @@ export default function DashboardPage() {
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
-        // 7. Tarifas
-        try {
-          const { data: tarifacaoDb } = await supabase.from('config_regras_tarifacao').select('*');
-          if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
-        } catch (e) {}
-
-        // 8. Regras de canais
+        // 7. Regras de canais
         try {
           const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
           if (regrasDb) setChannelRules(regrasDb);
@@ -158,10 +151,8 @@ export default function DashboardPage() {
   };
 
   const currentRefMonth = useMemo(() => {
-    if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate) return appliedStartDate.slice(0, 7);
-    if (appliedDateFilter === 'MES_ANTERIOR') return previousMonthDefault;
     return currentMonthDefault;
-  }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
+  }, [currentMonthDefault]);
 
   const activeCancelados = useMemo(() => {
     if (!dbDevolucoes) return [];
@@ -172,10 +163,9 @@ export default function DashboardPage() {
   }, [dbDevolucoes, appliedChannelFilter]);
 
   const enrichedSales = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     return (vendas || []).filter((s: any) => {
+        if (!s) return false;
+        if (s.mes_referencia && s.mes_referencia.toLowerCase() !== currentRefMonth.toLowerCase()) return false;
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
 
         const fisico = isChannelFisico(s.canal);
@@ -186,15 +176,9 @@ export default function DashboardPage() {
       })
       .map((s: any) => {
         const skuNorm = String(s.sku || '').trim().toLowerCase();
-        let custoCMV = 0;
-        
-        if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
-          custoCMV = parseCurrency(s.cmv_clube);
-        } else {
-          const qtd = parseCurrency(s.quantidade) || 1;
-          const custoUni = dbCustosMap.get(skuNorm) || 0;
-          custoCMV = custoUni * qtd;
-        }
+        const qtd = parseCurrency(s.quantidade) || 1;
+        const custoUni = dbCustosMap.get(skuNorm) || 0;
+        const custoCMV = custoUni * qtd;
 
         const flexOrder = dbPlp.find((f: any) => String(f.id_pedido) === String(s.id_pedido));
         const custoFlex = flexOrder ? parseCurrency(flexOrder.valor_frete ?? flexOrder.frete ?? flexOrder.valor) : 0;
@@ -217,7 +201,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [vendas, appliedChannelFilter, appliedModalidadeFilter, dbCustosMap, dbPlp]);
+  }, [vendas, appliedChannelFilter, appliedModalidadeFilter, dbCustosMap, dbPlp, currentRefMonth]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
@@ -234,7 +218,6 @@ export default function DashboardPage() {
     let cmvDigital = 0;
 
     const totalCancelamentosValor = activeCancelados.reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-
     const lojasFisicasDetalhes: any[] = [];
     const lojasFisicasRepasse: any[] = [];
 
@@ -251,7 +234,7 @@ export default function DashboardPage() {
         .filter((c: any) => String(c.canal).toLowerCase() === String(channelName).toLowerCase())
         .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
-      const faturadoPuroCanal = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
+      const faturadoPuroCanal = chSales.reduce((sum: number, s: any) => sum + (s.preco_venda * (parseCurrency(s.quantidade) || 1)), 0);
       const faturadoEfetivoCanal = Math.max(0, faturadoPuroCanal - cancelamentosCanal);
       const repasseCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
 
@@ -281,7 +264,8 @@ export default function DashboardPage() {
 
     enrichedSales.forEach((s: any) => {
       const fisico = isChannelFisico(s.canal);
-      const valBruto = s.preco_venda;
+      const qtd = parseCurrency(s.quantidade) || 1;
+      const valBruto = s.preco_venda * qtd;
       const valRepasse = s.repasse_liquido;
       const valCmv = s.custoCMV;
 
@@ -344,13 +328,6 @@ export default function DashboardPage() {
     };
   }, [enrichedSales, dbAds, appliedChannelFilter, canais, channelRules, goals, currentRefMonth, activeCancelados]);
 
-  const { targetDateStr, labelVendasDia } = useMemo(() => {
-    return {
-      targetDateStr: '2026-10-26',
-      labelVendasDia: 'Vendas do Dia'
-    };
-  }, []);
-
   const channelAnalytics = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
     let channelsToAnalyze = appliedChannelFilter === 'TODOS' ? activeChannels : activeChannels.filter(c => c === appliedChannelFilter);
@@ -372,7 +349,7 @@ export default function DashboardPage() {
     return channelsToAnalyze.map(channelName => {
       const chSales = enrichedSales.filter((s: any) => s.canal === channelName);
       
-      const vendasDoDia = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
+      const vendasDoDia = chSales.reduce((sum: number, s: any) => sum + (s.preco_venda * (parseCurrency(s.quantidade) || 1)), 0);
 
       const ruleObj = channelRules.find((r: any) => r.canal === channelName) || {};
       const goalObj = goals.find((g: any) => g.canal === channelName) || { meta_valor: 0, responsavel: 'Equipe Best Fit' };
@@ -381,7 +358,7 @@ export default function DashboardPage() {
         .filter((c: any) => String(c.canal).toLowerCase() === String(channelName).toLowerCase())
         .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
-      const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
+      const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + (s.preco_venda * (parseCurrency(s.quantidade) || 1)), 0);
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - cancelamentosMes);
       const repasseTotal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
       
@@ -742,7 +719,6 @@ export default function DashboardPage() {
                 <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800 tracking-wider">
                   <tr>
                     <th className="py-4 px-6">Canal / Responsável</th>
-                    <th className="py-4 px-4 text-right">{labelVendasDia}</th>
                     <th className="py-4 px-4 text-right">Total Vendas do Mês</th>
                     <th className="py-4 px-4 text-right">Meta do Mês</th>
                     <th className="py-4 px-4 text-right">Projeção do Mês</th>
@@ -755,7 +731,7 @@ export default function DashboardPage() {
                   {ecommerceChannels.length > 0 && (
                     <>
                       <tr className="bg-slate-950/80 font-black text-white text-xs border-y border-slate-800">
-                        <td colSpan={7} className="py-3 px-6 text-indigo-400 flex items-center gap-2">
+                        <td colSpan={6} className="py-3 px-6 text-indigo-400 flex items-center gap-2">
                           <i className="fa-solid fa-globe"></i> E-COMMERCE
                         </td>
                       </tr>
@@ -772,7 +748,6 @@ export default function DashboardPage() {
                                 </div>
                               </div>
                             </td>
-                            <td className="py-3.5 px-4 text-right font-mono text-slate-300">R$ {item.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="py-3.5 px-4 text-right font-bold text-white">R$ {item.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="py-3.5 px-4 text-right font-mono text-slate-400">R$ {item.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="py-3.5 px-4 text-right font-bold text-indigo-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -788,7 +763,6 @@ export default function DashboardPage() {
                       })}
                       <tr className="bg-slate-950/40 font-bold text-xs text-white border-t border-slate-800">
                         <td className="py-3 px-6 text-indigo-300">Total E-Commerce</td>
-                        <td className="py-3 px-4 text-right font-mono text-indigo-300">R$ {totalEcommerce.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="py-3 px-4 text-right text-indigo-300">R$ {totalEcommerce.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="py-3 px-4 text-right font-mono text-slate-400">R$ {totalEcommerce.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="py-3 px-4 text-right text-indigo-300">R$ {totalEcommerce.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -803,7 +777,7 @@ export default function DashboardPage() {
                   {physicalChannels.length > 0 && (
                     <>
                       <tr className="bg-slate-950/80 font-black text-white text-xs border-y border-slate-800">
-                        <td colSpan={7} className="py-3 px-6 text-emerald-400 flex items-center gap-2">
+                        <td colSpan={6} className="py-3 px-6 text-emerald-400 flex items-center gap-2">
                           <i className="fa-solid fa-store"></i> LOJAS FÍSICAS
                         </td>
                       </tr>
@@ -820,7 +794,6 @@ export default function DashboardPage() {
                                 </div>
                               </div>
                             </td>
-                            <td className="py-3.5 px-4 text-right font-mono text-slate-300">R$ {item.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="py-3.5 px-4 text-right font-bold text-white">R$ {item.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="py-3.5 px-4 text-right font-mono text-slate-400">R$ {item.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="py-3.5 px-4 text-right font-bold text-emerald-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -836,7 +809,6 @@ export default function DashboardPage() {
                       })}
                       <tr className="bg-slate-950/40 font-bold text-xs text-white border-t border-slate-800">
                         <td className="py-3 px-6 text-emerald-300">Total Lojas Físicas</td>
-                        <td className="py-3 px-4 text-right font-mono text-emerald-300">R$ {totalPhysical.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="py-3 px-4 text-right text-emerald-300">R$ {totalPhysical.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="py-3 px-4 text-right font-mono text-slate-400">R$ {totalPhysical.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="py-3 px-4 text-right text-emerald-300">R$ {totalPhysical.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -853,7 +825,6 @@ export default function DashboardPage() {
                 <tfoot className="bg-slate-950 text-white font-black text-xs border-t-2 border-slate-700">
                   <tr>
                     <td className="py-4 px-6">TOTAL GERAL</td>
-                    <td className="py-4 px-4 text-right font-mono text-emerald-400">R$ {totalGeral.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="py-4 px-4 text-right text-white">R$ {totalGeral.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="py-4 px-4 text-right font-mono text-slate-300">R$ {totalGeral.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="py-4 px-4 text-right text-emerald-400">R$ {totalGeral.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
