@@ -12,7 +12,9 @@ export default function DashboardPage() {
   const [dbPlp, setDbPlp] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
-  const [canaisDinamicos, setCanaisDinamicos] = useState<string[]>([]);
+  const [canaisDinamicos, setCanaisDinamicos] = useState<string[]>([
+    'Mercado Livre 1', 'Mercado Livre 2', 'Shopee', 'Amazon', 'TikTok', 'Magalu', 'Shein', 'Netshoes', 'Site', 'Centauro', 'Clube Hebraica', 'Clube Paineiras'
+  ]);
   
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
@@ -100,7 +102,7 @@ export default function DashboardPage() {
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
-        // 7. Puxar Canais cadastrados na Central de Regras (config_regras_tiny)
+        // 7. Puxa os canais dinâmicos diretamente da aba de regras (config_regras_tiny)
         try {
           const { data: configs } = await supabase.from('config_regras_tiny').select('*');
           if (configs) {
@@ -114,11 +116,6 @@ export default function DashboardPage() {
             }
           }
         } catch (e) {}
-
-        // Se não houver dinâmicos, define padrão com ML1 e ML2
-        if (canaisDinamicos.length === 0) {
-          setCanaisDinamicos(['Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro']);
-        }
 
         // 8. Regras de canais
         try {
@@ -174,7 +171,7 @@ export default function DashboardPage() {
     const cV = String(canalVenda || '').trim().toLowerCase();
     const fV = String(filtro || '').trim().toLowerCase();
     if (cV === fV) return true;
-    if (fV === 'mercado livre' && cV.includes('mercado livre')) return true;
+    if (fV.includes('mercado livre') && cV.includes('mercado livre')) return true;
     return false;
   };
 
@@ -228,7 +225,7 @@ export default function DashboardPage() {
   }, [vendas, appliedChannelFilter, appliedModalidadeFilter, dbCustosMap, dbPlp, currentRefMonth]);
 
   const kpis = useMemo(() => {
-    const activeChannels = canaisDinamicos.length > 0 ? canaisDinamicos : ['Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro'];
+    const activeChannels = canaisDinamicos;
     
     let faturamentoBrutoVendas = 0;
     let faturamentoLiquidoRepasse = 0;
@@ -351,7 +348,7 @@ export default function DashboardPage() {
   }, [enrichedSales, dbAds, appliedChannelFilter, canaisDinamicos, channelRules, goals, currentRefMonth, activeCancelados]);
 
   const channelAnalytics = useMemo(() => {
-    const activeChannels = canaisDinamicos.length > 0 ? canaisDinamicos : ['Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro'];
+    const activeChannels = canaisDinamicos;
     
     let channelsToAnalyze = appliedChannelFilter === 'TODOS' 
       ? activeChannels 
@@ -405,13 +402,8 @@ export default function DashboardPage() {
       const projecaoFaturamento = faturadoComRedutor;
       const valorFaltante = Math.max(0, metaBase - faturadoComRedutor);
 
-      let nomeExibicao = channelName;
-      if (appliedChannelFilter.toLowerCase() === 'mercado livre') {
-        nomeExibicao = "Mercado Livre";
-      }
-
       return { 
-        canal: nomeExibicao, 
+        canal: channelName, 
         responsavel: ruleObj.responsavel || goalObj.responsavel || 'Equipe Best Fit', 
         metaValor: metaBase,
         vendasDoDia,
@@ -531,7 +523,6 @@ export default function DashboardPage() {
               <i className="fa-solid fa-store text-purple-400 pl-2 text-xs"></i>
               <select value={selectedChannelFilter} onChange={(e) => setSelectedChannelFilter(e.target.value)} className="bg-transparent text-purple-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
                 <option value="TODOS" className="bg-slate-900 text-white">Todos os Canais</option>
-                <option value="Mercado Livre" className="bg-slate-900 text-white">Mercado Livre (Geral)</option>
                 {canaisDinamicos.map((ch: string) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
               </select>
             </div>
