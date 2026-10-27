@@ -116,24 +116,18 @@ export default function DashboardPage() {
           }
         } catch (e) {}
 
-        // 8. VENDAS EXCLUSIVAS DA ABA DE UPLOADS (Tabela padrão de pedidos importados)
+        // 8. DADOS DOS UPLOADS DE CANAIS (Tabela onde a aba de upload grava os pedidos)
         try {
-          const { data: vendasDb } = await supabase.from('vendas_pedidos').select('*');
-          if (vendasDb && vendasDb.length > 0) {
+          const { data: vendasDb } = await supabase.from('vendas_lives').select('*');
+          if (vendasDb) {
             setSales(vendasDb);
-          } else {
-            const { data: fallbackDb } = await supabase.from('vendas').select('*');
-            if (fallbackDb) setSales(fallbackDb);
           }
         } catch (e) {
-          try {
-            const { data: fallbackDb } = await supabase.from('vendas').select('*');
-            if (fallbackDb) setSales(fallbackDb);
-          } catch (err) {}
+          console.error("Erro ao carregar tabela de uploads:", e);
         }
 
       } catch (err) {
-        console.error("Erro ao carregar dados do Supabase:", err);
+        console.error("Erro geral ao carregar dados do Supabase:", err);
       } finally {
         setLoading(false);
       }
@@ -554,7 +548,7 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Dashboard Omnichannel</h1>
-            <p className="text-sm font-medium text-slate-400">Visão consolidada via Uploads de Pedidos, Devoluções, Adsense, PLP e Custos</p>
+            <p className="text-sm font-medium text-slate-400">Visão consolidada via Uploads (Pedidos, Devoluções, Adsense, PLP e Custos)</p>
           </div>
           <Navbar />
         </div>
