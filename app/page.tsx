@@ -47,7 +47,7 @@ export default function DashboardPage() {
       try {
         setLoading(true);
 
-        // 1. Custos unitários por SKU cadastrados na aba de Custos
+        // 1. Custos unitários por SKU
         let allCustos: any[] = [];
         let from = 0;
         const step = 1000;
@@ -107,13 +107,13 @@ export default function DashboardPage() {
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
-        // 8. Tarifas da aba Regras e Tarifas do Site
+        // 8. Tarifas e Tarifas do Site
         try {
           const { data: tarifacaoDb } = await supabase.from('config_regras_tarifacao').select('*');
           if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
         } catch (e) {}
 
-        // 9. Canais ativos salvos na aba Regras
+        // 9. Canais ativos
         try {
           const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
           if (regrasDb && regrasDb.length > 0) {
@@ -176,7 +176,6 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
-  // Cruzamento estricto com as vendas e faturados da aba Updates
   const enrichedSales = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -240,7 +239,7 @@ export default function DashboardPage() {
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
 
         if (repasseLiquido <= 0) {
-          const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal || t.id_pedido === s.id_pedido);
+          const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal || String(t.id_pedido) === String(s.id_pedido));
           if (regraFaixa) {
             const tarifaSiteVal = Number(regraFaixa.tarifa_site) || 0;
             const comissaoPct = Number(regraFaixa.comissao) || 0;
