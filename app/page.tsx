@@ -6,18 +6,12 @@ import Navbar from '@/app/components/Navbar';
 /* =====================================================================
    DASHBOARD OMNICHANNEL — app/dashboard/page.tsx
 
-   Fluxo de dados:
-   1. Vendas      -> vendas_padrao_lancamentos (gravadas pela aba Updates e Alimenta)
-                     + faturados (data de faturamento de cada pedido)
-   2. Regras      -> config_regras_canais ("Configurando Canal: <canal>"):
-                     formula_excel + colunas col_pdv / col_quantidade
-   3. Devoluções  -> devolucoes (abate bruto e líquido; "Troca" não abate)
-   4. Ads         -> ads_faturamento_canal.gasto_ads (fallback: soma de
-                     ads_campanhas_lancamentos.investimento)
-   5. Frete FLEX  -> plp_pedidos (modalidade FLEX, cruzado pelo nº do pedido)
-
-   Lucro líquido real = Faturamento líquido (fórmula do canal)
-                        - devoluções (líquido) - CMV - Ads - frete FLEX
+   Fluxo de dados atualizado:
+   1. Vendas      -> vendas_padrao_lancamentos (cruzado com faturados)
+   2. Regras      -> config_regras_canais (formula_excel, colunas, canais ativos)
+   3. Devoluções  -> devolucoes (abate PDV bruto, repasse líquido e frete reverso)
+   4. Ads         -> ads_faturamento_canal / ads_campanhas_lancamentos (descontado do líquido)
+   5. Frete FLEX  -> plp_pedidos (modalidade FLEX cruzada pelo ID do pedido)
    ===================================================================== */
 
 const MODALIDADE_FRETE_DESCONTADO = 'flex';
@@ -68,7 +62,6 @@ const matchCanal = (canalNorm: string, filtro: string) => {
   return canalNorm === norm(filtro);
 };
 
-// Aceita 2026-10-27, 27/10/2026 (com ou sem hora) e número serial do Excel
 function parseData(v: any): string | null {
   if (v === null || v === undefined || v === '') return null;
   if (v instanceof Date) return isNaN(v.getTime()) ? null : isoLocal(v);
@@ -91,7 +84,6 @@ function parseData(v: any): string | null {
   return null;
 }
 
-// Meses (MM/AAAA) que o período toca, com a fração de dias de cada um
 function normalizarMesRef(v: any): string | null {
   const s = norm(v);
   if (!s) return null;
@@ -128,7 +120,6 @@ function mesesDoPeriodo(ini: string, fim: string) {
   return out;
 }
 
-// Lê todas as linhas da tabela (o Supabase limita 1000 por consulta)
 async function buscarTudo(tabela: string): Promise<{ dados: any[]; erro: string | null }> {
   const passo = 1000;
   let from = 0;
@@ -145,7 +136,6 @@ async function buscarTudo(tabela: string): Promise<{ dados: any[]; erro: string 
   return { dados: acc, erro: null };
 }
 
-/* ------------- avaliador seguro da fórmula (ex.: D2 - (D2 * 12%)) ------------- */
 type Ctx = Record<string, number>;
 type Node = (c: Ctx) => number;
 type Formula = { fn: Node; refs: string[] };
@@ -233,7 +223,7 @@ type Metricas = {
   canal: string; canalNorm: string; isFisico: boolean; responsavel: string; logoUrl: string | null;
   metaValor: number; vendasDoDia: number;
   bruto: number; devBruto: number; fatBruto: number;
-  liqVendas: number; devLiq: number; fatLiquido: number;
+  liqVendas: number; devLiq: number; freteDevolucao: number; fatLiquidoAntesDeducoes: number; fatLiquido: number;
   cmv: number; ads: number; flex: number; lucro: number; margemPct: number;
   progressoMetaPct: number; valorFaltante: number; mediaDiariaNecessaria: number; projecao: number;
   itens: number;
@@ -244,11 +234,12 @@ const somar = (lista: Metricas[]) =>
     (a, c) => ({
       metaValor: a.metaValor + c.metaValor, vendasDoDia: a.vendasDoDia + c.vendasDoDia,
       bruto: a.bruto + c.bruto, devBruto: a.devBruto + c.devBruto, fatBruto: a.fatBruto + c.fatBruto,
-      liqVendas: a.liqVendas + c.liqVendas, devLiq: a.devLiq + c.devLiq, fatLiquido: a.fatLiquido + c.fatLiquido,
+      liqVendas: a.liqVendas + c.liqVendas, devLiq: a.devLiq + c.devLiq, freteDevolucao: a.freteDevolucao + c.freteDevolucao,
+      fatLiquidoAntesDeducoes: a.fatLiquidoAntesDeducoes + c.fatLiquidoAntesDeducoes, fatLiquido: a.fatLiquido + c.fatLiquido,
       cmv: a.cmv + c.cmv, ads: a.ads + c.ads, flex: a.flex + c.flex, lucro: a.lucro + c.lucro,
       projecao: a.projecao + c.projecao, itens: a.itens + c.itens,
     }),
-    { metaValor: 0, vendasDoDia: 0, bruto: 0, devBruto: 0, fatBruto: 0, liqVendas: 0, devLiq: 0, fatLiquido: 0, cmv: 0, ads: 0, flex: 0, lucro: 0, projecao: 0, itens: 0 }
+    { metaValor: 0, vendasDoDia: 0, bruto: 0, devBruto: 0, fatBruto: 0, liqVendas: 0, devLiq: 0, freteDevolucao: 0, fatLiquidoAntesDeducoes: 0, fatLiquido: 0, cmv: 0, ads: 0, flex: 0, lucro: 0, projecao: 0, itens: 0 }
   );
 
 /* ================================ página ================================ */
@@ -294,8 +285,6 @@ export default function DashboardPage() {
       finally { if (ativo) setLoading(false); }
     })();
     return () => { ativo = false; };
-    // carregarDados intentionally runs only on mount; manual refresh is handled by handleRecalculate.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleRecalculate = async () => {
@@ -360,9 +349,6 @@ export default function DashboardPage() {
     return m;
   }, [db.config_regras_canais]);
 
-  // Aplica a fórmula do canal. "valor" é exatamente o que está na célula do PDV da planilha.
-  // Se a fórmula usa a coluna de quantidade, o PDV é unitário (bruto = PDV x qtd);
-  // caso contrário o PDV já é o total da linha.
   const calcularLinha = (canal: string, valor: number, qtd: number, liquidoFallback?: number) => {
     const r = regrasPorCanal.get(norm(canal));
     const unitario = !!(r && r.ok && r.formula && r.formula.refs.includes(r.colQtd));
@@ -430,7 +416,6 @@ export default function DashboardPage() {
       out.push({ canal: s.canal, canalNorm: norm(s.canal), pedido, data, bruto, liquido, comRegra, cmv: custoUni * qtd, semCusto: custoUni <= 0, sku: k });
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db.vendas_padrao_lancamentos, dataPorPedido, custosMap, regrasPorCanal, periodo, appliedChannelFilter, appliedModalidadeFilter]);
 
   /* --------------------------- frete FLEX (PLP) --------------------------- */
@@ -446,7 +431,7 @@ export default function DashboardPage() {
     const usados = new Set<string>();
     vendasPeriodo.forEach((v) => {
       const f = porPedido.get(v.pedido);
-      if (!f || usados.has(v.pedido)) return; // um frete por pedido, mesmo com vários itens
+      if (!f || usados.has(v.pedido)) return;
       usados.add(v.pedido);
       porCanal.set(v.canalNorm, (porCanal.get(v.canalNorm) || 0) + f.valor);
     });
@@ -460,25 +445,28 @@ export default function DashboardPage() {
       semVendaValor += f.valor;
     });
     return { porCanal, semVendaQtd, semVendaValor };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db.plp_pedidos, vendasPeriodo, periodo, appliedChannelFilter, appliedModalidadeFilter]);
 
   /* ------------------------------ devoluções ------------------------------ */
   const devolucoes = useMemo(() => {
-    const m = new Map<string, { bruto: number; liquido: number }>();
+    const m = new Map<string, { bruto: number; liquido: number; freteDevolucao: number }>();
     (db.devolucoes || []).forEach((d: any) => {
-      if (norm(d.solicitacao).includes('troca')) return; // troca não reduz a venda
+      if (norm(d.solicitacao).includes('troca')) return;
       if (!d.canal || !passaFiltros(d.canal)) return;
       const data = parseData(d.data_retorno);
       if (!data || data < periodo.ini || data > periodo.fim) return;
       const qtd = Math.max(1, num(d.quantidade) || 1);
       const { bruto, liquido } = calcularLinha(d.canal, num(d.pdv), qtd);
+      const freteRev = num(d.custo_frete ?? d.frete);
       const k = norm(d.canal);
-      const atual = m.get(k) || { bruto: 0, liquido: 0 };
-      m.set(k, { bruto: atual.bruto + bruto, liquido: atual.liquido + liquido });
+      const atual = m.get(k) || { bruto: 0, liquido: 0, freteDevolucao: 0 };
+      m.set(k, {
+        bruto: atual.bruto + bruto,
+        liquido: atual.liquido + liquido,
+        freteDevolucao: atual.freteDevolucao + freteRev
+      });
     });
     return m;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db.devolucoes, regrasPorCanal, periodo, appliedChannelFilter, appliedModalidadeFilter]);
 
   /* ---------------------------------- Ads ---------------------------------- */
@@ -507,8 +495,6 @@ export default function DashboardPage() {
       meses.forEach(({ chave, fracao }) => {
         const chaveMes = `${c}|${chave}`;
         const valorMes = gasto.has(chaveMes) ? (gasto.get(chaveMes) || 0) : (invest.get(chaveMes) || 0);
-        // No mês atual, o valor de Ads costuma ser acumulado até hoje; não o ratear novamente.
-        // Em períodos personalizados, a despesa mensal é estimada proporcionalmente aos dias selecionados.
         total += valorMes * (periodo.isMesAtual ? 1 : fracao);
       });
       out.set(c, total);
@@ -520,12 +506,10 @@ export default function DashboardPage() {
   const canaisLista = useMemo(() => {
     const mapa = new Map<string, string>();
     const add = (n: any) => { const k = norm(n); if (k && !mapa.has(k)) mapa.set(k, String(n).trim()); };
-    // Fonte única: aba de Regras. Mesma lista que a aba Ads usa (config_regras_canais),
-    // mais os canais salvos em "canais_dashboard". Nomes idênticos aos de "Configurando Canal".
     (db.config_regras_canais || []).forEach((r: any) => add(r.canal));
     const cfg = (db.config_regras_tiny || []).find((t: any) => t.campo === 'canais_dashboard');
     if (cfg?.coluna) {
-      try { const p = JSON.parse(cfg.coluna); if (Array.isArray(p)) p.forEach(add); } catch { /* ignora */ }
+      try { const p = JSON.parse(cfg.coluna); if (Array.isArray(p)) p.forEach(add); } catch {}
     }
     CANAIS_FISICOS_PADRAO.forEach(add);
     (db.vendas_padrao_lancamentos || []).forEach((r: any) => add(r.canal));
@@ -550,23 +534,26 @@ export default function DashboardPage() {
       .filter((c) => passaFiltros(c))
       .sort((a, b) => {
         const fa = isChannelFisico(a), fb = isChannelFisico(b);
-        return fa === fb ? 0 : fa ? -1 : 1; // ordem original da aba de Regras
+        return fa === fb ? 0 : fa ? -1 : 1;
       })
       .map((canal): Metricas => {
         const k = norm(canal);
         const vs = porCanal.get(k) || [];
         const regra = regrasPorCanal.get(k);
-        const dev = devolucoes.get(k) || { bruto: 0, liquido: 0 };
+        const dev = devolucoes.get(k) || { bruto: 0, liquido: 0, freteDevolucao: 0 };
 
         const bruto = vs.reduce((s, v) => s + v.bruto, 0);
         const liqVendas = vs.reduce((s, v) => s + v.liquido, 0);
         const cmv = vs.reduce((s, v) => s + v.cmv, 0);
         const vendasDoDia = vs.filter((v) => v.data === periodo.ontemIso).reduce((s, v) => s + v.bruto, 0);
         const fatBruto = bruto - dev.bruto;
-        const fatLiquido = liqVendas - dev.liquido;
+        
+        // Faturamento líquido considera abatimento do repasse de devoluções + frete reverso de devolução + Adsense + frete FLEX
+        const fatLiquidoAntesDeducoes = liqVendas - dev.liquido;
         const ads = adsPorCanal.get(k) || 0;
         const fl = flex.porCanal.get(k) || 0;
-        const lucro = fatLiquido - cmv - fl - ads;
+        const fatLiquido = fatLiquidoAntesDeducoes - dev.freteDevolucao - ads - fl;
+        const lucro = fatLiquido - cmv;
 
         const mesAlvoMeta = `${pad(Number(periodo.ini.slice(5, 7)))}/${periodo.ini.slice(0, 4)}`;
         const metaObj = metas.find((g) => norm(g.canal) === k && normalizarMesRef(g.mes_referencia) === mesAlvoMeta) || metas.find((g) => norm(g.canal) === k && !normalizarMesRef(g.mes_referencia));
@@ -579,7 +566,7 @@ export default function DashboardPage() {
           canal, canalNorm: k, isFisico: isChannelFisico(canal),
           responsavel: regra?.responsavel || metaObj?.responsavel || 'Equipe Best Fit',
           logoUrl: regra?.logo || null,
-          metaValor, vendasDoDia, bruto, devBruto: dev.bruto, fatBruto, liqVendas, devLiq: dev.liquido, fatLiquido,
+          metaValor, vendasDoDia, bruto, devBruto: dev.bruto, fatBruto, liqVendas, devLiq: dev.liquido, freteDevolucao: dev.freteDevolucao, fatLiquidoAntesDeducoes, fatLiquido,
           cmv, ads, flex: fl, lucro,
           margemPct: fatBruto > 0 ? (lucro / fatBruto) * 100 : 0,
           progressoMetaPct: metaValor > 0 ? (fatBruto / metaValor) * 100 : 0,
@@ -588,7 +575,6 @@ export default function DashboardPage() {
           projecao, itens: vs.length,
         };
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canaisLista, vendasPeriodo, devolucoes, adsPorCanal, flex, regrasPorCanal, db.tb_metas, periodo, appliedChannelFilter, appliedModalidadeFilter]);
 
   const ecommerce = useMemo(() => channelAnalytics.filter((c) => !c.isFisico), [channelAnalytics]);
@@ -609,20 +595,9 @@ export default function DashboardPage() {
     }
     const skusSemCusto = new Set(vendasPeriodo.filter((v) => v.semCusto).map((v) => v.sku));
     if (skusSemCusto.size > 0) lista.push(`${skusSemCusto.size} SKUs vendidos sem custo cadastrado — o CMV está subestimado.`);
-    const nomesRegras = new Set(canaisLista.map(norm));
-    const vendasForaLista = new Set(vendasPeriodo.filter((v) => !nomesRegras.has(v.canalNorm)).map((v) => v.canal));
-    if (vendasForaLista.size > 0) {
-      lista.push(`Vendas em canais que não existem na aba Regras (não entram nos totais): ${Array.from(vendasForaLista).join(', ')}.`);
-    }
-    const adsForaLista = Array.from(adsPorCanal.entries()).filter(([k, v]) => v > 0 && !nomesRegras.has(k)).map(([k]) => k);
-    if (adsForaLista.length > 0) {
-      lista.push(`Ads lançado em canais com nome diferente da aba Regras (não debitado): ${adsForaLista.join(', ')}.`);
-    }
-    if (flex.semVendaQtd > 0) lista.push(`${flex.semVendaQtd} pedidos FLEX (R$ ${brl(flex.semVendaValor)}) sem venda correspondente no período — frete não descontado.`);
     return lista;
-  }, [vendasPeriodo, flex, canaisLista, adsPorCanal]);
+  }, [vendasPeriodo]);
 
-  /* -------------------------------- e-mail -------------------------------- */
   const handleEnviarEmailAlerta = () => {
     const email = 'gisele@usebestfit.com.br';
     const dataHoje = new Date().toLocaleDateString('pt-BR');
@@ -712,23 +687,23 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Dashboard Omnichannel</h1>
-            <p className="text-sm font-medium text-slate-400">Visão consolidada consultando Supabase (Vendas, Regras do Canal, Devoluções, Adsense, PLP e Custos)</p>
+            <p className="text-sm font-medium text-slate-400">Visão consolidada consultando Supabase (Faturados, Regras, Devoluções, Ads, PLP e Custos)</p>
           </div>
           <Navbar />
         </div>
 
-        {/* AVISOS DE QUALIDADE DOS DADOS */}
+        {/* AVISOS */}
         {(erros.length > 0 || avisos.length > 0) && (
           <div className="space-y-2">
             {erros.length > 0 && (
               <div className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-4 text-xs text-rose-200 space-y-1">
-                <strong className="block text-rose-300">Falha ao carregar do Supabase (os valores abaixo podem estar incompletos):</strong>
+                <strong className="block text-rose-300">Falha ao carregar do Supabase:</strong>
                 {erros.map((e) => <span key={e} className="block">• {e}</span>)}
               </div>
             )}
             {avisos.length > 0 && (
               <div className="rounded-2xl border border-amber-500/30 bg-amber-950/20 p-4 text-xs text-amber-200 space-y-1">
-                <strong className="block text-amber-300">Atenção aos dados do período:</strong>
+                <strong className="block text-amber-300">Atenção aos dados:</strong>
                 {avisos.map((a) => <span key={a} className="block">• {a}</span>)}
               </div>
             )}
@@ -739,7 +714,7 @@ export default function DashboardPage() {
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl gap-4">
           <div>
             <h2 className="text-base font-bold text-white tracking-tight">Dashboard Best Fit</h2>
-            <p className="text-xs text-slate-400 mt-0.5">Lucro real = Fat. líquido (fórmula do canal) − Devoluções − CMV − Adsense − Frete FLEX</p>
+            <p className="text-xs text-slate-400 mt-0.5">Lucro real = Fat. líquido (fórmula do canal) − Devoluções (repasse, PDV e frete reverso) − CMV − Ads − Frete FLEX</p>
           </div>
 
           <div className="flex flex-wrap gap-3 items-center w-full lg:w-auto">
@@ -815,7 +790,7 @@ export default function DashboardPage() {
             </div>
             <div className="mt-3 space-y-1">
               <div className="flex justify-between text-[10px] text-slate-400"><span>Vendas</span><span>R$ {brl(totG.bruto)}</span></div>
-              <Deducao rotulo="Devoluções / cancelamentos" valor={totG.devBruto} />
+              <Deducao rotulo="Devoluções / cancelamentos (PDV)" valor={totG.devBruto} />
             </div>
             <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3 text-center">
               <div>
@@ -851,11 +826,14 @@ export default function DashboardPage() {
             <div className="text-center">
               <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Líquido (Repasse)</span>
               <h3 className="text-2xl font-black text-purple-400 mt-1">R$ {brl(totG.fatLiquido)}</h3>
-              <p className="text-[10px] text-slate-500 mt-1">Após fórmula de cada canal</p>
+              <p className="text-[10px] text-slate-500 mt-1">Após fórmula, devoluções e despesas</p>
             </div>
             <div className="mt-3 space-y-1">
               <div className="flex justify-between text-[10px] text-slate-400"><span>Repasse das vendas</span><span>R$ {brl(totG.liqVendas)}</span></div>
-              <Deducao rotulo="Devoluções (líquido)" valor={totG.devLiq} />
+              <Deducao rotulo="Devoluções (repasse)" valor={totG.devLiq} />
+              <Deducao rotulo="Frete reverso devolução" valor={totG.freteDevolucao} />
+              <Deducao rotulo="Adsense" valor={totG.ads} />
+              <Deducao rotulo="Frete FLEX" valor={totG.flex} />
             </div>
             <BlocoModalidade fisico={totF.fatLiquido} digital={totE.fatLiquido} />
           </div>
@@ -875,12 +853,10 @@ export default function DashboardPage() {
             <div className="text-center">
               <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
               <h3 className={`text-2xl font-black mt-1 ${totG.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>R$ {brl(totG.lucro)}</h3>
-              <p className="text-[10px] text-slate-500 mt-1">Fat. líquido − CMV − Ads − FLEX</p>
+              <p className="text-[10px] text-slate-500 mt-1">Fat. líquido − CMV</p>
             </div>
             <div className="mt-3 space-y-1">
               <Deducao rotulo="CMV" valor={totG.cmv} />
-              <Deducao rotulo="Adsense (investimento)" valor={totG.ads} />
-              <Deducao rotulo="Frete FLEX (PLP)" valor={totG.flex} />
             </div>
             <BlocoModalidade fisico={totF.lucro} digital={totE.lucro} />
           </div>
@@ -891,7 +867,7 @@ export default function DashboardPage() {
           <div className="flex flex-col items-center justify-center py-16 px-6 bg-slate-900/60 rounded-2xl border border-slate-800 border-dashed shadow-xl">
             <p className="text-slate-400 text-sm font-bold text-center leading-relaxed">
               Selecione uma modalidade (Todas, Lojas Físicas ou E-commerce)<br />
-              no filtro acima e clique em &quot;Recalcular&quot; para ver o detalhamento por canal.
+              no filtro acima e clique em "Recalcular" para ver o detalhamento por canal.
             </p>
           </div>
         ) : viewMode === 'cards' ? (
@@ -935,6 +911,8 @@ export default function DashboardPage() {
 
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs">
                     <Deducao rotulo="Devoluções (bruto)" valor={item.devBruto} />
+                    <Deducao rotulo="Devoluções (repasse)" valor={item.devLiq} />
+                    <Deducao rotulo="Frete reverso devolução" valor={item.freteDevolucao} />
                     <Deducao rotulo="CMV" valor={item.cmv} />
                     <Deducao rotulo="Adsense" valor={item.ads} />
                     <Deducao rotulo="Frete FLEX" valor={item.flex} />
