@@ -6,12 +6,12 @@ import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
 
 function letraParaIndice(letra: string): number {
-  let l = letra.trim().toUpperCase();
+  let l = (letra || "A").trim().toUpperCase();
   let num = 0;
   for (let i = 0; i < l.length; i++) {
     num = num * 26 + (l.charCodeAt(i) - 64);
   }
-  return num - 1;
+  return Math.max(0, num - 1);
 }
 
 function normalizarSku(valor: any): string {
@@ -23,19 +23,6 @@ function normalizarSku(valor: any): string {
     try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
   }
   return s.toLowerCase();
-}
-
-function parseNumeroBruto(valor: any): number {
-  if (valor === null || valor === undefined || valor === "") return 0;
-  if (typeof valor === "number") return valor;
-  let s = String(valor).replace(/R\$/g, "").replace(/BRL/g, "").replace(/\$/g, "").replace(/\s/g, "").trim();
-  if (s.includes(",") && s.includes(".")) {
-    s = s.replace(/\./g, "").replace(",", ".");
-  } else if (s.includes(",")) {
-    s = s.replace(",", ".");
-  }
-  const num = parseFloat(s);
-  return isNaN(num) ? 0 : num;
 }
 
 export default function UpdatesPage() {
@@ -71,9 +58,7 @@ export default function UpdatesPage() {
   const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
 
   const [pesquisaMl, setPesquisaMl] = useState("");
-  const [listaRegrasMlFiltradas, setListaRegrasMlFiltradas] = useState<any[]>([]);
 
-  // Estados específicos para o Alimentador do Dashboard (Admin)
   const [mesAlvoDash, setMesAlvoDash] = useState("outubro de 2026");
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
   const [canaisDashList, setCanaisDashList] = useState<string[]>([
@@ -97,16 +82,17 @@ export default function UpdatesPage() {
   const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i);
 
   useEffect(() => {
+    const usuarioLogado = localStorage.getItem("usuario_logado");
+    if (!usuarioLogado) {
+      router.push("/login");
+      return;
+    }
     carregarDadosCadastros();
   }, []);
 
   useEffect(() => {
     pesquisarCustosNoBanco();
   }, [pesquisaCusto]);
-
-  useEffect(() => {
-    pesquisarMlNoBanco();
-  }, [pesquisaMl]);
 
   const carregarDadosCadastros = async () => {
     const { data: regras } = await supabase.from('config_regras_canais').select('*').order('id');
@@ -159,6 +145,18 @@ export default function UpdatesPage() {
     });
 
     setEstatisticas({ totalTiny, normais, obsoletos });
+  };
+
+  const atualizarColunaSkuCanal = async (id: number, canalNome: novaLetraCol, novaLetraCol: string) => {
+    const letraUpper = novaLetraCol.toUpperCase().trim();
+    const atualizadas = regrasCanais.map(r => r.id === id ? { ...r, coluna_sku: letraUpper } : r);
+    setRegrasCanais(atualizadas);
+
+    try {
+      await supabase.from('config_regras_canais').update({ coluna_sku: letraUpper }).eq('id', id);
+    } catch (err) {
+      console.error("Erro ao atualizar coluna do canal:", err);
+    }
   };
 
   const salvarRegrasMlSupabase = async () => {
@@ -680,13 +678,6 @@ export default function UpdatesPage() {
     if (data) setListaCustosFiltrados(data);
   };
 
-  const pesquisarMlNoBanco = async () => {
-    if (!pesquisaMl || pesquisaMl.trim() === "") { setListaRegrasMlFiltradas([]); return; }
-    const termo = pesquisaMl.trim().toUpperCase();
-    const { data } = await supabase.from('ml_anuncios_regras').select('*').or(`mlb.ilike.%${termo}%,sku.ilike.%${termo}%`).limit(50);
-    if (data) setListaRegrasMlFiltradas(data);
-  };
-
   const excluirCusto = async (id: number) => {
     if (!confirm("Excluir?")) return;
     await supabase.from('tabela_custos_skus').delete().eq('id', id);
@@ -812,16 +803,23 @@ export default function UpdatesPage() {
 
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
               <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-              <p className="text-xs text-slate-400 mb-6">Suba as planilhas por canal determinando a coluna onde o SKU será lido.</p>
+              <p className="text-xs text-slate-400 mb-6">Suba as planilhas por canal definindo e salvando a coluna onde o SKU será lido.</p>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {regrasCanais.map((r, idx) => (
                   <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
                     <div className="flex justify-between items-center">
-                      <div>
-                        <span className="font-bold text-white text-sm block">{r.canal}</span>
-                        <span className="text-[10px] font-mono text-indigo-400">Coluna SKU: {r.coluna_sku}</span>
-                      </div>
+                      <span className="font-bold text-white text-sm">{r.canal}</span>
                       <button onClick={() => limparCanal(r.canal)} className="text-rose-400 text-[10px] font-bold bg-rose-950/40 px-2.5 py-1 rounded cursor-pointer">Limpar</button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Coluna SKU:</label>
+                      <input 
+                        type="text" 
+                        value={r.coluna_sku || "A"} 
+                        onChange={(e) => atualizarColunaConfigML(r.id, r.canal, e.target.value)} 
+                        onBlur={(e) => atualizarColunaSkuCanal(r.id, r.canal, e.target.value)}
+                        className="w-14 bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" 
+                      />
                     </div>
                     <input type="file" multiple accept=".xlsx, .xls, .csv" onChange={(e) => handleUploadCanalMultiplos(r.canal, r.coluna_sku, e)} className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1.5 rounded-lg border border-slate-800" />
                   </div>
