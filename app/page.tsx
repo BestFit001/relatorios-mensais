@@ -488,7 +488,6 @@ export default function HomePage() {
     return out;
   }, [db.ads_faturamento_canal, db.ads_campanhas_lancamentos, periodo]);
 
-  // Lista de canais puxada diretamente da tabela config_regras_canais (Aba Regras)
   const canaisLista = useMemo(() => {
     const mapa = new Map<string, string>();
     const add = (n: any) => {
@@ -497,7 +496,6 @@ export default function HomePage() {
       if (k && !mapa.has(k)) mapa.set(k, nomeLimpo);
     };
 
-    // Fonte principal unica da aba Regras
     (db.config_regras_canais || []).forEach((r: any) => add(r.canal));
 
     CANAIS_FISICOS_PADRAO.forEach(add);
@@ -946,4 +944,16 @@ export default function HomePage() {
                 {fisicas.length > 0 && (
                   <>
                     <tr className="bg-slate-950/70"><td colSpan={10} className="py-3 px-6 text-emerald-400 font-black">Lojas Físicas</td></tr>
-                    {fisicas.map((item) => <LinhaTabela key={
+                    {fisicas.map((item) => <LinhaTabela key={item.canal} item={item} cor="text-rose-400" />)}
+                    <TotalTabela titulo="Total Lojas Físicas" t={totF} cor="text-emerald-300" />
+                  </>
+                )}
+                <TotalTabela titulo="TOTAL GERAL" t={totG} cor="text-white" />
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
