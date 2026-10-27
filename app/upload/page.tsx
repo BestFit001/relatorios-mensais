@@ -25,6 +25,26 @@ function normalizarSku(valor: any): string {
   return s.toLowerCase();
 }
 
+function parseSmartFloat(val: any, channelName: string) {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return val;
+  let strVal = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(strVal) || /^\d{2}\/\d{2}\/\d{4}/.test(strVal)) return 0;
+  strVal = strVal.replace(/[a-zA-Z$\s]/g, '');
+  if (strVal.includes(',') && strVal.includes('.')) {
+    const lastComma = strVal.lastIndexOf(',');
+    const lastDot = strVal.lastIndexOf('.');
+    if (lastComma > lastDot) {
+      strVal = strVal.replace(/\./g, '').replace(',', '.');
+    } else {
+      strVal = strVal.replace(/,/g, '');
+    }
+  } else if (strVal.includes(',')) {
+    strVal = strVal.replace(/\./g, '').replace(',', '.');
+  }
+  return parseFloat(strVal) || 0;
+}
+
 export default function UpdatesPage() {
   const router = useRouter();
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "dashboard_admin">("relatorios");
@@ -193,7 +213,7 @@ export default function UpdatesPage() {
     }
   };
 
-  // LEITURA INTELIGENTE DE FATURADOS (Extrai apenas o número limpo do pedido)
+  // LEITURA INTELIGENTE DE FATURADOS (Extrai o número correto do pedido)
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -217,7 +237,6 @@ export default function UpdatesPage() {
           const rawObs = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
           
           let pedidoId = null;
-          // Extrai apenas o número do pedido limpando textos descritivos
           const matchId = rawObs.match(/\b\d{10,20}\b/) || rawObs.match(/\b[A-Z]+-\d+\b/) || rawObs.match(/\d{3}-\d{7}-\d{7}/) || rawObs.match(/20000[0-9]+/) || rawObs.match(/\b[A-Z0-9]{6,}\b/);
           if (matchId) {
             pedidoId = matchId[0].trim();
@@ -244,7 +263,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Faturados importados e limpos com sucesso! Total: ${registros.length} registos.`);
+        alert(`✅ Faturados importados com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Faturados: " + err.message);
@@ -254,6 +273,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // IMPORTAÇÃO DE VENDAS RESPEITANDO AS REGRAS DO CANAL
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -267,16 +287,21 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
+        // Busca a regra específica configurada para o canal selecionado
+        const regraCanal = regrasCanais.find((r: any) => r.canal === canalAlvoDash);
+        const letraSkuCanal = regraCanal ? regraCanal.coluna_sku : 'A';
+        const idxSku = letraParaIndice(letraSkuCanal);
+
         const registros = [];
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
 
           const idPedido = String(row[0] || "").trim();
-          const sku = normalizarSku(row[1]);
-          const precoVenda = Number(String(row[3] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
+          const sku = idxSku >= 0 && row[idxSku] ? normalizarSku(row[idxSku]) : normalizarSku(row[1]);
+          const precoVenda = parseSmartFloat(row[3], canalAlvoDash);
           const quantidade = Number(row[4] || 1);
-          const repasseLiquido = Number(String(row[5] || "0").replace("R$", "").trim().replace(",", ".")) || precoVenda;
+          const repasseLiquido = parseSmartFloat(row[5], canalAlvoDash) || precoVenda;
 
           if (idPedido || sku) {
             registros.push({
@@ -295,14 +320,15 @@ export default function UpdatesPage() {
         if (registros.length > 0) {
           await supabase.from('vendas_lives').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
           for (let i = 0; i < registros.length; i += 500) {
-            await supabase.from('vendas_lives').insert(registros.slice(i, i + 500));
+            const { error } = await supabase.from('vendas_lives').insert(registros.slice(i, i + 500));
+            if (error) throw error;
           }
         }
 
-        alert(`✅ Vendas do canal [${canalAlvoDash}] gravadas! (${registros.length} itens).`);
-        setLoading(false);
+        alert(`✅ Vendas do canal [${canalAlvoDash}] gravadas com sucesso no Supabase! (${registros.length} itens).`);
       } catch (err: any) {
-        alert("Erro: " + err.message);
+        alert("Erro ao importar vendas: " + err.message);
+      } finally {
         setLoading(false);
       }
     };
@@ -330,7 +356,7 @@ export default function UpdatesPage() {
           const row = json[i];
           if (!row) continue;
           const idPedido = String(row[idxId] || "").trim();
-          const valorTarifa = Number(String(row[idxTarifa] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
+          const valorTarifa = parseSmartFloat(row[idxTarifa], 'TARIFAS');
 
           if (idPedido) {
             registros.push({
@@ -565,7 +591,7 @@ export default function UpdatesPage() {
           if (!row || row.length === 0) continue;
           const sku = normalizarSku(row[idxSku]);
           const produto = String(row[idxProd] || "Produto").trim();
-          const custo = Number(String(row[idxCusto] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
+          const custo = parseSmartFloat(row[idxCusto], 'CUSTOS');
           const marca = String(row[idxMarca] || "").trim();
           if (sku && !isNaN(custo)) {
             mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
