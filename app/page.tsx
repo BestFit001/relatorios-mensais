@@ -5,13 +5,6 @@ import Navbar from '@/app/components/Navbar';
 
 /* =====================================================================
    DASHBOARD OMNICHANNEL — app/dashboard/page.tsx
-
-   Fluxo de dados atualizado:
-   1. Vendas      -> vendas_padrao_lancamentos (cruzado com faturados)
-   2. Regras      -> config_regras_canais (formula_excel, colunas, canais ativos)
-   3. Devoluções  -> devolucoes (abate PDV bruto, repasse líquido e frete reverso)
-   4. Ads         -> ads_faturamento_canal / ads_campanhas_lancamentos (descontado do líquido)
-   5. Frete FLEX  -> plp_pedidos (modalidade FLEX cruzada pelo ID do pedido)
    ===================================================================== */
 
 const MODALIDADE_FRETE_DESCONTADO = 'flex';
@@ -250,8 +243,8 @@ export default function DashboardPage() {
 
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
-  const [modalidadeFilter, setModalidadeFilter] = useState('SELECIONE');
-  const [appliedModalidadeFilter, setAppliedModalidadeFilter] = useState('SELECIONE');
+  const [modalidadeFilter, setModalidadeFilter] = useState('TODAS');
+  const [appliedModalidadeFilter, setAppliedModalidadeFilter] = useState('TODAS');
   const [viewMode, setViewMode] = useState<'cards' | 'linhas'>('cards');
 
   const hojeIso = isoLocal(new Date());
@@ -548,7 +541,6 @@ export default function DashboardPage() {
         const vendasDoDia = vs.filter((v) => v.data === periodo.ontemIso).reduce((s, v) => s + v.bruto, 0);
         const fatBruto = bruto - dev.bruto;
         
-        // Faturamento líquido considera abatimento do repasse de devoluções + frete reverso de devolução + Adsense + frete FLEX
         const fatLiquidoAntesDeducoes = liqVendas - dev.liquido;
         const ads = adsPorCanal.get(k) || 0;
         const fl = flex.porCanal.get(k) || 0;
@@ -585,16 +577,15 @@ export default function DashboardPage() {
 
   const progressoDigital = totE.metaValor > 0 ? (totE.fatBruto / totE.metaValor) * 100 : 0;
 
-  /* ------------------------------ diagnóstico ------------------------------ */
   const avisos = useMemo(() => {
     const lista: string[] = [];
     const semRegra = new Map<string, number>();
     vendasPeriodo.filter((v) => !v.comRegra).forEach((v) => semRegra.set(v.canal, (semRegra.get(v.canal) || 0) + 1));
     if (semRegra.size > 0) {
-      lista.push(`Sem fórmula válida em "Configurando Canal" (usado o repasse gravado no upload): ${Array.from(semRegra.entries()).map(([c, n]) => `${c} (${n} itens)`).join(', ')}.`);
+      lista.push(`Sem fórmula válida em "Configurando Canal": ${Array.from(semRegra.entries()).map(([c, n]) => `${c} (${n} itens)`).join(', ')}.`);
     }
     const skusSemCusto = new Set(vendasPeriodo.filter((v) => v.semCusto).map((v) => v.sku));
-    if (skusSemCusto.size > 0) lista.push(`${skusSemCusto.size} SKUs vendidos sem custo cadastrado — o CMV está subestimado.`);
+    if (skusSemCusto.size > 0) lista.push(`${skusSemCusto.size} SKUs vendidos sem custo cadastrado.`);
     return lista;
   }, [vendasPeriodo]);
 
@@ -714,7 +705,7 @@ export default function DashboardPage() {
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl gap-4">
           <div>
             <h2 className="text-base font-bold text-white tracking-tight">Dashboard Best Fit</h2>
-            <p className="text-xs text-slate-400 mt-0.5">Lucro real = Fat. líquido (fórmula do canal) − Devoluções (repasse, PDV e frete reverso) − CMV − Ads − Frete FLEX</p>
+            <p className="text-xs text-slate-400 mt-0.5">Lucro real = Fat. líquido (fórmula do canal) − Devoluções − CMV − Ads − Frete FLEX</p>
           </div>
 
           <div className="flex flex-wrap gap-3 items-center w-full lg:w-auto">
@@ -742,7 +733,6 @@ export default function DashboardPage() {
 
             <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
               <select value={modalidadeFilter} onChange={(e) => setModalidadeFilter(e.target.value)} className="bg-transparent text-emerald-300 font-bold text-xs focus:outline-none px-2 cursor-pointer">
-                <option value="SELECIONE" className="bg-slate-900 text-slate-500">Selecione...</option>
                 <option value="TODAS" className="bg-slate-900 text-white">Todas as Modalidades</option>
                 <option value="FISICO" className="bg-slate-900 text-white">Lojas Físicas</option>
                 <option value="DIGITAL" className="bg-slate-900 text-white">E-commerce / Marketplaces</option>
@@ -790,7 +780,7 @@ export default function DashboardPage() {
             </div>
             <div className="mt-3 space-y-1">
               <div className="flex justify-between text-[10px] text-slate-400"><span>Vendas</span><span>R$ {brl(totG.bruto)}</span></div>
-              <Deducao rotulo="Devoluções / cancelamentos (PDV)" valor={totG.devBruto} />
+              <Deducao rotulo="Devoluções / cancelamentos" valor={totG.devBruto} />
             </div>
             <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3 text-center">
               <div>
@@ -826,14 +816,11 @@ export default function DashboardPage() {
             <div className="text-center">
               <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Líquido (Repasse)</span>
               <h3 className="text-2xl font-black text-purple-400 mt-1">R$ {brl(totG.fatLiquido)}</h3>
-              <p className="text-[10px] text-slate-500 mt-1">Após fórmula, devoluções e despesas</p>
+              <p className="text-[10px] text-slate-500 mt-1">Após fórmula de cada canal</p>
             </div>
             <div className="mt-3 space-y-1">
               <div className="flex justify-between text-[10px] text-slate-400"><span>Repasse das vendas</span><span>R$ {brl(totG.liqVendas)}</span></div>
-              <Deducao rotulo="Devoluções (repasse)" valor={totG.devLiq} />
-              <Deducao rotulo="Frete reverso devolução" valor={totG.freteDevolucao} />
-              <Deducao rotulo="Adsense" valor={totG.ads} />
-              <Deducao rotulo="Frete FLEX" valor={totG.flex} />
+              <Deducao rotulo="Devoluções (líquido)" valor={totG.devLiq} />
             </div>
             <BlocoModalidade fisico={totF.fatLiquido} digital={totE.fatLiquido} />
           </div>
@@ -853,24 +840,19 @@ export default function DashboardPage() {
             <div className="text-center">
               <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
               <h3 className={`text-2xl font-black mt-1 ${totG.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>R$ {brl(totG.lucro)}</h3>
-              <p className="text-[10px] text-slate-500 mt-1">Fat. líquido − CMV</p>
+              <p className="text-[10px] text-slate-500 mt-1">Fat. líquido − CMV − Ads − FLEX</p>
             </div>
             <div className="mt-3 space-y-1">
               <Deducao rotulo="CMV" valor={totG.cmv} />
+              <Deducao rotulo="Adsense (investimento)" valor={totG.ads} />
+              <Deducao rotulo="Frete FLEX (PLP)" valor={totG.flex} />
             </div>
             <BlocoModalidade fisico={totF.lucro} digital={totE.lucro} />
           </div>
         </div>
 
         {/* LISTAGEM DE CANAIS / LOJAS */}
-        {appliedModalidadeFilter === 'SELECIONE' ? (
-          <div className="flex flex-col items-center justify-center py-16 px-6 bg-slate-900/60 rounded-2xl border border-slate-800 border-dashed shadow-xl">
-            <p className="text-slate-400 text-sm font-bold text-center leading-relaxed">
-              Selecione uma modalidade (Todas, Lojas Físicas ou E-commerce)<br />
-              no filtro acima e clique em "Recalcular" para ver o detalhamento por canal.
-            </p>
-          </div>
-        ) : viewMode === 'cards' ? (
+        {viewMode === 'cards' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {channelAnalytics.map((item) => {
               const metaBatida = item.progressoMetaPct >= 100;
@@ -911,8 +893,6 @@ export default function DashboardPage() {
 
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs">
                     <Deducao rotulo="Devoluções (bruto)" valor={item.devBruto} />
-                    <Deducao rotulo="Devoluções (repasse)" valor={item.devLiq} />
-                    <Deducao rotulo="Frete reverso devolução" valor={item.freteDevolucao} />
                     <Deducao rotulo="CMV" valor={item.cmv} />
                     <Deducao rotulo="Adsense" valor={item.ads} />
                     <Deducao rotulo="Frete FLEX" valor={item.flex} />
