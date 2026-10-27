@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import Navbar from '@/app/components/Navbar';
 
 /* =====================================================================
-   DASHBOARD OMNICHANNEL — app/dashboard/page.tsx
+   DASHBOARD OMNICHANNEL — app/page.tsx (Página Principal)
    ===================================================================== */
 
 const MODALIDADE_FRETE_DESCONTADO = 'flex';
@@ -235,8 +235,7 @@ const somar = (lista: Metricas[]) =>
     { metaValor: 0, vendasDoDia: 0, bruto: 0, devBruto: 0, fatBruto: 0, liqVendas: 0, devLiq: 0, freteDevolucao: 0, fatLiquidoAntesDeducoes: 0, fatLiquido: 0, cmv: 0, ads: 0, flex: 0, lucro: 0, projecao: 0, itens: 0 }
   );
 
-/* ================================ página ================================ */
-export default function DashboardPage() {
+export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [db, setDb] = useState<Record<string, any[]>>({});
   const [erros, setErros] = useState<string[]>([]);
@@ -292,7 +291,6 @@ export default function DashboardPage() {
     finally { setIsRecalculating(false); }
   };
 
-  /* ------------------------------ período ------------------------------ */
   const periodo = useMemo(() => {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
@@ -329,7 +327,6 @@ export default function DashboardPage() {
     };
   }, [appliedDateFilter, appliedStartDate, appliedEndDate]);
 
-  /* --------------------------- regras por canal --------------------------- */
   const regrasPorCanal = useMemo(() => {
     const m = new Map<string, RegraCanal>();
     (db.config_regras_canais || []).forEach((r: any) => {
@@ -354,7 +351,6 @@ export default function DashboardPage() {
     return { bruto, liquido: fallbackValido ? liquidoFallback : bruto, comRegra: false };
   };
 
-  /* ------------------------------- vendas ------------------------------- */
   const dataPorPedido = useMemo(() => {
     const m = new Map<string, string>();
     (db.faturados || []).forEach((f: any) => {
@@ -411,7 +407,6 @@ export default function DashboardPage() {
     return out;
   }, [db.vendas_padrao_lancamentos, dataPorPedido, custosMap, regrasPorCanal, periodo, appliedChannelFilter, appliedModalidadeFilter]);
 
-  /* --------------------------- frete FLEX (PLP) --------------------------- */
   const flex = useMemo(() => {
     const porPedido = new Map<string, { valor: number; canal: string; data: string | null }>();
     (db.plp_pedidos || []).forEach((p: any) => {
@@ -440,7 +435,6 @@ export default function DashboardPage() {
     return { porCanal, semVendaQtd, semVendaValor };
   }, [db.plp_pedidos, vendasPeriodo, periodo, appliedChannelFilter, appliedModalidadeFilter]);
 
-  /* ------------------------------ devoluções ------------------------------ */
   const devolucoes = useMemo(() => {
     const m = new Map<string, { bruto: number; liquido: number; freteDevolucao: number }>();
     (db.devolucoes || []).forEach((d: any) => {
@@ -462,7 +456,6 @@ export default function DashboardPage() {
     return m;
   }, [db.devolucoes, regrasPorCanal, periodo, appliedChannelFilter, appliedModalidadeFilter]);
 
-  /* ---------------------------------- Ads ---------------------------------- */
   const adsPorCanal = useMemo(() => {
     const gasto = new Map<string, number>();
     const invest = new Map<string, number>();
@@ -495,7 +488,7 @@ export default function DashboardPage() {
     return out;
   }, [db.ads_faturamento_canal, db.ads_campanhas_lancamentos, periodo]);
 
-  /* -------------------------------- canais (FONTE: ABA REGRAS + OUTROS) -------------------------------- */
+  // Lista de canais puxada diretamente da tabela config_regras_canais (Aba Regras)
   const canaisLista = useMemo(() => {
     const mapa = new Map<string, string>();
     const add = (n: any) => {
@@ -504,14 +497,9 @@ export default function DashboardPage() {
       if (k && !mapa.has(k)) mapa.set(k, nomeLimpo);
     };
 
-    // Fonte principal: Configuração de Regras de Canais (aba Regras)
+    // Fonte principal unica da aba Regras
     (db.config_regras_canais || []).forEach((r: any) => add(r.canal));
 
-    // Outras fontes secundárias de apoio
-    const cfg = (db.config_regras_tiny || []).find((t: any) => t.campo === 'canais_dashboard');
-    if (cfg?.coluna) {
-      try { const p = JSON.parse(cfg.coluna); if (Array.isArray(p)) p.forEach(add); } catch {}
-    }
     CANAIS_FISICOS_PADRAO.forEach(add);
     (db.vendas_padrao_lancamentos || []).forEach((r: any) => add(r.canal));
     (db.devolucoes || []).forEach((r: any) => add(r.canal));
@@ -520,9 +508,8 @@ export default function DashboardPage() {
     (db.plp_pedidos || []).forEach((r: any) => add(r.canal));
 
     return Array.from(mapa.values());
-  }, [db.config_regras_tiny, db.config_regras_canais, db.vendas_padrao_lancamentos, db.devolucoes, db.ads_faturamento_canal, db.ads_campanhas_lancamentos, db.plp_pedidos]);
+  }, [db.config_regras_canais, db.vendas_padrao_lancamentos, db.devolucoes, db.ads_faturamento_canal, db.ads_campanhas_lancamentos, db.plp_pedidos]);
 
-  /* ------------------------------ métricas ------------------------------ */
   const channelAnalytics = useMemo(() => {
     const porCanal = new Map<string, any[]>();
     vendasPeriodo.forEach((v) => {
@@ -959,16 +946,4 @@ export default function DashboardPage() {
                 {fisicas.length > 0 && (
                   <>
                     <tr className="bg-slate-950/70"><td colSpan={10} className="py-3 px-6 text-emerald-400 font-black">Lojas Físicas</td></tr>
-                    {fisicas.map((item) => <LinhaTabela key={item.canal} item={item} cor="text-rose-400" />)}
-                    <TotalTabela titulo="Total Lojas Físicas" t={totF} cor="text-emerald-300" />
-                  </>
-                )}
-                <TotalTabela titulo="TOTAL GERAL" t={totG} cor="text-white" />
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+                    {fisicas.map((item) => <LinhaTabela key={
