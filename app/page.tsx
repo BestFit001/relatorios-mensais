@@ -12,8 +12,10 @@ export default function DashboardPage() {
   const [dbPlp, setDbPlp] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
+  
+  // Lista dinâmica de canais puxada direto da tabela de regras do Supabase
   const [canaisDinamicos, setCanaisDinamicos] = useState<string[]>([
-    'Mercado Livre 1', 'Mercado Livre 2', 'Shopee', 'Amazon', 'TikTok', 'Magalu', 'Shein', 'Netshoes', 'Site', 'Centauro', 'Clube Hebraica', 'Clube Paineiras'
+    'Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro'
   ]);
   
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
@@ -102,7 +104,7 @@ export default function DashboardPage() {
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
-        // 7. Puxa os canais dinâmicos diretamente da aba de regras (config_regras_tiny)
+        // 7. Puxa os canais dinâmicos diretamente da tabela de regras (config_regras_tiny)
         try {
           const { data: configs } = await supabase.from('config_regras_tiny').select('*');
           if (configs) {
@@ -523,6 +525,7 @@ export default function DashboardPage() {
               <i className="fa-solid fa-store text-purple-400 pl-2 text-xs"></i>
               <select value={selectedChannelFilter} onChange={(e) => setSelectedChannelFilter(e.target.value)} className="bg-transparent text-purple-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
                 <option value="TODOS" className="bg-slate-900 text-white">Todos os Canais</option>
+                <option value="Mercado Livre" className="bg-slate-900 text-white">Mercado Livre (Geral)</option>
                 {canaisDinamicos.map((ch: string) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
               </select>
             </div>
