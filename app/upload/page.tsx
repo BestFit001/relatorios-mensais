@@ -25,7 +25,7 @@ function normalizarSku(valor: any): string {
   return s.toLowerCase();
 }
 
-function parseSmartFloat(val: any, channelName: string) {
+function parseSmartFloat(val: any) {
   if (val === undefined || val === null || val === '') return 0;
   if (typeof val === 'number') return val;
   let strVal = String(val).trim();
@@ -213,7 +213,7 @@ export default function UpdatesPage() {
     }
   };
 
-  // LEITURA INTELIGENTE DE FATURADOS (Extrai o número correto do pedido)
+  // LEITURA INTELIGENTE DE FATURADOS (Extração limpa apenas dos números dos pedidos)
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -263,7 +263,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Faturados importados com sucesso! Total: ${registros.length} registos.`);
+        alert(`✅ Faturados importados e limpos com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Faturados: " + err.message);
@@ -273,7 +273,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // IMPORTAÇÃO DE VENDAS RESPEITANDO AS REGRAS DO CANAL
+  // IMPORTAÇÃO DE VENDAS USANDO A TABELA DO ESTADO GLOBAL / SUPABASE OFICIAL ('tb_estado_global' ou 'sales')
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -287,45 +287,54 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        // Busca a regra específica configurada para o canal selecionado
         const regraCanal = regrasCanais.find((r: any) => r.canal === canalAlvoDash);
         const letraSkuCanal = regraCanal ? regraCanal.coluna_sku : 'A';
         const idxSku = letraParaIndice(letraSkuCanal);
 
-        const registros = [];
+        const novasVendas = [];
+        const loteId = `lote_${canalAlvoDash}_${Date.now()}`;
+
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
 
           const idPedido = String(row[0] || "").trim();
+          if (!idPedido || idPedido.toLowerCase().includes('pedido')) continue;
+
           const sku = idxSku >= 0 && row[idxSku] ? normalizarSku(row[idxSku]) : normalizarSku(row[1]);
-          const precoVenda = parseSmartFloat(row[3], canalAlvoDash);
+          const precoVenda = parseSmartFloat(row[3]);
           const quantidade = Number(row[4] || 1);
-          const repasseLiquido = parseSmartFloat(row[5], canalAlvoDash) || precoVenda;
+          const repasseLiquido = parseSmartFloat(row[5]) || precoVenda;
 
           if (idPedido || sku) {
-            registros.push({
-              id_pedido: idPedido || `PED-${i}`,
+            novasVendas.push({
+              id_pedido: idPedido,
               sku: sku,
               quantidade: isNaN(quantidade) ? 1 : quantidade,
               preco_venda: precoVenda,
               repasse_liquido: repasseLiquido,
               canal: canalAlvoDash,
               data_faturamento: new Date().toISOString().slice(0, 10),
-              mes_referencia: mesAlvoDash
+              mes_referencia: mesAlvoDash,
+              lote_id: loteId,
+              unique_key: `${idPedido}_${sku}_${i}`
             });
           }
         }
 
-        if (registros.length > 0) {
-          await supabase.from('vendas_lives').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
-          for (let i = 0; i < registros.length; i += 500) {
-            const { error } = await supabase.from('vendas_lives').insert(registros.slice(i, i + 500));
-            if (error) throw error;
-          }
+        if (novasVendas.length > 0) {
+          // Busca as vendas atuais salvas no Supabase para atualizar mantendo o resto
+          const { data: resp } = await supabase.from('tb_estado_global').select('dados').eq('chave', 'vendas').single();
+          let vendasExistentes = resp?.dados || [];
+
+          // Remove as vendas antigas deste canal para este mês e adiciona as novas
+          vendasExistentes = vendasExistentes.filter((s: any) => !(s.canal === canalAlvoDash && s.mes_referencia === mesAlvoDash));
+          const vendasAtualizadas = [...novasVendas, ...vendasExistentes];
+
+          await supabase.from('tb_estado_global').upsert([{ chave: 'vendas', dados: vendasAtualizadas }], { onConflict: 'chave' });
         }
 
-        alert(`✅ Vendas do canal [${canalAlvoDash}] gravadas com sucesso no Supabase! (${registros.length} itens).`);
+        alert(`✅ Vendas do canal [${canalAlvoDash}] salvas com sucesso! (${novasVendas.length} itens).`);
       } catch (err: any) {
         alert("Erro ao importar vendas: " + err.message);
       } finally {
@@ -351,27 +360,21 @@ export default function UpdatesPage() {
         const idxId = letraParaIndice(colunaIdSite);
         const idxTarifa = letraParaIndice(colunaTarifaSite);
 
-        const registros = [];
+        const novasTarifas: Record<string, number> = {};
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row) continue;
           const idPedido = String(row[idxId] || "").trim();
-          const valorTarifa = parseSmartFloat(row[idxTarifa], 'TARIFAS');
+          const valorTarifa = parseSmartFloat(row[idxTarifa]);
 
-          if (idPedido) {
-            registros.push({
-              id_pedido: idPedido,
-              tarifa_site: valorTarifa,
-              mes_referencia: mesAlvoDash
-            });
-          }
+          if (idPedido) novasTarifas[idPedido] = valorTarifa;
         }
 
-        if (registros.length > 0) {
-          await supabase.from('config_regras_tarifacao').upsert(registros, { onConflict: 'id_pedido' });
+        if (Object.keys(novasTarifas).length > 0) {
+          await supabase.from('tb_estado_global').upsert([{ chave: 'tarifas_site', dados: novasTarifas }], { onConflict: 'chave' });
         }
 
-        alert(`✅ Tarifas do Site importadas! Total: ${registros.length} registos.`);
+        alert(`✅ Tarifas do Site importadas! Total: ${Object.keys(novasTarifas).length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Tarifas do Site: " + err.message);
@@ -385,7 +388,14 @@ export default function UpdatesPage() {
     if (!confirm(`Deseja limpar os registros de [${tabela}] para o mês [${mesAlvoDash}]?`)) return;
     setLoading(true);
     try {
-      await supabase.from(tabela).delete().eq('mes_referencia', mesAlvoDash);
+      if (tabela === 'faturados') {
+        await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash);
+      } else if (tabela === 'vendas') {
+        const { data: resp } = await supabase.from('tb_estado_global').select('dados').eq('chave', 'vendas').single();
+        let vendasExistentes = resp?.dados || [];
+        vendasExistentes = vendasExistentes.filter((s: any) => !(s.canal === canalAlvoDash && s.mes_referencia === mesAlvoDash));
+        await supabase.from('tb_estado_global').upsert([{ chave: 'vendas', dados: vendasExistentes }], { onConflict: 'chave' });
+      }
       alert(`✅ Registros de ${tabela} limpos.`);
     } catch (err: any) {
       alert("Erro: " + err.message);
@@ -397,7 +407,10 @@ export default function UpdatesPage() {
     if (!confirm("⚠️ Deseja apagar TODAS as informações das bases principais?")) return;
     setLoading(true);
     try {
-      await supabase.from('vendas_lives').delete().neq('id', 0);
+      const chaves = ['vendas', 'faturados', 'cancelados', 'flex', 'ads', 'tarifas_site'];
+      for (const chave of chaves) {
+        await supabase.from('tb_estado_global').delete().eq('chave', chave);
+      }
       await supabase.from('faturados').delete().neq('id', 0);
       alert("✅ Banco de dados limpo com sucesso!");
     } catch (err: any) {
@@ -591,7 +604,7 @@ export default function UpdatesPage() {
           if (!row || row.length === 0) continue;
           const sku = normalizarSku(row[idxSku]);
           const produto = String(row[idxProd] || "Produto").trim();
-          const custo = parseSmartFloat(row[idxCusto], 'CUSTOS');
+          const custo = parseSmartFloat(row[idxCusto]);
           const marca = String(row[idxMarca] || "").trim();
           if (sku && !isNaN(custo)) {
             mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
@@ -1062,7 +1075,7 @@ export default function UpdatesPage() {
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
                   Apagar Faturados ({mesAlvoDash})
                 </button>
-                <button onClick={() => apagarDadosPorTipo('vendas_lives')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
+                <button onClick={() => apagarDadosPorTipo('vendas')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
                   Apagar Vendas ({mesAlvoDash})
                 </button>
               </div>
