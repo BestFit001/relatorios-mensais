@@ -122,7 +122,6 @@ export default function DashboardOmnichannel() {
   const [loading, setLoading] = useState(true);
   const [database, setDatabase] = useState<Record<string, any[]>>({});
   
-  // Filtros de Tela (Iniciando com TODAS para evitar bloqueio inicial)
   const [filtroModalidade, setFiltroModalidade] = useState<'TODAS' | 'FISICO' | 'DIGITAL'>('TODAS');
   const [filtroCanal, setFiltroCanal] = useState<string>('TODOS');
   const [tipoVisualizacao, setTipoVisualizacao] = useState<'cards' | 'linhas'>('cards');
@@ -172,7 +171,6 @@ export default function DashboardOmnichannel() {
     };
   }, [periodoSelecionado]);
 
-  // Canais dinamicos da aba Regras
   const canaisDisponiveis = useMemo(() => {
     const mapa = new Map<string, string>();
     const adicionar = (nome: any) => {
@@ -381,6 +379,15 @@ export default function DashboardOmnichannel() {
     }), { fatBruto: 0, fatLiquido: 0, cmv: 0, ads: 0, flex: 0, lucro: 0, metaValor: 0, devBruto: 0 });
   }, [metricasCanais]);
 
+  const handleEnviarEmailAlerta = () => {
+    const email = 'gisele@usebestfit.com.br';
+    const dataHoje = new Date().toLocaleDateString('pt-BR');
+    const assunto = encodeURIComponent(`📊 Resumo de Vendas - Lojas Físicas e Online (${dataHoje})`);
+    let corpo = `Olá, tudo bem? Segue resumo executivo de vendas.\n\n`;
+    corpo += `Caso queiram visualiza-lo, acessem o link a seguir: https://dashboard-e-commerce-nine.vercel.app/\n`;
+    window.location.href = `mailto:${email}?subject=${assunto}&body=${encodeURIComponent(corpo)}`;
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#07090e] flex items-center justify-center text-slate-100">
@@ -408,6 +415,13 @@ export default function DashboardOmnichannel() {
         {/* BARRA DE FILTROS */}
         <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">
+            <button 
+              onClick={handleEnviarEmailAlerta} 
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg cursor-pointer"
+            >
+              Enviar Relatório por E-mail
+            </button>
+
             <select 
               value={periodoSelecionado} 
               onChange={(e) => setPeriodoSelecionado(e.target.value as any)}
