@@ -77,7 +77,8 @@ export default function DashboardPage() {
           }
         } catch (e) {}
 
-        // 3. PASSO 2: Buscar Vendas Importadas dos Canais (Tabela vendas_lives)
+        // 3. PASSO 2: Buscar Vendas Importadas (Tabela de upload de canais)
+        // Certifique-se de alterar 'vendas_lives' abaixo para outra tabela caso tenha criado uma específica para uploads padrão.
         try {
           const { data: vendasAdmin } = await supabase.from('vendas_lives').select('*');
           if (vendasAdmin) setAdminSales(vendasAdmin);
@@ -185,8 +186,7 @@ export default function DashboardPage() {
     return safeSales.filter((s: any) => {
         if (!s) return false;
 
-        // CRUZAMENTO OBRIGATÓRIO COM O PASSO 1 (Faturados)
-        // Se houver faturados carregados, o ID do pedido tem de estar obrigatoriamente na tabela faturados
+        // FILTRAGEM OBRIGATÓRIA: O pedido precisa existir na tabela de Faturados (Passo 1)
         if (faturadosIds.size > 0 && s.id_pedido && !faturadosIds.has(String(s.id_pedido).trim())) {
           return false;
         }
@@ -566,7 +566,7 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Dashboard Omnichannel</h1>
-            <p className="text-sm font-medium text-slate-400">Visão consolidada cruzando Faturados (Passo 1) com Vendas de Canais (Passo 2)</p>
+            <p className="text-sm font-medium text-slate-400">Visão consolidada cruzando Faturados (Passo 1) com Uploads de Vendas (Passo 2)</p>
           </div>
           <Navbar />
         </div>
