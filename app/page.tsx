@@ -6,8 +6,7 @@ import Navbar from '@/app/components/Navbar';
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [canais, setCanais] = useState<string[]>(['Mercado Livre', 'Shopee', 'Amazon', 'TikTok Shop', 'Magalu', 'Clube Hebraica', 'Clube Paineiras']);
-  const [adminSales, setAdminSales] = useState<any[]>([]);
-  const [faturadosIds, setFaturadosIds] = useState<Set<string>>(new Set());
+  const [sales, setSales] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
   
@@ -43,11 +42,11 @@ export default function DashboardPage() {
   const [isRecalculating, setIsRecalculating] = useState(false);
 
   useEffect(() => {
-    async function fetchDashboardData() {
+    async function fetchAllData() {
       try {
         setLoading(true);
 
-        // 1. Custos unitários por SKU
+        // 1. Custos de SKUs cadastrados na aba de Custos
         let allCustos: any[] = [];
         let from = 0;
         const step = 1000;
@@ -69,51 +68,37 @@ export default function DashboardPage() {
         });
         setDbCustosMap(cMap);
 
-        // 2. Faturados upados na aba Updates (Passo 1)
-        try {
-          const { data: fatData } = await supabase.from('faturados').select('id_pedido');
-          if (fatData) {
-            setFaturadosIds(new Set(fatData.map((f: any) => String(f.id_pedido).trim())));
-          }
-        } catch (e) {}
-
-        // 3. Vendas por canal upadas na aba Updates (Passo 2)
-        try {
-          const { data: vendasAdmin } = await supabase.from('vendas_lives').select('*');
-          if (vendasAdmin) setAdminSales(vendasAdmin);
-        } catch (e) {}
-
-        // 4. Devoluções
+        // 2. Devoluções / Cancelados
         try {
           const { data: devData } = await supabase.from('devolucoes').select('*');
           if (devData) setDbDevolucoes(devData);
         } catch (e) {}
 
-        // 5. Adsense / Ads
+        // 3. Adsense / Ads
         try {
           const { data: adsDataDb } = await supabase.from('ads_faturamento').select('*');
           if (adsDataDb) setDbAds(adsDataDb);
         } catch (e) {}
 
-        // 6. PLPs / Frete
+        // 4. PLPs / Frete
         try {
           const { data: plpData } = await supabase.from('plp_pedidos').select('*');
           if (plpData) setDbPlp(plpData);
         } catch (e) {}
 
-        // 7. Metas da aba Regras
+        // 5. Metas da aba Regras
         try {
           const { data: metasDb } = await supabase.from('tb_metas').select('*');
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
-        // 8. Tarifas e Tarifas do Site
+        // 6. Tarifas da aba Regras
         try {
           const { data: tarifacaoDb } = await supabase.from('config_regras_tarifacao').select('*');
           if (tarifacaoDb) setConfigTarifas(tarifacaoDb);
         } catch (e) {}
 
-        // 9. Canais ativos
+        // 7. Canais salvos na aba Regras
         try {
           const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
           if (regrasDb && regrasDb.length > 0) {
@@ -131,13 +116,25 @@ export default function DashboardPage() {
           }
         } catch (e) {}
 
+        // 8. DADOS DE VENDAS BRUTAS DA ABA DE UPLOADS (Ajustado para puxar da tabela correta de pedidos/uploads)
+        try {
+          const { data: vendasDb } = await supabase.from('vendas_pedidos').select('*'); // Altere 'vendas_pedidos' para o nome exato da tabela gerada pelos seus uploads caso seja diferente
+          if (vendasDb) setSales(vendasDb);
+        } catch (e) {
+          // Fallback caso a tabela principal de uploads tenha outro nome no seu Supabase
+          try {
+            const { data: fallbackDb } = await supabase.from('vendas').select('*');
+            if (fallbackDb) setSales(fallbackDb);
+          } catch (err) {}
+        }
+
       } catch (err) {
-        console.error("Erro ao carregar dados para o Dashboard:", err);
+        console.error("Erro ao carregar dados do Supabase:", err);
       } finally {
         setLoading(false);
       }
     }
-    fetchDashboardData();
+    fetchAllData();
   }, []);
 
   const handleRecalculate = () => {
@@ -180,15 +177,10 @@ export default function DashboardPage() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const safeSales = Array.isArray(adminSales) ? adminSales : [];
+    const safeSales = Array.isArray(sales) ? sales : [];
 
     return safeSales.filter((s: any) => {
         if (!s) return false;
-
-        if (faturadosIds.size > 0 && s.id_pedido && !faturadosIds.has(String(s.id_pedido).trim())) {
-          return false;
-        }
-
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
 
         const fisico = isChannelFisico(s.canal);
@@ -239,18 +231,12 @@ export default function DashboardPage() {
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
 
         if (repasseLiquido <= 0) {
-          const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal || String(t.id_pedido) === String(s.id_pedido));
+          const regraFaixa = configTarifas.find((t: any) => t.canal === s.canal);
           if (regraFaixa) {
-            const tarifaSiteVal = Number(regraFaixa.tarifa_site) || 0;
             const comissaoPct = Number(regraFaixa.comissao) || 0;
             const tarifaFixa = Number(regraFaixa.tarifa_fixa) || 0;
             const freteRegra = Number(regraFaixa.frete) || 0;
-            
-            if (tarifaSiteVal > 0) {
-              repasseLiquido = Math.max(0, precoVenda - tarifaSiteVal);
-            } else {
-              repasseLiquido = Math.max(0, precoVenda - (precoVenda * (comissaoPct / 100)) - tarifaFixa - freteRegra);
-            }
+            repasseLiquido = Math.max(0, precoVenda - (precoVenda * (comissaoPct / 100)) - tarifaFixa - freteRegra);
           } else {
             repasseLiquido = precoVenda;
           }
@@ -268,7 +254,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [adminSales, faturadosIds, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, dbCustosMap, dbPlp, configTarifas, currentMonthDefault, previousMonthDefault]);
 
   const kpis = useMemo(() => {
     const safeCanais = Array.isArray(canais) ? canais : [];
@@ -563,7 +549,7 @@ export default function DashboardPage() {
     
     const progressoDigitalPct = metaDigitalTotal > 0 ? (fatDigitalTotal / metaDigitalTotal) * 100 : 0;
 
-    let corpoTexto = `Olá, tudo bem? Segue resumo das vendas das lojas fisica e onlines do dia ${dataHoje}.\n\n`;
+    let corpoTexto = `Olá, tudo bem? Segue resumo das vendas das lojas física e onlines do dia ${dataHoje}.\n\n`;
     corpoTexto += `Hebraica: R$ ${hebraicaObj.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${hebraicaObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
     corpoTexto += `Paineiras: R$ ${paineirasObj.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${paineirasObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
     corpoTexto += `E-commerce: R$ ${fatDigitalTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${progressoDigitalPct.toFixed(1)}% da meta)\n\n`;
@@ -592,7 +578,7 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Dashboard Omnichannel</h1>
-            <p className="text-sm font-medium text-slate-400">Visão consolidada consultando Supabase (Faturados do Admin, Custos e Tarifas)</p>
+            <p className="text-sm font-medium text-slate-400">Visão consolidada consultando Supabase (Uploads de Pedidos, Devoluções, Adsense, PLP e Custos)</p>
           </div>
           <Navbar />
         </div>
@@ -986,7 +972,7 @@ export default function DashboardPage() {
 
                 <tfoot className="bg-slate-950 text-white font-black text-xs border-t-2 border-slate-700">
                   <tr>
-                    <td className="py-4 px-6">TOTAL GERAL</td>
+                    <td className="py-4 px6">TOTAL GERAL</td>
                     <td className="py-4 px-4 text-right font-mono text-emerald-400">R$ {totalGeral.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="py-4 px-4 text-right text-white">R$ {totalGeral.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="py-4 px-4 text-right font-mono text-slate-300">R$ {totalGeral.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
