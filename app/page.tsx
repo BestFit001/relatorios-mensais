@@ -4,10 +4,10 @@ import { supabase } from '@/lib/supabase';
 import Navbar from '@/app/components/Navbar';
 
 /* =====================================================================
-   DASHBOARD OMNICHANNEL — Nova Estrutura Modular (app/page.tsx)
+   DASHBOARD OMNICHANNEL — app/page.tsx (Página Principal)
    ===================================================================== */
 
-const MESES_NOME = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const TABELAS_SUPABASE = [
   'vendas_padrao_lancamentos',
   'faturados',
@@ -21,11 +21,11 @@ const TABELAS_SUPABASE = [
   'plp_pedidos',
 ] as const;
 
-// Helpers utilitários de formatação e normalização
-const normalizarTexto = (v: any) => String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ' );
+const normalizarTexto = (v: any) => String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
 const normalizarPedido = (v: any) => String(v ?? '').trim().replace(/\.0$/, '').replace(/\s+/g, '').toLowerCase();
 const formatarNumero = (n: number) => (n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const formatarMoeda = (v: number) => `R$ ${formatarNumero(v)}`;
+
 const converterNumero = (val: any): number => {
   if (typeof val === 'number') return isNaN(val) ? 0 : val;
   if (!val) return 0;
@@ -42,7 +42,6 @@ const isCanalFisico = (canal: string) => {
   return n.includes('clube') || n.includes('loja') || n.includes('paineiras') || n.includes('hebraica');
 };
 
-// Compilador seguro para as fórmulas do Excel cadastradas na aba Regras
 function compilarFormulaExcel(src: any) {
   const texto = String(src || '').trim().replace(/^=/, '');
   if (!texto) return null;
@@ -123,7 +122,7 @@ export default function DashboardOmnichannel() {
   const [loading, setLoading] = useState(true);
   const [database, setDatabase] = useState<Record<string, any[]>>({});
   
-  // Filtros de Tela
+  // Filtros de Tela (Iniciando com TODAS para evitar bloqueio inicial)
   const [filtroModalidade, setFiltroModalidade] = useState<'TODAS' | 'FISICO' | 'DIGITAL'>('TODAS');
   const [filtroCanal, setFiltroCanal] = useState<string>('TODOS');
   const [tipoVisualizacao, setTipoVisualizacao] = useState<'cards' | 'linhas'>('cards');
@@ -148,7 +147,6 @@ export default function DashboardOmnichannel() {
     setLoading(false);
   }
 
-  // Datas e Período Ativo
   const datasCalculo = useMemo(() => {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
@@ -169,13 +167,12 @@ export default function DashboardOmnichannel() {
     return {
       inicioIso: iso(ini),
       fimIso: iso(fim),
-      mesRefKey: `${pad(ini.getMonth() + 1)}/${ini.getFullYear()}`,
       diasPassados: Math.max(1, hoje.getDate()),
       totalDiasMes: new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate()
     };
   }, [periodoSelecionado]);
 
-  // Lista de Canais Dinâmica (Puxada da Aba Regras e Lançamentos)
+  // Canais dinamicos da aba Regras
   const canaisDisponiveis = useMemo(() => {
     const mapa = new Map<string, string>();
     const adicionar = (nome: any) => {
@@ -193,7 +190,6 @@ export default function DashboardOmnichannel() {
     return Array.from(mapa.values());
   }, [database]);
 
-  // Mapeamento de Regras por Canal
   const regrasMap = useMemo(() => {
     const map = new Map();
     (database.config_regras_canais || []).forEach(r => {
@@ -211,7 +207,6 @@ export default function DashboardOmnichannel() {
     return map;
   }, [database.config_regras_canais]);
 
-  // Custos de SKUs
   const custosMap = useMemo(() => {
     const map = new Map();
     (database.tabela_custos_skus || []).forEach(c => {
@@ -221,7 +216,6 @@ export default function DashboardOmnichannel() {
     return map;
   }, [database.tabela_custos_skus]);
 
-  // Faturados (Data por Pedido)
   const faturadosMap = useMemo(() => {
     const map = new Map();
     (database.faturados || []).forEach(f => {
@@ -231,7 +225,6 @@ export default function DashboardOmnichannel() {
     return map;
   }, [database.faturados]);
 
-  // Frete Flex (PLP) por Pedido
   const flexMap = useMemo(() => {
     const map = new Map();
     (database.plp_pedidos || []).forEach(p => {
@@ -243,7 +236,6 @@ export default function DashboardOmnichannel() {
     return map;
   }, [database.plp_pedidos]);
 
-  // Ads por Canal
   const adsMap = useMemo(() => {
     const map = new Map();
     (database.ads_faturamento_canal || []).forEach(a => {
@@ -257,7 +249,6 @@ export default function DashboardOmnichannel() {
     return map;
   }, [database.ads_faturamento_canal, database.ads_campanhas_lancamentos]);
 
-  // Consolidado de Vendas e Métricas por Canal
   const metricasCanais = useMemo(() => {
     const vendasValid = (database.vendas_padrao_lancamentos || []).filter(v => {
       if (filtroCanal !== 'TODOS' && normalizarTexto(v.canal) !== normalizarTexto(filtroCanal)) return false;
@@ -267,7 +258,6 @@ export default function DashboardOmnichannel() {
       return true;
     });
 
-    // Agrupa vendas por canal
     const porCanal = new Map<string, any[]>();
     vendasValid.forEach(v => {
       const k = normalizarTexto(v.canal);
@@ -301,14 +291,12 @@ export default function DashboardOmnichannel() {
           const ped = normalizarPedido(v.id_pedido);
           const dataFat = faturadosMap.get(ped);
           
-          // Valida se está no período
           if (dataFat && (dataFat < datasCalculo.inicioIso || dataFat > datasCalculo.fimIso)) return;
 
           const qtd = converterNumero(v.quantidade) || 1;
           const valorPdv = converterNumero(v.valor ?? v.preco_venda);
           const repasseDb = converterNumero(v.repasse_liquido ?? v.repasse);
 
-          // Aplicação da Fórmula da Aba Regras
           let brutoLinha = valorPdv;
           let liqLinha = repasseDb > 0 ? repasseDb : valorPdv;
 
@@ -325,14 +313,12 @@ export default function DashboardOmnichannel() {
           const custoUni = custosMap.get(skuNorm) || 0;
           cmvCanal += custoUni * qtd;
 
-          // Soma Frete Flex se o pedido tiver
           if (ped && flexMap.has(ped) && !pedidosFlexCanal.has(ped)) {
             pedidosFlexCanal.add(ped);
             flexCanalValor += flexMap.get(ped);
           }
         });
 
-        // Devoluções do Canal no Período
         let devBruto = 0;
         let devLiq = 0;
         let freteDevolucao = 0;
@@ -360,18 +346,13 @@ export default function DashboardOmnichannel() {
         const fatLiquido = liqCanal - devLiq - freteDevolucao - adsCanal - flexCanalValor;
         const lucroLiquido = fatLiquido - cmvCanal;
 
-        // Meta
         const metaObj = metas.find(m => normalizarTexto(m.canal) === kCanal) || { meta_valor: 0 };
         const metaValor = converterNumero(metaObj.meta_valor);
         const progressoMeta = metaValor > 0 ? (fatBruto / metaValor) * 100 : 0;
-        const valorFaltante = Math.max(0, metaValor - fatBruto);
-        const projecao = periodoSelecionado === 'MES_ATUAL' ? (fatBruto / datasCalculo.diasPassados) * datasCalculo.totalDiasMes : fatBruto;
 
         return {
           canal,
-          isFisico: isCanalFisico(canal),
           responsavel: regra?.responsavel || 'Equipe Best Fit',
-          logoUrl: regra?.logoUrl || null,
           metaValor,
           fatBruto,
           fatLiquido,
@@ -379,19 +360,14 @@ export default function DashboardOmnichannel() {
           ads: adsCanal,
           flex: flexCanalValor,
           devBruto,
-          devLiq,
-          freteDevolucao,
           lucro: lucroLiquido,
           margemPct: fatBruto > 0 ? (lucroLiquido / fatBruto) * 100 : 0,
           progressoMetaPct: progressoMeta,
-          valorFaltante,
-          projecao,
           itensValidados: itensVenda.length
         };
       });
-  }, [database, canaisDisponiveis, regrasMap, custosMap, faturadosMap, flexMap, adsMap, datasCalculo, filtroCanal, filtroModalidade, periodoSelecionado]);
+  }, [database, canaisDisponiveis, regrasMap, custosMap, faturadosMap, flexMap, adsMap, datasCalculo, filtroCanal, filtroModalidade]);
 
-  // Totais Consolidados
   const totaisGerais = useMemo(() => {
     return metricasCanais.reduce((acc, curr) => ({
       fatBruto: acc.fatBruto + curr.fatBruto,
@@ -401,9 +377,8 @@ export default function DashboardOmnichannel() {
       flex: acc.flex + curr.flex,
       lucro: acc.lucro + curr.lucro,
       metaValor: acc.metaValor + curr.metaValor,
-      projecao: acc.projecao + curr.projecao,
       devBruto: acc.devBruto + curr.devBruto
-    }), { fatBruto: 0, fatLiquido: 0, cmv: 0, ads: 0, flex: 0, lucro: 0, metaValor: 0, projecao: 0, devBruto: 0 });
+    }), { fatBruto: 0, fatLiquido: 0, cmv: 0, ads: 0, flex: 0, lucro: 0, metaValor: 0, devBruto: 0 });
   }, [metricasCanais]);
 
   if (loading) {
@@ -425,7 +400,7 @@ export default function DashboardOmnichannel() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Dashboard Omnichannel</h1>
-            <p className="text-sm font-medium text-slate-400">Visão consolidada por canal com regras da aba Regras, PLP, Ads e Devoluções</p>
+            <p className="text-sm font-medium text-slate-400">Visão consolidada com canais dinâmicos da aba Regras</p>
           </div>
           <Navbar />
         </div>
@@ -477,46 +452,23 @@ export default function DashboardOmnichannel() {
 
         {/* 4 CARDS RESUMO */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
-            <div className="text-center">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Bruto</span>
-              <h3 className="text-2xl font-black text-white mt-1">{formatarMoeda(totaisGerais.fatBruto)}</h3>
-            </div>
-            <div className="mt-3 text-[10px] text-slate-400 space-y-1 border-t border-slate-800 pt-2">
-              <div className="flex justify-between"><span>Devoluções (Bruto)</span><span className="text-rose-400">- {formatarMoeda(totaisGerais.devBruto)}</span></div>
-            </div>
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl text-center space-y-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Bruto</span>
+            <h3 className="text-2xl font-black text-white">{formatarMoeda(totaisGerais.fatBruto)}</h3>
           </div>
-
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
-            <div className="text-center">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Líquido (Repasse)</span>
-              <h3 className="text-2xl font-black text-purple-400 mt-1">{formatarMoeda(totaisGerais.fatLiquido)}</h3>
-            </div>
-            <div className="mt-3 text-[10px] text-slate-400 border-t border-slate-800 pt-2 text-center">
-              <span>Após fórmula, Ads e Frete Flex</span>
-            </div>
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl text-center space-y-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Líquido (Repasse)</span>
+            <h3 className="text-2xl font-black text-purple-400">{formatarMoeda(totaisGerais.fatLiquido)}</h3>
           </div>
-
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
-            <div className="text-center">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">CMV Total</span>
-              <h3 className="text-2xl font-black text-amber-400 mt-1">{formatarMoeda(totaisGerais.cmv)}</h3>
-            </div>
-            <div className="mt-3 text-[10px] text-slate-400 border-t border-slate-800 pt-2 text-center">
-              <span>Custo unitário x quantidade</span>
-            </div>
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl text-center space-y-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">CMV Total</span>
+            <h3 className="text-2xl font-black text-amber-400">{formatarMoeda(totaisGerais.cmv)}</h3>
           </div>
-
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-emerald-500/30 shadow-xl flex flex-col justify-between">
-            <div className="text-center">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
-              <h3 className={`text-2xl font-black mt-1 ${totaisGerais.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {formatarMoeda(totaisGerais.lucro)}
-              </h3>
-            </div>
-            <div className="mt-3 text-[10px] text-slate-400 border-t border-slate-800 pt-2 text-center">
-              <span>Fat. Líquido − CMV</span>
-            </div>
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-emerald-500/30 shadow-xl text-center space-y-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
+            <h3 className={`text-2xl font-black ${totaisGerais.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {formatarMoeda(totaisGerais.lucro)}
+            </h3>
           </div>
         </div>
 
@@ -535,7 +487,7 @@ export default function DashboardOmnichannel() {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800">
+                <div className="grid grid-cols-3 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 text-center">
                   <div>
                     <span className="text-[9px] text-slate-400 block font-bold">FAT. BRUTO</span>
                     <strong className="text-xs font-black text-white">{formatarMoeda(item.fatBruto)}</strong>
@@ -554,7 +506,6 @@ export default function DashboardOmnichannel() {
                   <div className="flex justify-between"><span>CMV:</span><span className="text-amber-400">- {formatarMoeda(item.cmv)}</span></div>
                   <div className="flex justify-between"><span>Adsense:</span><span className="text-rose-400">- {formatarMoeda(item.ads)}</span></div>
                   <div className="flex justify-between"><span>Frete Flex:</span><span className="text-rose-400">- {formatarMoeda(item.flex)}</span></div>
-                  <div className="flex justify-between"><span>Frete Reverso (Devolução):</span><span className="text-rose-400">- {formatarMoeda(item.freteDevolucao)}</span></div>
                   <div className="flex justify-between pt-2 border-t border-slate-900 font-bold text-white">
                     <span>Lucro Líquido:</span>
                     <span className={item.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{formatarMoeda(item.lucro)}</span>
@@ -574,7 +525,6 @@ export default function DashboardOmnichannel() {
                   <th className="py-4 px-4 text-right">CMV</th>
                   <th className="py-4 px-4 text-right">Adsense</th>
                   <th className="py-4 px-4 text-right">Frete Flex</th>
-                  <th className="py-4 px-4 text-right">Frete Reverso</th>
                   <th className="py-4 px-4 text-right">Lucro Líq.</th>
                   <th className="py-4 px-6 text-right text-emerald-400">Margem Líq.</th>
                 </tr>
@@ -588,7 +538,6 @@ export default function DashboardOmnichannel() {
                     <td className="py-3 px-4 text-right font-mono text-amber-400">{formatarMoeda(item.cmv)}</td>
                     <td className="py-3 px-4 text-right font-mono text-rose-300">{formatarMoeda(item.ads)}</td>
                     <td className="py-3 px-4 text-right font-mono text-rose-300">{formatarMoeda(item.flex)}</td>
-                    <td className="py-3 px-4 text-right font-mono text-rose-300">{formatarMoeda(item.freteDevolucao)}</td>
                     <td className={`py-3 px-4 text-right font-mono font-black ${item.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatarMoeda(item.lucro)}</td>
                     <td className="py-3 px-6 text-right font-black text-emerald-400">{item.margemPct.toFixed(1)}%</td>
                   </tr>
