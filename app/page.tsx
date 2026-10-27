@@ -116,12 +116,11 @@ export default function DashboardPage() {
           }
         } catch (e) {}
 
-        // 8. DADOS DE VENDAS BRUTAS DA ABA DE UPLOADS (Ajustado para puxar da tabela correta de pedidos/uploads)
+        // 8. VENDAS BRUTAS DA ABA DE UPLOADS (Apenas tabela de pedidos/vendas oficiais)
         try {
-          const { data: vendasDb } = await supabase.from('vendas_pedidos').select('*'); // Altere 'vendas_pedidos' para o nome exato da tabela gerada pelos seus uploads caso seja diferente
+          const { data: vendasDb } = await supabase.from('vendas_pedidos').select('*');
           if (vendasDb) setSales(vendasDb);
         } catch (e) {
-          // Fallback caso a tabela principal de uploads tenha outro nome no seu Supabase
           try {
             const { data: fallbackDb } = await supabase.from('vendas').select('*');
             if (fallbackDb) setSales(fallbackDb);
@@ -531,34 +530,6 @@ export default function DashboardPage() {
     };
   }, [totalEcommerce, totalPhysical]);
 
-  const handleEnviarEmailAlerta = () => {
-    const emailsCadastrados = "gisele@usebestfit.com.br";
-    const dataHoje = new Date().toLocaleDateString('pt-BR');
-    const assunto = encodeURIComponent(`📊 Resumo de Vendas - Lojas Físicas e Online (${dataHoje})`);
-
-    const hebraicaObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('hebraica')) || { faturadoBruto: 0, progressoMetaPct: 0 };
-    const paineirasObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('paineiras')) || { faturadoBruto: 0, progressoMetaPct: 0 };
-    
-    const fatDigitalTotal = channelAnalytics
-      .filter(c => !isChannelFisico(c.canal))
-      .reduce((acc, c) => acc + c.faturadoBruto, 0);
-    
-    const metaDigitalTotal = channelAnalytics
-      .filter(c => !isChannelFisico(c.canal))
-      .reduce((acc, c) => acc + c.metaValor, 0);
-    
-    const progressoDigitalPct = metaDigitalTotal > 0 ? (fatDigitalTotal / metaDigitalTotal) * 100 : 0;
-
-    let corpoTexto = `Olá, tudo bem? Segue resumo das vendas das lojas física e onlines do dia ${dataHoje}.\n\n`;
-    corpoTexto += `Hebraica: R$ ${hebraicaObj.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${hebraicaObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
-    corpoTexto += `Paineiras: R$ ${paineirasObj.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${paineirasObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
-    corpoTexto += `E-commerce: R$ ${fatDigitalTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${progressoDigitalPct.toFixed(1)}% da meta)\n\n`;
-    corpoTexto += `Caso queiram visualiza-lo, acessem o link a seguir: https://dashboard-e-commerce-nine.vercel.app/\n`;
-
-    const corpoEncoded = encodeURIComponent(corpoTexto);
-    window.location.href = `mailto:${emailsCadastrados}?subject=${assunto}&body=${corpoEncoded}`;
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-[#07090e] p-8 text-slate-100 flex items-center justify-center">
@@ -578,7 +549,7 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Dashboard Omnichannel</h1>
-            <p className="text-sm font-medium text-slate-400">Visão consolidada consultando Supabase (Uploads de Pedidos, Devoluções, Adsense, PLP e Custos)</p>
+            <p className="text-sm font-medium text-slate-400">Visão consolidada via Uploads de Pedidos, Devoluções, Adsense, PLP e Custos</p>
           </div>
           <Navbar />
         </div>
@@ -591,13 +562,6 @@ export default function DashboardPage() {
           </div>
           
           <div className="flex flex-wrap gap-3 items-center w-full lg:w-auto">
-            <button 
-              onClick={handleEnviarEmailAlerta} 
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-2 cursor-pointer"
-            >
-              <i className="fa-solid fa-envelope"></i> Enviar Relatório por E-mail
-            </button>
-
             <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
               <i className="fa-regular fa-calendar text-indigo-400 pl-2 text-xs"></i>
               <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="bg-transparent text-indigo-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
@@ -972,7 +936,7 @@ export default function DashboardPage() {
 
                 <tfoot className="bg-slate-950 text-white font-black text-xs border-t-2 border-slate-700">
                   <tr>
-                    <td className="py-4 px6">TOTAL GERAL</td>
+                    <td className="py-4 px-6">TOTAL GERAL</td>
                     <td className="py-4 px-4 text-right font-mono text-emerald-400">R$ {totalGeral.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="py-4 px-4 text-right text-white">R$ {totalGeral.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="py-4 px-4 text-right font-mono text-slate-300">R$ {totalGeral.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
