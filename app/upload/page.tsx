@@ -213,7 +213,7 @@ export default function UpdatesPage() {
     }
   };
 
-  // LEITURA INTELIGENTE DE FATURADOS (Extração limpa apenas dos números dos pedidos)
+  // LEITURA INTELIGENTE DE FATURADOS
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -273,7 +273,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // CRUZAMENTO COM FATURADOS E APLICAÇÃO DAS REGRAS NA TABELA 'vendas_padrao_lancamentos'
+  // CRUZAMENTO COM FATURADOS E GRAVAÇÃO NA TABELA OFICIAL 'vendas_padrao_lancamentos'
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -336,13 +336,13 @@ export default function UpdatesPage() {
           const repasseLiquido = precoVenda - (precoVenda * 0.09);
 
           novasVendas.push({
-            id_pedido: rawId,
-            sku: sku,
-            quantidade: isNaN(quantidade) ? 1 : quantidade,
-            preco_venda: precoVenda,
-            repasse_liquido: repasseLiquido > 0 ? repasseLiquido : precoVenda,
             canal: canalAlvoDash,
-            mes_referencia: mesAlvoDash
+            mes_referencia: mesAlvoDash,
+            sku: sku,
+            produto: `Produto ${sku}`,
+            quantidade: isNaN(quantidade) ? 1 : quantidade,
+            valor: precoVenda,
+            repasse_liquido: repasseLiquido > 0 ? repasseLiquido : precoVenda
           });
         }
 
