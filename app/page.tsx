@@ -12,6 +12,7 @@ export default function DashboardPage() {
   const [dbPlp, setDbPlp] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
   const [channelRules, setChannelRules] = useState<any[]>([]);
+  const [canaisDinamicos, setCanaisDinamicos] = useState<string[]>([]);
   
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
@@ -20,13 +21,6 @@ export default function DashboardPage() {
   const [appliedModalidadeFilter, setAppliedModalidadeFilter] = useState('SELECIONE');
 
   const [viewMode, setViewMode] = useState<'cards' | 'linhas'>('cards');
-
-  // Canais atualizados para englobar Mercado Livre 1 e Mercado Livre 2
-  const canais = [
-    'Mercado Livre 1', 'Mercado Livre 2', 'Shopee', 'Amazon', 
-    'TikTok', 'Magalu', 'Shein', 'Netshoes', 'Site', 'Centauro', 
-    'Clube Hebraica', 'Clube Paineiras'
-  ];
 
   const currentMonthDefault = "outubro de 2026";
   const previousMonthDefault = "setembro de 2026";
@@ -68,7 +62,7 @@ export default function DashboardPage() {
         });
         setDbCustosMap(cMap);
 
-        // 2. Vendas da tabela oficial vendas_padrao_lancamentos (em lotes para trazer tudo)
+        // 2. Vendas da tabela oficial vendas_padrao_lancamentos (em lotes)
         let allVendas: any[] = [];
         let vFrom = 0;
         let vKeep = true;
@@ -106,9 +100,29 @@ export default function DashboardPage() {
           if (metasDb) setGoals(metasDb);
         } catch (e) {}
 
-        // 7. Regras de canais
+        // 7. Puxar Canais cadastrados na Central de Regras (config_regras_tiny)
         try {
-          const { data: regrasDb } = await supabase.from('config_regras_tiny').select('*');
+          const { data: configs } = await supabase.from('config_regras_tiny').select('*');
+          if (configs) {
+            const canaisSalvos = configs.find((t: any) => t.campo === 'canais_dashboard');
+            if (canaisSalvos && canaisSalvos.coluna) {
+              const parsed = JSON.parse(canaisSalvos.coluna);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                const baseObrigatoria = ['Clube Hebraica', 'Clube Paineiras'];
+                setCanaisDinamicos(Array.from(new Set([...parsed, ...baseObrigatoria])));
+              }
+            }
+          }
+        } catch (e) {}
+
+        // Se não houver dinâmicos, define padrão com ML1 e ML2
+        if (canaisDinamicos.length === 0) {
+          setCanaisDinamicos(['Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro']);
+        }
+
+        // 8. Regras de canais
+        try {
+          const { data: regrasDb } = await supabase.from('config_regras_canais').select('*');
           if (regrasDb) setChannelRules(regrasDb);
         } catch (e) {}
 
@@ -155,26 +169,22 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [currentMonthDefault]);
 
-  const activeCancelados = useMemo(() => {
-    if (!dbDevolucoes) return [];
-    return dbDevolucoes.filter((c: any) => {
-      if (appliedChannelFilter !== 'TODOS') {
-        const cCanal = String(c.canal || '').toLowerCase();
-        const fCanal = String(appliedChannelFilter).toLowerCase();
-        if (cCanal !== fCanal && !(fCanal.includes('mercado livre') && cCanal.includes('mercado livre'))) return false;
-      }
-      return true;
-    });
-  }, [dbDevolucoes, appliedChannelFilter]);
-
   const matchesChannelFilter = (canalVenda: string, filtro: string) => {
     if (filtro === 'TODOS') return true;
     const cV = String(canalVenda || '').trim().toLowerCase();
     const fV = String(filtro || '').trim().toLowerCase();
     if (cV === fV) return true;
-    if (fV.includes('mercado livre') && cV.includes('mercado livre')) return true;
+    if (fV === 'mercado livre' && cV.includes('mercado livre')) return true;
     return false;
   };
+
+  const activeCancelados = useMemo(() => {
+    if (!dbDevolucoes) return [];
+    return dbDevolucoes.filter((c: any) => {
+      if (appliedChannelFilter !== 'TODOS' && !matchesChannelFilter(c.canal, appliedChannelFilter)) return false;
+      return true;
+    });
+  }, [dbDevolucoes, appliedChannelFilter]);
 
   const enrichedSales = useMemo(() => {
     return (vendas || []).filter((s: any) => {
@@ -218,7 +228,7 @@ export default function DashboardPage() {
   }, [vendas, appliedChannelFilter, appliedModalidadeFilter, dbCustosMap, dbPlp, currentRefMonth]);
 
   const kpis = useMemo(() => {
-    const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
+    const activeChannels = canaisDinamicos.length > 0 ? canaisDinamicos : ['Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro'];
     
     let faturamentoBrutoVendas = 0;
     let faturamentoLiquidoRepasse = 0;
@@ -237,8 +247,8 @@ export default function DashboardPage() {
 
     activeChannels.forEach(channelName => {
       const fisico = isChannelFisico(channelName);
-      const goalObj = goals.find((g: any) => g.canal === channelName && g.mes_referencia === currentRefMonth) 
-                   || goals.find((g: any) => g.canal === channelName) 
+      const goalObj = goals.find((g: any) => matchesChannelFilter(g.canal, channelName) && g.mes_referencia === currentRefMonth) 
+                   || goals.find((g: any) => matchesChannelFilter(g.canal, channelName)) 
                    || { meta_valor: 0 };
       const metaCanal = parseCurrency(goalObj.meta_valor);
 
@@ -338,14 +348,14 @@ export default function DashboardPage() {
       diffDigital,
       totalCancelamentosValor
     };
-  }, [enrichedSales, dbAds, appliedChannelFilter, canais, channelRules, goals, currentRefMonth, activeCancelados]);
+  }, [enrichedSales, dbAds, appliedChannelFilter, canaisDinamicos, channelRules, goals, currentRefMonth, activeCancelados]);
 
-  // Agrupamento limpo para os cartões de E-commerce (agrupando Mercado Livre 1 e 2 caso selecione "Mercado Livre")
   const channelAnalytics = useMemo(() => {
-    // Se o filtro selecionado for genérico "Mercado Livre", analisamos ambos, senão o canal exato
+    const activeChannels = canaisDinamicos.length > 0 ? canaisDinamicos : ['Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro'];
+    
     let channelsToAnalyze = appliedChannelFilter === 'TODOS' 
-      ? canais 
-      : canais.filter(c => matchesChannelFilter(c, appliedChannelFilter));
+      ? activeChannels 
+      : activeChannels.filter(c => matchesChannelFilter(c, appliedChannelFilter));
 
     if (appliedModalidadeFilter === 'FISICO') {
       channelsToAnalyze = channelsToAnalyze.filter(c => isChannelFisico(c));
@@ -395,9 +405,8 @@ export default function DashboardPage() {
       const projecaoFaturamento = faturadoComRedutor;
       const valorFaltante = Math.max(0, metaBase - faturadoComRedutor);
 
-      // Se for Mercado Livre 1 ou 2 e estiver agrupado, exibe "Mercado Livre" no card se preferir
       let nomeExibicao = channelName;
-      if (appliedChannelFilter.toLowerCase().includes('mercado livre')) {
+      if (appliedChannelFilter.toLowerCase() === 'mercado livre') {
         nomeExibicao = "Mercado Livre";
       }
 
@@ -420,7 +429,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, dbAds, appliedChannelFilter, appliedModalidadeFilter, channelRules, canais, activeCancelados]);
+  }, [enrichedSales, goals, dbAds, appliedChannelFilter, appliedModalidadeFilter, channelRules, canaisDinamicos, activeCancelados]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
@@ -523,7 +532,7 @@ export default function DashboardPage() {
               <select value={selectedChannelFilter} onChange={(e) => setSelectedChannelFilter(e.target.value)} className="bg-transparent text-purple-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
                 <option value="TODOS" className="bg-slate-900 text-white">Todos os Canais</option>
                 <option value="Mercado Livre" className="bg-slate-900 text-white">Mercado Livre (Geral)</option>
-                {canais.map((ch: string) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
+                {canaisDinamicos.map((ch: string) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
               </select>
             </div>
 
