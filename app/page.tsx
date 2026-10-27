@@ -40,7 +40,7 @@ const TABELAS = [
 /* ------------------------------ helpers ------------------------------ */
 const norm = (v: any) =>
   String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
-const normPedido = (v: any) => String(v ?? '').trim().replace(/\.0$/, '').replace(/\D/g, '');
+const normPedido = (v: any) => String(v ?? '').trim().replace(/\.0$/, '').replace(/\s+/g, '').toLowerCase();
 const pad = (n: number) => String(n).padStart(2, '0');
 const isoLocal = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const labelMes = (d: Date) => `${MESES[d.getMonth()]} de ${d.getFullYear()}`;
@@ -52,6 +52,7 @@ const num = (val: any): number => {
   let s = String(val).trim().replace('R$', '').trim();
   if (s.includes('.') && s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
   else if (s.includes(',')) s = s.replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
   const n = Number(s);
   return isNaN(n) ? 0 : n;
 };
@@ -73,9 +74,16 @@ function parseData(v: any): string | null {
   if (v instanceof Date) return isNaN(v.getTime()) ? null : isoLocal(v);
   const s = String(v).trim();
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  if (m) {
+    const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+    return !isNaN(d.getTime()) && isoLocal(d) === `${m[1]}-${m[2]}-${m[3]}` ? `${m[1]}-${m[2]}-${m[3]}` : null;
+  }
   m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (m) return `${m[3]}-${pad(Number(m[2]))}-${pad(Number(m[1]))}`;
+  if (m) {
+    const iso = `${m[3]}-${pad(Number(m[2]))}-${pad(Number(m[1]))}`;
+    const d = new Date(`${iso}T00:00:00`);
+    return !isNaN(d.getTime()) && isoLocal(d) === iso ? iso : null;
+  }
   if (/^\d{5}(\.\d+)?$/.test(s)) {
     const d = new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
     return d.toISOString().slice(0, 10);
@@ -84,6 +92,24 @@ function parseData(v: any): string | null {
 }
 
 // Meses (MM/AAAA) que o período toca, com a fração de dias de cada um
+function normalizarMesRef(v: any): string | null {
+  const s = norm(v);
+  if (!s) return null;
+  let m = s.match(/^(\d{1,2})\/(\d{4})$/);
+  if (m) return `${pad(Number(m[1]))}/${m[2]}`;
+  m = s.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?$/);
+  if (m) return `${pad(Number(m[2]))}/${m[1]}`;
+  m = s.match(/^(\d{1,2})-(\d{4})$/);
+  if (m) return `${pad(Number(m[1]))}/${m[2]}`;
+  m = s.match(/^(\d{4})\/(\d{1,2})$/);
+  if (m) return `${pad(Number(m[2]))}/${m[1]}`;
+  const nomeMes = s.replace(/\s+de\s+\d{4}$/, '').trim();
+  const idx = MESES.findIndex((mes) => norm(mes) === nomeMes);
+  const ano = s.match(/(\d{4})/);
+  if (idx >= 0 && ano) return `${pad(idx + 1)}/${ano[1]}`;
+  return null;
+}
+
 function mesesDoPeriodo(ini: string, fim: string) {
   const out: { chave: string; fracao: number }[] = [];
   let [y, m] = ini.split('-').map(Number);
@@ -247,32 +273,41 @@ export default function DashboardPage() {
   const [appliedEndDate, setAppliedEndDate] = useState(hojeIso);
   const [isRecalculating, setIsRecalculating] = useState(false);
 
+  const carregarDados = async () => {
+    const resultados = await Promise.all(TABELAS.map((t) => buscarTudo(t)));
+    const novo: Record<string, any[]> = {};
+    const falhas: string[] = [];
+    resultados.forEach((r, idx) => {
+      novo[TABELAS[idx]] = r.dados;
+      if (r.erro) falhas.push(r.erro);
+    });
+    setDb(novo);
+    setErros(falhas);
+  };
+
   useEffect(() => {
+    let ativo = true;
     (async () => {
       setLoading(true);
-      const resultados = await Promise.all(TABELAS.map((t) => buscarTudo(t)));
-      const novo: Record<string, any[]> = {};
-      const falhas: string[] = [];
-      resultados.forEach((r, idx) => {
-        novo[TABELAS[idx]] = r.dados;
-        if (r.erro) falhas.push(r.erro);
-      });
-      setDb(novo);
-      setErros(falhas);
-      setLoading(false);
+      try { await carregarDados(); }
+      catch (e) { setErros([`Falha inesperada ao carregar dados: ${e instanceof Error ? e.message : String(e)}`]); }
+      finally { if (ativo) setLoading(false); }
     })();
+    return () => { ativo = false; };
+    // carregarDados intentionally runs only on mount; manual refresh is handled by handleRecalculate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleRecalculate = () => {
+  const handleRecalculate = async () => {
     setIsRecalculating(true);
-    setTimeout(() => {
-      setAppliedChannelFilter(selectedChannelFilter);
-      setAppliedModalidadeFilter(modalidadeFilter);
-      setAppliedDateFilter(dateFilter);
-      setAppliedStartDate(customStartDate);
-      setAppliedEndDate(customEndDate);
-      setIsRecalculating(false);
-    }, 200);
+    setAppliedChannelFilter(selectedChannelFilter);
+    setAppliedModalidadeFilter(modalidadeFilter);
+    setAppliedDateFilter(dateFilter);
+    setAppliedStartDate(customStartDate);
+    setAppliedEndDate(customEndDate);
+    try { await carregarDados(); }
+    catch (e) { setErros((atual) => [...atual, `Falha ao atualizar dados: ${e instanceof Error ? e.message : String(e)}`]); }
+    finally { setIsRecalculating(false); }
   };
 
   /* ------------------------------ período ------------------------------ */
@@ -296,8 +331,9 @@ export default function DashboardPage() {
       case 'PERSONALIZADO':
         ini = new Date((appliedStartDate || isoLocal(hoje)) + 'T00:00:00');
         fim = new Date((appliedEndDate || isoLocal(hoje)) + 'T00:00:00');
+        if (ini > fim) { const tmp = ini; ini = fim; fim = tmp; }
         break;
-      default: ini = iniMes(hoje); fim = fimMes(hoje); modoMes = true;
+      default: ini = iniMes(hoje); fim = hoje; modoMes = true;
     }
     const ontem = addDias(hoje, -1);
     return {
@@ -335,7 +371,8 @@ export default function DashboardPage() {
       const liq = r.formula.fn({ [r.colPdv]: valor, [r.colQtd]: qtd });
       if (Number.isFinite(liq)) return { bruto, liquido: liq, comRegra: true };
     }
-    return { bruto, liquido: liquidoFallback && liquidoFallback > 0 ? liquidoFallback : bruto, comRegra: false };
+    const fallbackValido = liquidoFallback !== undefined && liquidoFallback !== null && Number.isFinite(liquidoFallback);
+    return { bruto, liquido: fallbackValido ? liquidoFallback : bruto, comRegra: false };
   };
 
   /* ------------------------------- vendas ------------------------------- */
@@ -374,13 +411,20 @@ export default function DashboardPage() {
       const data = dataPorPedido.get(pedido) || null;
 
       let dentro: boolean;
-      if (periodo.modoMes && s.mes_referencia) dentro = norm(s.mes_referencia) === norm(periodo.mesLabel);
-      else dentro = !!data && data >= periodo.ini && data <= periodo.fim;
+      if (periodo.modoMes && s.mes_referencia) {
+        const mesRegistro = normalizarMesRef(s.mes_referencia);
+        const mesPeriodo = `${pad(Number(periodo.ini.slice(5, 7)))}/${periodo.ini.slice(0, 4)}`;
+        dentro = mesRegistro
+          ? mesRegistro === mesPeriodo && (!data || (data >= periodo.ini && data <= periodo.fim))
+          : !!data && data >= periodo.ini && data <= periodo.fim;
+      } else dentro = !!data && data >= periodo.ini && data <= periodo.fim;
       if (!dentro) continue;
 
       const qtd = num(s.quantidade) || 1;
       const valor = num(s.valor ?? s.preco_venda);
-      const { bruto, liquido, comRegra } = calcularLinha(s.canal, valor, qtd, num(s.repasse_liquido ?? s.repasse));
+      const repasseRaw = s.repasse_liquido ?? s.repasse;
+      const repasseFallback = repasseRaw === null || repasseRaw === undefined || repasseRaw === '' ? undefined : num(repasseRaw);
+      const { bruto, liquido, comRegra } = calcularLinha(s.canal, valor, qtd, repasseFallback);
       const k = norm(s.sku);
       const custoUni = custosMap.get(k) ?? 0;
       out.push({ canal: s.canal, canalNorm: norm(s.canal), pedido, data, bruto, liquido, comRegra, cmv: custoUni * qtd, semCusto: custoUni <= 0, sku: k });
@@ -442,11 +486,15 @@ export default function DashboardPage() {
     const gasto = new Map<string, number>();
     const invest = new Map<string, number>();
     (db.ads_faturamento_canal || []).forEach((a: any) => {
-      const k = `${norm(a.canal)}|${String(a.mes_referencia).trim()}`;
+      const mes = normalizarMesRef(a.mes_referencia);
+      if (!mes) return;
+      const k = `${norm(a.canal)}|${mes}`;
       gasto.set(k, (gasto.get(k) || 0) + num(a.gasto_ads));
     });
     (db.ads_campanhas_lancamentos || []).forEach((a: any) => {
-      const k = `${norm(a.canal)}|${String(a.mes_referencia).trim()}`;
+      const mes = normalizarMesRef(a.mes_referencia);
+      if (!mes) return;
+      const k = `${norm(a.canal)}|${mes}`;
       invest.set(k, (invest.get(k) || 0) + num(a.investimento));
     });
     const canais = new Set<string>();
@@ -457,8 +505,11 @@ export default function DashboardPage() {
     canais.forEach((c) => {
       let total = 0;
       meses.forEach(({ chave, fracao }) => {
-        const g = gasto.get(`${c}|${chave}`) || 0;
-        total += (g > 0 ? g : invest.get(`${c}|${chave}`) || 0) * fracao;
+        const chaveMes = `${c}|${chave}`;
+        const valorMes = gasto.has(chaveMes) ? (gasto.get(chaveMes) || 0) : (invest.get(chaveMes) || 0);
+        // No mês atual, o valor de Ads costuma ser acumulado até hoje; não o ratear novamente.
+        // Em períodos personalizados, a despesa mensal é estimada proporcionalmente aos dias selecionados.
+        total += valorMes * (periodo.isMesAtual ? 1 : fracao);
       });
       out.set(c, total);
     });
@@ -477,8 +528,13 @@ export default function DashboardPage() {
       try { const p = JSON.parse(cfg.coluna); if (Array.isArray(p)) p.forEach(add); } catch { /* ignora */ }
     }
     CANAIS_FISICOS_PADRAO.forEach(add);
+    (db.vendas_padrao_lancamentos || []).forEach((r: any) => add(r.canal));
+    (db.devolucoes || []).forEach((r: any) => add(r.canal));
+    (db.ads_faturamento_canal || []).forEach((r: any) => add(r.canal));
+    (db.ads_campanhas_lancamentos || []).forEach((r: any) => add(r.canal));
+    (db.plp_pedidos || []).forEach((r: any) => add(r.canal));
     return Array.from(mapa.values());
-  }, [db.config_regras_tiny, db.config_regras_canais]);
+  }, [db.config_regras_tiny, db.config_regras_canais, db.vendas_padrao_lancamentos, db.devolucoes, db.ads_faturamento_canal, db.ads_campanhas_lancamentos, db.plp_pedidos]);
 
   /* ------------------------------ métricas ------------------------------ */
   const channelAnalytics = useMemo(() => {
@@ -512,7 +568,8 @@ export default function DashboardPage() {
         const fl = flex.porCanal.get(k) || 0;
         const lucro = fatLiquido - cmv - fl - ads;
 
-        const metaObj = metas.find((g) => norm(g.canal) === k && norm(g.mes_referencia) === norm(periodo.mesLabel)) || metas.find((g) => norm(g.canal) === k);
+        const mesAlvoMeta = `${pad(Number(periodo.ini.slice(5, 7)))}/${periodo.ini.slice(0, 4)}`;
+        const metaObj = metas.find((g) => norm(g.canal) === k && normalizarMesRef(g.mes_referencia) === mesAlvoMeta) || metas.find((g) => norm(g.canal) === k && !normalizarMesRef(g.mes_referencia));
         const metaValor = num(metaObj?.meta_valor);
         const valorFaltante = Math.max(0, metaValor - fatBruto);
         const projecao = periodo.isMesAtual ? (fatBruto / periodo.diasPassados) * periodo.totalDiasMes : fatBruto;
@@ -574,7 +631,7 @@ export default function DashboardPage() {
       const c = channelAnalytics.find((x) => norm(x.canal).includes(nome));
       return `${nome.charAt(0).toUpperCase() + nome.slice(1)}: R$ ${brl(c?.fatBruto || 0)} (${(c?.progressoMetaPct || 0).toFixed(1)}% da meta)\n`;
     };
-    let corpo = `Olá, tudo bem? Segue resumo das vendas das lojas fisica e onlines do dia ${dataHoje}.\n\n`;
+    let corpo = `Olá, tudo bem? Segue resumo executivo do período ${periodo.ini} a ${periodo.fim}.\n\n`;
     corpo += linhaLoja('hebraica') + linhaLoja('paineiras');
     corpo += `E-commerce: R$ ${brl(totE.fatBruto)} (${progressoDigital.toFixed(1)}% da meta)\n\n`;
     corpo += `Caso queiram visualiza-lo, acessem o link a seguir: https://dashboard-e-commerce-nine.vercel.app/\n`;
@@ -725,7 +782,7 @@ export default function DashboardPage() {
               </select>
             </div>
 
-            <button onClick={handleRecalculate} className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg cursor-pointer">
+            <button onClick={handleRecalculate} disabled={isRecalculating} className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg cursor-pointer">
               {isRecalculating ? 'Calculando...' : 'Recalcular'}
             </button>
           </div>
@@ -834,7 +891,7 @@ export default function DashboardPage() {
           <div className="flex flex-col items-center justify-center py-16 px-6 bg-slate-900/60 rounded-2xl border border-slate-800 border-dashed shadow-xl">
             <p className="text-slate-400 text-sm font-bold text-center leading-relaxed">
               Selecione uma modalidade (Todas, Lojas Físicas ou E-commerce)<br />
-              no filtro acima e clique em "Recalcular" para ver o detalhamento por canal.
+              no filtro acima e clique em &quot;Recalcular&quot; para ver o detalhamento por canal.
             </p>
           </div>
         ) : viewMode === 'cards' ? (
@@ -913,7 +970,7 @@ export default function DashboardPage() {
               <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800 tracking-wider">
                 <tr>
                   <th className="py-4 px-6">Canal / Responsável</th>
-                  <th className="py-4 px-4 text-right">Vendas do Dia {periodo.ontemDia}</th>
+                  <th className="py-4 px-4 text-right">Vendas de Ontem ({periodo.ontemDia})</th>
                   <th className="py-4 px-4 text-right">Fat. Bruto</th>
                   <th className="py-4 px-4 text-right">Fat. Líquido</th>
                   <th className="py-4 px-4 text-right">Adsense</th>
