@@ -5,39 +5,6 @@ import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
 
-function letraParaIndice(letra: string): number {
-  let l = letra.trim().toUpperCase();
-  let num = 0;
-  for (let i = 0; i < l.length; i++) {
-    num = num * 26 + (l.charCodeAt(i) - 64);
-  }
-  return num - 1;
-}
-
-function normalizarSku(valor: any): string {
-  if (valor === null || valor === undefined) return "";
-  let s = String(valor).trim().replace(/^['"]/, "");
-  if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  s = s.replace(/^["']|["']$/g, "").trim();
-  if (/e\+/i.test(s)) {
-    try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
-  }
-  return s.toLowerCase();
-}
-
-function parseNumeroBruto(valor: any): number {
-  if (valor === null || valor === undefined || valor === "") return 0;
-  if (typeof valor === "number") return valor;
-  let s = String(valor).replace(/R\$/g, "").replace(/BRL/g, "").replace(/\$/g, "").replace(/\s/g, "").trim();
-  if (s.includes(",") && s.includes(".")) {
-    s = s.replace(/\./g, "").replace(",", ".");
-  } else if (s.includes(",")) {
-    s = s.replace(",", ".");
-  }
-  const num = parseFloat(s);
-  return isNaN(num) ? 0 : num;
-}
-
 export default function UpdatesPage() {
   const router = useRouter();
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "dashboard_admin">("relatorios");
@@ -51,7 +18,9 @@ export default function UpdatesPage() {
   const [loading, setLoading] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
 
+  const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
+  
   const [contaMlSelecionada, setContaMlSelecionada] = useState<"Mercado Livre 1" | "Mercado Livre 2">("Mercado Livre 1");
 
   const [colunasPorConta, setColunasPorConta] = useState<{ [key: string]: { ml_mlb: string, ml_sku: string, ml_comissao: string, ml_peso: string, ml_altura: string, ml_largura: string, ml_comprimento: string } }>({
@@ -63,10 +32,15 @@ export default function UpdatesPage() {
     custo_sku: 'B', custo_produto: 'C', custo_valor: 'D', custo_marca: 'E'
   });
 
+  const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
+
   const [pesquisaCusto, setPesquisaCusto] = useState("");
   const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
-  const [pesquisaMl, setPesquisaMl] = useState("");
 
+  const [pesquisaMl, setPesquisaMl] = useState("");
+  const [listaRegrasMlFiltradas, setListaRegrasMlFiltradas] = useState<any[]>([]);
+
+  // Estados específicos para o Alimentador do Dashboard (Admin)
   const [mesAlvoDash, setMesAlvoDash] = useState("outubro de 2026");
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
   const [canaisDashList, setCanaisDashList] = useState<string[]>([
@@ -90,58 +64,142 @@ export default function UpdatesPage() {
   const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i);
 
   useEffect(() => {
-    const usuarioLogado = localStorage.getItem("usuario_logado");
-    if (!usuarioLogado) {
-      router.push("/login");
-      return;
-    }
-    carregarConfiguracoesSupabase();
+    carregarDadosCadastros();
   }, []);
 
-  const carregarConfiguracoesSupabase = async () => {
-    try {
-      const { data } = await supabase.from('config_regras_canais').select('*');
-      if (data && data.length > 0) {
-        const novoObj: any = { ...colunasPorConta };
-        data.forEach((r: any) => {
-          if (novoObj[r.conta]) {
-            novoObj[r.conta] = {
-              ml_mlb: r.coluna_mlb || novoObj[r.conta].ml_mlb,
-              ml_sku: r.coluna_sku || novoObj[r.conta].ml_sku,
-              ml_comissao: r.coluna_comissao || novoObj[r.conta].ml_comissao,
-              ml_peso: r.coluna_peso || novoObj[r.conta].ml_peso,
-              ml_altura: r.coluna_altura || novoObj[r.conta].ml_altura,
-              ml_largura: r.coluna_largura || novoObj[r.conta].ml_largura,
-              ml_comprimento: r.coluna_comprimento || novoObj[r.conta].ml_comprimento,
-            };
+  useEffect(() => {
+    pesquisarCustosNoBanco();
+  }, [pesquisaCusto]);
+
+  useEffect(() => {
+    pesquisarMlNoBanco();
+  }, [pesquisaMl]);
+
+  const carregarDadosCadastros = async () => {
+    const { data: regras } = await supabase.from('config_regras_canais').select('*').order('id');
+    if (regras) setRegrasCanais(regras);
+
+    const { data: tinyConfig } = await supabase.from('config_regras_tiny').select('*');
+    if (tinyConfig) {
+      const getC = (k: string, d: string) => tinyConfig.find((t: any) => t.campo === k)?.coluna || d;
+      setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
+      setRegrasColsCusto({
+        custo_sku: getC('custo_sku', 'B'), custo_produto: getC('custo_produto', 'C'), custo_valor: getC('custo_valor', 'D'), custo_marca: getC('custo_marca', 'E')
+      });
+
+      const canalCfg = tinyConfig.find((t: any) => t.campo === 'canais_dashboard');
+      if (canalCfg && canalCfg.coluna) {
+        try {
+          const parsed = JSON.parse(canalCfg.coluna);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setCanaisDashList(Array.from(new Set([...parsed, 'Clube Hebraica', 'Clube Paineiras'])));
           }
-        });
-        setColunasPorConta(novoObj);
+        } catch (e) {}
       }
-    } catch (e) {}
+    }
+
+    let allTiny: any[] = [];
+    let rangeStep = 1000;
+    let from = 0;
+    let keepFetching = true;
+    while (keepFetching) {
+      const { data } = await supabase.from('cadastros_base_tiny').select('sku, estoque').range(from, from + rangeStep - 1);
+      if (data && data.length > 0) {
+        allTiny = [...allTiny, ...data];
+        from += rangeStep;
+        if (data.length < rangeStep) keepFetching = false;
+      } else {
+        keepFetching = false;
+      }
+    }
+
+    const { data: statusData } = await supabase.from('status_skus_catalogo').select('sku, status');
+    const totalTiny = allTiny.length;
+    const mapaStatus = new Map(statusData?.map(s => [String(s.sku).trim(), s.status]) || []);
+
+    let normais = 0;
+    let obsoletos = 0;
+    allTiny.forEach(item => {
+      const st = mapaStatus.get(String(item.sku).trim()) || 'Normal';
+      if (st === 'Obsoleto') obsoletos++;
+      else normais++;
+    });
+
+    setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
-  const salvarRegrasMlSupabase = async () => {
-    try {
-      setLoading(true);
-      for (const conta of ["Mercado Livre 1", "Mercado Livre 2"]) {
-        const c = colunasPorConta[conta];
-        await supabase.from('config_regras_canais').upsert({
-          conta,
-          coluna_mlb: c.ml_mlb,
-          coluna_sku: c.ml_sku,
-          coluna_comissao: c.ml_comissao,
-          coluna_peso: c.ml_peso,
-          coluna_altura: c.ml_altura,
-          coluna_largura: c.ml_largura,
-          coluna_comprimento: c.ml_comprimento,
-        }, { onConflict: 'conta' });
+  const atualizarColunaConfigML = async (campo: string, coluna: string) => {
+    const novasColunasConta = {
+      ...colunasPorConta,
+      [contaMlSelecionada]: {
+        ...colunasPorConta[contaMlSelecionada],
+        [campo]: coluna
       }
-      alert("✅ Regras de Mercado Livre salvas com sucesso!");
-    } catch (err: any) {
-      alert("Erro ao salvar: " + err.message);
+    };
+    setColunasPorConta(novasColunasConta);
+
+    const prefixoDb = contaMlSelecionada === "Mercado Livre 1" ? "ml_1_" : "ml_2_";
+    const chaveDb = prefixoDb + campo.replace("ml_", "");
+
+    try {
+      await supabase.from('config_regras_tiny').upsert(
+        { campo: chaveDb, coluna: coluna },
+        { onConflict: 'campo' }
+      );
+    } catch (err) {
+      console.error("Erro ao salvar configuração da coluna:", err);
     }
-    setLoading(false);
+  };
+
+  const pesquisarCustosNoBanco = async () => {
+    if (!pesquisaCusto || pesquisaCusto.trim() === "") {
+      setListaCustosFiltrados([]);
+      return;
+    }
+    const termo = pesquisaCusto.trim();
+    const { data } = await supabase
+      .from('tabela_custos_skus')
+      .select('*')
+      .or(`sku.ilike.%${termo}%,produto.ilike.%${termo}%`)
+      .limit(50);
+
+    if (data) setListaCustosFiltrados(data);
+  };
+
+  const pesquisarMlNoBanco = async () => {
+    if (!pesquisaMl || pesquisaMl.trim() === "") {
+      setListaRegrasMlFiltradas([]);
+      return;
+    }
+    const termo = pesquisaMl.trim().toUpperCase();
+    const { data } = await supabase
+      .from('ml_anuncios_regras')
+      .select('*')
+      .or(`mlb.ilike.%${termo}%,sku.ilike.%${termo}%`)
+      .limit(50);
+
+    if (data) setListaRegrasMlFiltradas(data);
+  };
+
+  const letraParaIndice = (str: string) => {
+    if (!str) return 0;
+    let base = str.toUpperCase().trim();
+    let coluna = 0;
+    for (let i = 0; i < base.length; i++) {
+      coluna = coluna * 26 + (base.charCodeAt(i) - 64);
+    }
+    return coluna - 1;
+  };
+
+  const normalizarSku = (valor: any): string => {
+    if (valor === null || valor === undefined) return "";
+    let s = String(valor).trim();
+    if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
+    s = s.replace(/^["']|["']$/g, "").trim();
+    if (/e\+/i.test(s)) {
+      try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
+    }
+    return s;
   };
 
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -323,6 +381,7 @@ export default function UpdatesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setFicheiroABC(file.name);
+
     const reader = new FileReader();
     reader.onload = (evento) => {
       try {
@@ -330,6 +389,7 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
+        
         const formatado = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
@@ -338,13 +398,25 @@ export default function UpdatesPage() {
           const codigo = normalizarSku(row[1]);
           const quantidade = Number(row[2]);
           const valor = Number(row[3]);
+
           if (codigo && !isNaN(quantidade)) {
-            formatado.push({ mes_referencia: mesReferencia, codigo, produto, quantidade, valor: isNaN(valor) ? 0 : valor });
+            formatado.push({
+              mes_referencia: mesReferencia,
+              codigo: codigo,
+              produto: produto,
+              quantidade: quantidade,
+              valor: isNaN(valor) ? 0 : valor,
+              porcentagem_individual: Number(row[4] || 0),
+              porcentagem_acumulada: Number(row[5] || 0),
+              classificacao: String(row[6] || "C").trim().toUpperCase()
+            });
           }
         }
         setDadosABC(formatado);
         alert(`Curva ABC processada: ${formatado.length} produtos válidos.`);
-      } catch (err: any) { alert("Erro ao ler Curva ABC: " + err.message); }
+      } catch (err: any) {
+        alert("Erro ao ler Curva ABC: " + err.message);
+      }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -352,9 +424,14 @@ export default function UpdatesPage() {
   const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (dadosABC.length === 0) { alert("Processe primeiro a Curva ABC."); e.target.value = ""; return; }
+    if (dadosABC.length === 0) {
+      alert("Processe primeiro a Curva ABC.");
+      e.target.value = "";
+      return;
+    }
     setFicheiroInventario(file.name);
     const skusPermitidos = new Set(dadosABC.map(item => String(item.codigo).trim()));
+
     const reader = new FileReader();
     reader.onload = (evento) => {
       try {
@@ -362,23 +439,33 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
+        
         const formatado = [];
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
           let skuEncontrado = "";
+          let saldoEstoque = 0;
+
           for (let col = 0; col < row.length; col++) {
             const val = normalizarSku(row[col]);
-            if (skusPermitidos.has(val)) { skuEncontrado = val; break; }
+            if (skusPermitidos.has(val)) {
+              skuEncontrado = val;
+              break;
+            }
           }
+
           if (skuEncontrado) {
             const saldoVal = Number(row[row.length - 1] ?? 0);
-            formatado.push({ mes_referencia: mesReferencia, codigo_sku: skuEncontrado, saldo: isNaN(saldoVal) ? 0 : saldoVal });
+            if (!isNaN(saldoVal)) saldoEstoque = saldoVal;
+            formatado.push({ mes_referencia: mesReferencia, codigo_sku: skuEncontrado, saldo: saldoEstoque });
           }
         }
         setDadosInvBruto(formatado);
         alert(`Inventário processado: ${formatado.length} SKUs identificados.`);
-      } catch (err: any) { alert("Erro ao ler Inventário: " + err.message); }
+      } catch (err: any) {
+        alert("Erro ao ler Inventário: " + err.message);
+      }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -388,8 +475,11 @@ export default function UpdatesPage() {
     setLoading(true);
     await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
     await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
+
     await supabase.from('curva_abc').insert(dadosABC);
-    if (dadosInvBruto.length > 0) await supabase.from('inventario').insert(dadosInvBruto);
+    if (dadosInvBruto.length > 0) {
+      await supabase.from('inventario').insert(dadosInvBruto);
+    }
     setLoading(false);
     alert(`🚀 Dados guardados no Supabase com sucesso!`);
     setFicheiroABC(""); setFicheiroInventario(""); setDadosABC([]); setDadosInvBruto([]);
@@ -407,6 +497,13 @@ export default function UpdatesPage() {
   const limparBaseTiny = async () => {
     if (!confirm("Tem certeza que deseja apagar toda a base do Tiny ERP?")) return;
     await supabase.from('cadastros_base_tiny').delete().neq('id', 0);
+    carregarDadosCadastros();
+  };
+
+  const limparCanal = async (canalNome: string) => {
+    if (!confirm(`Apagar canal "${canalNome}"?`)) return;
+    await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
+    alert(`Canal limpo.`);
   };
 
   const limparTabelaCustos = async () => {
@@ -419,8 +516,10 @@ export default function UpdatesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+
     const indiceSku = letraParaIndice(regrasTiny.sku);
     const indiceEstoque = letraParaIndice(regrasTiny.estoque);
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -428,23 +527,32 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
         const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceEstoque)) continue;
+
           const sku = normalizarSku(row[indiceSku]);
           const estoque = Number(row[indiceEstoque] || 0);
-          if (sku && !/sku|código|codigo/i.test(sku)) {
+
+          if (sku && sku.length >= 10 && !/sku|código|codigo/i.test(sku)) {
             mapaUnico.set(sku, { sku, estoque: isNaN(estoque) ? 0 : estoque });
           }
         }
         const registros = Array.from(mapaUnico.values());
+
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('cadastros_base_tiny').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
+
         alert(`Base Tiny atualizada! ${registros.length} SKUs processados.`);
         setLoading(false);
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
+        carregarDadosCadastros();
+      } catch (err: any) {
+        alert("Erro: " + err.message);
+        setLoading(false);
+      }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -453,8 +561,10 @@ export default function UpdatesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+
     const indiceSku = letraParaIndice(regrasTiny.status_sku);
     const indiceValor = letraParaIndice(regrasTiny.status_valor);
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -462,23 +572,48 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array", cellDates: true, raw: false });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
+        let allTiny: any[] = [];
+        let from = 0;
+        let keepFetching = true;
+        while (keepFetching) {
+          const { data } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + 999);
+          if (data && data.length > 0) {
+            allTiny = [...allTiny, ...data];
+            from += 1000;
+            if (data.length < 1000) keepFetching = false;
+          } else {
+            keepFetching = false;
+          }
+        }
+        const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
+
         const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
           const sku = normalizarSku(row[indiceSku]);
+          if (!skusTinySet.has(sku)) continue;
+
           let statusVal = String(row[indiceValor] || 'Normal').trim();
           if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
           else statusVal = 'Normal';
+
           mapaUnico.set(sku, { sku, status: statusVal });
         }
         const registros = Array.from(mapaUnico.values());
+
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('status_skus_catalogo').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
+
         alert(`Status atualizados! ${registros.length} SKUs validados.`);
         setLoading(false);
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
+        carregarDadosCadastros();
+      } catch (err: any) {
+        alert("Erro: " + err.message);
+        setLoading(false);
+      }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -487,10 +622,12 @@ export default function UpdatesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+
     const idxSku = letraParaIndice(regrasColsCusto.custo_sku);
     const idxProd = letraParaIndice(regrasColsCusto.custo_produto);
     const idxCusto = letraParaIndice(regrasColsCusto.custo_valor);
     const idxMarca = letraParaIndice(regrasColsCusto.custo_marca);
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -498,26 +635,34 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
         const mapaUnicoCustos = new Map();
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
-          if (!row || row.length === 0) continue;
+          if (!row || row.length <= Math.max(idxSku, idxCusto)) continue;
+
           const sku = normalizarSku(row[idxSku]);
           const produto = String(row[idxProd] || "Produto").trim();
           const custo = Number(String(row[idxCusto] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
           const marca = String(row[idxMarca] || "").trim();
-          if (sku && !isNaN(custo)) {
+
+          if (sku && sku.length >= 10 && !isNaN(custo)) {
             mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
           }
         }
+
         const registros = Array.from(mapaUnicoCustos.values());
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('tabela_custos_skus').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
         }
+
         alert(`💰 Custos salvos com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
         pesquisarCustosNoBanco();
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
+      } catch (err: any) {
+        alert("Erro: " + err.message);
+        setLoading(false);
+      }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -526,10 +671,16 @@ export default function UpdatesPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
+
     const cols = colunasPorConta[contaMlSelecionada];
     const idxMlb = letraParaIndice(cols.ml_mlb);
     const idxSku = letraParaIndice(cols.ml_sku);
     const idxCom = letraParaIndice(cols.ml_comissao);
+    const idxPeso = cols.ml_peso ? letraParaIndice(cols.ml_peso) : -1;
+    const idxAlt = cols.ml_altura ? letraParaIndice(cols.ml_altura) : -1;
+    const idxLarg = cols.ml_largura ? letraParaIndice(cols.ml_largura) : -1;
+    const idxComp = cols.ml_comprimento ? letraParaIndice(cols.ml_comprimento) : -1;
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -537,32 +688,122 @@ export default function UpdatesPage() {
         const workbook = XLSX.read(data, { type: "array" });
         let sheetName = workbook.SheetNames[0];
         if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
+        
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
+        const mapSkuPorMlb = new Map<string, string>();
+        for (let i = 4; i < json.length; i++) {
+          const row = json[i];
+          if (!row) continue;
+          const mlbVal = String(row[idxMlb] || "").trim().toUpperCase();
+          const skuVal = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
+          if (mlbVal && mlbVal.startsWith("MLB") && skuVal && skuVal.length >= 10 && !mapSkuPorMlb.has(mlbVal)) {
+            mapSkuPorMlb.set(mlbVal, skuVal);
+          }
+        }
+
         const mapaMlPendente = new Map<string, any>();
         for (let i = 4; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
+
           const mlb = String(row[idxMlb] || "").trim().toUpperCase();
           if (!mlb || !mlb.startsWith("MLB")) continue;
+
           let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
+          if ((!sku || sku === "-" || sku.length < 10) && mapSkuPorMlb.has(mlb)) {
+            sku = mapSkuPorMlb.get(mlb)!;
+          }
+
           let comissaoNum = 14;
           let rawComissao = row[idxCom];
           if (rawComissao !== undefined && rawComissao !== "") {
             let parsed = parseFloat(String(rawComissao).replace("%", "").trim().replace(",", "."));
             if (!isNaN(parsed) && parsed > 0) comissaoNum = parsed < 1 ? parsed * 100 : parsed;
           }
-          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, canal: contaMlSelecionada });
+
+          let pesoReal = 2.000;
+          if (idxPeso >= 0 && row[idxPeso] !== undefined) {
+            let p = Number(String(row[idxPeso]).replace(",", "."));
+            if (!isNaN(p) && p > 0) pesoReal = p;
+          }
+
+          const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
+          const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
+          const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
+
+          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada });
         }
+
         const registros = Array.from(mapaMlPendente.values());
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
         }
+
         alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).`);
         setLoading(false);
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
+      } catch (err: any) {
+        alert("Erro: " + err.message);
+        setLoading(false);
+      }
     };
     reader.readAsArrayBuffer(file);
+  };
+
+  const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setLoading(true);
+
+    const indiceColuna = letraParaIndice(letraColuna || "A");
+    try {
+      let allTiny: any[] = [];
+      let from = 0;
+      let keepFetching = true;
+      while (keepFetching) {
+        const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + 999);
+        if (tinyBatch && tinyBatch.length > 0) {
+          allTiny = [...allTiny, ...tinyBatch];
+          from += 1000;
+          if (tinyBatch.length < 1000) keepFetching = false;
+        } else {
+          keepFetching = false;
+        }
+      }
+      const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
+      const skusEncontradosNoCanal = new Set<string>();
+
+      for (let f = 0; f < files.length; f++) {
+        const file = files[f];
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true, raw: false });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
+        for (let i = 4; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length <= indiceColuna) continue;
+          const skuVal = normalizarSku(row[indiceColuna]);
+          if (skuVal && skuVal.length >= 10 && skusTinySet.has(skuVal)) {
+            skusEncontradosNoCanal.add(skuVal);
+          }
+        }
+      }
+
+      await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
+      const registrosUpsert = Array.from(skusEncontradosNoCanal).map(sku => ({ canal: canalNome, sku, presente: true }));
+
+      for (let i = 0; i < registrosUpsert.length; i += 500) {
+        await supabase.from('mapeamento_canais_skus').insert(registrosUpsert.slice(i, i + 500));
+      }
+
+      alert(`Canal "${canalNome}" sincronizado com sucesso!`);
+      setLoading(false);
+    } catch (err: any) {
+      alert("Erro: " + err.message);
+      setLoading(false);
+    }
   };
 
   const pesquisarCustosNoBanco = async () => {
@@ -657,21 +898,60 @@ export default function UpdatesPage() {
         {/* ABA: CADASTROS E CANAIS */}
         {abaAtiva === "cadastros" && (
           <div className="space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total SKUs Tiny</span>
+                <p className="text-3xl font-black text-white mt-2">{estatisticas.totalTiny}</p>
+              </div>
+              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
+                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Normais</span>
+                <p className="text-3xl font-black text-white mt-2">{estatisticas.normais}</p>
+              </div>
+              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
+                <span className="text-xs font-bold text-rose-400 uppercase tracking-wider">Obsoletos</span>
+                <p className="text-3xl font-black text-white mt-2">{estatisticas.obsoletos}</p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
                 <div>
                   <div className="flex justify-between items-center mb-2">
                     <h3 className="text-sm font-bold text-white uppercase tracking-wider">Base Central (Tiny ERP)</h3>
-                    <button onClick={limparBaseTiny} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer">Limpar Base Tiny</button>
+                    <button onClick={limparBaseTiny} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer">
+                      🗑️ Limpar Base Tiny
+                    </button>
                   </div>
+                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
                 </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadTiny} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
               </div>
+
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
+                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
                 </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
+              </div>
+            </div>
+
+            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
+              <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
+              <p className="text-xs text-slate-400 mb-6">Suba as planilhas por canal determinando a coluna onde o SKU será lido.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {regrasCanais.map((r, idx) => (
+                  <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <span className="font-bold text-white text-sm block">{r.canal}</span>
+                        <span className="text-[10px] font-mono text-indigo-400">Coluna SKU: {r.coluna_sku}</span>
+                      </div>
+                      <button onClick={() => limparCanal(r.canal)} className="text-rose-400 text-[10px] font-bold bg-rose-950/40 px-2.5 py-1 rounded cursor-pointer">Limpar</button>
+                    </div>
+                    <input type="file" multiple accept=".xlsx, .xls, .csv" onChange={(e) => handleUploadCanalMultiplos(r.canal, r.coluna_sku, e)} className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1.5 rounded-lg border border-slate-800" />
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -735,7 +1015,7 @@ export default function UpdatesPage() {
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400">Mapeamento de colunas para leitura de anúncios por conta.</p>
+                <p className="text-xs text-slate-400">Mapeamento de colunas para leitura de anúncios por conta (MLB, SKU, Comissão, Peso, Altura, Largura, Comprimento).</p>
               </div>
               <button onClick={salvarRegrasMlSupabase} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase cursor-pointer">
                 Salvar Configurações
@@ -763,6 +1043,18 @@ export default function UpdatesPage() {
               <div>
                 <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Peso (kg):</label>
                 <input type="text" value={colunasPorConta[contaMlSelecionada].ml_peso} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_peso: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Altura (cm):</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_altura} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_altura: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Largura (cm):</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_largura} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_largura: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Comprimento (cm):</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_comprimento} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_comprimento: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
               </div>
             </div>
 
