@@ -193,6 +193,7 @@ export default function UpdatesPage() {
     }
   };
 
+  // LEITURA INTELIGENTE DE FATURADOS (Extrai apenas o número limpo do pedido)
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -213,12 +214,23 @@ export default function UpdatesPage() {
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row) continue;
-          const idPedido = String(row[idxId] || "").trim();
+          const rawObs = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
+          
+          let pedidoId = null;
+          // Extrai apenas o número do pedido limpando textos descritivos
+          const matchId = rawObs.match(/\b\d{10,20}\b/) || rawObs.match(/\b[A-Z]+-\d+\b/) || rawObs.match(/\d{3}-\d{7}-\d{7}/) || rawObs.match(/20000[0-9]+/) || rawObs.match(/\b[A-Z0-9]{6,}\b/);
+          if (matchId) {
+            pedidoId = matchId[0].trim();
+          } else if (rawObs) {
+            const numbersOnly = rawObs.replace(/\D/g, '');
+            if (numbersOnly.length >= 8) pedidoId = numbersOnly;
+          }
+
           const dataFaturamento = String(row[idxData] || "").trim();
 
-          if (idPedido) {
+          if (pedidoId) {
             registros.push({
-              id_pedido: idPedido,
+              id_pedido: pedidoId,
               data_faturamento: dataFaturamento || new Date().toISOString().slice(0, 10),
               mes_referencia: mesAlvoDash
             });
@@ -232,7 +244,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Faturados importados com sucesso! Total: ${registros.length} registos.`);
+        alert(`✅ Faturados importados e limpos com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Faturados: " + err.message);
