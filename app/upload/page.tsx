@@ -28,8 +28,9 @@ export default function AdminPage() {
     "Mercado Livre 2": { ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'AA', ml_peso: 'AF', ml_altura: 'AC', ml_largura: 'AD', ml_comprimento: 'AE' }
   });
 
+  // CORREÇÃO: Mapeamento ajustado para corresponder exatamente à planilha de custos (Sku: B, Nome: C, Custo: D, Marca: E)
   const [regrasColsCusto, setRegrasColsCusto] = useState({
-    custo_sku: 'A', custo_produto: 'B', custo_valor: 'C', custo_marca: 'D'
+    custo_sku: 'B', custo_produto: 'C', custo_valor: 'D', custo_marca: 'E'
   });
 
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
@@ -44,7 +45,6 @@ export default function AdminPage() {
   const [editandoMlId, setEditandoMlId] = useState<number | null>(null);
   const [dadosEdicaoMl, setDadosEdicaoMl] = useState({ mlb: "", sku: "", comissao: 0, peso_real: 0, altura: 0, largura: 0, comprimento: 0, canal: "Mercado Livre 1" });
 
-  // Estados específicos para o Alimentador do Dashboard (Admin)
   const [mesAlvoDash, setMesAlvoDash] = useState("outubro de 2026");
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
   const [canaisDashList, setCanaisDashList] = useState<string[]>([
@@ -88,7 +88,7 @@ export default function AdminPage() {
       const getC = (k: string, d: string) => tinyConfig.find((t: any) => t.campo === k)?.coluna || d;
       setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
       setRegrasColsCusto({
-        custo_sku: getC('custo_sku', 'A'), custo_produto: getC('custo_produto', 'B'), custo_valor: getC('custo_valor', 'C'), custo_marca: getC('custo_marca', 'D')
+        custo_sku: getC('custo_sku', 'B'), custo_produto: getC('custo_produto', 'C'), custo_valor: getC('custo_valor', 'D'), custo_marca: getC('custo_marca', 'E')
       });
 
       const canalCfg = tinyConfig.find((t: any) => t.campo === 'canais_dashboard');
@@ -100,17 +100,6 @@ export default function AdminPage() {
           }
         } catch (e) {}
       }
-
-      setColunasPorConta({
-        "Mercado Livre 1": {
-          ml_mlb: getC('ml_1_mlb', 'B'), ml_sku: getC('ml_1_sku', 'E'), ml_comissao: getC('ml_1_comissao', 'AA'),
-          ml_peso: getC('ml_1_peso', 'AF'), ml_altura: getC('ml_1_altura', 'AC'), ml_largura: getC('ml_1_largura', 'AD'), ml_comprimento: getC('ml_1_comprimento', 'AE')
-        },
-        "Mercado Livre 2": {
-          ml_mlb: getC('ml_2_mlb', 'B'), ml_sku: getC('ml_2_sku', 'E'), ml_comissao: getC('ml_2_comissao', 'AA'),
-          ml_peso: getC('ml_2_peso', 'AF'), ml_altura: getC('ml_2_altura', 'AC'), ml_largura: getC('ml_2_largura', 'AD'), ml_comprimento: getC('ml_2_comprimento', 'AE')
-        }
-      });
     }
 
     let allTiny: any[] = [];
@@ -143,27 +132,83 @@ export default function AdminPage() {
     setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
-  const atualizarColunaConfigML = async (campo: string, coluna: string) => {
-    const novasColunasConta = {
-      ...colunasPorConta,
-      [contaMlSelecionada]: {
-        ...colunasPorConta[contaMlSelecionada],
-        [campo]: coluna
+  const letraParaIndice = (str: string) => {
+    if (!str) return 0;
+    let base = str.toUpperCase().trim();
+    let coluna = 0;
+    for (let i = 0; i < base.length; i++) {
+      coluna = coluna * 26 + (base.charCodeAt(i) - 64);
+    }
+    return coluna - 1;
+  };
+
+  const normalizarSku = (valor: any): string => {
+    if (valor === null || valor === undefined) return "";
+    let s = String(valor).trim();
+    if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
+    s = s.replace(/^["']|["']$/g, "").trim();
+    if (/e\+/i.test(s)) {
+      try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
+    }
+    return s;
+  };
+
+  // UPLOAD DE CUSTOS UNITÁRIOS CORRIGIDO
+  const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+
+    const idxSku = letraParaIndice(regrasColsCusto.custo_sku);
+    const idxProd = letraParaIndice(regrasColsCusto.custo_produto);
+    const idxCusto = letraParaIndice(regrasColsCusto.custo_valor);
+    const idxMarca = letraParaIndice(regrasColsCusto.custo_marca);
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+
+        const mapaUnicoCustos = new Map();
+        for (let i = 1; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length === 0) continue;
+
+          const sku = normalizarSku(row[idxSku]);
+          const produto = String(row[idxProd] || "Produto").trim();
+          const custo = Number(String(row[idxCusto] || "0").replace("R$", "").trim().replace(",", ".")) || 0;
+          const marca = String(row[idxMarca] || "").trim();
+
+          // Validação flexível para aceitar SKUs válidos
+          if (sku && !isNaN(custo)) {
+            mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
+          }
+        }
+
+        const registros = Array.from(mapaUnicoCustos.values());
+        if (registros.length === 0) {
+          alert("Nenhum custo válido encontrado. Verifique se os dados começam na linha 2 e se as colunas estão corretas.");
+          setLoading(false);
+          return;
+        }
+
+        for (let i = 0; i < registros.length; i += 500) {
+          const { error } = await supabase.from('tabela_custos_skus').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
+          if (error) throw error;
+        }
+
+        alert(`💰 Custos salvos com sucesso! Total: ${registros.length} registos processados.`);
+        setLoading(false);
+        pesquisarCustosNoBanco();
+      } catch (err: any) {
+        alert("Erro ao processar custos: " + err.message);
+        setLoading(false);
       }
     };
-    setColunasPorConta(novasColunasConta);
-
-    const prefixoDb = contaMlSelecionada === "Mercado Livre 1" ? "ml_1_" : "ml_2_";
-    const chaveDb = prefixoDb + campo.replace("ml_", "");
-
-    try {
-      await supabase.from('config_regras_tiny').upsert(
-        { campo: chaveDb, coluna: coluna },
-        { onConflict: 'campo' }
-      );
-    } catch (err) {
-      console.error("Erro ao salvar configuração da coluna:", err);
-    }
+    reader.readAsArrayBuffer(file);
   };
 
   const pesquisarCustosNoBanco = async () => {
@@ -196,28 +241,6 @@ export default function AdminPage() {
     if (data) setListaRegrasMlFiltradas(data);
   };
 
-  const letraParaIndice = (str: string) => {
-    if (!str) return 0;
-    let base = str.toUpperCase().trim();
-    let coluna = 0;
-    for (let i = 0; i < base.length; i++) {
-      coluna = coluna * 26 + (base.charCodeAt(i) - 64);
-    }
-    return coluna - 1;
-  };
-
-  const normalizarSku = (valor: any): string => {
-    if (valor === null || valor === undefined) return "";
-    let s = String(valor).trim();
-    if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-    s = s.replace(/^["']|["']$/g, "").trim();
-    if (/e\+/i.test(s)) {
-      try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
-    }
-    return s;
-  };
-
-  // Funções de Upload
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -322,7 +345,6 @@ export default function AdminPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Restaura a função de subida de Tarifas do Site
   const handleSubirTarifasSite = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -553,7 +575,7 @@ export default function AdminPage() {
           const sku = normalizarSku(row[indiceSku]);
           const estoque = Number(row[indiceEstoque] || 0);
 
-          if (sku && sku.length >= 10 && !/sku|código|codigo/i.test(sku)) {
+          if (sku && !/sku|código|codigo/i.test(sku)) {
             mapaUnico.set(sku, { sku, estoque: isNaN(estoque) ? 0 : estoque });
           }
         }
@@ -590,27 +612,11 @@ export default function AdminPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        let allTiny: any[] = [];
-        let from = 0;
-        let keepFetching = true;
-        while (keepFetching) {
-          const { data } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + 999);
-          if (data && data.length > 0) {
-            allTiny = [...allTiny, ...data];
-            from += 1000;
-            if (data.length < 1000) keepFetching = false;
-          } else {
-            keepFetching = false;
-          }
-        }
-        const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
-
         const mapaUnico = new Map();
         for (let i = 0; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
           const sku = normalizarSku(row[indiceSku]);
-          if (!skusTinySet.has(sku)) continue;
 
           let statusVal = String(row[indiceValor] || 'Normal').trim();
           if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
@@ -625,55 +631,6 @@ export default function AdminPage() {
         }
 
         alert(`Status atualizados! ${registros.length} SKUs validados.`);
-        setLoading(false);
-        carregarDadosCadastros();
-      } catch (err: any) {
-        alert("Erro: " + err.message);
-        setLoading(false);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-
-    const idxSku = letraParaIndice(regrasColsCusto.custo_sku);
-    const idxProd = letraParaIndice(regrasColsCusto.custo_produto);
-    const idxCusto = letraParaIndice(regrasColsCusto.custo_valor);
-    const idxMarca = letraParaIndice(regrasColsCusto.custo_marca);
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const mapaUnicoCustos = new Map();
-        for (let i = 1; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= Math.max(idxSku, idxCusto)) continue;
-
-          const sku = normalizarSku(row[idxSku]);
-          const produto = String(row[idxProd] || "Produto").trim();
-          const custo = Number(row[idxCusto] || 0);
-          const marca = String(row[idxMarca] || "").trim();
-
-          if (sku && sku.length >= 10 && !isNaN(custo)) {
-            mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
-          }
-        }
-
-        const registros = Array.from(mapaUnicoCustos.values());
-        for (let i = 0; i < registros.length; i += 500) {
-          await supabase.from('tabela_custos_skus').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
-        }
-
-        alert(`💰 Custos salvos com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro: " + err.message);
@@ -708,18 +665,7 @@ export default function AdminPage() {
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        const mapSkuPorMlb = new Map<string, string>();
-        for (let i = 4; i < json.length; i++) {
-          const row = json[i];
-          if (!row) continue;
-          const mlbVal = String(row[idxMlb] || "").trim().toUpperCase();
-          const skuVal = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-          if (mlbVal && mlbVal.startsWith("MLB") && skuVal && skuVal.length >= 10 && !mapSkuPorMlb.has(mlbVal)) {
-            mapSkuPorMlb.set(mlbVal, skuVal);
-          }
-        }
-
-        const mapaMlPendente = new Map<string, { registro: any, score: number }>();
+        const mapaMlPendente = new Map<string, any>();
         for (let i = 4; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
@@ -728,10 +674,6 @@ export default function AdminPage() {
           if (!mlb || !mlb.startsWith("MLB")) continue;
 
           let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-          if ((!sku || sku === "-" || sku.length < 10) && mapSkuPorMlb.has(mlb)) {
-            sku = mapSkuPorMlb.get(mlb)!;
-          }
-
           let comissaoNum = 14;
           let rawComissao = row[idxCom];
           if (rawComissao !== undefined && rawComissao !== "") {
@@ -749,11 +691,10 @@ export default function AdminPage() {
           const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
           const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
 
-          const objReg = { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada };
-          mapaMlPendente.set(mlb, { registro: objReg, score: 1 });
+          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada });
         }
 
-        const registros = Array.from(mapaMlPendente.values()).map(item => item.registro);
+        const registros = Array.from(mapaMlPendente.values());
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
         }
@@ -775,20 +716,6 @@ export default function AdminPage() {
 
     const indiceColuna = letraParaIndice(letraColuna || "A");
     try {
-      let allTiny: any[] = [];
-      let from = 0;
-      let keepFetching = true;
-      while (keepFetching) {
-        const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + 999);
-        if (tinyBatch && tinyBatch.length > 0) {
-          allTiny = [...allTiny, ...tinyBatch];
-          from += 1000;
-          if (tinyBatch.length < 1000) keepFetching = false;
-        } else {
-          keepFetching = false;
-        }
-      }
-      const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
       const skusEncontradosNoCanal = new Set<string>();
 
       for (let f = 0; f < files.length; f++) {
@@ -802,7 +729,7 @@ export default function AdminPage() {
           const row = json[i];
           if (!row || row.length <= indiceColuna) continue;
           const skuVal = normalizarSku(row[indiceColuna]);
-          if (skuVal && skuVal.length >= 10 && skusTinySet.has(skuVal)) {
+          if (skuVal) {
             skusEncontradosNoCanal.add(skuVal);
           }
         }
@@ -1006,7 +933,10 @@ export default function AdminPage() {
         {abaAtiva === "custos" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
+              <div>
+                <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
+                <p className="text-xs text-slate-400 mt-1">Configurado para ler: SKU (Col: <strong>{regrasColsCusto.custo_sku}</strong>), Produto (Col: <strong>{regrasColsCusto.custo_produto}</strong>), Custo (Col: <strong>{regrasColsCusto.custo_valor}</strong>), Marca (Col: <strong>{regrasColsCusto.custo_marca}</strong>).</p>
+              </div>
               <button onClick={limparTabelaCustos} className="bg-rose-950/60 text-rose-400 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer">🗑️ Limpar Custos</button>
             </div>
             <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadCustosUnitarios} className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-emerald-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700 mb-6" />
@@ -1047,11 +977,9 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ABA: ALIMENTA DASHBOARD (ADMIN) [Com Faturados, Vendas Canal e Tarifas do Site] */}
+        {/* ABA: ALIMENTA DASHBOARD (ADMIN) */}
         {abaAtiva === "dashboard_admin" && (
           <div className="space-y-6">
-            
-            {/* PASSO 1: FATURADOS */}
             <div className="grid grid-cols-1 gap-6 max-w-xl">
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
                 <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 1: Faturados (NFes Saída)</h3>
@@ -1078,7 +1006,6 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* PASSO 2: VENDAS POR CANAL */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6 max-w-xl">
               <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 2: Importar Vendas (Canal)</h3>
               <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
@@ -1098,50 +1025,6 @@ export default function AdminPage() {
                 </label>
               </div>
             </div>
-
-            {/* CONSULTA TARIFAS SITE (RESTAURADO) */}
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6 max-w-xl">
-              <h3 className="text-sm font-black text-emerald-400 uppercase tracking-wider">Consulta Tarifas Site</h3>
-              <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
-                <p className="text-[10px] text-slate-400">Cruza ID do Pedido com a tarifa para descontar do líquido final.</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col ID Pedido</label>
-                    <input type="text" value={colunaIdSite} onChange={e => setColunaIdSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col Valor Tarifa</label>
-                    <input type="text" value={colunaTarifaSite} onChange={e => setColunaTarifaSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
-                  </div>
-                </div>
-                <label className="block w-full text-center bg-indigo-600 hover:bg-indigo-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
-                  <span>Subir Tarifas do Site</span>
-                  <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirTarifasSite} className="hidden" />
-                </label>
-              </div>
-            </div>
-
-            {/* ZONA DE LIMPEZA DE DADOS */}
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
-                  Apagar Faturados ({mesAlvoDash})
-                </button>
-                <button onClick={() => apagarDadosPorTipo('vendas_lives')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
-                  Apagar Vendas ({mesAlvoDash})
-                </button>
-              </div>
-              <div className="pt-3 border-t border-slate-800 flex justify-end">
-                <button onClick={zerarBancoTotal} className="bg-rose-600 hover:bg-rose-500 text-white font-black py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer">
-                  🗑️ Zerar Banco Principal
-                </button>
-              </div>
-            </div>
-
           </div>
         )}
 
