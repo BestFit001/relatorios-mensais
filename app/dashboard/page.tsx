@@ -170,6 +170,7 @@ export default function DashboardPage() {
     };
   }, [periodoSelecionado]);
 
+  // Canais obtidos diretamente da aba Regras (config_regras_canais)
   const canaisDisponiveis = useMemo(() => {
     const mapa = new Map<string, string>();
     const adicionar = (nome: any) => {
@@ -178,14 +179,10 @@ export default function DashboardPage() {
     };
 
     (database.config_regras_canais || []).forEach(r => adicionar(r.canal));
-    (database.vendas_padrao_lancamentos || []).forEach(v => adicionar(v.canal));
-    (database.devolucoes || []).forEach(d => adicionar(d.canal));
-    (database.ads_faturamento_canal || []).forEach(a => adicionar(a.canal));
-    (database.plp_pedidos || []).forEach(p => adicionar(p.canal));
     ['Clube Hebraica', 'Clube Paineiras'].forEach(adicionar);
 
     return Array.from(mapa.values());
-  }, [database]);
+  }, [database.config_regras_canais]);
 
   const regrasMap = useMemo(() => {
     const map = new Map();
@@ -233,7 +230,7 @@ export default function DashboardPage() {
     return map;
   }, [database.plp_pedidos]);
 
-  // Mapeamento correto dos gastos de Adsense registrados nas abas de Ads
+  // Puxa o Ads de ambas as tabelas (ads_faturamento_canal e ads_campanhas_lancamentos)
   const adsMap = useMemo(() => {
     const map = new Map();
     (database.ads_faturamento_canal || []).forEach(a => {
