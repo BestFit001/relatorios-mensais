@@ -146,11 +146,18 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
-  // Puxa o "Valor Gasto (Inserir)" da aba ads_faturamento_canal filtrando pelo canal e mês em vigência
+  // Adsense: Puxa o "Valor Gasto (Inserir)" da aba ads_faturamento_canal compatibilizando YYYY-MM e MM/YYYY
   const adsMap = useMemo(() => {
     const map = new Map();
+    let formatoMMYYYY = currentRefMonth;
+    if (currentRefMonth.includes('-')) {
+      const [ano, mes] = currentRefMonth.split('-');
+      formatoMMYYYY = `${mes}/${ano}`;
+    }
+
     (database.ads_faturamento_canal || []).forEach((a: any) => {
-      if (a.mes_referencia === currentRefMonth) {
+      const mesRefDb = String(a.mes_referencia || '').trim();
+      if (mesRefDb === currentRefMonth || mesRefDb === formatoMMYYYY) {
         const k = normalizarTexto(a.canal);
         map.set(k, parseCurrency(a.gasto_ads));
       }
@@ -518,7 +525,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal: canalAds,
+        adsCanal,
         flexCanal,
         isCurrentMonth,
         logoUrl,
