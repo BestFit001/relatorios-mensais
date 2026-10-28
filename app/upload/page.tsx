@@ -45,6 +45,85 @@ function parseSmartFloat(val: any) {
   return parseFloat(strVal) || 0;
 }
 
+function compilarFormulaExcel(src: any) {
+  const texto = String(src || '').trim().replace(/^=/, '');
+  if (!texto) return null;
+  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?\d*|[-+*/^()%]/g);
+  if (!tokens || tokens.join('') !== texto.replace(/\s+/g, '')) return null;
+
+  let i = 0;
+  const refs: string[] = [];
+  const peek = () => tokens[i];
+  const next = () => tokens[i++];
+
+  const expr = (): any => {
+    let l = term();
+    while (peek() === '+' || peek() === '-') {
+      const op = next();
+      const r = term();
+      const a = l;
+      l = op === '+' ? (c: any) => (a(c) || 0) + (r(c) || 0) : (c: any) => (a(c) || 0) - (r(c) || 0);
+    }
+    return l;
+  };
+  const term = (): any => {
+    let l = power();
+    while (peek() === '*' || peek() === '/') {
+      const op = next();
+      const r = power();
+      const a = l;
+      l = op === '*' ? (c: any) => (a(c) || 0) * (r(c) || 0) : (c: any) => {
+        const den = r(c) || 1;
+        return den === 0 ? 0 : (a(c) || 0) / den;
+      };
+    }
+    return l;
+  };
+  const power = (): any => {
+    const base = unary();
+    if (peek() === '^') {
+      next();
+      const e = power();
+      return (c: any) => Math.pow(base(c) || 0, e(c) || 0);
+    }
+    return base;
+  };
+  const unary = (): any => {
+    if (peek() === '-') { next(); const x = unary(); return (c: any) => -(x(c) || 0); }
+    if (peek() === '+') { next(); return unary(); }
+    return postfix();
+  };
+  const postfix = (): any => {
+    let n = primary();
+    while (peek() === '%') { next(); const a = n; n = (c: any) => (a(c) || 0) / 100; }
+    return n;
+  };
+  const primary = (): any => {
+    const t = next();
+    if (t === undefined) throw new Error('Fim inesperado');
+    if (t === '(') {
+      const e = expr();
+      if (next() !== ')') throw new Error('Parêntese');
+      return e;
+    }
+    if (/^\d/.test(t)) { const v = Number(t.replace(',', '.')); return () => v; }
+    if (/^\$?[A-Za-z]/.test(t)) {
+      const col = t.replace(/[^A-Za-z]/g, '').toUpperCase();
+      refs.push(col);
+      return (c: any) => (c[col] !== undefined ? c[col] : (c['PDV'] !== undefined ? c['PDV'] : 0));
+    }
+    throw new Error('Token inválido');
+  };
+
+  try {
+    const fn = expr();
+    if (i !== tokens.length) return null;
+    return { fn, refs };
+  } catch {
+    return null;
+  }
+}
+
 export default function UpdatesPage() {
   const router = useRouter();
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "dashboard_admin">("relatorios");
@@ -213,7 +292,6 @@ export default function UpdatesPage() {
     }
   };
 
-  // LEITURA INTELIGENTE DE FATURADOS
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -273,7 +351,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // CRUZAMENTO COM FATURADOS E LEITURA EXATA DAS COLUNAS DA ABA DE REGRAS
+  // PASSO 2: IMPORTAR VENDAS LENDO CORRETAMENTE AS COLUNAS E APLICANDO A FÓRMULA DE REGRAS DO CANAL
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -299,7 +377,6 @@ export default function UpdatesPage() {
           return;
         }
 
-        // Busca as regras do canal cadastrado (ID na Coluna A, SKU na X, PDV em I, Qtd em H por defeito ou conforme configurado)
         const { data: regraData } = await supabase
           .from('config_regras_canais')
           .select('*')
@@ -311,31 +388,58 @@ export default function UpdatesPage() {
           return reg ? reg.coluna_sku : 'X';
         };
 
-        const idxId = letraParaIndice(regraData?.coluna_id || 'A'); // Coluna A (0) para ID do Pedido
-        const idxSku = letraParaIndice(regraCanalSku(canalAlvoDash)); // Coluna configurada para SKU (ex: X)
-        const idxPdv = letraParaIndice(regraData?.coluna_pdv || 'I'); // Coluna I para Preço Venda
-        const idxQtd = letraParaIndice(regraData?.coluna_quantidade || 'H'); // Coluna H para Quantidade
+        const idxId = letraParaIndice(regraData?.coluna_id || 'A');
+        const idxSku = letraParaIndice(regraCanalSku(canalAlvoDash));
+        const idxPdv = letraParaIndice(regraData?.col_pdv || regraData?.coluna_pdv || 'AC'); // AC (28) é Preço unitário por padrão no ML
+        const idxQtd = letraParaIndice(regraData?.col_quantidade || regraData?.coluna_quantidade || 'H'); // H (7) é Unidades por padrão no ML
+
+        const formulaCompilada = compilarFormulaExcel(regraData?.formula_excel);
 
         const novasVendas = [];
         let ignoradosNaoFaturados = 0;
 
-        for (let i = 7; i < json.length; i++) { // Começa a partir da linha 7 (ignora cabeçalhos do Mercado Livre)
+        for (let i = 7; i < json.length; i++) {
           const row = json[i];
           if (!row || row.length === 0) continue;
 
           let rawId = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
           rawId = rawId.replace(/\.0$/, '').replace(/\D/g, '');
 
-          // CRUZAMENTO OBRIGATÓRIO: Só guarda se o pedido constar nos faturados
           if (!rawId || !idsFaturadosSet.has(rawId)) {
             ignoradosNaoFaturados++;
             continue;
           }
 
           const sku = idxSku >= 0 && row[idxSku] ? normalizarSku(row[idxSku]) : 'SKU-GERAL';
-          const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : row[8]);
+          const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : row[28]);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] ? row[idxQtd] : (row[7] || 1)) || 1;
-          const repasseLiquido = precoVenda - (precoVenda * 0.09); // Aplicação de apuração / desconto
+
+          let repasseLiquido = precoVenda - (precoVenda * 0.09);
+          if (formulaCompilada) {
+            try {
+              const letraPdv = String(regraData?.col_pdv || regraData?.coluna_pdv || 'AC').toUpperCase();
+              const letraQtd = String(regraData?.col_quantidade || regraData?.coluna_quantidade || 'H').toUpperCase();
+              const ctx: Record<string, number> = {
+                [letraPdv]: precoVenda,
+                [letraQtd]: quantidade,
+                'PDV': precoVenda,
+                'AC': precoVenda,
+                'I': precoVenda,
+                'H': quantidade
+              };
+              if (regraData?.col_pdv) {
+                const idxUserPdv = letraParaIndice(regraData.col_pdv);
+                ctx[regraData.col_pdv.toUpperCase()] = parseSmartFloat(row[idxUserPdv]);
+              }
+              const resFormula = formulaCompilada.fn(ctx);
+              if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
+                repasseLiquido = resFormula;
+              }
+            } catch {}
+          }
+          if (isNaN(repasseLiquido) || repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
+            repasseLiquido = precoVenda - (precoVenda * 0.09);
+          }
 
           novasVendas.push({
             id_pedido: rawId,
@@ -345,7 +449,7 @@ export default function UpdatesPage() {
             produto: `Produto ${sku}`,
             quantidade: isNaN(quantidade) ? 1 : quantidade,
             valor: precoVenda,
-            repasse_liquido: repasseLiquido > 0 ? repasseLiquido : precoVenda
+            repasse_liquido: repasseLiquido
           });
         }
 
@@ -357,7 +461,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Vendas cruzadas e gravadas com sucesso na tabela oficial!\n• Importados e Registrados: ${novasVendas.length} itens\n• Ignorados (fora dos faturados): ${ignoradosNaoFaturados}`);
+        alert(`✅ Vendas cruzadas, aplicando a fórmula do canal, e gravadas com sucesso!\n• Importados: ${novasVendas.length} itens\n• Ignorados: ${ignoradosNaoFaturados}`);
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
       } finally {
