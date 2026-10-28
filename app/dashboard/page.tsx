@@ -12,7 +12,6 @@ const TABELAS_SUPABASE = [
   'tb_metas',
   'devolucoes',
   'ads_faturamento_canal',
-  'ads_campanhas_lancamentos',
   'plp_pedidos',
 ] as const;
 
@@ -147,7 +146,7 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
-  // Adsense: Puxa o "Valor Gasto (Inserir)" da aba ads_faturamento_canal filtrando pelo canal e mês em vigência (currentRefMonth)
+  // CORREÇÃO: Puxa o "Valor Gasto (Inserir)" da tabela ads_faturamento_canal filtrando estritamente pelo mês em vigência
   const adsMap = useMemo(() => {
     const map = new Map();
     (database.ads_faturamento_canal || []).forEach((a: any) => {
