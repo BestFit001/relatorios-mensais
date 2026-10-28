@@ -124,7 +124,6 @@ export default function DashboardPage() {
   
   const [filtroModalidade, setFiltroModalidade] = useState<'TODAS' | 'FISICO' | 'DIGITAL'>('TODAS');
   const [filtroCanal, setFiltroCanal] = useState<string>('TODOS');
-  const [tipoVisualizacao, setTipoVisualizacao] = useState<'cards' | 'linhas'>('cards');
   const [periodoSelecionado, setPeriodoSelecionado] = useState<'MES_ATUAL' | 'MES_ANTERIOR' | 'HOJE'>('MES_ATUAL');
 
   useEffect(() => {
@@ -234,6 +233,7 @@ export default function DashboardPage() {
     return map;
   }, [database.plp_pedidos]);
 
+  // Mapeamento correto dos gastos de Adsense registrados nas abas de Ads
   const adsMap = useMemo(() => {
     const map = new Map();
     (database.ads_faturamento_canal || []).forEach(a => {
@@ -453,15 +453,6 @@ export default function DashboardPage() {
               ))}
             </select>
           </div>
-
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setTipoVisualizacao(tipoVisualizacao === 'cards' ? 'linhas' : 'cards')}
-              className="bg-slate-800 hover:bg-slate-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer"
-            >
-              Modo: {tipoVisualizacao === 'cards' ? 'Cards Executivos' : 'Tabela Executiva'}
-            </button>
-          </div>
         </div>
 
         {/* 4 CARDS RESUMO */}
@@ -486,80 +477,47 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* LISTAGEM DE CANAIS */}
-        {tipoVisualizacao === 'cards' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {metricasCanais.map(item => (
-              <div key={item.canal} className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4 flex flex-col justify-between">
-                <div className="flex justify-between items-start border-b border-slate-800 pb-3">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">{item.responsavel}</span>
-                    <h4 className="font-black text-white text-sm">{item.canal}</h4>
-                  </div>
-                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${item.progressoMetaPct >= 100 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
-                    {item.progressoMetaPct.toFixed(1)}% da meta
-                  </span>
+        {/* LISTAGEM DE CANAIS EM CARDS EXECUTIVOS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {metricasCanais.map(item => (
+            <div key={item.canal} className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4 flex flex-col justify-between">
+              <div className="flex justify-between items-start border-b border-slate-800 pb-3">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">{item.responsavel}</span>
+                  <h4 className="font-black text-white text-sm">{item.canal}</h4>
                 </div>
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${item.progressoMetaPct >= 100 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
+                  {item.progressoMetaPct.toFixed(1)}% da meta
+                </span>
+              </div>
 
-                <div className="grid grid-cols-3 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 text-center">
-                  <div>
-                    <span className="text-[9px] text-slate-400 block font-bold">FAT. BRUTO</span>
-                    <strong className="text-xs font-black text-white">{formatarMoeda(item.fatBruto)}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[9px] text-purple-300 block font-bold">FAT. LÍQ</span>
-                    <strong className="text-xs font-black text-purple-400">{formatarMoeda(item.fatLiquido)}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[9px] text-emerald-300 block font-bold">MARGEM</span>
-                    <strong className="text-xs font-black text-emerald-400">{item.margemPct.toFixed(1)}%</strong>
-                  </div>
+              <div className="grid grid-cols-3 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 text-center">
+                <div>
+                  <span className="text-[9px] text-slate-400 block font-bold">FAT. BRUTO</span>
+                  <strong className="text-xs font-black text-white">{formatarMoeda(item.fatBruto)}</strong>
                 </div>
-
-                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1 text-xs text-slate-400">
-                  <div className="flex justify-between"><span>CMV:</span><span className="text-amber-400">- {formatarMoeda(item.cmv)}</span></div>
-                  <div className="flex justify-between"><span>Adsense:</span><span className="text-rose-400">- {formatarMoeda(item.ads)}</span></div>
-                  <div className="flex justify-between"><span>Frete Flex:</span><span className="text-rose-400">- {formatarMoeda(item.flex)}</span></div>
-                  <div className="flex justify-between pt-2 border-t border-slate-900 font-bold text-white">
-                    <span>Lucro Líquido:</span>
-                    <span className={item.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{formatarMoeda(item.lucro)}</span>
-                  </div>
+                <div>
+                  <span className="text-[9px] text-purple-300 block font-bold">FAT. LÍQ</span>
+                  <strong className="text-xs font-black text-purple-400">{formatarMoeda(item.fatLiquido)}</strong>
+                </div>
+                <div>
+                  <span className="text-[9px] text-emerald-300 block font-bold">MARGEM</span>
+                  <strong className="text-xs font-black text-emerald-400">{item.margemPct.toFixed(1)}%</strong>
                 </div>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-200">
-              <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
-                <tr>
-                  <th className="py-4 px-6">Canal / Responsável</th>
-                  <th className="py-4 px-4 text-right">Fat. Bruto</th>
-                  <th className="py-4 px-4 text-right">Fat. Líquido</th>
-                  <th className="py-4 px-4 text-right">CMV</th>
-                  <th className="py-4 px-4 text-right">Adsense</th>
-                  <th className="py-4 px-4 text-right">Frete Flex</th>
-                  <th className="py-4 px-4 text-right">Lucro Líq.</th>
-                  <th className="py-4 px-6 text-right text-emerald-400">Margem Líq.</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {metricasCanais.map(item => (
-                  <tr key={item.canal} className="hover:bg-slate-800/40">
-                    <td className="py-3 px-6 font-bold text-white">{item.canal}<span className="block text-[10px] text-slate-400">{item.responsavel}</span></td>
-                    <td className="py-3 px-4 text-right font-mono">{formatarMoeda(item.fatBruto)}</td>
-                    <td className="py-3 px-4 text-right font-mono text-purple-300 font-bold">{formatarMoeda(item.fatLiquido)}</td>
-                    <td className="py-3 px-4 text-right font-mono text-amber-400">{formatarMoeda(item.cmv)}</td>
-                    <td className="py-3 px-4 text-right font-mono text-rose-300">{formatarMoeda(item.ads)}</td>
-                    <td className="py-3 px-4 text-right font-mono text-rose-300">{formatarMoeda(item.flex)}</td>
-                    <td className={`py-3 px-4 text-right font-mono font-black ${item.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatarMoeda(item.lucro)}</td>
-                    <td className="py-3 px-6 text-right font-black text-emerald-400">{item.margemPct.toFixed(1)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1 text-xs text-slate-400">
+                <div className="flex justify-between"><span>CMV:</span><span className="text-amber-400">- {formatarMoeda(item.cmv)}</span></div>
+                <div className="flex justify-between"><span>Adsense:</span><span className="text-rose-400">- {formatarMoeda(item.ads)}</span></div>
+                <div className="flex justify-between"><span>Frete Flex:</span><span className="text-rose-400">- {formatarMoeda(item.flex)}</span></div>
+                <div className="flex justify-between pt-2 border-t border-slate-900 font-bold text-white">
+                  <span>Lucro Líquido:</span>
+                  <span className={item.lucro >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{formatarMoeda(item.lucro)}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
 
       </div>
     </div>
