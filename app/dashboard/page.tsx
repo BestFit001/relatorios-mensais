@@ -223,7 +223,6 @@ export default function DashboardPage() {
     return map;
   }, [database.tarifas_site]);
 
-  // MAPA ROBUSTO DE FRETE PLP (FLEX)
   const flexMap = useMemo(() => {
     const map = new Map();
     (database.plp_pedidos || []).forEach((p: any) => {
@@ -623,7 +622,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal,
+        adsCanal: canalAds,
         flexCanal,
         cmvCanal: cmvCanalTotal,
         repasseLiquidoTotal,
