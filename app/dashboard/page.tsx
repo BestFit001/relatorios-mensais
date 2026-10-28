@@ -32,7 +32,7 @@ function compilarFormulaExcel(src: any) {
       const op = next();
       const r = term();
       const a = l;
-      l = op === '+' ? (c: any) => a(c) + r(c) : (c: any) => a(c) - r(c);
+      l = op === '+' ? (c: any) => (a(c) || 0) + (r(c) || 0) : (c: any) => (a(c) || 0) - (r(c) || 0);
     }
     return l;
   };
@@ -42,7 +42,10 @@ function compilarFormulaExcel(src: any) {
       const op = next();
       const r = power();
       const a = l;
-      l = op === '*' ? (c: any) => a(c) * r(c) : (c: any) => a(c) / r(c);
+      l = op === '*' ? (c: any) => (a(c) || 0) * (r(c) || 0) : (c: any) => {
+        const den = r(c) || 1;
+        return den === 0 ? 0 : (a(c) || 0) / den;
+      };
     }
     return l;
   };
@@ -51,18 +54,18 @@ function compilarFormulaExcel(src: any) {
     if (peek() === '^') {
       next();
       const e = power();
-      return (c: any) => Math.pow(base(c), e(c));
+      return (c: any) => Math.pow(base(c) || 0, e(c) || 0);
     }
     return base;
   };
   const unary = (): any => {
-    if (peek() === '-') { next(); const x = unary(); return (c: any) => -x(c); }
+    if (peek() === '-') { next(); const x = unary(); return (c: any) => -(x(c) || 0); }
     if (peek() === '+') { next(); return unary(); }
     return postfix();
   };
   const postfix = (): any => {
     let n = primary();
-    while (peek() === '%') { next(); const a = n; n = (c: any) => a(c) / 100; }
+    while (peek() === '%') { next(); const a = n; n = (c: any) => (a(c) || 0) / 100; }
     return n;
   };
   const primary = (): any => {
@@ -77,7 +80,7 @@ function compilarFormulaExcel(src: any) {
     if (/^\$?[A-Za-z]/.test(t)) {
       const col = t.replace(/[^A-Za-z]/g, '').toUpperCase();
       refs.push(col);
-      return (c: any) => c[col];
+      return (c: any) => (c[col] !== undefined ? c[col] : (col === 'I' ? c['PDV'] : 0));
     }
     throw new Error('Token inválido');
   };
@@ -158,6 +161,7 @@ export default function DashboardPage() {
   };
 
   const normalizarTexto = (v: any) => String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+  const normalizarSku = (v: any) => String(v ?? '').trim().replace(/^['"]/, '').replace(/['"]$/, '').toLowerCase();
   const normalizarPedido = (v: any) => String(v ?? '').trim().replace(/\.0$/, '').replace(/\s+/g, '').toLowerCase();
 
   const isChannelFisico = (canalName: string) => {
@@ -318,12 +322,13 @@ export default function DashboardPage() {
         const qtd = parseCurrency(s.quantidade) || 1;
         const precoVenda = parseCurrency(s.preco_venda || s.valor);
 
-        // CMV correto buscando custo_unitario, preco_custo ou custo + custo_embalagem
+        // CMV robusto buscando em custo_unitario, preco_custo ou custo + custo_embalagem
         let custoCMV = 0;
         if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
           custoCMV = parseCurrency(s.cmv_clube);
         } else {
-          const prod = products.find((p: any) => normalizarTexto(p.sku) === normalizarTexto(s.sku)) || { custo_unitario: 0, preco_custo: 0, custo: 0, custo_embalagem: 0 };
+          const skuVendaNorm = normalizarSku(s.sku);
+          const prod = products.find((p: any) => normalizarSku(p.sku) === skuVendaNorm) || { custo_unitario: 0, preco_custo: 0, custo: 0, custo_embalagem: 0 };
           const unitCusto = parseCurrency(prod.custo_unitario || prod.preco_custo || prod.custo);
           const embCusto = parseCurrency(prod.custo_embalagem);
           custoCMV = (unitCusto + embCusto) * qtd;
@@ -335,10 +340,13 @@ export default function DashboardPage() {
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
         if (regra?.formula) {
           try {
-            repasseLiquido = regra.formula.fn({ [regra.colPdv]: precoVenda, [regra.colQtd]: qtd });
+            const resFormula = regra.formula.fn({ [regra.colPdv]: precoVenda, [regra.colQtd]: qtd, 'PDV': precoVenda });
+            if (!isNaN(resFormula) && resFormula !== undefined) {
+              repasseLiquido = resFormula;
+            }
           } catch {}
         }
-        if (repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
+        if (isNaN(repasseLiquido) || repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
           repasseLiquido = precoVenda;
         }
         
@@ -572,15 +580,16 @@ export default function DashboardPage() {
           const regra = regrasMap.get(kCanal);
           if (regra?.formula) {
             try {
-              repDev = regra.formula.fn({ [regra.colPdv]: pdvVal, [regra.colQtd]: parseCurrency(d.quantidade) || 1 });
+              const resFormDev = regra.formula.fn({ [regra.colPdv]: pdvVal, [regra.colQtd]: parseCurrency(d.quantidade) || 1, 'PDV': pdvVal });
+              if (!isNaN(resFormDev)) repDev = resFormDev;
             } catch {}
           }
-          if (repDev <= 0) repDev = pdvVal;
+          if (isNaN(repDev) || repDev <= 0) repDev = pdvVal;
           devRepasseLiquido += repDev;
 
-          const skuDev = normalizarTexto(d.sku);
+          const skuDev = normalizarSku(d.sku);
           const qtdDev = parseCurrency(d.quantidade) || 1;
-          const prodObj = products.find((p: any) => normalizarTexto(p.sku) === skuDev) || { custo_unitario: 0, preco_custo: 0, custo: 0, custo_embalagem: 0 };
+          const prodObj = products.find((p: any) => normalizarSku(p.sku) === skuDev) || { custo_unitario: 0, preco_custo: 0, custo: 0, custo_embalagem: 0 };
           const unitCusto = parseCurrency(prodObj.custo_unitario || prodObj.preco_custo || prodObj.custo);
           const embCusto = parseCurrency(prodObj.custo_embalagem);
           devCmvTotal += (unitCusto + embCusto) * qtdDev;
@@ -632,8 +641,10 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal: canalAds,
+        adsCanal,
         flexCanal,
+        cmvCanal: cmvCanalTotal,
+        repasseLiquidoTotal,
         isCurrentMonth,
         logoUrl,
         isFisico: isChannelFisico(channelName)
@@ -670,7 +681,7 @@ export default function DashboardPage() {
       faturadoComRedutor: totalEcommerce.faturadoComRedutor + totalPhysical.faturadoComRedutor,
       metaValor: totalEcommerce.metaValor + totalPhysical.metaValor,
       projecaoFaturamento: totalEcommerce.projecaoFaturamento + totalPhysical.projecaoFaturamento,
-      lucroLiquidoFinal: totalEcommerce.lucroLiquidoFinal + totalPhysical.lucroLiquidoFinal
+      lucroLiquidoFinal: totalEcommerce.lucroLiquidoFinal + totalPhysical.lucroLiquidoReal
     };
   }, [totalEcommerce, totalPhysical]);
 
@@ -933,13 +944,17 @@ export default function DashboardPage() {
                      <strong className="text-xs font-black text-sky-400">R$ {item.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                    </div>
                    <div>
-                     <span className="text-[9px] text-purple-200 block font-bold tracking-wider mb-0.5">MARGEM LÍQ.</span>
-                     <strong className="text-xs font-black text-purple-400">{item.margemLiquidaPct.toFixed(1)}%</strong>
+                     <span className="text-[9px] text-purple-200 block font-bold tracking-wider mb-0.5">REPASSE LÍQ.</span>
+                     <strong className="text-xs font-black text-purple-400">R$ {item.repasseLiquidoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                    </div>
                  </div>
 
-                 {/* DETALHAMENTO VISÍVEL DOS ABATIMENTOS (Devoluções, Adsense, Frete Flex) */}
+                 {/* DETALHAMENTO VISÍVEL DOS ABATIMENTOS & CMV */}
                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs text-slate-300">
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">CMV (Custo Produtos):</span>
+                     <span className="text-amber-400 font-bold">- R$ {item.cmvCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
                    <div className="flex justify-between items-center text-[10px]">
                      <span className="text-slate-400 font-bold uppercase">Abatimento Devoluções (PDV):</span>
                      <span className="text-rose-400 font-bold">- R$ {item.devolucoesPdv.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
