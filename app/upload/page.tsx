@@ -14,6 +14,17 @@ function letraParaIndice(letra: string): number {
   return Math.max(0, num - 1);
 }
 
+function indiceParaLetra(index: number): string {
+  let n = index + 1;
+  let letters = "";
+  while (n > 0) {
+    let rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "");
@@ -45,6 +56,7 @@ function parseSmartFloat(val: any) {
   return parseFloat(strVal) || 0;
 }
 
+// AVALIADOR DE FÓRMULAS ROBUSTO COM SUPORTE A TODAS AS COLUNAS ALFABÉTICAS DA PLANILHA
 function compilarFormulaExcel(src: any) {
   const texto = String(src || '').trim().replace(/^=/, '');
   if (!texto) return null;
@@ -110,7 +122,7 @@ function compilarFormulaExcel(src: any) {
     if (/^\$?[A-Za-z]/.test(t)) {
       const col = t.replace(/[^A-Za-z]/g, '').toUpperCase();
       refs.push(col);
-      return (c: any) => (c[col] !== undefined ? c[col] : (c['PDV'] !== undefined ? c['PDV'] : 0));
+      return (c: any) => (c[col] !== undefined ? c[col] : 0);
     }
     throw new Error('Token inválido');
   };
@@ -351,7 +363,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS LENDO CORRETAMENTE AS COLUNAS E APLICANDO A FÓRMULA DE REGRAS DO CANAL
+  // PASSO 2: IMPORTAR VENDAS MAPEANDO TODAS AS COLUNAS POR LETRA E APLICANDO A FÓRMULA DE REGRAS
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -390,8 +402,8 @@ export default function UpdatesPage() {
 
         const idxId = letraParaIndice(regraData?.coluna_id || 'A');
         const idxSku = letraParaIndice(regraCanalSku(canalAlvoDash));
-        const idxPdv = letraParaIndice(regraData?.col_pdv || regraData?.coluna_pdv || 'AC'); // AC (28) é Preço unitário por padrão no ML
-        const idxQtd = letraParaIndice(regraData?.col_quantidade || regraData?.coluna_quantidade || 'H'); // H (7) é Unidades por padrão no ML
+        const idxPdv = letraParaIndice(regraData?.col_pdv || regraData?.coluna_pdv || 'AC');
+        const idxQtd = letraParaIndice(regraData?.col_quantidade || regraData?.coluna_quantidade || 'H');
 
         const formulaCompilada = compilarFormulaExcel(regraData?.formula_excel);
 
@@ -414,24 +426,21 @@ export default function UpdatesPage() {
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : row[28]);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] ? row[idxQtd] : (row[7] || 1)) || 1;
 
+          // Cria o contexto com todas as colunas da linha convertidas para letras (A, B, C, D, T, I, AC, etc.)
+          const contextoLinha: Record<string, number> = {
+            'PDV': precoVenda,
+            'I': precoVenda,
+            'H': quantidade
+          };
+          for (let c = 0; c < row.length; c++) {
+            const ltr = indiceParaLetra(c);
+            contextoLinha[ltr] = parseSmartFloat(row[c]);
+          }
+
           let repasseLiquido = precoVenda - (precoVenda * 0.09);
           if (formulaCompilada) {
             try {
-              const letraPdv = String(regraData?.col_pdv || regraData?.coluna_pdv || 'AC').toUpperCase();
-              const letraQtd = String(regraData?.col_quantidade || regraData?.coluna_quantidade || 'H').toUpperCase();
-              const ctx: Record<string, number> = {
-                [letraPdv]: precoVenda,
-                [letraQtd]: quantidade,
-                'PDV': precoVenda,
-                'AC': precoVenda,
-                'I': precoVenda,
-                'H': quantidade
-              };
-              if (regraData?.col_pdv) {
-                const idxUserPdv = letraParaIndice(regraData.col_pdv);
-                ctx[regraData.col_pdv.toUpperCase()] = parseSmartFloat(row[idxUserPdv]);
-              }
-              const resFormula = formulaCompilada.fn(ctx);
+              const resFormula = formulaCompilada.fn(contextoLinha);
               if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
                 repasseLiquido = resFormula;
               }
