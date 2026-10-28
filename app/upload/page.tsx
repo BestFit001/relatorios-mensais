@@ -362,7 +362,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS LENDO EXATAMENTE AS COLUNAS SALVAS NA ABA DE REGRAS
+  // PASSO 2: IMPORTAR VENDAS CRUZANDO PERFEITAMENTE O SKU E O NOME DO PRODUTO NA TABELA DE CUSTOS
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -395,14 +395,13 @@ export default function UpdatesPage() {
           .eq('canal', canalAlvoDash)
           .maybeSingle();
 
-        // Puxa todos os custos do banco para cruzar o nome do produto correto pelo SKU
+        // Puxa todos os custos do banco para cruzar o nome do produto correto pelo SKU (normalizado)
         const { data: custosBanco } = await supabase
           .from('tabela_custos_skus')
           .select('sku, produto');
 
         const mapaProdutos = new Map(custosBanco?.map((c: any) => [normalizarSku(c.sku), c.produto]) || []);
 
-        // Usa estritamente as colunas configuradas na aba de Regras (col_sku, col_pdv, col_quantidade, col_id_pedido)
         const colSkuDef = regraData?.col_sku || 'X';
         const colPdvDef = regraData?.col_pdv || regraData?.coluna_pdv || 'I';
         const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || 'H';
@@ -430,12 +429,13 @@ export default function UpdatesPage() {
             continue;
           }
 
-          const sku = idxSku >= 0 && row[idxSku] ? normalizarSku(row[idxSku]) : '';
+          const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
+          const sku = normalizarSku(skuRaw);
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
-          const quantidade = Number(idxQtd >= 0 && row[idxQtd] ? row[idxQtd] : 1) || 1;
+          const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
-          // Puxa o nome do produto da tabela de custos baseada no SKU salvo
-          const nomeProduto = mapaProdutos.get(sku) || (sku ? `Produto ${sku}` : 'Produto Geral');
+          // Cruza exatamente com o mapa de produtos da tabela de custos
+          const nomeProduto = mapaProdutos.get(sku) || (skuRaw ? String(skuRaw).trim() : 'Produto Geral');
 
           const contextoLinha: Record<string, number> = {
             'PDV': precoVenda,
@@ -637,7 +637,7 @@ export default function UpdatesPage() {
     if (dadosInvBruto.length > 0) await supabase.from('inventario').insert(dadosInvBruto);
     setLoading(false);
     alert(`🚀 Dados guardados no Supabase com sucesso!`);
-    setFicheiroABC(""); setFicheiroInventario(""); setDadosABC([]); setDadosInvBruto([]);
+    setFicheiroABC(""); setFicheiroInventario(""); setDadosABC(""); setDadosInvBruto([]);
   };
 
   const limparDadosCompetencia = async () => {
@@ -1220,7 +1220,7 @@ export default function UpdatesPage() {
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
                   Apagar Faturados ({mesAlvoDash})
                 </button>
-                <button onClick={() => apagarDadosPorTipo('vendas')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
+                <button onClick={() => apagarDatesPorTipo('vendas')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
                   Apagar Vendas ({mesAlvoDash})
                 </button>
               </div>
