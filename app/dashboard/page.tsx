@@ -223,6 +223,7 @@ export default function DashboardPage() {
     return map;
   }, [database.tarifas_site]);
 
+  // Mapa de frete Flex (PLP)
   const flexMap = useMemo(() => {
     const map = new Map();
     (database.plp_pedidos || []).forEach((p: any) => {
@@ -622,7 +623,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal: canalAds,
+        adsCanal,
         flexCanal,
         cmvCanal: cmvCanalTotal,
         repasseLiquidoTotal,
