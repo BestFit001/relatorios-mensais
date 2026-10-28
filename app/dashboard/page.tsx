@@ -315,7 +315,6 @@ export default function DashboardPage() {
         return true;
       })
       .map((s: any) => {
-        const regra = regrasMap.get(normalizarTexto(s.canal));
         const qtd = parseCurrency(s.quantidade) || 1;
         const precoVenda = parseCurrency(s.preco_venda || s.valor);
 
@@ -334,21 +333,7 @@ export default function DashboardPage() {
         const custoFlex = flexMap.get(ped) || 0;
         
         let repasseLiquido = parseCurrency(s.repasse_liquido);
-        if (regra?.formula) {
-          try {
-            const contextoEval: Record<string, number> = {
-              'PDV': precoVenda,
-              'I': precoVenda,
-              'H': qtd,
-              'T': precoVenda
-            };
-            const resFormula = regra.formula.fn(contextoEval);
-            if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
-              repasseLiquido = resFormula;
-            }
-          } catch {}
-        }
-        if (isNaN(repasseLiquido) || repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
+        if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
           repasseLiquido = precoVenda - (precoVenda * 0.09);
         }
         
@@ -366,7 +351,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, products, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap, regrasMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, products, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
@@ -579,13 +564,6 @@ export default function DashboardPage() {
           devFreteLiquido += freteVal;
           
           let repDev = parseCurrency(d.repasse_liquido || d.repasse);
-          const regra = regrasMap.get(kCanal);
-          if (regra?.formula) {
-            try {
-              const resFormDev = regra.formula.fn({ 'PDV': pdvVal, 'I': pdvVal, 'T': pdvVal });
-              if (!isNaN(resFormDev)) repDev = resFormDev;
-            } catch {}
-          }
           if (isNaN(repDev) || repDev <= 0) repDev = pdvVal - (pdvVal * 0.09);
           devRepasseLiquido += repDev;
 
@@ -643,7 +621,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal,
+        adsCanal: canalAds,
         flexCanal,
         cmvCanal: cmvCanalTotal,
         repasseLiquidoTotal,
@@ -652,7 +630,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap, products, regrasMap]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap, products]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
@@ -663,8 +641,8 @@ export default function DashboardPage() {
       faturadoComRedutor: acc.faturadoComRedutor + curr.faturadoComRedutor,
       metaValor: acc.metaValor + curr.metaValor,
       projecaoFaturamento: acc.projecaoFaturamento + curr.projecaoFaturamento,
-      lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoReal
-    }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoFinal: 0 });
+      lucroLiquidoReal: acc.lucroLiquidoReal + curr.lucroLiquidoReal
+    }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoReal: 0 });
   }, [ecommerceChannels]);
 
   const totalPhysical = useMemo(() => {
@@ -673,8 +651,8 @@ export default function DashboardPage() {
       faturadoComRedutor: acc.faturadoComRedutor + curr.faturadoComRedutor,
       metaValor: acc.metaValor + curr.metaValor,
       projecaoFaturamento: acc.projecaoFaturamento + curr.projecaoFaturamento,
-      lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoReal
-    }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoFinal: 0 });
+      lucroLiquidoReal: acc.lucroLiquidoReal + curr.lucroLiquidoReal
+    }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoReal: 0 });
   }, [physicalChannels]);
 
   const totalGeral = useMemo(() => {
@@ -683,7 +661,7 @@ export default function DashboardPage() {
       faturadoComRedutor: totalEcommerce.faturadoComRedutor + totalPhysical.faturadoComRedutor,
       metaValor: totalEcommerce.metaValor + totalPhysical.metaValor,
       projecaoFaturamento: totalEcommerce.projecaoFaturamento + totalPhysical.projecaoFaturamento,
-      lucroLiquidoFinal: totalEcommerce.lucroLiquidoFinal + totalPhysical.lucroLiquidoFinal
+      lucroLiquidoReal: totalEcommerce.lucroLiquidoReal + totalPhysical.lucroLiquidoReal
     };
   }, [totalEcommerce, totalPhysical]);
 
