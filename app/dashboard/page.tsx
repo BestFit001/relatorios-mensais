@@ -141,18 +141,23 @@ export default function DashboardPage() {
     return map;
   }, [database.plp_pedidos]);
 
+  const currentRefMonth = useMemo(() => {
+    if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate) return appliedStartDate.slice(0, 7);
+    if (appliedDateFilter === 'MES_ANTERIOR') return previousMonthDefault;
+    return currentMonthDefault;
+  }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
+
+  // Adsense: Puxa o "Valor Gasto (Inserir)" da aba ads_faturamento_canal filtrando pelo canal e mês em vigência (currentRefMonth)
   const adsMap = useMemo(() => {
     const map = new Map();
     (database.ads_faturamento_canal || []).forEach((a: any) => {
-      const k = normalizarTexto(a.canal);
-      map.set(k, (map.get(k) || 0) + parseCurrency(a.gasto_ads));
-    });
-    (database.ads_campanhas_lancamentos || []).forEach((a: any) => {
-      const k = normalizarTexto(a.canal);
-      map.set(k, (map.get(k) || 0) + parseCurrency(a.investimento));
+      if (a.mes_referencia === currentRefMonth) {
+        const k = normalizarTexto(a.canal);
+        map.set(k, parseCurrency(a.gasto_ads));
+      }
     });
     return map;
-  }, [database.ads_faturamento_canal, database.ads_campanhas_lancamentos]);
+  }, [database.ads_faturamento_canal, currentRefMonth]);
 
   const devolucoesList = database.devolucoes || [];
 
@@ -163,12 +168,6 @@ export default function DashboardPage() {
     });
     return map;
   }, [channelRules]);
-
-  const currentRefMonth = useMemo(() => {
-    if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate) return appliedStartDate.slice(0, 7);
-    if (appliedDateFilter === 'MES_ANTERIOR') return previousMonthDefault;
-    return currentMonthDefault;
-  }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
   const activeCancelados = useMemo(() => {
     if (!cancelados) return [];
@@ -520,7 +519,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal: canalAds,
+        adsCanal,
         flexCanal,
         isCurrentMonth,
         logoUrl,
