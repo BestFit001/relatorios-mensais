@@ -23,7 +23,6 @@ export default function DashboardPage() {
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
   
-  // CORREÇÃO DO FILTRO: Inicia em 'DIGITAL' (E-commerce / Marketplaces) por padrão
   const [modalidadeFilter, setModalidadeFilter] = useState('DIGITAL');
   const [appliedModalidadeFilter, setAppliedModalidadeFilter] = useState('DIGITAL');
 
@@ -131,7 +130,6 @@ export default function DashboardPage() {
     return map;
   }, [database.faturados]);
 
-  // Frete da aba de PLPs (plp_pedidos onde modalidade é flex)
   const flexMap = useMemo(() => {
     const map = new Map();
     (database.plp_pedidos || []).forEach((p: any) => {
@@ -143,7 +141,6 @@ export default function DashboardPage() {
     return map;
   }, [database.plp_pedidos]);
 
-  // Adsense / Ads da aba de ads (ads_faturamento_canal e ads_campanhas_lancamentos)
   const adsMap = useMemo(() => {
     const map = new Map();
     (database.ads_faturamento_canal || []).forEach((a: any) => {
@@ -157,8 +154,16 @@ export default function DashboardPage() {
     return map;
   }, [database.ads_faturamento_canal, database.ads_campanhas_lancamentos]);
 
-  // Devoluções da aba de devoluções
   const devolucoesList = database.devolucoes || [];
+
+  // Declaração de channelLogos movida para antes de channelAnalytics para evitar erro de escopo TypeScript
+  const channelLogos = useMemo(() => {
+    const map: Record<string, string> = {};
+    channelRules.forEach((r: any) => {
+      if (r.canal && r.logo_url) map[r.canal] = r.logo_url;
+    });
+    return map;
+  }, [channelRules]);
 
   const currentRefMonth = useMemo(() => {
     if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate) return appliedStartDate.slice(0, 7);
@@ -450,7 +455,6 @@ export default function DashboardPage() {
         .filter((c: any) => normalizarTexto(c.canal) === kCanal)
         .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
-      // Subtrai devoluções da aba de devoluções
       let devolucoesCanalBruto = 0;
       devolucoesList.forEach((d: any) => {
         if (normalizarTexto(d.canal) === kCanal) {
@@ -504,14 +508,6 @@ export default function DashboardPage() {
       };
     });
   }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap]);
-
-  const channelLogos = useMemo(() => {
-    const map: Record<string, string> = {};
-    channelRules.forEach((r: any) => {
-      if (r.canal && r.logo_url) map[r.canal] = r.logo_url;
-    });
-    return map;
-  }, [channelRules]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
