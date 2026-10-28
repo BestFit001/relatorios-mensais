@@ -15,6 +15,82 @@ const TABELAS_SUPABASE = [
   'plp_pedidos',
 ] as const;
 
+function compilarFormulaExcel(src: any) {
+  const texto = String(src || '').trim().replace(/^=/, '');
+  if (!texto) return null;
+  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?\d*|[-+*/^()%]/g);
+  if (!tokens || tokens.join('') !== texto.replace(/\s+/g, '')) return null;
+
+  let i = 0;
+  const refs: string[] = [];
+  const peek = () => tokens[i];
+  const next = () => tokens[i++];
+
+  const expr = (): any => {
+    let l = term();
+    while (peek() === '+' || peek() === '-') {
+      const op = next();
+      const r = term();
+      const a = l;
+      l = op === '+' ? (c: any) => a(c) + r(c) : (c: any) => a(c) - r(c);
+    }
+    return l;
+  };
+  const term = (): any => {
+    let l = power();
+    while (peek() === '*' || peek() === '/') {
+      const op = next();
+      const r = power();
+      const a = l;
+      l = op === '*' ? (c: any) => a(c) * r(c) : (c: any) => a(c) / r(c);
+    }
+    return l;
+  };
+  const power = (): any => {
+    const base = unary();
+    if (peek() === '^') {
+      next();
+      const e = power();
+      return (c: any) => Math.pow(base(c), e(c));
+    }
+    return base;
+  };
+  const unary = (): any => {
+    if (peek() === '-') { next(); const x = unary(); return (c: any) => -x(c); }
+    if (peek() === '+') { next(); return unary(); }
+    return postfix();
+  };
+  const postfix = (): any => {
+    let n = primary();
+    while (peek() === '%') { next(); const a = n; n = (c: any) => a(c) / 100; }
+    return n;
+  };
+  const primary = (): any => {
+    const t = next();
+    if (t === undefined) throw new Error('Fim inesperado');
+    if (t === '(') {
+      const e = expr();
+      if (next() !== ')') throw new Error('Parêntese');
+      return e;
+    }
+    if (/^\d/.test(t)) { const v = Number(t.replace(',', '.')); return () => v; }
+    if (/^\$?[A-Za-z]/.test(t)) {
+      const col = t.replace(/[^A-Za-z]/g, '').toUpperCase();
+      refs.push(col);
+      return (c: any) => c[col];
+    }
+    throw new Error('Token inválido');
+  };
+
+  try {
+    const fn = expr();
+    if (i !== tokens.length) return null;
+    return { fn, refs };
+  } catch {
+    return null;
+  }
+}
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [database, setDatabase] = useState<Record<string, any[]>>({});
@@ -120,6 +196,23 @@ export default function DashboardPage() {
   const cancelados = database.cancelados || [];
   const users = database.usuarios_permissoes || [];
 
+  const regrasMap = useMemo(() => {
+    const map = new Map();
+    (database.config_regras_canais || []).forEach((r: any) => {
+      const colPdv = String(r.col_pdv || 'I').toUpperCase();
+      const colQtd = String(r.col_quantidade || 'H').toUpperCase();
+      const formulaObj = compilarFormulaExcel(r.formula_excel);
+      map.set(normalizarTexto(r.canal), {
+        formula: formulaObj,
+        colPdv,
+        colQtd,
+        responsavel: r.responsavel || 'Equipe Best Fit',
+        logoUrl: r.logo_url || null
+      });
+    });
+    return map;
+  }, [database.config_regras_canais]);
+
   const faturadosMap = useMemo(() => {
     const map = new Map();
     (database.faturados || []).forEach((f: any) => {
@@ -146,7 +239,6 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
-  // Adsense: Puxa o "Valor Gasto (Inserir)" da aba ads_faturamento_canal compatibilizando YYYY-MM e MM/YYYY
   const adsMap = useMemo(() => {
     const map = new Map();
     let formatoMMYYYY = currentRefMonth;
@@ -222,21 +314,30 @@ export default function DashboardPage() {
         return true;
       })
       .map((s: any) => {
+        const regra = regrasMap.get(normalizarTexto(s.canal));
+        const qtd = parseCurrency(s.quantidade) || 1;
+        const precoVenda = parseCurrency(s.preco_venda || s.valor);
+
+        // CMV correto buscando custo_unitario, preco_custo ou custo
         let custoCMV = 0;
-        
         if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
           custoCMV = parseCurrency(s.cmv_clube);
         } else {
-          const prod = products.find((p: any) => normalizarTexto(p.sku) === normalizarTexto(s.sku)) || { preco_custo: 0, custo_embalagem: 0 };
-          const qtd = parseCurrency(s.quantidade) || 1;
-          custoCMV = (parseCurrency(prod.preco_custo || prod.custo) + parseCurrency(prod.custo_embalagem)) * qtd;
+          const prod = products.find((p: any) => normalizarTexto(p.sku) === normalizarTexto(s.sku)) || { custo_unitario: 0, preco_custo: 0, custo: 0, custo_embalagem: 0 };
+          const unitCusto = parseCurrency(prod.custo_unitario || prod.preco_custo || prod.custo);
+          const embCusto = parseCurrency(prod.custo_embalagem);
+          custoCMV = (unitCusto + embCusto) * qtd;
         }
 
         const ped = normalizarPedido(s.id_pedido);
         const custoFlex = flexMap.get(ped) || 0;
         
-        const precoVenda = parseCurrency(s.preco_venda || s.valor);
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
+        if (regra?.formula) {
+          try {
+            repasseLiquido = regra.formula.fn({ [regra.colPdv]: precoVenda, [regra.colQtd]: qtd });
+          } catch {}
+        }
         if (repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
           repasseLiquido = precoVenda;
         }
@@ -246,20 +347,16 @@ export default function DashboardPage() {
            const taxaVindi = parseCurrency(tarifasSiteMap[ped]);
            repasseLiquido = Math.max(0, repasseLiquido - taxaVindi);
         }
-
-        const ganhoBruto = repasseLiquido - custoCMV; 
-        const ganhoLiquido = ganhoBruto - custoFlex;
         
         return { 
           ...s, 
           preco_venda: precoVenda,
           custoCMV, 
           custoFlex, 
-          ganhoLiquido, 
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, products, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, products, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap, regrasMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
@@ -470,13 +567,23 @@ export default function DashboardPage() {
           const freteVal = parseCurrency(d.custo_frete || d.frete);
           devPdvBruto += pdvVal;
           devFreteLiquido += freteVal;
-          devRepasseLiquido += parseCurrency(d.repasse_liquido || d.repasse || pdvVal);
+          
+          let repDev = parseCurrency(d.repasse_liquido || d.repasse);
+          const regra = regrasMap.get(kCanal);
+          if (regra?.formula) {
+            try {
+              repDev = regra.formula.fn({ [regra.colPdv]: pdvVal, [regra.colQtd]: parseCurrency(d.quantidade) || 1 });
+            } catch {}
+          }
+          if (repDev <= 0) repDev = pdvVal;
+          devRepasseLiquido += repDev;
 
           const skuDev = normalizarTexto(d.sku);
           const qtdDev = parseCurrency(d.quantidade) || 1;
-          const prodObj = products.find((p: any) => normalizarTexto(p.sku) === skuDev) || { preco_custo: 0, custo_unitario: 0, custo: 0, custo_embalagem: 0 };
-          const unitCusto = parseCurrency(prodObj.preco_custo || prodObj.custo_unitario || prodObj.custo) + parseCurrency(prodObj.custo_embalagem);
-          devCmvTotal += unitCusto * qtdDev;
+          const prodObj = products.find((p: any) => normalizarTexto(p.sku) === skuDev) || { custo_unitario: 0, preco_custo: 0, custo: 0, custo_embalagem: 0 };
+          const unitCusto = parseCurrency(prodObj.custo_unitario || prodObj.preco_custo || prodObj.custo);
+          const embCusto = parseCurrency(prodObj.custo_embalagem);
+          devCmvTotal += (unitCusto + embCusto) * qtdDev;
         }
       });
 
@@ -525,14 +632,14 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal: canalAds,
+        adsCanal,
         flexCanal,
         isCurrentMonth,
         logoUrl,
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap, products]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap, products, regrasMap]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
