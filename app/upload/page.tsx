@@ -362,7 +362,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS LENDO EXATAMENTE A COLUNA CONFIGURADA NAS REGRAS
+  // PASSO 2: IMPORTAR VENDAS CRUZANDO PERFEITAMENTE O SKU E O NOME DO PRODUTO NA TABELA DE CUSTOS
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
