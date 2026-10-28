@@ -146,7 +146,7 @@ export default function DashboardPage() {
     return currentMonthDefault;
   }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
 
-  // CORREÇÃO: Puxa o "Valor Gasto (Inserir)" da tabela ads_faturamento_canal filtrando estritamente pelo mês em vigência
+  // Puxa o "Valor Gasto (Inserir)" da aba ads_faturamento_canal filtrando pelo canal e mês em vigência
   const adsMap = useMemo(() => {
     const map = new Map();
     (database.ads_faturamento_canal || []).forEach((a: any) => {
@@ -518,7 +518,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal,
+        adsCanal: canalAds,
         flexCanal,
         isCurrentMonth,
         logoUrl,
