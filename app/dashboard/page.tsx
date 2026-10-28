@@ -322,7 +322,6 @@ export default function DashboardPage() {
         const qtd = parseCurrency(s.quantidade) || 1;
         const precoVenda = parseCurrency(s.preco_venda || s.valor);
 
-        // CMV robusto buscando em custo_unitario, preco_custo ou custo + custo_embalagem
         let custoCMV = 0;
         if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
           custoCMV = parseCurrency(s.cmv_clube);
@@ -648,7 +647,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal,
+        adsCanal: canalAds,
         flexCanal,
         cmvCanal: cmvCanalTotal,
         repasseLiquidoTotal,
