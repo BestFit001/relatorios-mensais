@@ -362,7 +362,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS LENDO CORRETAMENTE A COLUNA DE SKU DA ABA DE REGRAS E PUXANDO O PRODUTO DA TABELA DE CUSTOS
+  // PASSO 2: IMPORTAR VENDAS LENDO EXATAMENTE AS COLUNAS SALVAS NA ABA DE REGRAS
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -388,21 +388,22 @@ export default function UpdatesPage() {
           return;
         }
 
-        // Puxa as regras salvas do canal (incluindo col_sku e col_pdv salvos na aba de Regras)
+        // Puxa as regras salvas do canal no Supabase
         const { data: regraData } = await supabase
           .from('config_regras_canais')
           .select('*')
           .eq('canal', canalAlvoDash)
           .maybeSingle();
 
-        // Puxa todos os custos do banco para cruzar o nome do produto e custos pelo SKU
+        // Puxa todos os custos do banco para cruzar o nome do produto correto pelo SKU
         const { data: custosBanco } = await supabase
           .from('tabela_custos_skus')
           .select('sku, produto');
 
         const mapaProdutos = new Map(custosBanco?.map((c: any) => [normalizarSku(c.sku), c.produto]) || []);
 
-        const colSkuDef = regraData?.col_sku || regraData?.coluna_sku || 'X';
+        // Usa estritamente as colunas configuradas na aba de Regras (col_sku, col_pdv, col_quantidade, col_id_pedido)
+        const colSkuDef = regraData?.col_sku || 'X';
         const colPdvDef = regraData?.col_pdv || regraData?.coluna_pdv || 'I';
         const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || 'H';
         const colIdDef = regraData?.col_id_pedido || regraData?.coluna_id || 'A';
@@ -430,16 +431,16 @@ export default function UpdatesPage() {
           }
 
           const sku = idxSku >= 0 && row[idxSku] ? normalizarSku(row[idxSku]) : '';
-          const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : row[8]);
+          const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] ? row[idxQtd] : 1) || 1;
 
-          // Puxa o nome do produto da tabela de custos baseada no SKU. Se não encontrar, usa "Produto {sku}"
+          // Puxa o nome do produto da tabela de custos baseada no SKU salvo
           const nomeProduto = mapaProdutos.get(sku) || (sku ? `Produto ${sku}` : 'Produto Geral');
 
           const contextoLinha: Record<string, number> = {
             'PDV': precoVenda,
-            'I': precoVenda,
-            'H': quantidade
+            [colPdvDef.toUpperCase()]: precoVenda,
+            [colQtdDef.toUpperCase()]: quantidade
           };
           for (let c = 0; c < row.length; c++) {
             const ltr = indiceParaLetra(c);
@@ -1213,7 +1214,7 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
