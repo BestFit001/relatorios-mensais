@@ -362,7 +362,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS PARA A TABELA ISOLADA 'vendas_canais'
+  // PASSO 2: IMPORTAR VENDAS LENDO EXATAMENTE AS COLUNAS SALVAS NA ABA DE REGRAS
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -388,21 +388,30 @@ export default function UpdatesPage() {
           return;
         }
 
+        // Puxa as regras salvas do canal no Supabase
         const { data: regraData } = await supabase
           .from('config_regras_canais')
           .select('*')
           .eq('canal', canalAlvoDash)
-          .single();
+          .maybeSingle();
 
-        const regraCanalSku = (nome: string) => {
-          const reg = regrasCanais.find(r => r.canal === nome);
-          return reg ? reg.coluna_sku : 'X';
-        };
+        // Puxa todos os custos do banco para cruzar o nome do produto correto pelo SKU
+        const { data: custosBanco } = await supabase
+          .from('tabela_custos_skus')
+          .select('sku, produto');
 
-        const idxId = letraParaIndice(regraData?.coluna_id || 'A');
-        const idxSku = letraParaIndice(regraCanalSku(canalAlvoDash));
-        const idxPdv = letraParaIndice(regraData?.col_pdv || regraData?.coluna_pdv || 'AC');
-        const idxQtd = letraParaIndice(regraData?.col_quantidade || regraData?.coluna_quantidade || 'H');
+        const mapaProdutos = new Map(custosBanco?.map((c: any) => [normalizarSku(c.sku), c.produto]) || []);
+
+        // Usa estritamente as colunas configuradas na aba de Regras (col_sku, col_pdv, col_quantidade, col_id_pedido)
+        const colSkuDef = regraData?.col_sku || 'X';
+        const colPdvDef = regraData?.col_pdv || regraData?.coluna_pdv || 'I';
+        const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || 'H';
+        const colIdDef = regraData?.col_id_pedido || regraData?.coluna_id || 'A';
+
+        const idxId = letraParaIndice(colIdDef);
+        const idxSku = letraParaIndice(colSkuDef);
+        const idxPdv = letraParaIndice(colPdvDef);
+        const idxQtd = letraParaIndice(colQtdDef);
 
         const formulaCompilada = compilarFormulaExcel(regraData?.formula_excel);
 
@@ -421,14 +430,17 @@ export default function UpdatesPage() {
             continue;
           }
 
-          const sku = idxSku >= 0 && row[idxSku] ? normalizarSku(row[idxSku]) : 'SKU-GERAL';
-          const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : row[28]);
-          const quantidade = Number(idxQtd >= 0 && row[idxQtd] ? row[idxQtd] : (row[7] || 1)) || 1;
+          const sku = idxSku >= 0 && row[idxSku] ? normalizarSku(row[idxSku]) : '';
+          const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
+          const quantidade = Number(idxQtd >= 0 && row[idxQtd] ? row[idxQtd] : 1) || 1;
+
+          // Puxa o nome do produto da tabela de custos baseada no SKU salvo
+          const nomeProduto = mapaProdutos.get(sku) || (sku ? `Produto ${sku}` : 'Produto Geral');
 
           const contextoLinha: Record<string, number> = {
             'PDV': precoVenda,
-            'I': precoVenda,
-            'H': quantidade
+            [colPdvDef.toUpperCase()]: precoVenda,
+            [colQtdDef.toUpperCase()]: quantidade
           };
           for (let c = 0; c < row.length; c++) {
             const ltr = indiceParaLetra(c);
@@ -452,8 +464,8 @@ export default function UpdatesPage() {
             id_pedido: rawId,
             canal: canalAlvoDash,
             mes_referencia: mesAlvoDash,
-            sku: sku,
-            produto: `Produto ${sku}`,
+            sku: sku || 'sem-sku',
+            produto: nomeProduto,
             quantidade: isNaN(quantidade) ? 1 : quantidade,
             preco_venda: precoVenda,
             repasse_liquido: repasseLiquido
@@ -468,7 +480,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Vendas salvas na tabela 'vendas_canais' com sucesso!\n• Importados: ${novasVendas.length} itens\n• Ignorados: ${ignoradosNaoFaturados}`);
+        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados: ${novasVendas.length} itens\n• Ignorados: ${ignoradosNaoFaturados}`);
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
       } finally {
@@ -1202,7 +1214,7 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
