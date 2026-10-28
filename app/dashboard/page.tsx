@@ -80,7 +80,7 @@ function compilarFormulaExcel(src: any) {
     if (/^\$?[A-Za-z]/.test(t)) {
       const col = t.replace(/[^A-Za-z]/g, '').toUpperCase();
       refs.push(col);
-      return (c: any) => (c[col] !== undefined ? c[col] : (col === 'I' ? c['PDV'] : 0));
+      return (c: any) => (c[col] !== undefined ? c[col] : (c['PDV'] !== undefined ? c['PDV'] : 0));
     }
     throw new Error('Token inválido');
   };
@@ -322,6 +322,7 @@ export default function DashboardPage() {
         const qtd = parseCurrency(s.quantidade) || 1;
         const precoVenda = parseCurrency(s.preco_venda || s.valor);
 
+        // CMV robusto buscando em custo_unitario, preco_custo ou custo + custo_embalagem
         let custoCMV = 0;
         if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
           custoCMV = parseCurrency(s.cmv_clube);
@@ -339,14 +340,21 @@ export default function DashboardPage() {
         let repasseLiquido = parseCurrency(s.repasse_liquido || s.repasse);
         if (regra?.formula) {
           try {
-            const resFormula = regra.formula.fn({ [regra.colPdv]: precoVenda, [regra.colQtd]: qtd, 'PDV': precoVenda });
-            if (!isNaN(resFormula) && resFormula !== undefined) {
+            const contextoEval: Record<string, number> = {
+              [regra.colPdv]: precoVenda,
+              [regra.colQtd]: qtd,
+              'PDV': precoVenda,
+              'I': precoVenda,
+              'H': qtd
+            };
+            const resFormula = regra.formula.fn(contextoEval);
+            if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
               repasseLiquido = resFormula;
             }
           } catch {}
         }
         if (isNaN(repasseLiquido) || repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
-          repasseLiquido = precoVenda;
+          repasseLiquido = precoVenda - (precoVenda * 0.09);
         }
         
         const nomeCanal = normalizarTexto(s.canal);
@@ -579,11 +587,11 @@ export default function DashboardPage() {
           const regra = regrasMap.get(kCanal);
           if (regra?.formula) {
             try {
-              const resFormDev = regra.formula.fn({ [regra.colPdv]: pdvVal, [regra.colQtd]: parseCurrency(d.quantidade) || 1, 'PDV': pdvVal });
+              const resFormDev = regra.formula.fn({ [regra.colPdv]: pdvVal, [regra.colQtd]: parseCurrency(d.quantidade) || 1, 'PDV': pdvVal, 'I': pdvVal });
               if (!isNaN(resFormDev)) repDev = resFormDev;
             } catch {}
           }
-          if (isNaN(repDev) || repDev <= 0) repDev = pdvVal;
+          if (isNaN(repDev) || repDev <= 0) repDev = pdvVal - (pdvVal * 0.09);
           devRepasseLiquido += repDev;
 
           const skuDev = normalizarSku(d.sku);
@@ -640,7 +648,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal: canalAds,
+        adsCanal,
         flexCanal,
         cmvCanal: cmvCanalTotal,
         repasseLiquidoTotal,
