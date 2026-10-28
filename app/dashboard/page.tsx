@@ -156,7 +156,6 @@ export default function DashboardPage() {
 
   const devolucoesList = database.devolucoes || [];
 
-  // Declaração de channelLogos movida para antes de channelAnalytics para evitar erro de escopo TypeScript
   const channelLogos = useMemo(() => {
     const map: Record<string, string> = {};
     channelRules.forEach((r: any) => {
@@ -455,27 +454,49 @@ export default function DashboardPage() {
         .filter((c: any) => normalizarTexto(c.canal) === kCanal)
         .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
-      let devolucoesCanalBruto = 0;
+      // Tratamento completo da Devolução conforme solicitado:
+      // - PDV descontado do Bruto
+      // - Frete (custo_frete / frete) descontado do líquido
+      // - Valor de repasse da venda inserida na devolução descontado do líquido
+      // - CMV dos produtos devolvidos computado corretamente da tabela de custos do Supabase
+      let devPdvBruto = 0;
+      let devFreteLiquido = 0;
+      let devRepasseLiquido = 0;
+      let devCmvTotal = 0;
+
       devolucoesList.forEach((d: any) => {
         if (normalizarTexto(d.canal) === kCanal) {
-          devolucoesCanalBruto += parseCurrency(d.pdv || d.valor);
+          const pdvVal = parseCurrency(d.pdv || d.valor);
+          const freteVal = parseCurrency(d.custo_frete || d.frete);
+          devPdvBruto += pdvVal;
+          devFreteLiquido += freteVal;
+          devRepasseLiquido += parseCurrency(d.repasse_liquido || d.repasse || pdvVal);
+
+          const skuDev = normalizarTexto(d.sku);
+          const qtdDev = parseCurrency(d.quantidade) || 1;
+          const prodObj = products.find((p: any) => normalizarTexto(p.sku) === skuDev) || { preco_custo: 0, custo_unitario: 0, custo: 0, custo_embalagem: 0 };
+          const unitCusto = parseCurrency(prodObj.preco_custo || prodObj.custo_unitario || prodObj.custo) + parseCurrency(prodObj.custo_embalagem);
+          devCmvTotal += unitCusto * qtdDev;
         }
       });
 
-      const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0) - devolucoesCanalBruto;
+      const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0) - devPdvBruto;
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - cancelamentosMes);
-      const repasseTotal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
       
+      const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
+      const repasseLiquidoTotal = repasseVendasCanal - devRepasseLiquido;
+
       const canalAds = adsMap.get(kCanal) || 0;
-      const cmvCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0);
+      const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0);
+      const cmvCanalTotal = cmvVendasCanal + devCmvTotal;
       const flexCanal = chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
 
-      const lucroLiquidoFinal = repasseTotal - cmvCanal - flexCanal - canalAds;
+      const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - flexCanal - canalAds - devFreteLiquido;
       
       const metaBase = parseCurrency(goalObj.meta_valor);
       const progressoMetaPct = metaBase > 0 ? (faturadoComRedutor / metaBase) * 100 : 0;
       
-      const margemBrutaPct = faturadoBrutoPuro > 0 ? (repasseTotal / faturadoBrutoPuro) * 100 : 0;
+      const margemBrutaPct = faturadoBrutoPuro > 0 ? (repasseLiquidoTotal / faturadoBrutoPuro) * 100 : 0;
       const margemLiquidaPct = faturadoBrutoPuro > 0 ? (lucroLiquidoFinal / faturadoBrutoPuro) * 100 : 0;
 
       const projecaoFaturamento = isCurrentMonth 
@@ -494,7 +515,7 @@ export default function DashboardPage() {
         vendasDoDia,
         faturadoBruto: faturadoBrutoPuro,
         faturadoComRedutor, 
-        lucroLiquidoFinal, 
+        lucroLiquidoReal: lucroLiquidoFinal, 
         progressoMetaPct, 
         margemBrutaPct, 
         margemLiquidaPct, 
@@ -502,12 +523,16 @@ export default function DashboardPage() {
         valorFaltante,
         mediaDiariaNecessaria,
         cancelamentosMes,
+        devolucoesPdv: devPdvBruto,
+        devolucoesFrete: devFreteLiquido,
+        adsCanal,
+        flexCanal,
         isCurrentMonth,
         logoUrl,
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap, products]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
@@ -518,7 +543,7 @@ export default function DashboardPage() {
       faturadoComRedutor: acc.faturadoComRedutor + curr.faturadoComRedutor,
       metaValor: acc.metaValor + curr.metaValor,
       projecaoFaturamento: acc.projecaoFaturamento + curr.projecaoFaturamento,
-      lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoFinal
+      lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoReal
     }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoFinal: 0 });
   }, [ecommerceChannels]);
 
@@ -528,7 +553,7 @@ export default function DashboardPage() {
       faturadoComRedutor: acc.faturadoComRedutor + curr.faturadoComRedutor,
       metaValor: acc.metaValor + curr.metaValor,
       projecaoFaturamento: acc.projecaoFaturamento + curr.projecaoFaturamento,
-      lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoFinal
+      lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoReal
     }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoFinal: 0 });
   }, [physicalChannels]);
 
@@ -803,6 +828,33 @@ export default function DashboardPage() {
                    <div>
                      <span className="text-[9px] text-purple-200 block font-bold tracking-wider mb-0.5">MARGEM LÍQ.</span>
                      <strong className="text-xs font-black text-purple-400">{item.margemLiquidaPct.toFixed(1)}%</strong>
+                   </div>
+                 </div>
+
+                 {/* DETALHAMENTO VISÍVEL DOS ABATIMENTOS (Devoluções, Adsense, Frete Flex) */}
+                 <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs text-slate-300">
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">Abatimento Devoluções (PDV):</span>
+                     <span className="text-rose-400 font-bold">- R$ {item.devolucoesPdv.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">Frete Reverso Devoluções:</span>
+                     <span className="text-rose-400 font-bold">- R$ {item.devolucoesFrete.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">Adsense (Ads):</span>
+                     <span className="text-rose-400 font-bold">- R$ {item.adsCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">Frete Flex (PLP):</span>
+                     <span className="text-rose-400 font-bold">- R$ {item.flexCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+                   
+                   <div className="flex justify-between items-center pt-2 border-t border-slate-900 font-bold text-white">
+                     <span>Lucro Líquido Real:</span>
+                     <span className={item.lucroLiquidoReal >= 0 ? 'text-emerald-400 font-black' : 'text-rose-400 font-black'}>
+                       R$ {item.lucroLiquidoReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                     </span>
                    </div>
                  </div>
 
