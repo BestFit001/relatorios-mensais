@@ -56,7 +56,6 @@ function parseSmartFloat(val: any) {
   return parseFloat(strVal) || 0;
 }
 
-// AVALIADOR DE FÓRMULAS ROBUSTO COM SUPORTE A TODAS AS COLUNAS ALFABÉTICAS DA PLANILHA
 function compilarFormulaExcel(src: any) {
   const texto = String(src || '').trim().replace(/^=/, '');
   if (!texto) return null;
@@ -347,13 +346,13 @@ export default function UpdatesPage() {
         }
 
         if (registros.length > 0) {
-          await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash);
+          await supabase.from('faturados_pedidos').delete().eq('mes_referencia', mesAlvoDash);
           for (let i = 0; i < registros.length; i += 500) {
-            await supabase.from('faturados').insert(registros.slice(i, i + 500));
+            await supabase.from('faturados_pedidos').insert(registros.slice(i, i + 500));
           }
         }
 
-        alert(`✅ Faturados importados e limpos com sucesso! Total: ${registros.length} registos.`);
+        alert(`✅ Faturados salvos em 'faturados_pedidos'! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Faturados: " + err.message);
@@ -363,7 +362,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS MAPEANDO TODAS AS COLUNAS POR LETRA E APLICANDO A FÓRMULA DE REGRAS
+  // PASSO 2: IMPORTAR VENDAS PARA A TABELA ISOLADA 'vendas_canais'
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -378,13 +377,13 @@ export default function UpdatesPage() {
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
         const { data: faturadosBanco } = await supabase
-          .from('faturados')
+          .from('faturados_pedidos')
           .select('id_pedido')
           .eq('mes_referencia', mesAlvoDash);
 
         const idsFaturadosSet = new Set((faturadosBanco || []).map((f: any) => String(f.id_pedido).trim()));
         if (idsFaturadosSet.size === 0) {
-          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado no Supabase para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
+          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado em 'faturados_pedidos' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
           setLoading(false);
           return;
         }
@@ -426,7 +425,6 @@ export default function UpdatesPage() {
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : row[28]);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] ? row[idxQtd] : (row[7] || 1)) || 1;
 
-          // Cria o contexto com todas as colunas da linha convertidas para letras (A, B, C, D, T, I, AC, etc.)
           const contextoLinha: Record<string, number> = {
             'PDV': precoVenda,
             'I': precoVenda,
@@ -457,20 +455,20 @@ export default function UpdatesPage() {
             sku: sku,
             produto: `Produto ${sku}`,
             quantidade: isNaN(quantidade) ? 1 : quantidade,
-            valor: precoVenda,
+            preco_venda: precoVenda,
             repasse_liquido: repasseLiquido
           });
         }
 
         if (novasVendas.length > 0) {
-          await supabase.from('vendas_padrao_lancamentos').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
+          await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
           for (let i = 0; i < novasVendas.length; i += 500) {
-            const { error } = await supabase.from('vendas_padrao_lancamentos').insert(novasVendas.slice(i, i + 500));
+            const { error } = await supabase.from('vendas_canais').insert(novasVendas.slice(i, i + 500));
             if (error) throw error;
           }
         }
 
-        alert(`✅ Vendas cruzadas, aplicando a fórmula do canal, e gravadas com sucesso!\n• Importados: ${novasVendas.length} itens\n• Ignorados: ${ignoradosNaoFaturados}`);
+        alert(`✅ Vendas salvas na tabela 'vendas_canais' com sucesso!\n• Importados: ${novasVendas.length} itens\n• Ignorados: ${ignoradosNaoFaturados}`);
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
       } finally {
@@ -496,21 +494,26 @@ export default function UpdatesPage() {
         const idxId = letraParaIndice(colunaIdSite);
         const idxTarifa = letraParaIndice(colunaTarifaSite);
 
-        const novasTarifas: Record<string, number> = {};
+        const registros = [];
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row) continue;
           const idPedido = String(row[idxId] || "").trim();
           const valorTarifa = parseSmartFloat(row[idxTarifa]);
 
-          if (idPedido) novasTarifas[idPedido] = valorTarifa;
+          if (idPedido) {
+            registros.push({ id_pedido: idPedido, valor_tarifa: valorTarifa });
+          }
         }
 
-        if (Object.keys(novasTarifas).length > 0) {
-          await supabase.from('tb_estado_global').upsert([{ chave: 'tarifas_site', dados: novasTarifas }], { onConflict: 'chave' });
+        if (registros.length > 0) {
+          await supabase.from('tarifas_site').delete().neq('id', 0);
+          for (let i = 0; i < registros.length; i += 500) {
+            await supabase.from('tarifas_site').upsert(registros.slice(i, i + 500), { onConflict: 'id_pedido' });
+          }
         }
 
-        alert(`✅ Tarifas do Site importadas! Total: ${Object.keys(novasTarifas).length} registos.`);
+        alert(`✅ Tarifas do Site salvas em 'tarifas_site'! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Tarifas do Site: " + err.message);
@@ -524,9 +527,9 @@ export default function UpdatesPage() {
     setLoading(true);
     try {
       if (tabela === 'faturados') {
-        await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash);
+        await supabase.from('faturados_pedidos').delete().eq('mes_referencia', mesAlvoDash);
       } else if (tabela === 'vendas') {
-        await supabase.from('vendas_padrao_lancamentos').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
+        await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
       }
       alert(`✅ Registros de ${tabela} limpos.`);
     } catch (err: any) {
@@ -536,12 +539,13 @@ export default function UpdatesPage() {
   };
 
   const zerarBancoTotal = async () => {
-    if (!confirm("⚠️ Deseja apagar TODAS as informações das bases principais?")) return;
+    if (!confirm("⚠️ Deseja apagar TODAS as informações das novas bases?")) return;
     setLoading(true);
     try {
-      await supabase.from('vendas_padrao_lancamentos').delete().neq('id', 0);
-      await supabase.from('faturados').delete().neq('id', 0);
-      alert("✅ Banco de dados limpo com sucesso!");
+      await supabase.from('vendas_canais').delete().neq('id', 0);
+      await supabase.from('faturados_pedidos').delete().neq('id', 0);
+      await supabase.from('tarifas_site').delete().neq('id', 0);
+      alert("✅ Bases limpas com sucesso!");
     } catch (err: any) {
       alert("Erro: " + err.message);
     }
