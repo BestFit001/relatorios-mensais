@@ -362,7 +362,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS CRUZANDO PERFEITAMENTE O SKU E O NOME DO PRODUTO NA TABELA DE CUSTOS
+  // PASSO 2: IMPORTAR VENDAS LENDO EXATAMENTE A COLUNA CONFIGURADA NAS REGRAS
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -388,14 +388,12 @@ export default function UpdatesPage() {
           return;
         }
 
-        // Puxa as regras salvas do canal no Supabase
         const { data: regraData } = await supabase
           .from('config_regras_canais')
           .select('*')
           .eq('canal', canalAlvoDash)
           .maybeSingle();
 
-        // Puxa todos os custos do banco para cruzar o nome do produto correto pelo SKU (normalizado)
         const { data: custosBanco } = await supabase
           .from('tabela_custos_skus')
           .select('sku, produto');
@@ -434,7 +432,6 @@ export default function UpdatesPage() {
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
-          // Cruza exatamente com o mapa de produtos da tabela de custos
           const nomeProduto = mapaProdutos.get(sku) || (skuRaw ? String(skuRaw).trim() : 'Produto Geral');
 
           const contextoLinha: Record<string, number> = {
@@ -637,7 +634,7 @@ export default function UpdatesPage() {
     if (dadosInvBruto.length > 0) await supabase.from('inventario').insert(dadosInvBruto);
     setLoading(false);
     alert(`🚀 Dados guardados no Supabase com sucesso!`);
-    setFicheiroABC(""); setFicheiroInventario(""); setDadosABC(""); setDadosInvBruto([]);
+    setFicheiroABC(""); setFicheiroInventario(""); setDadosABC([]); setDadosInvBruto([]);
   };
 
   const limparDadosCompetencia = async () => {
@@ -1214,13 +1211,13 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
                   Apagar Faturados ({mesAlvoDash})
                 </button>
-                <button onClick={() => apagarDatesPorTipo('vendas')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
+                <button onClick={() => apagarDadosPorTipo('vendas')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
                   Apagar Vendas ({mesAlvoDash})
                 </button>
               </div>
