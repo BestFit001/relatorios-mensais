@@ -454,11 +454,6 @@ export default function DashboardPage() {
         .filter((c: any) => normalizarTexto(c.canal) === kCanal)
         .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
-      // Tratamento completo da Devolução conforme solicitado:
-      // - PDV descontado do Bruto
-      // - Frete (custo_frete / frete) descontado do líquido
-      // - Valor de repasse da venda inserida na devolução descontado do líquido
-      // - CMV dos produtos devolvidos computado corretamente da tabela de custos do Supabase
       let devPdvBruto = 0;
       let devFreteLiquido = 0;
       let devRepasseLiquido = 0;
@@ -525,7 +520,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal,
+        adsCanal: canalAds,
         flexCanal,
         isCurrentMonth,
         logoUrl,
