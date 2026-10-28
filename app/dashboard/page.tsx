@@ -525,7 +525,7 @@ export default function DashboardPage() {
         cancelamentosMes,
         devolucoesPdv: devPdvBruto,
         devolucoesFrete: devFreteLiquido,
-        adsCanal,
+        adsCanal: canalAds,
         flexCanal,
         isCurrentMonth,
         logoUrl,
