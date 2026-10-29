@@ -197,7 +197,6 @@ export default function DashboardPage() {
   const cancelados = database.cancelados || [];
   const users = database.usuarios_permissoes || [];
 
-  // Mapa de custos super flexível
   const produtosCustoMap = useMemo(() => {
     const map = new Map();
     (products || []).forEach((p: any) => {
@@ -806,7 +805,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* BOTÕES DE CHECKBOX / ALTERNÂNCIA DE VISUALIZAÇÃO (CARDS vs LINHAS) */}
       <div className="flex justify-between items-center bg-slate-900/60 px-5 py-3 rounded-xl border border-slate-800">
         <span className="text-xs text-slate-300 font-bold">Modo de Visualização dos Canais:</span>
         <div className="flex items-center gap-4">
@@ -831,10 +829,8 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 4 PAINÉIS DO TOPO */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         
-        {/* 1. FATURAMENTO BRUTO */}
         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center">
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Bruto</span>
@@ -871,7 +867,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* 2. REPASSE TOTAL */}
         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center">
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase">Repasse Total das Plataformas</span>
@@ -889,7 +884,6 @@ export default function DashboardPage() {
           </div>
         </div>
         
-        {/* 3. CMV TOTAL */}
         <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center">
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase">CMV Total (Custos de SKU x Qtd)</span>
@@ -907,7 +901,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* 4. LUCRO LÍQUIDO REAL */}
         <div className="bg-slate-900 p-5 rounded-2xl border border-emerald-500/20 flex flex-col justify-between text-center">
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
@@ -927,7 +920,6 @@ export default function DashboardPage() {
 
       </div>
 
-      {/* RENDERIZAÇÃO CONDICIONAL ENTRE CARDS E LINHAS */}
       {viewMode === 'cards' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {channelAnalytics.map((item: any) => {
@@ -969,7 +961,6 @@ export default function DashboardPage() {
                    </div>
                  </div>
 
-                 {/* DETALHAMENTO VISÍVEL DOS ABATIMENTOS & CMV */}
                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs text-slate-300">
                    <div className="flex justify-between items-center text-[10px]">
                      <span className="text-slate-400 font-bold uppercase">CMV (Custo Produtos):</span>
@@ -1177,8 +1168,8 @@ export default function DashboardPage() {
               </tfoot>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
