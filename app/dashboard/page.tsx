@@ -248,6 +248,20 @@ export default function DashboardPage() {
     return map;
   }, [database.config_regras_canais]);
 
+  const faturadosMap = useMemo(() => {
+    const map = new Map();
+    (database.faturados_pedidos || []).forEach((f: any) => {
+      const idPed = normalizarPedido(f.id_pedido);
+      if (idPed) {
+        map.set(idPed, {
+          data_faturamento: f.data_faturamento ? f.data_faturamento.slice(0, 10) : '',
+          mes_referencia: String(f.mes_referencia || '').trim().toLowerCase()
+        });
+      }
+    });
+    return map;
+  }, [database.faturados_pedidos]);
+
   const tarifasSiteMap = useMemo(() => {
     const map = new Map();
     (database.tarifas_site || []).forEach((t: any) => {
@@ -312,6 +326,7 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
+  // CRUCONEXÃO DE FATURADOS: APENAS PEDIDOS CUJO FATURAMENTO PERTENCE AO MÊS SELECIONADO ENTRARÃO NO DASHBOARD
   const enrichedSales = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -322,6 +337,21 @@ export default function DashboardPage() {
         const fisico = isChannelFisico(s.canal);
         if (appliedModalidadeFilter === 'FISICO' && !fisico) return false;
         if (appliedModalidadeFilter === 'DIGITAL' && fisico) return false;
+
+        const ped = normalizarPedido(s.id_pedido);
+        const fatInfo = faturadosMap.get(ped);
+
+        // Se o canal for digital (ex: Mercado Livre), exigimos validação pelo faturado do mês
+        if (!fisico) {
+          if (!fatInfo) return false;
+          // Verifica se o mês de referência ou a data do faturamento bate com o período selecionado
+          const mesRefAlvo = currentRefMonth.toLowerCase(); // ex: '2026-10' ou 'outubro de 2026'
+          const fatMesRef = fatInfo.mes_referencia.toLowerCase();
+          const fatData = fatInfo.data_faturamento; // yyyy-mm-dd
+
+          const matchMes = fatMesRef.includes(mesRefAlvo) || (fatData && fatData.startsWith(mesRefAlvo));
+          if (!matchMes) return false;
+        }
 
         return true;
       })
@@ -375,15 +405,18 @@ export default function DashboardPage() {
            repasseLiquido = Math.max(0, repasseLiquido - taxaVindi);
         }
         
+        const fatInfo = faturadosMap.get(ped);
+
         return { 
           ...s, 
           preco_venda: precoVenda,
           custoCMV, 
           custoFlex, 
-          repasse_liquido: repasseLiquido 
+          repasse_liquido: repasseLiquido,
+          data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap, faturadosMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
@@ -567,9 +600,7 @@ export default function DashboardPage() {
       const chSales = enrichedSales.filter((s: any) => normalizarTexto(s.canal) === kCanal);
       
       const vendasDoDia = chSales
-        .filter((s: any) => {
-          return s.data_faturamento === targetDateStr;
-        })
+        .filter((s: any) => s.data_faturamento === targetDateStr)
         .reduce((sum: number, s: any) => sum + s.preco_venda, 0);
 
       const ruleObj = channelRules.find((r: any) => normalizarTexto(r.canal) === kCanal) || {};
