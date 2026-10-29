@@ -27,9 +27,9 @@ function indiceParaLetra(index: number): string {
 
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
-  let s = String(valor).trim().replace(/^['"]/, "");
+  let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  s = s.replace(/^["']|["']$/g, "").trim();
+  s = s.replace(/\s+/g, '');
   if (/e\+/i.test(s)) {
     try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
   }
@@ -267,7 +267,6 @@ export default function UpdatesPage() {
 
       const skusComCusto = new Set((custos || []).map((c: any) => normalizarSku(c.sku)));
 
-      // Considera pendente APENAS se o SKU estiver realmente vazio ou não existir na tabela de custos
       const pendentes = (vendas || []).filter((v: any) => {
         const skuNorm = normalizarSku(v.sku);
         return !skuNorm || skuNorm === 'sem-sku' || !skusComCusto.has(skuNorm);
@@ -296,7 +295,7 @@ export default function UpdatesPage() {
         .eq('sku', skuNorm)
         .maybeSingle();
 
-      const produtoNome = custoMatch?.produto && custoMatch.produto !== skuNorm ? custoMatch.produto : "Produto Cadastrado";
+      const produtoNome = custoMatch?.produto && custoMatch.produto.toLowerCase() !== skuNorm ? custoMatch.produto : "Produto Cadastrado";
 
       const { error } = await supabase
         .from('vendas_canais')
@@ -305,13 +304,15 @@ export default function UpdatesPage() {
 
       if (error) throw error;
 
-      alert("✅ SKU atualizado com sucesso!");
+      // Remove imediatamente da lista local para sumir da tela na mesma hora
+      setVendasPendentes(prev => prev.filter(item => item.id !== id));
       setEdicoesPendentes(prev => {
         const copy = { ...prev };
         delete copy[id];
         return copy;
       });
-      carregarVendasPendentes();
+
+      alert("✅ SKU atualizado com sucesso!");
     } catch (err: any) {
       alert("Erro ao atualizar SKU: " + err.message);
     }
@@ -458,12 +459,10 @@ export default function UpdatesPage() {
           .from('tabela_custos_skus')
           .select('sku, produto');
 
-        // Mapeia SKU -> Nome Real do Produto (garantindo que se o produto na base for igual ao SKU ou vazio, ele usa um nome limpo)
         const mapaProdutos = new Map();
         (custosBanco || []).forEach((c: any) => {
           const sNorm = normalizarSku(c.sku);
           const pVal = String(c.produto || "").trim();
-          // Se o produto cadastrado for diferente do SKU e não vazio, usa ele. Senão, armazena para tratar.
           mapaProdutos.set(sNorm, pVal);
         });
 
@@ -499,7 +498,6 @@ export default function UpdatesPage() {
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
-          // Busca inteligente do nome do produto: se estiver na base e for válido, usa; senão usa o SKU cru
           let nomeProduto = mapaProdutos.get(sku);
           if (!nomeProduto || nomeProduto.toLowerCase() === sku) {
             nomeProduto = skuRaw ? String(skuRaw).trim() : 'Produto Geral';
@@ -1337,11 +1335,11 @@ export default function UpdatesPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col ID Pedido</label>
-                      <input type="text" value={colunaIdSite} onChange={e => setColunaIdSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                      <input type="text" value={colunaIdSite} onChange={e => colunaIdSite && setColunaIdSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col Valor Tarifa</label>
-                      <input type="text" value={colunaTarifaSite} onChange={e => setColunaTarifaSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                      <input type="text" value={colunaTarifaSite} onChange={e => colunaTarifaSite && setColunaTarifaSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
                     </div>
                   </div>
                   <label className="block w-full text-center bg-indigo-600 hover:bg-indigo-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
@@ -1356,7 +1354,7 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
