@@ -3,6 +3,7 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
+import * as XLSX from "xlsx";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -65,7 +66,7 @@ const formatarMoeda = (valor: number) =>
 export default function CalculadoraPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [modoCalculo, setModoCalculo] = useState<"pdv_ideal" | "reversa" | "custo_ideal">("pdv_ideal");
+  const [modoCalculo, setModoCalculo] = useState<"pdv_ideal" | "reversa" | "custo_ideal" | "massa">("pdv_ideal");
 
   const [skuBusca, setSkuBusca] = useState("");
   const [marcaFiltro, setMarcaFiltro] = useState("");
@@ -74,14 +75,20 @@ export default function CalculadoraPage() {
   const [precoAlvoCustoIdeal, setPrecoAlvoCustoIdeal] = useState("100.00");
   const [margemCustoIdeal, setMargemCustoIdeal] = useState("20");
 
+  // Estados para Precificação em Massa
+  const [canalMassaSelecionado, setCanalMassaSelecionado] = useState("Shopee");
+  const [margemMassaGlobal, setMargemMassaGlobal] = useState("30");
+  const [resultadosMassa, setResultadosMassa] = useState<any[]>([]);
+  const [processandoMassa, setProcessandoMassa] = useState(false);
+
   // Estado para armazenar o valor de rebate inserido por canal
   const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
 
   const [produtoEncontrado, setProdutoEncontrado] = useState<any>(null);
-  const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
+  const [custosMap, setCustosMap] = useState>(new Map());
   
-  const [mapeamentoMl1, setMapeamentoMl1] = useState<Map<string, any[]>>(new Map());
-  const [mapeamentoMl2, setMapeamentoMl2] = useState<Map<string, any[]>>(new Map());
+  const [mapeamentoMl1, setMapeamentoMl1] = useState>(new Map());
+  const [mapeamentoMl2, setMapeamentoMl2] = useState>(new Map());
   
   const [canaisConfig, setCanaisConfig] = useState<string[]>([]);
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
@@ -272,6 +279,136 @@ export default function CalculadoraPage() {
     return regrasDoCanal[0];
   };
 
+  // Função de Upload e Precificação em Massa
+  const handleFileUploadMassa = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setProcessandoMassa(true);
+    const reader = new FileReader();
+
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: "binary" });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+        const impostoPercent = 0.09;
+        const resultadosCalculados: any[] = [];
+        const cLower = canalMassaSelecionado.toLowerCase();
+
+        data.forEach((row, index) => {
+          if (index === 0 && String(row[0]).toLowerCase().includes("sku")) return;
+
+          let skuEncontrado = "";
+          let margemLinha = parsePorcentagem(margemMassaGlobal);
+
+          row.forEach((cellVal, colIdx) => {
+            const valStr = normalizarSku(cellVal);
+            if (skuValido(valStr)) {
+              skuEncontrado = valStr;
+            }
+            if (colIdx === 0 && !skuValido(valStr) && parsePorcentagem(cellVal) > 0) {
+              margemLinha = parsePorcentagem(cellVal);
+            }
+          });
+
+          if (!skuEncontrado) return;
+
+          const produtoMatch = custosMap.get(skuEncontrado);
+          const custoProduto = produtoMatch ? Number(produtoMatch.custo_unitario || 25.88) : 25.88;
+          const nomeProduto = produtoMatch ? produtoMatch.produto : "Produto SKU " + skuEncontrado;
+
+          const anunciosMl1 = mapeamentoMl1.get(skuEncontrado) || [];
+          const anunciosMl2 = mapeamentoMl2.get(skuEncontrado) || [];
+          let anunciosSku = cLower.includes("mercado livre 2") ? anunciosMl2 : anunciosMl1;
+          let refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
+
+          let comissaoPct = 0.14;
+          if (cLower.includes("mercado livre")) {
+            if (cLower.includes("clássico")) comissaoPct = 0.14;
+            else if (cLower.includes("premium")) comissaoPct = 0.19;
+          }
+
+          const pesoReal = refAnuncio && Number(refAnuncio.peso_real) > 0 ? Number(refAnuncio.peso_real) : 2.0;
+          const altura = refAnuncio && Number(refAnuncio.altura) > 0 ? Number(refAnuncio.altura) : 10;
+          const largura = refAnuncio && Number(refAnuncio.largura) > 0 ? Number(refAnuncio.largura) : 10;
+          const comprimento = refAnuncio && Number(refAnuncio.comprimento) > 0 ? Number(refAnuncio.comprimento) : 10;
+
+          const margemAlvoDec = margemLinha / 100;
+          let pdvCalculado = custoProduto * 2;
+
+          for (let iter = 0; iter < 5; iter++) {
+            let tarifaFixa = 0;
+            let freteVariavel = 0;
+
+            if (cLower.includes("mercado livre")) {
+              tarifaFixa = pdvCalculado < 79.00 ? 6.50 : 0.00;
+              freteVariavel = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
+            } else {
+              const regraTabela = obterRegraCanalDaTabela(canalMassaSelecionado, pdvCalculado);
+              comissaoPct = Number(regraTabela.comissao || 14) / 100;
+              tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
+              freteVariavel = Number(regraTabela.frete || 0);
+            }
+
+            const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
+            pdvCalculado = denominador > 0 ? (custoProduto + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
+          }
+
+          let tarifaFixaFinal = 0;
+          let freteFinal = 0;
+          if (cLower.includes("mercado livre")) {
+            tarifaFixaFinal = pdvCalculado < 79.00 ? 6.50 : 0.00;
+            freteFinal = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
+          } else {
+            const regraTabela = obterRegraCanalDaTabela(canalMassaSelecionado, pdvCalculado);
+            tarifaFixaFinal = Number(regraTabela.tarifa_fixa || 0);
+            freteFinal = Number(regraTabela.frete || 0);
+          }
+
+          const valorComissao = pdvCalculado * comissaoPct;
+          const valorImposto = pdvCalculado * impostoPercent;
+          const lucroLiquido = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+          const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
+
+          resultadosCalculados.push({
+            SKU: skuEncontrado,
+            Produto: nomeProduto,
+            Canal: canalMassaSelecionado,
+            "Margem Indicada (%)": margemLinha,
+            "Custo (R$)": Number(custoProduto.toFixed(2)),
+            "PDV Calculado (R$)": Number(pdvCalculado.toFixed(2)),
+            "Comissão (R$)": Number(valorComissao.toFixed(2)),
+            "Frete (R$)": Number(freteFinal.toFixed(2)),
+            "Imposto (R$)": Number(valorImposto.toFixed(2)),
+            "Lucro Líquido (R$)": Number(lucroLiquido.toFixed(2)),
+            "Margem Final (%)": Number(margemFinal.toFixed(2))
+          });
+        });
+
+        setResultadosMassa(resultadosCalculados);
+        setProcessandoMassa(false);
+      } catch (err) {
+        console.error(err);
+        alert("Erro ao processar a planilha.");
+        setProcessandoMassa(false);
+      }
+    };
+
+    reader.readAsBinaryString(file);
+  };
+
+  const baixarPlanilhaMassa = () => {
+    if (resultadosMassa.length === 0) return;
+    const worksheet = XLSX.utils.json_to_sheet(resultadosMassa);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Precificação Massa");
+    XLSX.writeFile(workbook, `precificacao_${canalMassaSelecionado.toLowerCase().replace(/\s+/g, "_")}.xlsx`);
+  };
+
   const calcularResultadosCanais = () => {
     if (!produtoEncontrado) return [];
 
@@ -322,7 +459,6 @@ export default function CalculadoraPage() {
         const largura = refAnuncio && Number(refAnuncio.largura) > 0 ? Number(refAnuncio.largura) : 10;
         const comprimento = refAnuncio && Number(refAnuncio.comprimento) > 0 ? Number(refAnuncio.comprimento) : 10;
 
-        // Valor de rebate adicionado manualmente pelo usuário para este canal
         const valRebate = parseNumero(rebatesCanais[canalNome] || "0");
 
         if (modoCalculo === "pdv_ideal") {
@@ -345,7 +481,6 @@ export default function CalculadoraPage() {
             }
 
             const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
-            // O rebate reduz o custo efetivo ou soma-se à receita, facilitando o cálculo do PDV ideal
             const custoEfetivo = Math.max(0, custoProduto - valRebate);
             pdvCalculado = denominador > 0 ? (custoEfetivo + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
           }
@@ -365,7 +500,6 @@ export default function CalculadoraPage() {
           const valorComissao = pdvCalculado * comissaoPct;
           const valorImposto = pdvCalculado * impostoPercent;
           
-          // Lucro base + Rebate somado ao líquido/lucro
           const lucroLiquidoBase = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
           const lucroLiquido = lucroLiquidoBase + valRebate;
           const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
@@ -405,7 +539,6 @@ export default function CalculadoraPage() {
           const valorComissao = pdvBase * comissaoPct;
           const valorImposto = pdvBase * impostoPercent;
           
-          // O rebate soma-se ao lucro líquido
           const lucroLiquidoBase = pdvBase - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
           const lucroLiquido = lucroLiquidoBase + valRebate;
           const margemFinal = pdvBase > 0 ? (lucroLiquido / pdvBase) * 100 : 0;
@@ -446,7 +579,6 @@ export default function CalculadoraPage() {
           const valorImposto = pdvAlvo * impostoPercent;
 
           const termoMultiplicador = 1 - (comissaoPct + impostoPercent + margemDesejadaDec);
-          // O rebate ajuda a suportar um custo ideal maior
           let custoIdealCalculado = (pdvAlvo * termoMultiplicador) - tarifaFixaFinal - freteFinal + valRebate;
 
           const lucroLiquidoIdealBase = pdvAlvo - (custoIdealCalculado > 0 ? custoIdealCalculado : 0 + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
@@ -499,10 +631,11 @@ export default function CalculadoraPage() {
           <Navbar />
         </div>
 
+        {/* Abas de Modos de Cálculo */}
         <div className="flex flex-wrap gap-2 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
           <button
             onClick={() => setModoCalculo("pdv_ideal")}
-            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+            className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
               modoCalculo === "pdv_ideal" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
             }`}
           >
@@ -510,7 +643,7 @@ export default function CalculadoraPage() {
           </button>
           <button
             onClick={() => setModoCalculo("reversa")}
-            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+            className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
               modoCalculo === "reversa" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
             }`}
           >
@@ -518,249 +651,353 @@ export default function CalculadoraPage() {
           </button>
           <button
             onClick={() => setModoCalculo("custo_ideal")}
-            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+            className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
               modoCalculo === "custo_ideal" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
             }`}
           >
             Custo Ideal (Margem Desejada)
           </button>
+          <button
+            onClick={() => setModoCalculo("massa")}
+            className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              modoCalculo === "massa" ? "bg-emerald-600 text-white shadow-lg" : "text-emerald-400 hover:text-white"
+            }`}
+          >
+            ⚡ Precificação em Massa (Upload)
+          </button>
         </div>
 
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        {/* CONTEÚDO QUANDO O MODO FOR MASSA */}
+        {modoCalculo === "massa" ? (
+          <div className="bg-slate-900/90 p-6 rounded-2xl border border-emerald-500/40 shadow-xl space-y-6">
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU(s) — Digite o SKU (&gt;= 10 dig):</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={skuBusca}
-                  onChange={(e) => setSkuBusca(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleBuscarProduto()}
-                  placeholder="Ex: 20345042233"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-purple-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleBuscarProduto}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 rounded-xl text-xs uppercase cursor-pointer"
+              <h2 className="text-lg font-bold text-emerald-400">Precificação em Massa por Canal</h2>
+              <p className="text-xs text-slate-400">Selecione o canal de destino, defina a margem e envie sua planilha contendo os SKUs.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Destino:</label>
+                <select
+                  value={canalMassaSelecionado}
+                  onChange={(e) => setCanalMassaSelecionado(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-emerald-500 cursor-pointer"
                 >
-                  Buscar
-                </button>
+                  {canaisConfig.map((canal, idx) => (
+                    <option key={idx} value={canal}>{canal}</option>
+                  ))}
+                </select>
               </div>
-            </div>
 
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca:</label>
-              <input
-                type="text"
-                value={marcaFiltro}
-                onChange={(e) => setMarcaFiltro(e.target.value)}
-                placeholder="Ex: BEST FIT"
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
-              />
-            </div>
-
-            {modoCalculo === "pdv_ideal" && (
-              <div className="md:col-span-2">
-                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Alvo (%):</label>
+              <div>
+                <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Margem Global Padrão (%):</label>
                 <input
                   type="number"
-                  value={margemAlvo}
-                  onChange={(e) => setMargemAlvo(e.target.value)}
-                  className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
+                  value={margemMassaGlobal}
+                  onChange={(e) => setMargemMassaGlobal(e.target.value)}
+                  className="w-full bg-slate-950 border border-emerald-600/50 rounded-xl p-2.5 text-xs font-mono text-emerald-300 font-bold outline-none"
                 />
               </div>
-            )}
 
-            {modoCalculo === "reversa" && (
-              <div className="md:col-span-2">
-                <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Preço Fixo Global (R$):</label>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Upload Planilha (Crua / SKUs):</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={precoFixo}
-                  onChange={(e) => setPrecoFixo(e.target.value)}
-                  className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleFileUploadMassa}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer"
                 />
-              </div>
-            )}
-
-            {modoCalculo === "custo_ideal" && (
-              <>
-                <div>
-                  <label className="block text-[10px] font-bold text-cyan-400 uppercase mb-1">Preço de Venda Alvo (R$):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={precoAlvoCustoIdeal}
-                    onChange={(e) => setPrecoAlvoCustoIdeal(e.target.value)}
-                    className="w-full bg-slate-950 border border-cyan-600/50 rounded-xl p-2.5 text-xs font-mono text-cyan-300 font-bold outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Lucro / Margem Desejada (%):</label>
-                  <input
-                    type="number"
-                    value={margemCustoIdeal}
-                    onChange={(e) => setMargemCustoIdeal(e.target.value)}
-                    className="w-full bg-slate-950 border border-emerald-600/50 rounded-xl p-2.5 text-xs font-mono text-emerald-300 font-bold outline-none"
-                  />
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="pt-4 border-t border-slate-800 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Canais Visíveis na Precificação:</span>
-              <div className="flex gap-3 text-xs">
-                <button type="button" onClick={() => selecionarTodosCanais(true)} className="text-purple-400 hover:underline cursor-pointer">
-                  Marcar Todos
-                </button>
-                <span className="text-slate-600">|</span>
-                <button type="button" onClick={() => selecionarTodosCanais(false)} className="text-slate-400 hover:underline cursor-pointer">
-                  Desmarcar Todos
-                </button>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 pt-1">
-              {canaisConfig.map((canalNome, i) => {
-                const ativo = canaisSelecionados.includes(canalNome);
-                return (
+
+            {processandoMassa && (
+              <div className="text-center py-6 text-emerald-400 font-bold animate-pulse text-xs">
+                Processando SKUs e calculando preços de venda em lote...
+              </div>
+            )}
+
+            {resultadosMassa.length > 0 && !processandoMassa && (
+              <div className="space-y-4 pt-4 border-t border-slate-800">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-slate-300">{resultadosMassa.length} SKUs precificados com sucesso para {canalMassaSelecionado}.</span>
                   <button
-                    key={i}
-                    type="button"
-                    onClick={() => toggleCanalSelecao(canalNome)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
-                      ativo
-                        ? "bg-purple-600/30 text-purple-300 border-purple-500/60 shadow-sm"
-                        : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300"
-                    }`}
+                    onClick={baixarPlanilhaMassa}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-xl text-xs uppercase cursor-pointer shadow-lg flex items-center gap-2"
                   >
-                    {ativo ? "✓ " : "+ "} {canalNome}
+                    📥 Baixar Planilha Precificada (.xlsx)
                   </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+                </div>
 
-        {produtoEncontrado && (
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <span className="block text-[9px] font-bold text-slate-500 uppercase">SKU</span>
-              <span className="text-xs font-mono font-bold text-indigo-400">{produtoEncontrado.sku}</span>
-            </div>
-            <div>
-              <span className="block text-[9px] font-bold text-slate-500 uppercase">Nome do Produto</span>
-              <span className="text-xs font-bold text-white">{produtoEncontrado.produto}</span>
-            </div>
-            <div>
-              <span className="block text-[9px] font-bold text-slate-500 uppercase">Marca</span>
-              <span className="text-xs font-bold text-slate-300">{produtoEncontrado.marca}</span>
-            </div>
-            <div>
-              <span className="block text-[9px] font-bold text-slate-500 uppercase">Custo Base Atual (CMV)</span>
-              <span className="text-xs font-mono font-bold text-rose-400">{formatarMoeda(produtoEncontrado.custo_unitario)}</span>
-            </div>
-            <div className="bg-emerald-950/40 border border-emerald-900/50 px-3 py-1.5 rounded-xl">
-              <span className="block text-[9px] font-bold text-emerald-400 uppercase">Status do Item</span>
-              <span className="text-xs font-bold text-emerald-300">LINHA NORMAL (Ativo)</span>
-            </div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {resultadosCanais.map((res, idx) => (
-            <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col justify-between">
-              <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                <h3 className="text-sm font-bold text-white">{res.canal}</h3>
-                <div className="flex items-center gap-2">
-                  {res.canal.toLowerCase().includes("mercado livre") && (
-                    <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${res.temMlb ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-amber-950 text-amber-400 border border-amber-800"}`}>
-                      {res.temMlb ? "MLB Encontrado" : "Padrão (Sem MLB)"}
-                    </span>
-                  )}
-                  <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
-                    Comissão: {res.comissaoPct.toFixed(1)}%
-                  </span>
+                <div className="overflow-x-auto max-h-96 rounded-xl border border-slate-800">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="bg-slate-950 text-slate-400 uppercase text-[10px]">
+                      <tr>
+                        <th className="p-3">SKU</th>
+                        <th className="p-3">Produto</th>
+                        <th className="p-3">Canal</th>
+                        <th className="p-3">Custo (R$)</th>
+                        <th className="p-3 text-emerald-400">PDV Calculado</th>
+                        <th className="p-3">Lucro Líquido</th>
+                        <th className="p-3">Margem Final</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800 text-slate-200">
+                      {resultadosMassa.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-slate-950/50">
+                          <td className="p-3 text-indigo-400 font-bold">{item.SKU}</td>
+                          <td className="p-3 truncate max-w-xs">{item.Produto}</td>
+                          <td className="p-3 text-slate-400">{item.Canal}</td>
+                          <td className="p-3 text-rose-400">{formatarMoeda(item["Custo (R$)"])}</td>
+                          <td className="p-3 text-emerald-400 font-bold">{formatarMoeda(item["PDV Calculado (R$)"])}</td>
+                          <td className="p-3 text-emerald-300">{formatarMoeda(item["Lucro Líquido (R$)"])}</td>
+                          <td className="p-3 text-purple-300">{item["Margem Final (%)"].toFixed(2)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-
-              <div className="p-5 space-y-3">
-                <div className="flex items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
-                  <div>
-                    <span className="block text-[10px] font-bold text-slate-400 uppercase">
-                      {modoCalculo === "custo_ideal" ? "Custo Máximo (Ideal de Aquisição)" : (modoCalculo === "pdv_ideal" ? "Preço de Venda (PDV Ideal)" : "Preço de Venda (PDV)")}
-                    </span>
-                    <span className={`text-xl font-black font-mono mt-0.5 block ${modoCalculo === "custo_ideal" ? "text-cyan-400" : "text-emerald-400"}`}>
-                      {modoCalculo === "custo_ideal" ? formatarMoeda(res.custoIdealCalculado || 0) : formatarMoeda(res.pdv)}
-                    </span>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* CONTEÚDO DOS MODOS INDIVIDUAIS (PDV, Reversa, Custo Ideal) */}
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU(s) — Digite o SKU (>= 10 dig):</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={skuBusca}
+                      onChange={(e) => setSkuBusca(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleBuscarProduto()}
+                      placeholder="Ex: 20345042233"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-purple-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleBuscarProduto}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 rounded-xl text-xs uppercase cursor-pointer"
+                    >
+                      Buscar
+                    </button>
                   </div>
                 </div>
 
-                {/* CAMPO DE REBATE MANUAL POR CANAL */}
-                <div className="bg-purple-950/20 border border-purple-900/40 p-2.5 rounded-xl flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-bold text-purple-300 uppercase">Rebate / Subsídio (R$):</span>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca:</label>
                   <input
-                    type="number"
-                    step="0.01"
-                    value={rebatesCanais[res.canal] || ""}
-                    onChange={(e) => setRebatesCanais({ ...rebatesCanais, [res.canal]: e.target.value })}
-                    placeholder="0.00"
-                    className="w-24 bg-slate-950 border border-purple-700/60 rounded-lg p-1 text-xs font-mono font-bold text-purple-200 text-right outline-none"
+                    type="text"
+                    value={marcaFiltro}
+                    onChange={(e) => setMarcaFiltro(e.target.value)}
+                    placeholder="Ex: BEST FIT"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
                   />
                 </div>
 
-                <div className="space-y-1.5 text-xs font-mono text-slate-300 pt-1">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">{modoCalculo === "custo_ideal" ? "Custo Ideal Calculado:" : "Custo Produto:"}</span>
-                    <span className={modoCalculo === "custo_ideal" ? "text-cyan-400 font-bold" : "text-rose-400"}>
-                      - {formatarMoeda(modoCalculo === "custo_ideal" ? (res.custoIdealCalculado || 0) : res.custoProduto)}
-                    </span>
+                {modoCalculo === "pdv_ideal" && (
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Alvo (%):</label>
+                    <input
+                      type="number"
+                      value={margemAlvo}
+                      onChange={(e) => setMargemAlvo(e.target.value)}
+                      className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
+                    />
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Comissão ({res.comissaoPct.toFixed(1)}%):</span>
-                    <span className="text-rose-400">- {formatarMoeda(res.valorComissao)}</span>
+                )}
+
+                {modoCalculo === "reversa" && (
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Preço Fixo Global (R$):</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={precoFixo}
+                      onChange={(e) => setPrecoFixo(e.target.value)}
+                      className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
+                    />
                   </div>
-                  {res.tarifaFixa > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Tarifa Fixa:</span>
-                      <span className="text-rose-400">- {formatarMoeda(res.tarifaFixa)}</span>
+                )}
+
+                {modoCalculo === "custo_ideal" && (
+                  <>
+                    <div>
+                      <label className="block text-[10px] font-bold text-cyan-400 uppercase mb-1">Preço de Venda Alvo (R$):</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={precoAlvoCustoIdeal}
+                        onChange={(e) => setPrecoAlvoCustoIdeal(e.target.value)}
+                        className="w-full bg-slate-950 border border-cyan-600/50 rounded-xl p-2.5 text-xs font-mono text-cyan-300 font-bold outline-none"
+                      />
                     </div>
-                  )}
-                  {res.frete > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Frete:</span>
-                      <span className="text-rose-400">- {formatarMoeda(res.frete)}</span>
+                    <div>
+                      <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Lucro / Margem Desejada (%):</label>
+                      <input
+                        type="number"
+                        value={margemCustoIdeal}
+                        onChange={(e) => setMargemCustoIdeal(e.target.value)}
+                        className="w-full bg-slate-950 border border-emerald-600/50 rounded-xl p-2.5 text-xs font-mono text-emerald-300 font-bold outline-none"
+                      />
                     </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Imposto (9%):</span>
-                    <span className="text-rose-400">- {formatarMoeda(res.valorImposto)}</span>
-                  </div>
-                  {res.rebate > 0 && (
-                    <div className="flex justify-between font-bold text-purple-400">
-                      <span>Rebate Adicionado:</span>
-                      <span>+ {formatarMoeda(res.rebate)}</span>
-                    </div>
-                  )}
-                </div>
+                  </>
+                )}
               </div>
 
-              <div className="p-4 bg-emerald-950/20 border-t border-emerald-900/30 flex justify-between items-center">
-                <div>
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Lucro Líquido</span>
-                  <span className="text-sm font-black text-emerald-400 font-mono">{formatarMoeda(res.lucroLiquido)}</span>
+              <div className="pt-4 border-t border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Canais Visíveis na Precificação:</span>
+                  <div className="flex gap-3 text-xs">
+                    <button type="button" onClick={() => selecionarTodosCanais(true)} className="text-purple-400 hover:underline cursor-pointer">
+                      Marcar Todos
+                    </button>
+                    <span className="text-slate-600">|</span>
+                    <button type="button" onClick={() => selecionarTodosCanais(false)} className="text-slate-400 hover:underline cursor-pointer">
+                      Desmarcar Todos
+                    </button>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Margem Final</span>
-                  <span className="text-sm font-black text-emerald-400 font-mono">{res.margemFinal.toFixed(2)}%</span>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {canaisConfig.map((canalNome, i) => {
+                    const ativo = canaisSelecionados.includes(canalNome);
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => toggleCanalSelecao(canalNome)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                          ativo
+                            ? "bg-purple-600/30 text-purple-300 border-purple-500/60 shadow-sm"
+                            : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300"
+                        }`}
+                      >
+                        {ativo ? "✓ " : "+ "} {canalNome}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
-          ))}
-        </div>
+
+            {produtoEncontrado && (
+              <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-500 uppercase">SKU</span>
+                  <span className="text-xs font-mono font-bold text-indigo-400">{produtoEncontrado.sku}</span>
+                </div>
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-500 uppercase">Nome do Produto</span>
+                  <span className="text-xs font-bold text-white">{produtoEncontrado.produto}</span>
+                </div>
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-500 uppercase">Marca</span>
+                  <span className="text-xs font-bold text-slate-300">{produtoEncontrado.marca}</span>
+                </div>
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-500 uppercase">Custo Base Atual (CMV)</span>
+                  <span className="text-xs font-mono font-bold text-rose-400">{formatarMoeda(produtoEncontrado.custo_unitario)}</span>
+                </div>
+                <div className="bg-emerald-950/40 border border-emerald-900/50 px-3 py-1.5 rounded-xl">
+                  <span className="block text-[9px] font-bold text-emerald-400 uppercase">Status do Item</span>
+                  <span className="text-xs font-bold text-emerald-300">LINHA NORMAL (Ativo)</span>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {resultadosCanais.map((res, idx) => (
+                <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col justify-between">
+                  <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
+                    <h3 className="text-sm font-bold text-white">{res.canal}</h3>
+                    <div className="flex items-center gap-2">
+                      {res.canal.toLowerCase().includes("mercado livre") && (
+                        <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${res.temMlb ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-amber-950 text-amber-400 border border-amber-800"}`}>
+                          {res.temMlb ? "MLB Encontrado" : "Padrão (Sem MLB)"}
+                        </span>
+                      )}
+                      <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
+                        Comissão: {res.comissaoPct.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-5 space-y-3">
+                    <div className="flex items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div>
+                        <span className="block text-[10px] font-bold text-slate-400 uppercase">
+                          {modoCalculo === "custo_ideal" ? "Custo Máximo (Ideal de Aquisição)" : (modoCalculo === "pdv_ideal" ? "Preço de Venda (PDV Ideal)" : "Preço de Venda (PDV)")}
+                        </span>
+                        <span className={`text-xl font-black font-mono mt-0.5 block ${modoCalculo === "custo_ideal" ? "text-cyan-400" : "text-emerald-400"}`}>
+                          {modoCalculo === "custo_ideal" ? formatarMoeda(res.custoIdealCalculado || 0) : formatarMoeda(res.pdv)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-purple-950/20 border border-purple-900/40 p-2.5 rounded-xl flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-purple-300 uppercase">Rebate / Subsídio (R$):</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={rebatesCanais[res.canal] || ""}
+                        onChange={(e) => setRebatesCanais({ ...rebatesCanais, [res.canal]: e.target.value })}
+                        placeholder="0.00"
+                        className="w-24 bg-slate-950 border border-purple-700/60 rounded-lg p-1 text-xs font-mono font-bold text-purple-200 text-right outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5 text-xs font-mono text-slate-300 pt-1">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">{modoCalculo === "custo_ideal" ? "Custo Ideal Calculado:" : "Custo Produto:"}</span>
+                        <span className={modoCalculo === "custo_ideal" ? "text-cyan-400 font-bold" : "text-rose-400"}>
+                          - {formatarMoeda(modoCalculo === "custo_ideal" ? (res.custoIdealCalculado || 0) : res.custoProduto)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Comissão ({res.comissaoPct.toFixed(1)}%):</span>
+                        <span className="text-rose-400">- {formatarMoeda(res.valorComissao)}</span>
+                      </div>
+                      {res.tarifaFixa > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Tarifa Fixa:</span>
+                          <span className="text-rose-400">- {formatarMoeda(res.tarifaFixa)}</span>
+                        </div>
+                      )}
+                      {res.frete > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Frete:</span>
+                          <span className="text-rose-400">- {formatarMoeda(res.frete)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Imposto (9%):</span>
+                        <span className="text-rose-400">- {formatarMoeda(res.valorImposto)}</span>
+                      </div>
+                      {res.rebate > 0 && (
+                        <div className="flex justify-between font-bold text-purple-400">
+                          <span>Rebate Adicionado:</span>
+                          <span>+ {formatarMoeda(res.rebate)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-emerald-950/20 border-t border-emerald-900/30 flex justify-between items-center">
+                    <div>
+                      <span className="block text-[9px] font-bold text-slate-400 uppercase">Lucro Líquido</span>
+                      <span className="text-sm font-black text-emerald-400 font-mono">{formatarMoeda(res.lucroLiquido)}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-[9px] font-bold text-slate-400 uppercase">Margem Final</span>
+                      <span className="text-sm font-black text-emerald-400 font-mono">{res.margemFinal.toFixed(2)}%</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
       </div>
     </div>
