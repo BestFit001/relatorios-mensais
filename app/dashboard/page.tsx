@@ -1,66 +1,30 @@
-"use client";
-import { useState, ChangeEvent, useEffect } from "react";
-import * as XLSX from "xlsx";
-import { supabase } from "../../lib/supabase";
-import Navbar from "../components/Navbar";
-import { useRouter } from "next/navigation";
+'use client';
+import React, { useState, useMemo, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
+import Navbar from '@/app/components/Navbar';
 
-async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo?: string, eqValor?: any) {
-  let todos: any[] = [];
-  let from = 0;
-  const step = 1000;
-  let continuar = true;
-  
-  while (continuar) {
-    let query = supabase.from(tabela).select(select).range(from, from + step - 1);
-    if (eqCampo && eqValor !== undefined) {
-      query = query.eq(eqCampo, eqValor);
-    }
-    
-    const { data, error } = await query;
-    if (error || !data) break;
-    todos = [...todos, ...data];
-    from += step;
-    if (data.length < step) continuar = false;
+const TABELAS_SUPABASE = [
+  'vendas_canais',
+  'faturados_pedidos',
+  'tarifas_site',
+  'tabela_custos_skus',
+  'config_regras_canais',
+  'config_regras_tiny',
+  'tb_metas',
+  'devolucoes',
+  'ads_faturamento_canal',
+  'plp_pedidos',
+] as const;
+
+function indiceParaLetra(index: number): string {
+  let n = index + 1;
+  let letters = "";
+  while (n > 0) {
+    let rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
   }
-  return todos;
-}
-
-function letraParaIndice(letra: string): number {
-  let l = (letra || "A").trim().toUpperCase();
-  let num = 0;
-  for (let i = 0; i < l.length; i++) {
-    num = num * 26 + (l.charCodeAt(i) - 64);
-  }
-  return Math.max(0, num - 1);
-}
-
-function normalizarSku(valor: any): string {
-  if (valor === null || valor === undefined) return "";
-  let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
-  if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  s = s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-  return s;
-}
-
-function parseSmartFloat(val: any) {
-  if (val === undefined || val === null || val === '') return 0;
-  if (typeof val === 'number') return val;
-  let strVal = String(val).trim();
-  if (/^\d{4}-\d{2}-\d{2}/.test(strVal) || /^\d{2}\/\d{2}\/\d{4}/.test(strVal)) return 0;
-  strVal = strVal.replace(/[a-zA-Z$\s]/g, '');
-  if (strVal.includes(',') && strVal.includes('.')) {
-    const lastComma = strVal.lastIndexOf(',');
-    const lastDot = strVal.lastIndexOf('.');
-    if (lastComma > lastDot) {
-      strVal = strVal.replace(/\./g, '').replace(',', '.');
-    } else {
-      strVal = strVal.replace(/,/g, '');
-    }
-  } else if (strVal.includes(',')) {
-    strVal = strVal.replace(/\./g, '').replace(',', '.');
-  }
-  return parseFloat(strVal) || 0;
+  return letters;
 }
 
 function compilarFormulaExcel(src: any) {
@@ -142,1372 +106,1059 @@ function compilarFormulaExcel(src: any) {
   }
 }
 
-export default function UpdatesPage() {
-  const router = useRouter();
-  const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "vendas_pendentes" | "dashboard_admin">("relatorios");
+export default function DashboardPage() {
+  const [loading, setLoading] = useState(true);
+  const [database, setDatabase] = useState<Record<string, any[]>>({});
 
-  const [mes, setMes] = useState("09");
-  const [ano, setAno] = useState("2026");
-  const [ficheiroABC, setFicheiroABC] = useState("");
-  const [ficheiroInventario, setFicheiroInventario] = useState("");
-  const [dadosABC, setDadosABC] = useState<any[]>([]);
-  const [dadosInvBruto, setDadosInvBruto] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadingDelete, setLoadingDelete] = useState(false);
-
-  const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
-  const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
+  const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
+  const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
   
-  const [contaMlSelecionada, setContaMlSelecionada] = useState<"Mercado Livre 1" | "Mercado Livre 2">("Mercado Livre 1");
+  const [modalidadeFilter, setModalidadeFilter] = useState('DIGITAL');
+  const [appliedModalidadeFilter, setAppliedModalidadeFilter] = useState('DIGITAL');
 
-  const [colunasPorConta, setColunasPorConta] = useState<{ [key: string]: { ml_mlb: string, ml_sku: string, ml_comissao: string, ml_peso: string, ml_altura: string, ml_largura: string, ml_comprimento: string } }>({
-    "Mercado Livre 1": { ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'AA', ml_peso: 'AF', ml_altura: 'AC', ml_largura: 'AD', ml_comprimento: 'AE' },
-    "Mercado Livre 2": { ml_mlb: 'B', ml_sku: 'E', ml_comissao: 'AA', ml_peso: 'AF', ml_altura: 'AC', ml_largura: 'AD', ml_comprimento: 'AE' }
-  });
+  const [viewMode, setViewMode] = useState<'cards' | 'linhas'>('cards');
 
-  const [regrasColsCusto, setRegrasColsCusto] = useState({
-    custo_sku: 'B', custo_produto: 'C', custo_valor: 'E', custo_marca: 'D'
-  });
-
-  const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
-
-  const [pesquisaCusto, setPesquisaCusto] = useState("");
-  const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
-  const [pesquisaMl, setPesquisaMl] = useState("");
-
-  const [vendasPendentes, setVendasPendentes] = useState<any[]>([]);
-  const [edicoesPendentes, setEdicoesPendentes] = useState<{ [id: number]: string }>({});
-  const [selecionadosPendentes, setSelecionadosPendentes] = useState<{ [id: number]: boolean }>({});
-  const [skuEmLote, setSkuEmLote] = useState("");
-
-  const [mesAlvoDash, setMesAlvoDash] = useState("outubro de 2026");
-  const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
-  const [canaisDashList, setCanaisDashList] = useState<string[]>([
-    "Mercado Livre 1", "Mercado Livre 2", "Amazon", "Magalu", "Shopee", "TikTok", "Shein", "Netshoes", "Site", "Clube Hebraica", "Clube Paineiras", "Centauro"
-  ]);
-  const [colunaIdFaturados, setColunaIdFaturados] = useState("AI");
-  const [colunaDataFaturados, setColunaDataFaturados] = useState("D");
-  const [colunaIdSite, setColunaIdSite] = useState("A");
-  const [colunaTarifaSite, setColunaTarifaSite] = useState("E");
-
-  const mesReferencia = mes && ano ? `${mes}/${ano}` : "";
-  const meses = [
-    { valor: "01", nome: "Janeiro" }, { valor: "02", nome: "Fevereiro" },
-    { valor: "03", nome: "Março" }, { valor: "04", nome: "Abril" },
-    { valor: "05", nome: "Maio" }, { valor: "06", nome: "Junho" },
-    { valor: "07", nome: "Julho" }, { valor: "08", nome: "Agosto" },
-    { valor: "09", nome: "Setembro" }, { valor: "10", nome: "Outubro" },
-    { valor: "11", nome: "Novembro" }, { valor: "12", nome: "Dezembro" }
-  ];
-  const anoAtual = new Date().getFullYear();
-  const anos = Array.from({ length: 11 }, (_, i) => anoAtual - 1 + i);
-
-  useEffect(() => {
-    const usuarioLogado = localStorage.getItem("usuario_logado");
-    if (!usuarioLogado) {
-      router.push("/login");
-      return;
-    }
-    carregarDadosCadastros();
-    carregarVendasPendentes();
+  const currentMonthDefault = new Date().toISOString().slice(0, 7);
+  const previousMonthDefault = useMemo(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return d.toISOString().slice(0, 7);
   }, []);
 
+  const [dateFilter, setDateFilter] = useState('MES_ATUAL');
+  const [customStartDate, setCustomStartDate] = useState(currentMonthDefault + '-01');
+  const [customEndDate, setCustomEndDate] = useState(new Date().toISOString().slice(0, 10));
+  
+  const [appliedDateFilter, setAppliedDateFilter] = useState('MES_ATUAL');
+  const [appliedStartDate, setAppliedStartDate] = useState(currentMonthDefault + '-01');
+  const [appliedEndDate, setAppliedEndDate] = useState(new Date().toISOString().slice(0, 10));
+  
+  const [isRecalculating, setIsRecalculating] = useState(false);
+
   useEffect(() => {
-    pesquisarCustosNoBanco();
-  }, [pesquisaCusto]);
-
-  const carregarDadosCadastros = async () => {
-    const { data: regras } = await supabase.from('config_regras_canais').select('*').order('id');
-    if (regras) setRegrasCanais(regras);
-
-    const { data: tinyConfig } = await supabase.from('config_regras_tiny').select('*');
-    if (tinyConfig) {
-      const getC = (k: string, d: string) => tinyConfig.find((t: any) => t.campo === k)?.coluna || d;
-      setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
-      setRegrasColsCusto({
-        custo_sku: getC('custo_sku', 'B'), custo_produto: getC('custo_produto', 'C'), custo_valor: getC('custo_valor', 'E'), custo_marca: getC('custo_marca', 'D')
-      });
-
-      const canalCfg = tinyConfig.find((t: any) => t.campo === 'canais_dashboard');
-      if (canalCfg && canalCfg.coluna) {
-        try {
-          const parsed = JSON.parse(canalCfg.coluna);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setCanaisDashList(Array.from(new Set([...parsed, 'Clube Hebraica', 'Clube Paineiras'])));
-          }
-        } catch (e) {}
-      }
-    }
-
-    const allTiny = await fetchTodosRegistros('cadastros_base_tiny', 'sku, estoque');
-    const statusData = await fetchTodosRegistros('status_skus_catalogo', 'sku, status');
-    
-    const totalTiny = allTiny.length;
-    const mapaStatus = new Map(statusData.map((s: any) => [String(s.sku).trim(), s.status]));
-
-    let normais = 0;
-    let obsoletos = 0;
-    allTiny.forEach(item => {
-      const st = mapaStatus.get(String(item.sku).trim()) || 'Normal';
-      if (st === 'Obsoleto') obsoletos++;
-      else normais++;
-    });
-
-    setEstatisticas({ totalTiny, normais, obsoletos });
-  };
-
-  const carregarVendasPendentes = async () => {
-    try {
-      const vendas = await fetchTodosRegistros('vendas_canais');
-      const custos = await fetchTodosRegistros('tabela_custos_skus', 'sku');
-
-      const skusComCusto = new Set(custos.map((c: any) => normalizarSku(c.sku)));
-
-      const pendentes = vendas.filter((v: any) => {
-        const skuNorm = normalizarSku(v.sku);
-        if (!skuNorm || skuNorm === 'semsku') return true;
-        return !skusComCusto.has(skuNorm);
-      });
-
-      setVendasPendentes(pendentes);
-    } catch (err) {
-      console.error("Erro ao carregar vendas pendentes:", err);
-    }
-  };
-
-  const salvarSkuPendente = async (id: number, skuInput?: string) => {
-    const novoSku = (skuInput !== undefined ? skuInput : edicoesPendentes[id] || "").trim();
-    if (!novoSku) {
-      if (skuInput === undefined) alert("Digite um SKU válido.");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const skuNorm = normalizarSku(novoSku);
-
-      const { data: custoMatch } = await supabase
-        .from('tabela_custos_skus')
-        .select('sku, produto')
-        .eq('sku', skuNorm)
-        .maybeSingle();
-
-      const produtoNome = custoMatch?.produto ? custoMatch.produto : "Produto Cadastrado";
-
-      const { error } = await supabase
-        .from('vendas_canais')
-        .update({ sku: skuNorm, produto: produtoNome })
-        .eq('id', id);
-
-      if (error) throw error;
-
-      setVendasPendentes(prev => prev.filter(item => item.id !== id));
-      setEdicoesPendentes(prev => {
-        const copy = { ...prev };
-        delete copy[id];
-        return copy;
-      });
-
-      if (skuInput === undefined) {
-        alert("✅ SKU atualizado e validado com sucesso!");
-      }
-    } catch (err: any) {
-      if (skuInput === undefined) alert("Erro ao atualizar SKU: " + err.message);
-    }
-    setLoading(false);
-  };
-
-  const selecionarTodosPendentes = (e: ChangeEvent<HTMLInputElement>) => {
-    const checked = e.target.checked;
-    const novoMap: { [id: number]: boolean } = {};
-    if (checked) {
-      vendasPendentes.forEach(item => {
-        novoMap[item.id] = true;
-      });
-    }
-    setSelecionadosPendentes(novoMap);
-  };
-
-  const salvarSelecionadosEmLote = async () => {
-    const idsParaSalvar = Object.keys(selecionadosPendentes).filter(id => selecionadosPendentes[Number(id)]);
-    if (idsParaSalvar.length === 0) {
-      alert("Nenhum item selecionado.");
-      return;
-    }
-    if (!skuEmLote.trim()) {
-      alert("Digite o SKU correto para aplicar aos itens selecionados.");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      for (const idStr of idsParaSalvar) {
-        await salvarSkuPendente(Number(idStr), skuEmLote);
-      }
-      alert(`✅ ${idsParaSalvar.length} itens atualizados com sucesso em lote!`);
-      setSkuEmLote("");
-      setSelecionadosPendentes({});
-      carregarVendasPendentes();
-    } catch (err: any) {
-      alert("Erro ao salvar em lote: " + err.message);
-    }
-    setLoading(false);
-  };
-
-  const atualizarColunaSkuCanal = async (id: number, novaLetraCol: string) => {
-    const letraUpper = novaLetraCol.toUpperCase().trim();
-    const atualizadas = regrasCanais.map(r => r.id === id ? { ...r, coluna_sku: letraUpper } : r);
-    setRegrasCanais(atualizadas);
-
-    try {
-      await supabase.from('config_regras_canais').update({ coluna_sku: letraUpper }).eq('id', id);
-    } catch (err) {
-      console.error("Erro ao atualizar coluna do canal:", err);
-    }
-  };
-
-  const salvarRegrasMlSupabase = async () => {
-    try {
+    async function carregarDados() {
       setLoading(true);
-      for (const conta of ["Mercado Livre 1", "Mercado Livre 2"] as const) {
-        const c = colunasPorConta[conta];
-        await supabase.from('config_regras_canais').upsert({
-          canal: conta,
-          coluna_mlb: c.ml_mlb,
-          coluna_sku: c.ml_sku,
-          coluna_comissao: c.ml_comissao,
-          coluna_peso: c.ml_peso,
-          coluna_altura: c.ml_altura,
-          coluna_largura: c.ml_largura,
-          coluna_comprimento: c.ml_comprimento,
-        }, { onConflict: 'canal' });
-      }
-      alert("✅ Regras de Mercado Livre salvas com sucesso!");
-    } catch (err: any) {
-      alert("Erro ao salvar: " + err.message);
+      const resultado: Record<string, any[]> = {};
+      await Promise.all(
+        TABELAS_SUPABASE.map(async (tabela) => {
+          let allRows: any[] = [];
+          let from = 0;
+          const step = 1000;
+          let keep = true;
+          while (keep) {
+            const { data } = await supabase.from(tabela).select('*').range(from, from + step - 1);
+            if (data && data.length > 0) {
+              allRows = [...allRows, ...data];
+              from += step;
+              if (data.length < step) keep = false;
+            } else keep = false;
+          }
+          resultado[tabela] = allRows;
+        })
+      );
+      setDatabase(resultado);
+      setLoading(false);
     }
-    setLoading(false);
+    carregarDados();
+  }, []);
+
+  const handleRecalculate = () => {
+    setIsRecalculating(true);
+    setTimeout(() => {
+      setAppliedChannelFilter(selectedChannelFilter);
+      setAppliedModalidadeFilter(modalidadeFilter);
+      setAppliedDateFilter(dateFilter);
+      setAppliedStartDate(customStartDate);
+      setAppliedEndDate(customEndDate);
+      setIsRecalculating(false);
+    }, 300);
   };
 
-  const limparTabelaCustos = async () => {
-    if (!confirm("Apagar todos os custos guardados?")) return;
-    try {
-      await supabase.from('tabela_custos_skus').delete().neq('id', 0);
-      setListaCustosFiltrados([]);
-      alert("✅ Custos limpos com sucesso.");
-    } catch (err: any) {
-      alert("Erro ao limpar custos: " + err.message);
-    }
+  const normalizarTexto = (v: any) => String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+  const normalizarSku = (v: any) => {
+    if (v === null || v === undefined) return "";
+    let s = String(v).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
+    if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
+    return s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  };
+  const normalizarPedido = (v: any) => String(v ?? '').trim().replace(/\.0$/, '').replace(/\s+/g, '').toLowerCase();
+
+  const isChannelFisico = (canalName: string) => {
+    const nome = normalizarTexto(canalName);
+    return nome.includes('clube') || nome.includes('loja') || nome.includes('paineiras') || nome.includes('hebraica');
   };
 
-  const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
+  const parseCurrency = (val: any) => {
+    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+    if (!val) return 0;
+    let s = String(val).trim().replace('R$', '').replace('R', '').trim();
+    if (s.includes('.') && s.includes(',')) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else if (s.includes(',')) {
+      s = s.replace(',', '.');
+    }
+    const num = Number(s);
+    return isNaN(num) ? 0 : num;
+  };
 
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const idxId = letraParaIndice(colunaIdFaturados);
-        const idxData = letraParaIndice(colunaDataFaturados);
-
-        const registros = [];
-        for (let i = 1; i < json.length; i++) {
-          const row = json[i];
-          if (!row) continue;
-          const rawObs = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
-          
-          let pedidoId = null;
-          const matchId = rawObs.match(/\b\d{10,20}\b/) || rawObs.match(/\b[A-Z]+-\d+\b/) || rawObs.match(/\d{3}-\d{7}-\d{7}/) || rawObs.match(/20000[0-9]+/) || rawObs.match(/\b[A-Z0-9]{6,}\b/);
-          if (matchId) {
-            pedidoId = matchId[0].trim();
-          } else if (rawObs) {
-            const numbersOnly = rawObs.replace(/\D/g, '');
-            if (numbersOnly.length >= 8) pedidoId = numbersOnly;
-          }
-
-          const dataFaturamento = String(row[idxData] || "").trim();
-
-          if (pedidoId) {
-            registros.push({
-              id_pedido: pedidoId,
-              data_faturamento: dataFaturamento || new Date().toISOString().slice(0, 10),
-              mes_referencia: mesAlvoDash
-            });
-          }
-        }
-
-        if (registros.length > 0) {
-          await supabase.from('faturados_pedidos').delete().eq('mes_referencia', mesAlvoDash);
-          for (let i = 0; i < registros.length; i += 500) {
-            await supabase.from('faturados_pedidos').insert(registros.slice(i, i + 500));
-          }
-        }
-
-        alert(`✅ Faturados salvos em 'faturados_pedidos'! Total: ${registros.length} registos.`);
-        setLoading(false);
-      } catch (err: any) {
-        alert("Erro ao importar Faturados: " + err.message);
-        setLoading(false);
-      }
+  const canais = useMemo(() => {
+    const mapa = new Map<string, string>();
+    const adicionar = (nome: any) => {
+      const limpo = String(nome || '').trim();
+      if (limpo) mapa.set(normalizarTexto(limpo), limpo);
     };
-    reader.readAsArrayBuffer(file);
-  };
+    (database.config_regras_canais || []).forEach((r: any) => adicionar(r.canal));
+    ['Clube Hebraica', 'Clube Paineiras'].forEach(adicionar);
+    return Array.from(mapa.values());
+  }, [database.config_regras_canais]);
 
-  const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
+  const channelRules = database.config_regras_canais || [];
+  const sales = database.vendas_canais || [];
+  const products = database.tabela_custos_skus || [];
+  const goals = database.tb_metas || [];
+  const cancelados = database.cancelados || [];
+  const users = database.usuarios_permissoes || [];
 
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+  const produtosCustoMap = useMemo(() => {
+    const map = new Map();
+    (products || []).forEach((p: any) => {
+      const sNorm = normalizarSku(p.sku);
+      if (sNorm) {
+        map.set(sNorm, {
+          custo_unitario: parseCurrency(p.custo_unitario || p.preco_custo || p.custo),
+          custo_embalagem: parseCurrency(p.custo_embalagem)
+        });
+      }
+    });
+    return map;
+  }, [products]);
 
-        // BUSCA RIGOROSA DOS FATURADOS DO MÊS PARA ATUAR COMO FILTRO TEMPORAL
-        const faturadosBanco = await fetchTodosRegistros('faturados_pedidos', 'id_pedido', 'mes_referencia', mesAlvoDash);
-        const idsFaturadosSet = new Set(faturadosBanco.map((f: any) => String(f.id_pedido).trim()));
-        
-        if (idsFaturadosSet.size === 0) {
-          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado em 'faturados_pedidos' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
-          setLoading(false);
-          return;
+  const regrasMap = useMemo(() => {
+    const map = new Map();
+    (database.config_regras_canais || []).forEach((r: any) => {
+      const formulaObj = compilarFormulaExcel(r.formula_excel);
+      map.set(normalizarTexto(r.canal), {
+        formula: formulaObj,
+        colPdv: String(r.col_pdv || r.col_preco_venda || 'I').toUpperCase(),
+        colQtd: String(r.col_quantidade || 'H').toUpperCase(),
+        responsavel: r.responsavel || 'Equipe Best Fit',
+        logoUrl: r.logo_url || null
+      });
+    });
+    return map;
+  }, [database.config_regras_canais]);
+
+  const tarifasSiteMap = useMemo(() => {
+    const map = new Map();
+    (database.tarifas_site || []).forEach((t: any) => {
+      const idPed = normalizarPedido(t.id_pedido);
+      if (idPed) map.set(idPed, parseCurrency(t.valor_tarifa));
+    });
+    return map;
+  }, [database.tarifas_site]);
+
+  const flexMap = useMemo(() => {
+    const map = new Map();
+    (database.plp_pedidos || []).forEach((p: any) => {
+      const idPed = normalizarPedido(p.numero_pedido ?? p.id_pedido);
+      const vFrete = parseCurrency(p.valor_frete);
+      if (idPed && vFrete > 0) {
+        map.set(idPed, vFrete);
+      }
+    });
+    return map;
+  }, [database.plp_pedidos]);
+
+  const currentRefMonth = useMemo(() => {
+    if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate) return appliedStartDate.slice(0, 7);
+    if (appliedDateFilter === 'MES_ANTERIOR') return previousMonthDefault;
+    return currentMonthDefault;
+  }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
+
+  const adsMap = useMemo(() => {
+    const map = new Map();
+    let formatoMMYYYY = currentRefMonth;
+    if (currentRefMonth.includes('-')) {
+      const [ano, mes] = currentRefMonth.split('-');
+      formatoMMYYYY = `${mes}/${ano}`;
+    }
+
+    (database.ads_faturamento_canal || []).forEach((a: any) => {
+      const mesRefDb = String(a.mes_referencia || '').trim();
+      if (mesRefDb === currentRefMonth || mesRefDb === formatoMMYYYY) {
+        const k = normalizarTexto(a.canal);
+        map.set(k, parseCurrency(a.gasto_ads));
+      }
+    });
+    return map;
+  }, [database.ads_faturamento_canal, currentRefMonth]);
+
+  const devolucoesList = database.devolucoes || [];
+
+  const channelLogos = useMemo(() => {
+    const map: Record<string, string> = {};
+    channelRules.forEach((r: any) => {
+      if (r.canal && r.logo_url) map[r.canal] = r.logo_url;
+    });
+    return map;
+  }, [channelRules]);
+
+  const activeCancelados = useMemo(() => {
+    if (!cancelados) return [];
+    return cancelados.filter((c: any) => {
+      if (c.mes_referencia !== currentRefMonth) return false;
+      if (appliedChannelFilter !== 'TODOS' && c.canal !== appliedChannelFilter) return false;
+      return true;
+    });
+  }, [cancelados, currentRefMonth, appliedChannelFilter]);
+
+  const enrichedSales = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return (sales || []).filter((s: any) => {
+        if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
+
+        const fisico = isChannelFisico(s.canal);
+        if (appliedModalidadeFilter === 'FISICO' && !fisico) return false;
+        if (appliedModalidadeFilter === 'DIGITAL' && fisico) return false;
+
+        return true;
+      })
+      .map((s: any) => {
+        const qtd = parseCurrency(s.quantidade) || 1;
+        const precoVenda = parseCurrency(s.preco_venda || s.valor);
+
+        let custoCMV = 0;
+        if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
+          custoCMV = parseCurrency(s.cmv_clube);
+        } else {
+          const skuVendaNorm = normalizarSku(s.sku);
+          const custoProd = produtosCustoMap.get(skuVendaNorm) || { custo_unitario: 0, custo_embalagem: 0 };
+          custoCMV = (custoProd.custo_unitario + custoProd.custo_embalagem) * qtd;
         }
 
-        const { data: regraData } = await supabase
-          .from('config_regras_canais')
-          .select('*')
-          .eq('canal', canalAlvoDash)
-          .maybeSingle();
+        const ped = normalizarPedido(s.id_pedido);
+        const custoFlex = flexMap.get(ped) || 0;
+        
+        let repasseLiquido = parseCurrency(s.repasse_liquido);
 
-        const custosBanco = await fetchTodosRegistros('tabela_custos_skus', 'sku, produto');
-
-        const mapaProdutos = new Map();
-        const skusBaseSet = new Set();
-        custosBanco.forEach((c: any) => {
-          const sNorm = normalizarSku(c.sku);
-          const pVal = String(c.produto || "").trim();
-          if (sNorm) {
-            mapaProdutos.set(sNorm, pVal);
-            skusBaseSet.add(sNorm);
-          }
-        });
-
-        const colSkuDef = regraData?.col_sku || 'X';
-        const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || 'I';
-        const colQtdDef = regraData?.col_quantidade || 'H';
-        const colIdDef = regraData?.col_id_pedido || regraData?.col_estado || 'A';
-
-        const idxId = letraParaIndice(colIdDef);
-        const idxSku = letraParaIndice(colSkuDef);
-        const idxPdv = letraParaIndice(colPdvDef);
-        const idxQtd = letraParaIndice(colQtdDef);
-        const idxDescricao = letraParaIndice("D"); 
-        const idxRepasse = letraParaIndice("T");
-
-        const formulaCompilada = compilarFormulaExcel(regraData?.formula_excel);
-
-        const novasVendas = [];
-        let totalImportados = 0;
-        let ignoradosForaDoMes = 0;
-
-        // COMEÇA EXATAMENTE NA LINHA DE DADOS (ÍNDICE 6 DO EXCEL DO ML)
-        let i = 6; 
-        while (i < json.length) {
-          const row = json[i];
-          if (!row || row.length === 0) {
-            i++;
-            continue;
-          }
-
-          let rawId = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
-          rawId = rawId.replace(/\.0$/, '').replace(/\D/g, '');
-
-          if (!rawId) {
-            i++;
-            continue;
-          }
-
-          // FILTRO TEMPORAL OBRIGATÓRIO: O PEDIDO SÓ ENTRA SE ESTIVER NA LISTA DE FATURADOS DO MÊS SELECIONADO
-          if (!idsFaturadosSet.has(rawId)) {
-            ignoradosForaDoMes++;
-            i++;
-            continue;
-          }
-
-          const descRaw = idxDescricao >= 0 && row[idxDescricao] !== undefined ? String(row[idxDescricao]).trim() : '';
-
-          // TRATAMENTO DE CARRINHO / PACOTE DE PRODUTOS
-          if (descRaw.toLowerCase().includes("pacote de") && descRaw.toLowerCase().includes("produtos")) {
-            const match = descRaw.match(/\d+/);
-            const qtdItensNoPacote = match ? parseInt(match[0], 10) : 0;
-            
-            if (qtdItensNoPacote > 0) {
-              const repasseTotal = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : 0);
-
-              let subItens = [];
-              let somaPdvSubItens = 0;
-
-              for (let j = 1; j <= qtdItensNoPacote; j++) {
-                const subRow = json[i + j];
-                if (subRow) {
-                  const skuSub = normalizarSku(subRow[idxSku >= 0 ? idxSku : 23]);
-                  const pdvSub = parseSmartFloat(idxPdv >= 0 ? subRow[idxPdv] : 0);
-                  const qtdSub = Number(idxQtd >= 0 && subRow[idxQtd] !== undefined ? subRow[idxQtd] : 1) || 1;
-                  
-                  const existe = skuSub && skusBaseSet.has(skuSub);
-                  const skuFinal = existe ? skuSub : (skuSub || 'sem-sku');
-                  const nome = existe ? mapaProdutos.get(skuSub) : 'Produto Carrinho';
-                  
-                  somaPdvSubItens += (pdvSub * qtdSub);
-                  subItens.push({ skuFinal, nome, pdvSub, qtdSub });
-                }
-              }
-
-              for (const item of subItens) {
-                let repasseRateado = 0;
-                if (somaPdvSubItens > 0) {
-                  repasseRateado = repasseTotal * ((item.pdvSub * item.qtdSub) / somaPdvSubItens);
-                } else {
-                  repasseRateado = repasseTotal / qtdItensNoPacote;
-                }
-
-                novasVendas.push({
-                  id_pedido: rawId,
-                  canal: canalAlvoDash,
-                  mes_referencia: mesAlvoDash,
-                  sku: item.skuFinal,
-                  produto: item.nome,
-                  quantidade: item.qtdSub,
-                  preco_venda: item.pdvSub,
-                  repasse_liquido: repasseRateado
-                });
-                totalImportados++;
-              }
-
-              i += (qtdItensNoPacote + 1);
-              continue;
-            }
-          }
-
-          // VENDAS NORMAIS (LINHA ÚNICA)
-          const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
-          const skuNorm = normalizarSku(skuRaw);
-          const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
-          const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
-
-          const existeNaBase = skuNorm && skusBaseSet.has(skuNorm);
-          const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
-          const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
-
-          const contextoLinha: Record<string, number> = {
-            'PDV': precoVenda,
-            [colPdvDef.toUpperCase()]: precoVenda,
-            [colQtdDef.toUpperCase()]: quantidade
-          };
-          for (let c = 0; c < row.length; c++) {
-            const ltr = indiceParaLetra(c);
-            contextoLinha[ltr] = parseSmartFloat(row[c]);
-          }
-
-          let repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : 0);
-          if (formulaCompilada) {
-            try {
-              const resFormula = formulaCompilada.fn(contextoLinha);
-              if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
+        const regraCanal = regrasMap.get(normalizarTexto(s.canal));
+        if (regraCanal && regraCanal.formula) {
+          try {
+            const contextoLinha: Record<string, number> = {
+              'PDV': precoVenda,
+              'I': precoVenda,
+              'H': qtd,
+              'QTD': qtd,
+              [regraCanal.colPdv]: precoVenda,
+              [regraCanal.colQtd]: qtd,
+            };
+            const resFormula = regraCanal.formula.fn(contextoLinha);
+            if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null && resFormula > 0) {
+              if (repasseLiquido <= 0) {
                 repasseLiquido = resFormula;
               }
-            } catch {}
-          }
-          if (isNaN(repasseLiquido) || repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
-            repasseLiquido = precoVenda - (precoVenda * 0.09);
-          }
-
-          novasVendas.push({
-            id_pedido: rawId,
-            canal: canalAlvoDash,
-            mes_referencia: mesAlvoDash,
-            sku: skuFinal,
-            produto: nomeProduto,
-            quantidade: isNaN(quantidade) ? 1 : quantidade,
-            preco_venda: precoVenda,
-            repasse_liquido: repasseLiquido
-          });
-          totalImportados++;
-
-          i++;
-        }
-
-        if (novasVendas.length > 0) {
-          await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
-          for (let k = 0; k < novasVendas.length; k += 500) {
-            const { error } = await supabase.from('vendas_canais').insert(novasVendas.slice(k, k + 500));
-            if (error) throw error;
+            }
+          } catch (err) {
+            console.error(`Erro ao calcular fórmula para o canal ${s.canal}:`, err);
           }
         }
 
-        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados (faturados no mês): ${totalImportados} itens\n• Ignorados (fora do mês/não faturados): ${ignoradosForaDoMes}`);
-        carregarVendasPendentes();
-      } catch (err: any) {
-        alert("Erro ao cruzar e importar vendas: " + err.message);
-      } finally {
-        setLoading(false);
+        if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
+          repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.09));
+        }
+        
+        const nomeCanal = normalizarTexto(s.canal);
+        if ((nomeCanal.includes('site') || nomeCanal.includes('loja virtual')) && tarifasSiteMap.has(ped)) {
+           const taxaVindi = parseCurrency(tarifasSiteMap.get(ped));
+           repasseLiquido = Math.max(0, repasseLiquido - taxaVindi);
+        }
+        
+        return { 
+          ...s, 
+          preco_venda: precoVenda,
+          custoCMV, 
+          custoFlex, 
+          repasse_liquido: repasseLiquido 
+        };
+      });
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap]);
+
+  const kpis = useMemo(() => {
+    const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
+    
+    let faturamentoBrutoVendas = 0;
+    let faturamentoLiquidoRepasse = 0;
+    let metaDigitalTotal = 0;
+    let fatBrutoFisico = 0;
+    let fatBrutoDigital = 0;
+    let repasseFisico = 0;
+    let repasseDigital = 0;
+    let custoTotalCMV = 0;
+    let cmvFisico = 0;
+    let cmvDigital = 0;
+
+    const totalCancelamentosValor = activeCancelados.reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
+
+    const lojasFisicasDetalhes: any[] = [];
+    const lojasFisicasRepasse: any[] = [];
+
+    activeChannels.forEach(channelName => {
+      const fisico = isChannelFisico(channelName);
+      const goalObj = goals.find((g: any) => g.canal === channelName && g.mes_referencia === currentRefMonth) 
+                   || goals.find((g: any) => g.canal === channelName) 
+                   || { meta_valor: 0 };
+      const metaCanal = parseCurrency(goalObj.meta_valor);
+
+      const chSales = enrichedSales.filter((s: any) => s.canal === channelName);
+      
+      const cancelamentosCanal = activeCancelados
+        .filter((c: any) => normalizarTexto(c.canal) === normalizarTexto(channelName))
+        .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
+
+      const faturadoPuroCanal = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
+      
+      const faturadoEfetivoCanal = Math.max(0, faturadoPuroCanal - cancelamentosCanal);
+      const repasseCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
+
+      let nomeLimpo = channelName.replace(/clube|loja/gi, '').trim();
+      if (!nomeLimpo) nomeLimpo = channelName;
+
+      if (fisico) {
+        const progresso = metaCanal > 0 ? (faturadoEfetivoCanal / metaCanal) * 100 : 0;
+        const diff = Math.abs(progresso - 100);
+
+        lojasFisicasDetalhes.push({
+          nome: nomeLimpo,
+          faturado: faturadoEfetivoCanal,
+          progresso,
+          diff,
+          abaixo: progresso < 100
+        });
+
+        lojasFisicasRepasse.push({
+          nome: nomeLimpo,
+          repasse: repasseCanal
+        });
+      } else {
+        metaDigitalTotal += metaCanal;
       }
+    });
+
+    enrichedSales.forEach((s: any) => {
+      const fisico = isChannelFisico(s.canal);
+      const valBruto = s.preco_venda;
+      const valRepasse = s.repasse_liquido;
+      const valCmv = s.custoCMV;
+
+      faturamentoBrutoVendas += valBruto;
+      faturamentoLiquidoRepasse += valRepasse;
+      custoTotalCMV += valCmv;
+
+      if (fisico) {
+        fatBrutoFisico += valBruto;
+        repasseFisico += valRepasse;
+        cmvFisico += valCmv;
+      } else {
+        fatBrutoDigital += valBruto;
+        repasseDigital += valRepasse;
+        cmvDigital += valCmv;
+      }
+    });
+
+    faturamentoBrutoVendas = Math.max(0, faturamentoBrutoVendas - totalCancelamentosValor);
+
+    const canceladosDigitais = activeCancelados
+        .filter((c: any) => !isChannelFisico(c.canal))
+        .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
+    
+    fatBrutoDigital = Math.max(0, fatBrutoDigital - canceladosDigitais);
+
+    const progressoDigitalPct = metaDigitalTotal > 0 ? (fatBrutoDigital / metaDigitalTotal) * 100 : 0;
+    const diffDigital = Math.abs(progressoDigitalPct - 100);
+
+    const totalFlexCost = enrichedSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
+    
+    const totalAdsCost = Array.from(adsMap.entries())
+      .filter(([canal]) => appliedChannelFilter === 'TODOS' || normalizarTexto(canal) === normalizarTexto(appliedChannelFilter))
+      .reduce((sum, [, val]) => sum + parseCurrency(val), 0);
+    
+    const lucroLiquidoReal = faturamentoLiquidoRepasse - custoTotalCMV - totalFlexCost - totalAdsCost;
+    const lucroFisico = repasseFisico - cmvFisico;
+    const lucroDigital = repasseDigital - cmvDigital - totalFlexCost - totalAdsCost;
+
+    return { 
+      faturamentoBrutoVendas, 
+      fatBrutoFisico,
+      fatBrutoDigital,
+      faturamentoLiquidoRepasse, 
+      repasseFisico,
+      repasseDigital,
+      custoTotalCMV, 
+      cmvFisico,
+      cmvDigital,
+      lucroLiquidoReal, 
+      lucroFisico,
+      lucroDigital,
+      totalPedidos: enrichedSales.length,
+      lojasFisicasDetalhes,
+      lojasFisicasRepasse,
+      progressoDigitalPct,
+      diffDigital,
+      totalCancelamentosValor
     };
-    reader.readAsArrayBuffer(file);
-  };
+  }, [enrichedSales, adsMap, appliedChannelFilter, canais, channelRules, goals, currentRefMonth, activeCancelados]);
 
-  const handleSubirTarifasSite = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-
-        const idxId = letraParaIndice(colunaIdSite);
-        const idxTarifa = letraParaIndice(colunaTarifaSite);
-
-        const registros = [];
-        for (let i = 1; i < json.length; i++) {
-          const row = json[i];
-          if (!row) continue;
-          const idPedido = String(row[idxId] || "").trim();
-          const valorTarifa = parseSmartFloat(row[idxTarifa]);
-
-          if (idPedido) {
-            registros.push({ id_pedido: idPedido, valor_tarifa: valorTarifa });
-          }
-        }
-
-        if (registros.length > 0) {
-          await supabase.from('tarifas_site').delete().neq('id', 0);
-          for (let i = 0; i < registros.length; i += 500) {
-            await supabase.from('tarifas_site').upsert(registros.slice(i, i + 500), { onConflict: 'id_pedido' });
-          }
-        }
-
-        alert(`✅ Tarifas do Site salvas em 'tarifas_site'! Total: ${registros.length} registos.`);
-        setLoading(false);
-      } catch (err: any) {
-        alert("Erro ao importar Tarifas do Site: " + err.message);
-      }
+  const { targetDateStr, labelVendasDia } = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return {
+      targetDateStr: `${yyyy}-${mm}-${dd}`,
+      labelVendasDia: `Vendas do Dia ${dd}`
     };
-    reader.readAsArrayBuffer(file);
-  };
+  }, []);
 
-  const apagarDadosPorTipo = async (tabela: string) => {
-    if (!confirm(`Deseja limpar os registros de [${tabela}] para o mês [${mesAlvoDash}]?`)) return;
-    setLoading(true);
-    try {
-      if (tabela === 'faturados') {
-        await supabase.from('faturados_pedidos').delete().eq('mes_referencia', mesAlvoDash);
-      } else if (tabela === 'vendas') {
-        await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
-      }
-      alert(`✅ Registros de ${tabela} limpos.`);
-      carregarVendasPendentes();
-    } catch (err: any) {
-      alert("Erro: " + err.message);
+  const channelAnalytics = useMemo(() => {
+    const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
+    let channelsToAnalyze = appliedChannelFilter === 'TODOS' ? activeChannels : activeChannels.filter(c => normalizarTexto(c) === normalizarTexto(appliedChannelFilter));
+
+    if (appliedModalidadeFilter === 'FISICO') {
+      channelsToAnalyze = channelsToAnalyze.filter(c => isChannelFisico(c));
+    } else if (appliedModalidadeFilter === 'DIGITAL') {
+      channelsToAnalyze = channelsToAnalyze.filter(c => !isChannelFisico(c));
     }
-    setLoading(false);
-  };
 
-  const zerarBancoTotal = async () => {
-    if (!confirm("⚠️ Deseja apagar TODAS as informações das novas bases?")) return;
-    setLoading(true);
-    try {
-      await supabase.from('vendas_canais').delete().neq('id', 0);
-      await supabase.from('faturados_pedidos').delete().neq('id', 0);
-      await supabase.from('tarifas_site').delete().neq('id', 0);
-      alert("✅ Bases limpas com sucesso!");
-      carregarVendasPendentes();
-    } catch (err: any) {
-      alert("Erro: " + err.message);
+    channelsToAnalyze.sort((a, b) => {
+      const aFisico = isChannelFisico(a);
+      const bFisico = isChannelFisico(b);
+      if (aFisico && !bFisico) return -1;
+      if (!aFisico && bFisico) return 1;
+      return a.localeCompare(b);
+    });
+
+    const [refAnoStr, refMesStr] = currentRefMonth.split('-');
+    const refAno = parseInt(refAnoStr, 10);
+    const refMes = parseInt(refMesStr, 10) - 1;
+
+    const now = new Date();
+    const isCurrentMonth = (now.getFullYear() === refAno && now.getMonth() === refMes);
+    const totalDiasMes = new Date(refAno, refMes + 1, 0).getDate();
+    
+    let diasPassados = 1;
+    let diasFaltantes = 1;
+
+    if (isCurrentMonth) {
+      diasPassados = Math.max(1, now.getDate());
+      diasFaltantes = Math.max(1, totalDiasMes - now.getDate());
+    } else if (new Date(refAno, refMes, 1) < now) {
+      diasPassados = totalDiasMes;
+      diasFaltantes = 0;
+    } else {
+      diasPassados = 1;
+      diasFaltantes = totalDiasMes;
     }
-    setLoading(false);
-  };
 
-  const processarABC = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFicheiroABC(file.name);
-    const reader = new FileReader();
-    reader.onload = (evento) => {
-      try {
-        const data = new Uint8Array(evento.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
-        const formatado = [];
-        for (let i = 0; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length === 0) continue;
-          const produto = String(row[0] || "").trim();
-          const codigo = normalizarSku(row[1]);
-          const quantidade = Number(row[2]);
-          const valor = Number(row[3]);
-          if (codigo && !isNaN(quantidade)) {
-            formatado.push({ mes_referencia: mesReferencia, codigo, produto, quantidade, valor: isNaN(valor) ? 0 : valor });
-          }
+    return channelsToAnalyze.map(channelName => {
+      const kCanal = normalizarTexto(channelName);
+      const chSales = enrichedSales.filter((s: any) => normalizarTexto(s.canal) === kCanal);
+      
+      const vendasDoDia = chSales
+        .filter((s: any) => {
+          return s.data_faturamento === targetDateStr;
+        })
+        .reduce((sum: number, s: any) => sum + s.preco_venda, 0);
+
+      const ruleObj = channelRules.find((r: any) => normalizarTexto(r.canal) === kCanal) || {};
+      const goalObj = goals.find((g: any) => normalizarTexto(g.canal) === kCanal && g.mes_referencia === currentRefMonth) 
+                   || goals.find((g: any) => normalizarTexto(g.canal) === kCanal) 
+                   || { meta_valor: 0, responsavel: ruleObj.responsavel || 'Equipe Best Fit' };
+
+      const cancelamentosMes = activeCancelados
+        .filter((c: any) => normalizarTexto(c.canal) === kCanal)
+        .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
+
+      let devPdvBruto = 0;
+      let devFreteLiquido = 0;
+      let devRepasseLiquido = 0;
+      let devCmvTotal = 0;
+
+      devolucoesList.forEach((d: any) => {
+        if (normalizarTexto(d.canal) === kCanal) {
+          const pdvVal = parseCurrency(d.pdv || d.valor);
+          const freteVal = parseCurrency(d.custo_frete || d.frete);
+          devPdvBruto += pdvVal;
+          devFreteLiquido += freteVal;
+          
+          let repDev = parseCurrency(d.repasse_liquido || d.repasse);
+          if (isNaN(repDev) || repDev <= 0) repDev = pdvVal - (pdvVal * 0.09);
+          devRepasseLiquido += repDev;
+
+          const skuDev = normalizarSku(d.sku);
+          const qtdDev = parseCurrency(d.quantidade) || 1;
+          const custoProd = produtosCustoMap.get(skuDev) || { custo_unitario: 0, custo_embalagem: 0 };
+          devCmvTotal += (custoProd.custo_unitario + custoProd.custo_embalagem) * qtdDev;
         }
-        setDadosABC(formatado);
-        alert(`Curva ABC processada: ${formatado.length} produtos válidos.`);
-      } catch (err: any) { alert("Erro ao ler Curva ABC: " + err.message); }
+      });
+
+      const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0) - devPdvBruto;
+      const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - cancelamentosMes);
+      
+      const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
+      const repasseLiquidoTotal = repasseVendasCanal - devRepasseLiquido;
+
+      const canalAds = adsMap.get(kCanal) || 0;
+      const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0);
+      const cmvCanalTotal = cmvVendasCanal + devCmvTotal;
+      const flexCanal = chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
+
+      const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - flexCanal - canalAds - devFreteLiquido;
+      
+      const metaBase = parseCurrency(goalObj.meta_valor);
+      const progressoMetaPct = metaBase > 0 ? (faturadoComRedutor / metaBase) * 100 : 0;
+      
+      const margemBrutaPct = faturadoBrutoPuro > 0 ? (repasseLiquidoTotal / faturadoBrutoPuro) * 100 : 0;
+      const margemLiquidaPct = faturadoBrutoPuro > 0 ? (lucroLiquidoFinal / faturadoBrutoPuro) * 100 : 0;
+
+      const projecaoFaturamento = isCurrentMonth 
+        ? (faturadoComRedutor / diasPassados) * totalDiasMes
+        : faturadoComRedutor;
+        
+      const valorFaltante = Math.max(0, metaBase - faturadoComRedutor);
+      const mediaDiariaNecessaria = (isCurrentMonth && valorFaltante > 0) ? valorFaltante / diasFaltantes : 0;
+
+      const logoUrl = channelLogos[channelName] || ruleObj.logo_url || null;
+
+      return { 
+        canal: channelName, 
+        responsavel: ruleObj.responsavel || goalObj.responsavel || 'Equipe Best Fit', 
+        metaValor: metaBase,
+        vendasDoDia,
+        faturadoBruto: faturadoBrutoPuro,
+        faturadoComRedutor, 
+        lucroLiquidoReal: lucroLiquidoFinal, 
+        progressoMetaPct, 
+        margemBrutaPct, 
+        margemLiquidaPct, 
+        projecaoFaturamento,
+        valorFaltante,
+        mediaDiariaNecessaria,
+        cancelamentosMes,
+        devolucoesPdv: devPdvBruto,
+        devolucoesFrete: devFreteLiquido,
+        adsCanal: canalAds,
+        flexCanal,
+        cmvCanal: cmvCanalTotal,
+        repasseLiquidoTotal,
+        isCurrentMonth,
+        logoUrl,
+        isFisico: isChannelFisico(channelName)
+      };
+    });
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, produtosCustoMap]);
+
+  const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
+  const physicalChannels = channelAnalytics.filter(c => c.isFisico);
+
+  const totalEcommerce = useMemo(() => {
+    return ecommerceChannels.reduce((acc, curr) => ({
+      vendasDoDia: acc.vendasDoDia + curr.vendasDoDia,
+      faturadoComRedutor: acc.faturadoComRedutor + curr.faturadoComRedutor,
+      metaValor: acc.metaValor + curr.metaValor,
+      projecaoFaturamento: acc.projecaoFaturamento + curr.projecaoFaturamento,
+      lucroLiquidoReal: acc.lucroLiquidoReal + curr.lucroLiquidoReal
+    }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoReal: 0 });
+  }, [ecommerceChannels]);
+
+  const totalPhysical = useMemo(() => {
+    return physicalChannels.reduce((acc, curr) => ({
+      vendasDoDia: acc.vendasDoDia + curr.vendasDoDia,
+      faturadoComRedutor: acc.faturadoComRedutor + curr.faturadoComRedutor,
+      metaValor: acc.metaValor + curr.metaValor,
+      projecaoFaturamento: acc.projecaoFaturamento + curr.projecaoFaturamento,
+      lucroLiquidoReal: acc.lucroLiquidoReal + curr.lucroLiquidoReal
+    }), { vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, lucroLiquidoReal: 0 });
+  }, [physicalChannels]);
+
+  const totalGeral = useMemo(() => {
+    return {
+      vendasDoDia: totalEcommerce.vendasDoDia + totalPhysical.vendasDoDia,
+      faturadoComRedutor: totalEcommerce.faturadoComRedutor + totalPhysical.faturadoComRedutor,
+      metaValor: totalEcommerce.metaValor + totalPhysical.metaValor,
+      projecaoFaturamento: totalEcommerce.projecaoFaturamento + totalPhysical.projecaoFaturamento,
+      lucroLiquidoReal: totalEcommerce.lucroLiquidoReal + totalPhysical.lucroLiquidoReal
     };
-    reader.readAsArrayBuffer(file);
+  }, [totalEcommerce, totalPhysical]);
+
+  const handleEnviarEmailAlerta = () => {
+    const emailsCadastrados = users && users.length > 0 
+      ? users.map((u: any) => u.username).filter(Boolean).join(';') 
+      : "gisele@usebestfit.com.br";
+    
+    const dataHoje = new Date().toLocaleDateString('pt-BR');
+    const assunto = encodeURIComponent(`📊 Resumo de Vendas - Lojas Físicas e Online (${dataHoje})`);
+
+    const hebraicaObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('hebraica')) || { faturadoBruto: 0, progressoMetaPct: 0 };
+    const paineirasObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('paineiras')) || { faturadoBruto: 0, progressoMetaPct: 0 };
+    
+    const fatDigitalTotal = channelAnalytics
+      .filter(c => !isChannelFisico(c.canal))
+      .reduce((acc, c) => acc + c.faturadoBruto, 0);
+    
+    const metaDigitalTotal = channelAnalytics
+      .filter(c => !isChannelFisico(c.canal))
+      .reduce((acc, c) => acc + c.metaValor, 0);
+    
+    const progressoDigitalPct = metaDigitalTotal > 0 ? (fatDigitalTotal / metaDigitalTotal) * 100 : 0;
+
+    let corpoTexto = `Olá, tudo bem? Segue resumo das vendas das lojas fisica e onlines do dia ${dataHoje}.\n\n`;
+    corpoTexto += `Hebraica: R$ ${hebraicaObj.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${hebraicaObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
+    corpoTexto += `Paineiras: R$ ${paineirasObj.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${paineirasObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
+    corpoTexto += `E-commerce: R$ ${fatDigitalTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${progressoDigitalPct.toFixed(1)}% da meta)\n\n`;
+    corpoTexto += `Caso queiram visualiza-lo, acessem o link a seguir: https://dashboard-e-commerce-nine.vercel.app/\n`;
+
+    const corpoEncoded = encodeURIComponent(corpoTexto);
+    window.location.href = `mailto:${emailsCadastrados}?subject=${assunto}&body=${corpoEncoded}`;
   };
 
-  const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (dadosABC.length === 0) { alert("Processe primeiro a Curva ABC."); e.target.value = ""; return; }
-    setFicheiroInventario(file.name);
-    const skusPermitidos = new Set(dadosABC.map(item => String(item.codigo).trim()));
-    const reader = new FileReader();
-    reader.onload = (evento) => {
-      try {
-        const data = new Uint8Array(evento.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
-        const formatado = [];
-        for (let i = 0; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length === 0) continue;
-          let skuEncontrado = "";
-          for (let col = 0; col < row.length; col++) {
-            const val = normalizarSku(row[col]);
-            if (skusPermitidos.has(val)) { skuEncontrado = val; break; }
-          }
-          if (skuEncontrado) {
-            const saldoVal = Number(row[row.length - 1] ?? 0);
-            formatado.push({ mes_referencia: mesReferencia, codigo_sku: skuEncontrado, saldo: isNaN(saldoVal) ? 0 : saldoVal });
-          }
-        }
-        setDadosInvBruto(formatado);
-        alert(`Inventário processado: ${formatado.length} SKUs identificados.`);
-      } catch (err: any) { alert("Erro ao ler Inventário: " + err.message); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const enviarParaBanco = async () => {
-    if (dadosABC.length === 0) return;
-    setLoading(true);
-    await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
-    await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
-    await supabase.from('curva_abc').insert(dadosABC);
-    if (dadosInvBruto.length > 0) await supabase.from('inventario').insert(dadosInvBruto);
-    setLoading(false);
-    alert(`🚀 Dados guardados no Supabase com sucesso!`);
-    setFicheiroABC(""); setFicheiroInventario(""); setDadosABC([]); setDadosInvBruto([]);
-  };
-
-  const limparDadosCompetencia = async () => {
-    if (!mesReferencia) return;
-    setLoadingDelete(true);
-    await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
-    await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
-    setLoadingDelete(false);
-    alert(`🗑 Dados limpos.`);
-  };
-
-  const limparBaseTiny = async () => {
-    if (!confirm("Tem certeza que deseja apagar toda a base do Tiny ERP?")) return;
-    await supabase.from('cadastros_base_tiny').delete().neq('id', 0);
-  };
-
-  const limparCanal = async (canalNome: string) => {
-    if (!confirm(`Apagar canal "${canalNome}"?`)) return;
-    await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
-    alert(`Canal limpo.`);
-  };
-
-  const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    const indiceSku = letraParaIndice(regrasTiny.sku);
-    const indiceEstoque = letraParaIndice(regrasTiny.estoque);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const buffer = evt.target?.result;
-        const workbook = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        const mapaUnico = new Map();
-        for (let i = 0; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= Math.max(indiceSku, indiceEstoque)) continue;
-          const sku = normalizarSku(row[indiceSku]);
-          const estoque = Number(row[indiceEstoque] || 0);
-          if (sku && !/sku|código|codigo/i.test(sku)) {
-            mapaUnico.set(sku, { sku, estoque: isNaN(estoque) ? 0 : estoque });
-          }
-        }
-        const registros = Array.from(mapaUnico.values());
-        for (let i = 0; i < registros.length; i += 500) {
-          await supabase.from('cadastros_base_tiny').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
-        }
-        alert(`Base Tiny atualizada! ${registros.length} SKUs processados.`);
-        setLoading(false);
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleUploadStatus = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    const indiceSku = letraParaIndice(regrasTiny.status_sku);
-    const indiceValor = letraParaIndice(regrasTiny.status_valor);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array", cellDates: true, raw: false });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        const mapaUnico = new Map();
-        for (let i = 0; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
-          const sku = normalizarSku(row[indiceSku]);
-          let statusVal = String(row[indiceValor] || 'Normal').trim();
-          if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
-          else statusVal = 'Normal';
-          mapaUnico.set(sku, { sku, status: statusVal });
-        }
-        const registros = Array.from(mapaUnico.values());
-        for (let i = 0; i < registros.length; i += 500) {
-          await supabase.from('status_skus_catalogo').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
-        }
-        alert(`Status atualizados! ${registros.length} SKUs validados.`);
-        setLoading(false);
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    const idxSku = letraParaIndice(regrasColsCusto.custo_sku);
-    const idxProd = letraParaIndice(regrasColsCusto.custo_produto);
-    const idxCusto = letraParaIndice(regrasColsCusto.custo_valor);
-    const idxMarca = letraParaIndice(regrasColsCusto.custo_marca);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        const mapaUnicoCustos = new Map();
-        for (let i = 1; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length === 0) continue;
-          const sku = normalizarSku(row[idxSku]);
-          const produto = String(row[idxProd] || "Produto").trim();
-          const custo = parseSmartFloat(row[idxCusto]);
-          const marca = String(row[idxMarca] || "").trim();
-          if (sku && !isNaN(custo)) {
-            mapaUnicoCustos.set(sku, { sku, produto, custo_unitario: custo, marca });
-          }
-        }
-        const registros = Array.from(mapaUnicoCustos.values());
-        for (let i = 0; i < registros.length; i += 500) {
-          await supabase.from('tabela_custos_skus').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
-        }
-        alert(`💰 Custos salvos com sucesso! Total: ${registros.length} registos.`);
-        setLoading(false);
-        pesquisarCustosNoBanco();
-        carregarVendasPendentes();
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    const cols = colunasPorConta[contaMlSelecionada];
-    const idxMlb = letraParaIndice(cols.ml_mlb);
-    const idxSku = letraParaIndice(cols.ml_sku);
-    const idxCom = letraParaIndice(cols.ml_comissao);
-    const idxPeso = cols.ml_peso ? letraParaIndice(cols.ml_peso) : -1;
-    const idxAlt = cols.ml_altura ? letraParaIndice(cols.ml_altura) : -1;
-    const idxLarg = cols.ml_largura ? letraParaIndice(cols.ml_largura) : -1;
-    const idxComp = cols.ml_comprimento ? letraParaIndice(cols.ml_comprimento) : -1;
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        let sheetName = workbook.SheetNames[0];
-        if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
-        const worksheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        const mapaMlPendente = new Map<string, any>();
-        for (let i = 4; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
-          const mlb = String(row[idxMlb] || "").trim().toUpperCase();
-          if (!mlb || !mlb.startsWith("MLB")) continue;
-          let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-          let comissaoNum = 14;
-          let rawComissao = row[idxCom];
-          if (rawComissao !== undefined && rawComissao !== "") {
-            let parsed = parseFloat(String(rawComissao).replace("%", "").trim().replace(",", "."));
-            if (!isNaN(parsed) && parsed > 0) comissaoNum = parsed < 1 ? parsed * 100 : parsed;
-          }
-          let pesoReal = 2.000;
-          if (idxPeso >= 0 && row[idxPeso] !== undefined) {
-            let p = Number(String(row[idxPeso]).replace(",", "."));
-            if (!isNaN(p) && p > 0) pesoReal = p;
-          }
-          const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
-          const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
-          const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
-
-          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada });
-        }
-        const registros = Array.from(mapaMlPendente.values());
-        for (let i = 0; i < registros.length; i += 500) {
-          await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
-        }
-        alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).`);
-        setLoading(false);
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    setLoading(true);
-    const indiceColuna = letraParaIndice(letraColuna || "A");
-    try {
-      const allTiny = await fetchTodosRegistros('cadastros_base_tiny', 'sku');
-      const skusTinySet = new Set(allTiny.map((t: any) => normalizarSku(t.sku)));
-      const skusEncontradosNoCanal = new Set<string>();
-
-      for (let f = 0; f < files.length; f++) {
-        const file = files[f];
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true, raw: false });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        for (let i = 4; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= indiceColuna) continue;
-          const skuVal = normalizarSku(row[indiceColuna]);
-          if (skuVal && skusTinySet.has(skuVal)) {
-            skusEncontradosNoCanal.add(skuVal);
-          }
-        }
-      }
-
-      await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
-      const registrosUpsert = Array.from(skusEncontradosNoCanal).map(sku => ({ canal: canalNome, sku, presente: true }));
-      for (let i = 0; i < registrosUpsert.length; i += 500) {
-        await supabase.from('mapeamento_canais_skus').insert(registrosUpsert.slice(i, i + 500));
-      }
-      alert(`Canal "${canalNome}" sincronizado com sucesso!`);
-      setLoading(false);
-    } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-  };
-
-  const pesquisarCustosNoBanco = async () => {
-    if (!pesquisaCusto || pesquisaCusto.trim() === "") { setListaCustosFiltrados([]); return; }
-    const termo = pesquisaCusto.trim();
-    const { data } = await supabase.from('tabela_custos_skus').select('*').or(`sku.ilike.%${termo}%,produto.ilike.%${termo}%`).limit(50);
-    if (data) setListaCustosFiltrados(data);
-  };
-
-  const excluirCusto = async (id: number) => {
-    if (!confirm("Excluir?")) return;
-    await supabase.from('tabela_custos_skus').delete().eq('id', id);
-    pesquisarCustosNoBanco();
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#07090e] flex items-center justify-center text-slate-100">
+        <div className="text-center space-y-3">
+          <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-xs font-bold text-slate-400">Carregando Dashboard Omnichannel...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen bg-[#07090e] p-6 text-slate-100 font-sans space-y-6">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900 p-5 rounded-2xl border border-slate-800 gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-white tracking-tight">Dashboard Best Fit</h2>
+          <p className="text-xs text-slate-400 mt-1">Cálculo de Margem Real = Repasse Líq - CMV - Fretes Flex (PLPs) - Devoluções - ADS</p>
+        </div>
         
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Central de Abastecimento & Updates</h1>
-            <p className="text-sm font-medium text-slate-400">Gestão completa de relatórios, bases ERP, custos, faturamento e tarifas do site</p>
-          </div>
+        <div className="flex flex-wrap gap-3 items-center w-full lg:w-auto">
           <Navbar />
-        </div>
+          <button 
+            onClick={handleEnviarEmailAlerta} 
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-2 cursor-pointer"
+          >
+            <i className="fa-solid fa-envelope"></i> Enviar Relatório por E-mail
+          </button>
 
-        {/* NAVEGAÇÃO DE ABAS */}
-        <div className="flex flex-wrap gap-3 mb-6">
-          <button onClick={() => setAbaAtiva("relatorios")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "relatorios" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
-            📊 Relatórios (ABC & Inventário)
-          </button>
-          <button onClick={() => setAbaAtiva("cadastros")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "cadastros" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
-            🛒 Cadastros e Canais
-          </button>
-          <button onClick={() => setAbaAtiva("custos")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "custos" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
-            💰 Custos por SKU
-          </button>
-          <button onClick={() => setAbaAtiva("regras_ml")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "regras_ml" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
-            📦 Regras & Medidas ML
-          </button>
-          <button onClick={() => setAbaAtiva("vendas_pendentes")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "vendas_pendentes" ? 'bg-amber-600 text-white' : 'bg-slate-900 text-amber-400 border border-amber-900/50'}`}>
-            ⚠️ Vendas Pendentes de Ajustes ({vendasPendentes.length})
-          </button>
-          <button onClick={() => setAbaAtiva("dashboard_admin")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "dashboard_admin" ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-emerald-400 border border-emerald-800'}`}>
-            ⚙️ Updates & Alimenta Dashboard
-          </button>
-        </div>
-
-        {/* ABA: RELATÓRIOS */}
-        {abaAtiva === "relatorios" && (
-          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-            <h2 className="text-lg font-bold mb-1 text-white">Relatórios Mensais</h2>
-            <p className="text-xs text-slate-400 mb-6">Defina a competência e envie as planilhas mensais.</p>
-            <div className="bg-slate-950 p-6 rounded-xl border border-slate-800/80 mb-6">
-              <div className="mb-6 border-b border-slate-800 pb-6">
-                <div className="flex justify-between items-center mb-3">
-                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">Competência</label>
-                  <button onClick={limparDadosCompetencia} disabled={!mesReferencia || loadingDelete} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[11px] font-bold py-1.5 px-3 rounded-lg cursor-pointer">
-                    {loadingDelete ? "A limpar..." : `🗑️ Limpar Base (${mesReferencia})`}
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <select className="border border-slate-700 rounded-xl p-3 bg-slate-900 text-xs text-white outline-none cursor-pointer" value={mes} onChange={(e) => setMes(e.target.value)}>
-                    {meses.map(m => <option key={m.valor} value={m.valor}>{m.nome}</option>)}
-                  </select>
-                  <select className="border border-slate-700 rounded-xl p-3 bg-slate-900 text-xs text-white outline-none cursor-pointer" value={ano} onChange={(e) => setAno(e.target.value)}>
-                    {anos.map(a => <option key={a} value={a}>{a}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Curva ABC</label>
-                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia} onChange={processarABC} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-lg file:bg-indigo-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" />
-                  {ficheiroABC && <p className="mt-2 text-xs text-emerald-400 font-bold">✓ {ficheiroABC}</p>}
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Inventário</label>
-                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia || dadosABC.length === 0} onChange={processarInventario} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-lg file:bg-indigo-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" />
-                  {ficheiroInventario && <p className="mt-2 text-xs text-emerald-400 font-bold">✓ {ficheiroInventario}</p>}
-                </div>
-              </div>
-              {(dadosABC.length > 0 || dadosInvBruto.length > 0) && (
-                <div className="mt-6 pt-5 border-t border-slate-800 flex justify-end">
-                  <button onClick={enviarParaBanco} disabled={loading} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">
-                    {loading ? "A gravar..." : "🚀 Gravar Dados no Supabase"}
-                  </button>
-                </div>
-              )}
-            </div>
+          <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
+            <i className="fa-regular fa-calendar text-indigo-400 pl-2 text-xs"></i>
+            <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="bg-transparent text-indigo-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
+              <option value="MES_ATUAL" className="bg-slate-900 text-white">Mês Atual (Padrão Metas)</option>
+              <option value="MES_ANTERIOR" className="bg-slate-900 text-white">Mês Anterior</option>
+              <option value="HOJE" className="bg-slate-900 text-white">Hoje</option>
+              <option value="SEMANA" className="bg-slate-900 text-white">Últimos 7 dias</option>
+              <option value="QUINZENA" className="bg-slate-900 text-white">Últimos 15 dias</option>
+              <option value="PERSONALIZADO" className="bg-slate-900 text-white">Personalizado</option>
+            </select>
           </div>
-        )}
-
-        {/* ABA: CADASTROS E CANAIS */}
-        {abaAtiva === "cadastros" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total SKUs Tiny</span>
-                <p className="text-3xl font-black text-white mt-2">{estatisticas.totalTiny}</p>
-              </div>
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
-                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Normais</span>
-                <p className="text-3xl font-black text-white mt-2">{estatisticas.normais}</p>
-              </div>
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
-                <span className="text-xs font-bold text-rose-400 uppercase tracking-wider">Obsoletos</span>
-                <p className="text-3xl font-black text-white mt-2">{estatisticas.obsoletos}</p>
-              </div>
+          {dateFilter === 'PERSONALIZADO' && (
+            <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-700">
+              <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="bg-transparent text-slate-300 font-bold text-xs focus:outline-none" />
+              <span className="text-slate-500 text-xs font-bold">até</span>
+              <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="bg-transparent text-slate-300 font-bold text-xs focus:outline-none" />
             </div>
+          )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Base Central (Tiny ERP)</h3>
-                    <button onClick={limparBaseTiny} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer">
-                      🗑️ Limpar Base Tiny
-                    </button>
-                  </div>
-                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
-                </div>
-                <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadTiny} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
-              </div>
+          <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
+            <i className="fa-solid fa-layer-group text-emerald-400 pl-2 text-xs"></i>
+            <select value={modalidadeFilter} onChange={(e) => setModalidadeFilter(e.target.value)} className="bg-transparent text-emerald-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
+              <option value="TODAS" className="bg-slate-900 text-white">Todas as Modalidades</option>
+              <option value="FISICO" className="bg-slate-900 text-white">Lojas Físicas</option>
+              <option value="DIGITAL" className="bg-slate-900 text-white">E-commerce / Marketplaces</option>
+            </select>
+          </div>
 
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
-                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
-                </div>
-                <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
-              </div>
-            </div>
+          <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
+            <i className="fa-solid fa-store text-purple-400 pl-2 text-xs"></i>
+            <select value={selectedChannelFilter} onChange={(e) => setSelectedChannelFilter(e.target.value)} className="bg-transparent text-purple-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
+              <option value="TODOS" className="bg-slate-900 text-white">Todos os Canais</option>
+              {canais.map((ch: string) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
+            </select>
+          </div>
 
-            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-              <p className="text-xs text-slate-400 mb-6">Suba as planilhas por canal definindo e salvando a coluna onde o SKU será lido.</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {regrasCanais.map((r, idx) => (
-                  <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-white text-sm">{r.canal}</span>
-                      <button onClick={() => limparCanal(r.canal)} className="text-rose-400 text-[10px] font-bold bg-rose-950/40 px-2.5 py-1 rounded cursor-pointer">Limpar</button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Coluna SKU:</label>
-                      <input 
-                        type="text" 
-                        value={r.coluna_sku || "A"} 
-                        onChange={(e) => atualizarColunaSkuCanal(r.id, e.target.value)}
-                        className="w-14 bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" 
-                      />
-                    </div>
-                    <input type="file" multiple accept=".xlsx, .xls, .csv" onChange={(e) => handleUploadCanalMultiplos(r.canal, r.coluna_sku, e)} className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1.5 rounded-lg border border-slate-800" />
+          <button onClick={handleRecalculate} className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg cursor-pointer">
+            {isRecalculating ? 'A calcular...' : 'Recalcular'}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex justify-between items-center bg-slate-900/60 px-5 py-3 rounded-xl border border-slate-800">
+        <span className="text-xs text-slate-300 font-bold">Modo de Visualização dos Canais:</span>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-200 select-none">
+            <input 
+              type="checkbox" 
+              checked={viewMode === 'cards'} 
+              onChange={() => setViewMode('cards')} 
+              className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-purple-500 cursor-pointer"
+            />
+            <i className="fa-solid fa-grip text-purple-400"></i> Visualização em Cards
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-200 select-none">
+            <input 
+              type="checkbox" 
+              checked={viewMode === 'linhas'} 
+              onChange={() => setViewMode('linhas')} 
+              className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-purple-500 cursor-pointer"
+            />
+            <i className="fa-solid fa-table-list text-emerald-400"></i> Visualização em Linhas (Tabela Executiva)
+          </label>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        
+        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center">
+          <div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Bruto</span>
+            <h3 className="text-2xl font-black text-white mt-1">R$ {kpis.faturamentoBrutoVendas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <p className="text-[10px] text-slate-500 mt-1">
+              {kpis.totalPedidos} itens validados
+              {kpis.totalCancelamentosValor > 0 && <span className="text-rose-400 block mt-0.5">Redutor Consolidado: - R$ {kpis.totalCancelamentosValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>}
+            </p>
+          </div>
+          
+          <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
+            <div>
+              <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-2">Lojas Físicas</span>
+              <div className="grid grid-cols-2 gap-2">
+                {kpis.lojasFisicasDetalhes.map((loja: any) => (
+                  <div key={loja.nome} className="bg-slate-950/50 p-2 rounded-xl border border-slate-800/50">
+                    <span className="font-bold text-slate-200 text-xs block">{loja.nome}</span>
+                    <span className="text-xs font-black text-white block mt-0.5">R$ {loja.faturado.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span className={`text-[9px] font-black block mt-0.5 ${loja.abaixo ? 'text-rose-400' : 'text-emerald-400'}`}>
+                      {loja.abaixo ? `▼ ${loja.diff.toFixed(1)}% abaixo` : `▲ ${loja.diff.toFixed(1)}% acima`}
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
-          </div>
-        )}
 
-        {/* ABA: CUSTOS POR SKU */}
-        {abaAtiva === "custos" && (
-          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
-              <button onClick={limparTabelaCustos} className="bg-rose-950/60 text-rose-400 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer">🗑️ Limpar Custos</button>
-            </div>
-            
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800 mb-6">
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Col. SKU:</label>
-                <input type="text" value={regrasColsCusto.custo_sku} onChange={e => setRegrasColsCusto({...regrasColsCusto, custo_sku: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Col. Produto:</label>
-                <input type="text" value={regrasColsCusto.custo_produto} onChange={e => setRegrasColsCusto({...regrasColsCusto, custo_produto: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Col. Custo:</label>
-                <input type="text" value={regrasColsCusto.custo_valor} onChange={e => setRegrasColsCusto({...regrasColsCusto, custo_valor: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Col. Marca:</label>
-                <input type="text" value={regrasColsCusto.custo_marca} onChange={e => setRegrasColsCusto({...regrasColsCusto, custo_marca: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-            </div>
-
-            <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadCustosUnitarios} className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-emerald-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700 mb-6" />
-            <input type="text" value={pesquisaCusto} onChange={(e) => setPesquisaCusto(e.target.value)} placeholder="🔍 Pesquisar SKU..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none mb-4" />
-            
-            {pesquisaCusto.trim() !== "" && (
-              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[400px]">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px]">
-                    <tr><th className="p-3">SKU</th><th className="p-3">Produto</th><th className="p-3">Custo Unitário</th><th className="p-3 text-center">Ações</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {listaCustosFiltrados.map(item => (
-                      <tr key={item.id} className="hover:bg-slate-800/40">
-                        <td className="p-3 font-mono">{item.sku}</td>
-                        <td className="p-3">{item.produto}</td>
-                        <td className="p-3 font-mono text-emerald-400 font-bold">R$ {Number(item.custo_unitario).toFixed(2)}</td>
-                        <td className="p-3 text-center"><button onClick={() => excluirCusto(item.id)} className="text-rose-400 font-bold">Remover</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ABA: REGRAS & MEDIDAS ML */}
-        {abaAtiva === "regras_ml" && (
-          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400">Mapeamento de colunas para leitura de anúncios por conta (MLB, SKU, Comissão, Peso, Altura, Largura, Comprimento).</p>
-              </div>
-              <button onClick={salvarRegrasMlSupabase} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase cursor-pointer">
-                Salvar Configurações
-              </button>
-            </div>
-
-            <div className="flex bg-slate-950 p-2 rounded-xl border border-slate-800 w-fit gap-2">
-              <button type="button" onClick={() => setContaMlSelecionada("Mercado Livre 1")} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer ${contaMlSelecionada === "Mercado Livre 1" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Mercado Livre 1</button>
-              <button type="button" onClick={() => setContaMlSelecionada("Mercado Livre 2")} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer ${contaMlSelecionada === "Mercado Livre 2" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Mercado Livre 2</button>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-950 p-5 rounded-xl border border-slate-800">
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna MLB (ID):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_mlb} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_mlb: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna SKU:</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_sku} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_sku: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Comissão:</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_comissao} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_comissao: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Peso (kg):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_peso} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_peso: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Altura (cm):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_altura} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_altura: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Largura (cm):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_largura} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_largura: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Comprimento (cm):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_comprimento} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_comprimento: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-            </div>
-
-            <input type="file" accept=".xlsx, .xls" onChange={handleUploadRegrasML} className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
-            <input type="text" value={pesquisaMl} onChange={(e) => setPesquisaMl(e.target.value)} placeholder="🔍 Pesquisar MLB ou SKU..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none" />
-          </div>
-        )}
-
-        {/* ABA: VENDAS PENDENTES DE AJUSTES */}
-        {abaAtiva === "vendas_pendentes" && (
-          <div className="bg-slate-900/90 p-8 rounded-2xl border border-amber-900/50 shadow-xl space-y-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-white">⚠️ Vendas Pendentes de Ajustes de SKU</h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  Estes itens foram importados nas vendas, mas o SKU veio inválido, vazio ou não foi encontrado na base de custos.
-                </p>
-              </div>
-
-              {/* BARRA DE AÇÃO EM LOTE */}
-              <div className="flex flex-wrap items-center gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                <input
-                  type="text"
-                  value={skuEmLote}
-                  onChange={(e) => setSkuEmLote(e.target.value)}
-                  placeholder="SKU para aplicar aos selecionados..."
-                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono uppercase outline-none w-52"
-                />
-                <button
-                  type="button"
-                  onClick={salvarSelecionadosEmLote}
-                  disabled={loading}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-1.5 rounded-lg text-xs uppercase transition cursor-pointer shadow"
-                >
-                  Salvar Selecionados
-                </button>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
-              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
-                  <tr>
-                    <th className="p-3 text-center w-10">
-                      <input 
-                        type="checkbox" 
-                        onChange={selecionarTodosPendentes}
-                        checked={vendasPendentes.length > 0 && vendasPendentes.every(item => selecionadosPendentes[item.id])}
-                        className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                      />
-                    </th>
-                    <th className="p-3">ID Pedido</th>
-                    <th className="p-3">Canal</th>
-                    <th className="p-3">Mês Ref.</th>
-                    <th className="p-3">Produto (Planilha)</th>
-                    <th className="p-3 text-right">Preço Venda</th>
-                    <th className="p-3 text-center">SKU Atual</th>
-                    <th className="p-3 min-w-[220px]">Atribuir SKU Correto (Base de Custos)</th>
-                    <th className="p-3 text-center">Ação</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                  {vendasPendentes.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="p-3 text-center">
-                        <input 
-                          type="checkbox"
-                          checked={!!selecionadosPendentes[item.id]}
-                          onChange={(e) => setSelecionadosPendentes({ ...selecionadosPendentes, [item.id]: e.target.checked })}
-                          className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                        />
-                      </td>
-                      <td className="p-3 font-mono font-bold text-indigo-400">{item.id_pedido}</td>
-                      <td className="p-3 font-bold text-white">{item.canal}</td>
-                      <td className="p-3 font-mono text-slate-400">{item.mes_referencia}</td>
-                      <td className="p-3 text-slate-300 max-w-[250px] truncate" title={item.produto}>{item.produto}</td>
-                      <td className="p-3 text-right font-mono text-emerald-400 font-bold">R$ {Number(item.preco_venda || item.valor || 0).toFixed(2)}</td>
-                      <td className="p-3 text-center font-mono text-rose-400 font-bold">{item.sku || "vazio"}</td>
-                      <td className="p-3">
-                        <input
-                          type="text"
-                          value={edicoesPendentes[item.id] ?? ""}
-                          onChange={(e) => setEdicoesPendentes({ ...edicoesPendentes, [item.id]: e.target.value })}
-                          placeholder="Digite o SKU correto..."
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-amber-500 uppercase"
-                        />
-                      </td>
-                      <td className="p-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => salvarSkuPendente(item.id)}
-                          disabled={loading}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer shadow-sm transition-all"
-                        >
-                          Salvar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {vendasPendentes.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="p-12 text-center text-emerald-400 font-bold">
-                        🎉 Parabéns! Não há nenhuma venda pendente de ajustes. Todos os SKUs estão validados com sucesso.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+            <div className="pt-2 border-t border-slate-800/50">
+              <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.fatBrutoDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span className={`text-[10px] font-black block mt-0.5 ${kpis.progressoDigitalPct >= 100 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {kpis.progressoDigitalPct >= 100 ? `▲ ${kpis.diffDigital.toFixed(1)}% acima` : `▼ ${kpis.diffDigital.toFixed(1)}% abaixo`}
+              </span>
             </div>
           </div>
-        )}
+        </div>
 
-        {/* ABA: UPDATES & ALIMENTA DASHBOARD (ADMIN) */}
-        {abaAtiva === "dashboard_admin" && (
-          <div className="space-y-6">
-            
-            {/* PASSO 1: FATURADOS */}
-            <div className="grid grid-cols-1 gap-6 max-w-xl">
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-                <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 1: Faturados (NFes Saída)</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência dos Faturados</label>
-                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-bold" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna ID (Observações / AI)</label>
-                      <input type="text" value={colunaIdFaturados} onChange={e => setColunaIdFaturados(e.target.value.toUpperCase())} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna Data (D)</label>
-                      <input type="text" value={colunaDataFaturados} onChange={e => setColunaDataFaturados(e.target.value.toUpperCase())} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-emerald-400 font-mono font-bold text-center uppercase outline-none" />
-                    </div>
-                  </div>
-                  <label className="block w-full text-center bg-emerald-600 hover:bg-emerald-500 transition text-white font-extrabold text-xs py-3 rounded-xl shadow-lg cursor-pointer">
-                    <span>Subir Faturados (Excel/CSV)</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirFaturados} className="hidden" />
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            {/* PASSO 2: VENDAS POR CANAL E TARIFAS DO SITE */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
-                <h3 className="text-sm font-black text-white uppercase tracking-wider">Passo 2: Importar Vendas (Canal)</h3>
-                <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência</label>
-                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Destino</label>
-                    <select value={canalAlvoDash} onChange={e => setCanalAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold">
-                      {canaisDashList.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <label className="block w-full text-center bg-purple-600 hover:bg-purple-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
-                    <span>Importar e Cruzar Vendas</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirVendasCanal} className="hidden" />
-                  </label>
-                </div>
-              </div>
-
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
-                <h3 className="text-sm font-black text-emerald-400 uppercase tracking-wider">Consulta Tarifas Site</h3>
-                <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
-                  <p className="text-[10px] text-slate-400">Cruza ID do Pedido com a tarifa para descontar do líquido final.</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col ID Pedido</label>
-                      <input type="text" value={colunaIdSite} onChange={e => setColunaIdSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col Valor Tarifa</label>
-                      <input type="text" value={colunaTarifaSite} onChange={e => setColunaTarifaSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
-                    </div>
-                  </div>
-                  <label className="block w-full text-center bg-indigo-600 hover:bg-indigo-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
-                    <span>Subir Tarifas do Site</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirTarifasSite} className="hidden" />
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            {/* ZONA DE LIMPEZA DE DADOS */}
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
-                  Apagar Faturados ({mesAlvoDash})
-                </button>
-                <button onClick-vendas={() => apagarDadosPorTipo('vendas')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
-                  Apagar Vendas ({mesAlvoDash})
-                </button>
-              </div>
-              <div className="pt-3 border-t border-slate-800 flex justify-end">
-                <button onClick={zerarBancoTotal} className="bg-rose-600 hover:bg-rose-500 text-white font-black py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider cursor-pointer">
-                  🗑️ Zerar Banco Principal
-                </button>
-              </div>
-            </div>
-
+        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center">
+          <div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Repasse Total das Plataformas</span>
+            <h3 className="text-2xl font-black text-purple-400 mt-1">R$ {kpis.faturamentoLiquidoRepasse.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
           </div>
-        )}
+          <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
+            <div>
+              <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-1">Lojas Físicas</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.repasseFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="pt-2 border-t border-slate-800/50">
+              <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.repasseDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center">
+          <div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase">CMV Total (Custos de SKU x Qtd)</span>
+            <h3 className="text-2xl font-black text-amber-400 mt-1">R$ {kpis.custoTotalCMV.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          </div>
+          <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
+            <div>
+              <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-1">Lojas Físicas</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.cmvFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="pt-2 border-t border-slate-800/50">
+              <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.cmvDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-slate-900 p-5 rounded-2xl border border-emerald-500/20 flex flex-col justify-between text-center">
+          <div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
+            <h3 className="text-2xl font-black text-emerald-400 mt-1">R$ {kpis.lucroLiquidoReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          </div>
+          <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
+            <div>
+              <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-1">Lojas Físicas</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.lucroFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="pt-2 border-t border-slate-800/50">
+              <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.lucroDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+        </div>
 
       </div>
+
+      {viewMode === 'cards' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {channelAnalytics.map((item: any) => {
+            const metaBatida = item.progressoMetaPct >= 100;
+            return (
+              <div key={item.canal} className="bg-slate-900 p-5 rounded-2xl border border-slate-800 space-y-4 flex flex-col justify-between hover:border-slate-700 transition duration-300 shadow-sm">
+                 <div className="flex justify-between items-start border-b border-slate-800 pb-3 gap-3">
+                   <div className="flex items-center gap-3">
+                     {item.logoUrl ? <img src={item.logoUrl} alt={item.canal} className="w-11 h-11 rounded-xl bg-white object-contain p-1 border border-slate-700 shadow" /> : <div className="w-11 h-11 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[10px] font-bold">Logo</div>}
+                     <div>
+                       <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wide">{item.responsavel || 'Equipe'}</span>
+                       <h4 className="font-black text-white text-sm tracking-tight">{item.canal}</h4>
+                     </div>
+                   </div>
+                   
+                   <div className="flex flex-col items-end gap-1">
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 whitespace-nowrap ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
+                        {metaBatida ? <i className="fa-solid fa-arrow-trend-up"></i> : <i className="fa-solid fa-arrow-trend-down"></i>}
+                        {item.progressoMetaPct.toFixed(1)}% da meta atingida
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 tracking-tight">
+                        Meta: R$ {item.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                   </div>
+                 </div>
+                 
+                 <div className="grid grid-cols-3 gap-2 bg-slate-800/30 p-3.5 rounded-xl border border-slate-700/50">
+                   <div>
+                     <span className="text-[9px] text-slate-300 block font-bold tracking-wider mb-0.5">FAT. BRUTO</span>
+                     <strong className="text-xs font-black text-white">R$ {item.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                   </div>
+                   <div>
+                     <span className="text-[9px] text-sky-200 block font-bold tracking-wider mb-0.5">C/ REDUTOR</span>
+                     <strong className="text-xs font-black text-sky-400">R$ {item.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                   </div>
+                   <div>
+                     <span className="text-[9px] text-purple-200 block font-bold tracking-wider mb-0.5">REPASSE LÍQ.</span>
+                     <strong className="text-xs font-black text-purple-400">R$ {item.repasseLiquidoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                   </div>
+                 </div>
+
+                 <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs text-slate-300">
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">CMV (Custo Produtos):</span>
+                     <span className="text-amber-400 font-bold">- R$ {item.cmvCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">Abatimento Devoluções (PDV):</span>
+                     <span className="text-rose-400 font-bold">- R$ {item.devolucoesPdv.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">Frete Reverso Devoluções:</span>
+                     <span className="text-rose-400 font-bold">- R$ {item.devolucoesFrete.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">Adsense (Ads):</span>
+                     <span className="text-rose-400 font-bold">- R$ {item.adsCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">Frete Flex (PLP):</span>
+                     <span className="text-rose-400 font-bold">- R$ {item.flexCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+                   
+                   <div className="flex justify-between items-center pt-2 border-t border-slate-900 font-bold text-white">
+                     <span>Lucro Líquido Real:</span>
+                     <span className={item.lucroLiquidoReal >= 0 ? 'text-emerald-400 font-black' : 'text-rose-400 font-black'}>
+                       R$ {item.lucroLiquidoReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                     </span>
+                   </div>
+                 </div>
+
+                 <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs">
+                   <div className="flex justify-between items-center">
+                     <span className="text-[10px] text-slate-400 font-bold uppercase">
+                        {item.isCurrentMonth ? 'Projeção Fechamento:' : 'Faturamento Final:'}
+                     </span>
+                     <strong className="text-xs font-black text-indigo-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                   </div>
+
+                   <div className="flex justify-between items-center pt-1 border-t border-slate-900">
+                     {item.valorFaltante === 0 ? (
+                       <span className="w-full text-center text-xs font-black text-emerald-400 py-0.5">🎉 Parabéns, meta batida!</span>
+                     ) : (
+                       <>
+                         <span className="text-[10px] text-slate-400 font-bold uppercase">
+                            {item.isCurrentMonth ? 'Meta Diária Restante:' : 'Faltou para a Meta:'}
+                         </span>
+                         <strong className="text-xs font-black text-amber-400">
+                            R$ {item.isCurrentMonth 
+                                ? item.mediaDiariaNecessaria.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' / dia' 
+                                : item.valorFaltante.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                         </strong>
+                       </>
+                     )}
+                   </div>
+                   
+                   {item.cancelamentosMes > 0 && (
+                     <div className="flex justify-between items-center pt-1 border-t border-slate-900">
+                       <span className="text-[10px] text-slate-400 font-bold uppercase">Cancelamentos do Mês:</span>
+                       <strong className="text-xs font-black text-rose-400">- R$ {item.cancelamentosMes.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                     </div>
+                   )}
+                 </div>
+                 
+                 <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-700/50">
+                    <div>
+                      <span className="text-[10px] text-slate-300 block font-bold mb-0.5">Margem Bruta</span>
+                      <strong className="text-sm font-black text-blue-400">{item.margemBrutaPct.toFixed(1)}%</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-300 block font-bold mb-0.5">Margem Líquida</span>
+                      <strong className="text-sm font-black text-emerald-400">{item.margemLiquidaPct.toFixed(1)}%</strong>
+                    </div>
+                 </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-200">
+              <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800 tracking-wider">
+                <tr>
+                  <th className="py-4 px-6">Canal / Responsável</th>
+                  <th className="py-4 px-4 text-right">{labelVendasDia}</th>
+                  <th className="py-4 px-4 text-right">Total Vendas do Mês</th>
+                  <th className="py-4 px-4 text-right">Meta do Mês</th>
+                  <th className="py-4 px-4 text-right">Projeção do Mês</th>
+                  <th className="py-4 px-4 text-center">Meta Atingida</th>
+                  <th className="py-4 px-6 text-right text-emerald-400">Margem Líq.</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 font-medium">
+                
+                {ecommerceChannels.length > 0 && (
+                  <>
+                    <tr className="bg-slate-950/80 font-black text-white text-xs border-y border-slate-800">
+                      <td colSpan={7} className="py-3 px-6 text-indigo-400 flex items-center gap-2">
+                        <i className="fa-solid fa-globe"></i> E-COMMERCE
+                      </td>
+                    </tr>
+                    {ecommerceChannels.map((item: any) => {
+                      const metaBatida = item.progressoMetaPct >= 100;
+                      return (
+                        <tr key={item.canal} className="hover:bg-slate-800/40 transition">
+                          <td className="py-3.5 px-6">
+                            <div className="flex items-center gap-3">
+                              {item.logoUrl ? <img src={item.logoUrl} alt={item.canal} className="w-8 h-8 rounded-lg bg-white object-contain p-0.5 border border-slate-700" /> : <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[9px] font-bold">Logo</div>}
+                              <div>
+                                <span className="font-bold text-white text-xs block">{item.canal}</span>
+                                <span className="text-[9px] uppercase font-bold text-slate-400">{item.responsavel}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-slate-300">R$ {item.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="py-3.5 px-4 text-right font-bold text-white">R$ {item.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="py-3.5 px-4 text-right font-mono text-slate-400">R$ {item.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="py-3.5 px-4 text-right font-bold text-indigo-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="py-3.5 px-4 text-center">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
+                              {metaBatida ? <i className="fa-solid fa-arrow-trend-up"></i> : <i className="fa-solid fa-arrow-trend-down"></i>}
+                              {item.progressoMetaPct.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-6 text-right font-black text-emerald-400">{item.margemLiquidaPct.toFixed(1)}%</td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="bg-slate-950/40 font-bold text-xs text-white border-t border-slate-800">
+                      <td className="py-3 px-6 text-indigo-300">Total E-Commerce</td>
+                      <td className="py-3 px-4 text-right font-mono text-indigo-300">R$ {totalEcommerce.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 px-4 text-right text-indigo-300">R$ {totalEcommerce.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 px-4 text-right font-mono text-slate-400">R$ {totalEcommerce.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 px-4 text-right text-indigo-300">R$ {totalEcommerce.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 px-4 text-center text-indigo-300">
+                        {totalEcommerce.metaValor > 0 ? ((totalEcommerce.faturadoComRedutor / totalEcommerce.metaValor) * 100).toFixed(1) : '0.0'}%
+                      </td>
+                      <td className="py-3 px-6 text-right text-emerald-400">-</td>
+                    </tr>
+                  </>
+                )}
+
+                {physicalChannels.length > 0 && (
+                  <>
+                    <tr className="bg-slate-950/80 font-black text-white text-xs border-y border-slate-800">
+                      <td colSpan={7} className="py-3 px-6 text-emerald-400 flex items-center gap-2">
+                        <i className="fa-solid fa-store"></i> LOJAS FÍSICAS
+                      </td>
+                    </tr>
+                    {physicalChannels.map((item: any) => {
+                      const metaBatida = item.progressoMetaPct >= 100;
+                      return (
+                        <tr key={item.canal} className="hover:bg-slate-800/40 transition">
+                          <td className="py-3.5 px-6">
+                            <div className="flex items-center gap-3">
+                              {item.logoUrl ? <img src={item.logoUrl} alt={item.canal} className="w-8 h-8 rounded-lg bg-white object-contain p-0.5 border border-slate-700" /> : <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[9px] font-bold">Logo</div>}
+                              <div>
+                                <span className="font-bold text-white text-xs block">{item.canal}</span>
+                                <span className="text-[9px] uppercase font-bold text-slate-400">{item.responsavel}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-slate-300">R$ {item.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="py-3.5 px-4 text-right font-bold text-white">R$ {item.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="py-3.5 px-4 text-right font-mono text-slate-400">R$ {item.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="py-3.5 px-4 text-right font-bold text-emerald-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="py-3.5 px-4 text-center">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
+                              {metaBatida ? <i className="fa-solid fa-arrow-trend-up"></i> : <i className="fa-solid fa-arrow-trend-down"></i>}
+                              {item.progressoMetaPct.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-6 text-right font-black text-emerald-400">{item.margemLiquidaPct.toFixed(1)}%</td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="bg-slate-950/40 font-bold text-xs text-white border-t border-slate-800">
+                      <td className="py-3 px-6 text-emerald-300">Total Lojas Físicas</td>
+                      <td className="py-3 px-4 text-right font-mono text-emerald-300">R$ {totalPhysical.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 px-4 text-right text-emerald-300">R$ {totalPhysical.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 px-4 text-right font-mono text-slate-400">R$ {totalPhysical.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 px-4 text-right text-emerald-300">R$ {totalPhysical.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 px-4 text-center text-emerald-300">
+                        {totalPhysical.metaValor > 0 ? ((totalPhysical.faturadoComRedutor / totalPhysical.metaValor) * 100).toFixed(1) : '0.0'}%
+                      </td>
+                      <td className="py-3 px-6 text-right text-emerald-400">-</td>
+                    </tr>
+                  </>
+                )}
+
+              </tbody>
+
+              <tfoot className="bg-slate-950 text-white font-black text-xs border-t-2 border-slate-700">
+                <tr>
+                  <td className="py-4 px-6">TOTAL GERAL</td>
+                  <td className="py-4 px-4 text-right font-mono text-emerald-400">R$ {totalGeral.vendasDoDia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="py-4 px-4 text-right text-white">R$ {totalGeral.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="py-4 px-4 text-right font-mono text-slate-300">R$ {totalGeral.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="py-4 px-4 text-right text-emerald-400">R$ {totalGeral.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="py-4 px-4 text-center text-purple-400">
+                    {totalGeral.metaValor > 0 ? ((totalGeral.faturadoComRedutor / totalGeral.metaValor) * 100).toFixed(1) : '0.0'}%
+                  </td>
+                  <td className="py-4 px-6 text-right text-emerald-400">-</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
