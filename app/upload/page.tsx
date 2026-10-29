@@ -269,6 +269,29 @@ export default function UpdatesPage() {
     }
   };
 
+  const salvarRegrasMlSupabase = async () => {
+    try {
+      setLoading(true);
+      for (const conta of ["Mercado Livre 1", "Mercado Livre 2"] as const) {
+        const c = colunasPorConta[conta];
+        await supabase.from('config_regras_canais').upsert({
+          canal: conta,
+          coluna_mlb: c.ml_mlb,
+          coluna_sku: c.ml_sku,
+          coluna_comissao: c.ml_comissao,
+          coluna_peso: c.ml_peso,
+          coluna_altura: c.ml_altura,
+          coluna_largura: c.ml_largura,
+          coluna_comprimento: c.ml_comprimento,
+        }, { onConflict: 'canal' });
+      }
+      alert("✅ Regras de Mercado Livre salvas com sucesso!");
+    } catch (err: any) {
+      alert("Erro ao salvar: " + err.message);
+    }
+    setLoading(false);
+  };
+
   const limparTabelaCustos = async () => {
     if (!confirm("Apagar todos os custos guardados?")) return;
     try {
@@ -339,7 +362,6 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // IMPORTAR VENDAS CRUZANDO PERFEITAMENTE O SKU E APLICANDO A FÓRMULA DA ABA DE REGRAS
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -814,7 +836,7 @@ export default function UpdatesPage() {
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO DE ABAS */}
+        {/* NAVEGAÇÃO DE ABAS RESTAURADA */}
         <div className="flex flex-wrap gap-3 mb-6">
           <button onClick={() => setAbaAtiva("relatorios")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "relatorios" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             📊 Relatórios (ABC & Inventário)
@@ -824,6 +846,9 @@ export default function UpdatesPage() {
           </button>
           <button onClick={() => setAbaAtiva("custos")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "custos" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             💰 Custos por SKU
+          </button>
+          <button onClick={() => setAbaAtiva("regras_ml")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "regras_ml" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
+            📦 Regras & Medidas ML
           </button>
           <button onClick={() => setAbaAtiva("dashboard_admin")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "dashboard_admin" ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-emerald-400 border border-emerald-800'}`}>
             ⚙️ Updates & Alimenta Dashboard
@@ -992,6 +1017,60 @@ export default function UpdatesPage() {
                 </table>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ABA: REGRAS & MEDIDAS ML (RESTAURADA) */}
+        {abaAtiva === "regras_ml" && (
+          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
+                <p className="text-xs text-slate-400">Mapeamento de colunas para leitura de anúncios por conta (MLB, SKU, Comissão, Peso, Altura, Largura, Comprimento).</p>
+              </div>
+              <button onClick={salvarRegrasMlSupabase} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase cursor-pointer">
+                Salvar Configurações
+              </button>
+            </div>
+
+            <div className="flex bg-slate-950 p-2 rounded-xl border border-slate-800 w-fit gap-2">
+              <button type="button" onClick={() => setContaMlSelecionada("Mercado Livre 1")} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer ${contaMlSelecionada === "Mercado Livre 1" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Mercado Livre 1</button>
+              <button type="button" onClick={() => setContaMlSelecionada("Mercado Livre 2")} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer ${contaMlSelecionada === "Mercado Livre 2" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Mercado Livre 2</button>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-950 p-5 rounded-xl border border-slate-800">
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna MLB (ID):</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_mlb} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_mlb: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna SKU:</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_sku} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_sku: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Comissão:</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_comissao} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_comissao: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Peso (kg):</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_peso} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_peso: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Altura (cm):</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_altura} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_altura: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Largura (cm):</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_largura} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_largura: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Comprimento (cm):</label>
+                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_comprimento} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_comprimento: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
+              </div>
+            </div>
+
+            <input type="file" accept=".xlsx, .xls" onChange={handleUploadRegrasML} className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
+            <input type="text" value={pesquisaMl} onChange={(e) => setPesquisaMl(e.target.value)} placeholder="🔍 Pesquisar MLB ou SKU..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none" />
           </div>
         )}
 

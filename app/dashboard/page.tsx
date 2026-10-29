@@ -1162,8 +1162,8 @@ export default function DashboardPage() {
               </tfoot>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
