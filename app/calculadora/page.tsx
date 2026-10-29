@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, ChangeEvent } from "react";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
@@ -384,7 +384,6 @@ export default function CalculadoraPage() {
       .map((canalNome) => calcularCalculoItem(produtoEncontrado, canalNome, margemDesejadaNum));
   };
 
-  // Leitura da planilha com SKUs na Coluna A
   const handleUploadPlanilhaMassa = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -417,7 +416,6 @@ export default function CalculadoraPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Processar e exportar via planilha
   const handleExportarPrecificacaoMassa = () => {
     if (skusMassaCarregados.length === 0) {
       alert("Nenhum SKU carregado. Envie uma planilha com os SKUs na Coluna A primeiro.");
