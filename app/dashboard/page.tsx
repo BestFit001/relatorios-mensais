@@ -19,7 +19,7 @@ const TABELAS_SUPABASE = [
 function compilarFormulaExcel(src: any) {
   const texto = String(src || '').trim().replace(/^=/, '');
   if (!texto) return null;
-  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?\d*|[-+*/^()%]/g);
+  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?[0-9]*|[-+*/^()%]/g);
   if (!tokens || tokens.join('') !== texto.replace(/\s+/g, '')) return null;
 
   let i = 0;
@@ -153,7 +153,12 @@ export default function DashboardPage() {
   };
 
   const normalizarTexto = (v: any) => String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
-  const normalizarSku = (v: any) => String(v ?? '').trim().replace(/^['"]/, '').replace(/['"]$/, '').toLowerCase();
+  const normalizarSku = (v: any) => {
+    if (v === null || v === undefined) return "";
+    let s = String(v).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
+    if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
+    return s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  };
   const normalizarPedido = (v: any) => String(v ?? '').trim().replace(/\.0$/, '').replace(/\s+/g, '').toLowerCase();
 
   const isChannelFisico = (canalName: string) => {
@@ -191,6 +196,21 @@ export default function DashboardPage() {
   const goals = database.tb_metas || [];
   const cancelados = database.cancelados || [];
   const users = database.usuarios_permissoes || [];
+
+  // Mapa de custos super flexível
+  const produtosCustoMap = useMemo(() => {
+    const map = new Map();
+    (products || []).forEach((p: any) => {
+      const sNorm = normalizarSku(p.sku);
+      if (sNorm) {
+        map.set(sNorm, {
+          custo_unitario: parseCurrency(p.custo_unitario || p.preco_custo || p.custo),
+          custo_embalagem: parseCurrency(p.custo_embalagem)
+        });
+      }
+    });
+    return map;
+  }, [products]);
 
   const regrasMap = useMemo(() => {
     const map = new Map();
@@ -326,10 +346,8 @@ export default function DashboardPage() {
           custoCMV = parseCurrency(s.cmv_clube);
         } else {
           const skuVendaNorm = normalizarSku(s.sku);
-          const prod = products.find((p: any) => normalizarSku(p.sku) === skuVendaNorm) || { custo_unitario: 0, preco_custo: 0, custo: 0, custo_embalagem: 0 };
-          const unitCusto = parseCurrency(prod.custo_unitario || prod.preco_custo || prod.custo);
-          const embCusto = parseCurrency(prod.custo_embalagem);
-          custoCMV = (unitCusto + embCusto) * qtd;
+          const custoProd = produtosCustoMap.get(skuVendaNorm) || { custo_unitario: 0, custo_embalagem: 0 };
+          custoCMV = (custoProd.custo_unitario + custoProd.custo_embalagem) * qtd;
         }
 
         const ped = normalizarPedido(s.id_pedido);
@@ -337,7 +355,6 @@ export default function DashboardPage() {
         
         let repasseLiquido = parseCurrency(s.repasse_liquido);
 
-        // Aplicação estrita da fórmula da aba Regras com blindagem contra valores negativos
         const regraCanal = regrasMap.get(normalizarTexto(s.canal));
         if (regraCanal && regraCanal.formula) {
           try {
@@ -376,7 +393,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, products, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap, regrasMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, produtosCustoMap, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap, regrasMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
@@ -594,10 +611,8 @@ export default function DashboardPage() {
 
           const skuDev = normalizarSku(d.sku);
           const qtdDev = parseCurrency(d.quantidade) || 1;
-          const prodObj = products.find((p: any) => normalizarSku(p.sku) === skuDev) || { custo_unitario: 0, preco_custo: 0, custo: 0, custo_embalagem: 0 };
-          const unitCusto = parseCurrency(prodObj.custo_unitario || prodObj.preco_custo || prodObj.custo);
-          const embCusto = parseCurrency(prodObj.custo_embalagem);
-          devCmvTotal += (unitCusto + embCusto) * qtdDev;
+          const custoProd = produtosCustoMap.get(skuDev) || { custo_unitario: 0, custo_embalagem: 0 };
+          devCmvTotal += (custoProd.custo_unitario + custoProd.custo_embalagem) * qtdDev;
         }
       });
 
@@ -655,7 +670,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap, products]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap, produtosCustoMap]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
@@ -1162,8 +1177,8 @@ export default function DashboardPage() {
               </tfoot>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
