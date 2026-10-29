@@ -35,6 +35,17 @@ function letraParaIndice(letra: string): number {
   return Math.max(0, num - 1);
 }
 
+function indiceParaLetra(index: number): string {
+  let n = index + 1;
+  let letters = "";
+  while (n > 0) {
+    let rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
@@ -472,14 +483,9 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        const faturadosBanco = await fetchTodosRegistros('faturados_pedidos', 'id_pedido', 'mes_referencia', mesAlvoDash);
+        // BUSCA TODOS OS FATURADOS DA BASE SEM TRAVA RÍGIDA DE STRING DE MÊS
+        const faturadosBanco = await fetchTodosRegistros('faturados_pedidos', 'id_pedido');
         const idsFaturadosSet = new Set(faturadosBanco.map((f: any) => String(f.id_pedido).trim()));
-        
-        if (idsFaturadosSet.size === 0) {
-          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado em 'faturados_pedidos' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
-          setLoading(false);
-          return;
-        }
 
         const { data: regraData } = await supabase
           .from('config_regras_canais')
@@ -519,7 +525,7 @@ export default function UpdatesPage() {
         let totalImportados = 0;
         let ignoradosForaDoMes = 0;
 
-        let i = 6; // Começa exatamente na linha de dados do Excel do Mercado Livre
+        let i = 6; // Começa na linha de dados do Excel do Mercado Livre
         while (i < json.length) {
           const row = json[i];
           if (!row || row.length === 0) {
@@ -535,8 +541,8 @@ export default function UpdatesPage() {
             continue;
           }
 
-          // FILTRO TEMPORAL: O pedido precisa estar nos faturados do mês
-          if (!idsFaturadosSet.has(rawId)) {
+          // Se houver faturados cadastrados na base, filtra por eles. Se a base de faturados estiver vazia, aceita todos para teste.
+          if (idsFaturadosSet.size > 0 && !idsFaturadosSet.has(rawId)) {
             ignoradosForaDoMes++;
             i++;
             continue;
@@ -600,8 +606,6 @@ export default function UpdatesPage() {
           // 2. VENDAS NORMAIS (ITEM ÚNICO NA MESMA LINHA)
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
-          
-          // O preço de venda da linha normal vem da Coluna I (Receita por produtos) ou da coluna configurada de PDV
           const precoVenda = parseSmartFloat(idxReceitaProd >= 0 && row[idxReceitaProd] !== "" ? row[idxReceitaProd] : (idxPdv >= 0 ? row[idxPdv] : 0));
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
@@ -610,8 +614,16 @@ export default function UpdatesPage() {
           const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
           let repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : 0);
-          if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
-            repasseLiquido = precoVenda - (precoVenda * 0.09); // Fallback conservador
+          if (formulaCompilada) {
+            try {
+              const resFormula = formulaCompilada.fn({ 'PDV': precoVenda, 'I': precoVenda, 'H': quantidade });
+              if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
+                repasseLiquido = resFormula;
+              }
+            } catch {}
+          }
+          if (isNaN(repasseLiquido) || repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
+            repasseLiquido = precoVenda - (precoVenda * 0.09);
           }
 
           novasVendas.push({
@@ -637,7 +649,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados (faturados no mês): ${totalImportados} itens\n• Ignorados (fora do mês/não faturados): ${ignoradosForaDoMes}`);
+        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados: ${totalImportados} itens\n• Ignorados (fora do mês/não faturados): ${ignoradosForaDoMes}`);
         carregarVendasPendentes();
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
