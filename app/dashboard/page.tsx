@@ -16,17 +16,6 @@ const TABELAS_SUPABASE = [
   'plp_pedidos',
 ] as const;
 
-function indiceParaLetra(index: number): string {
-  let n = index + 1;
-  let letters = "";
-  while (n > 0) {
-    let rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return letters;
-}
-
 function compilarFormulaExcel(src: any) {
   const texto = String(src || '').trim().replace(/^=/, '');
   if (!texto) return null;
@@ -252,12 +241,7 @@ export default function DashboardPage() {
     const map = new Map();
     (database.faturados_pedidos || []).forEach((f: any) => {
       const idPed = normalizarPedido(f.id_pedido);
-      if (idPed) {
-        map.set(idPed, {
-          data_faturamento: f.data_faturamento ? f.data_faturamento.slice(0, 10) : '',
-          mes_referencia: String(f.mes_referencia || '').trim().toLowerCase()
-        });
-      }
+      if (idPed && f.data_faturamento) map.set(idPed, f.data_faturamento.slice(0, 10));
     });
     return map;
   }, [database.faturados_pedidos]);
@@ -326,7 +310,6 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
-  // CRUCONEXÃO DE FATURADOS: APENAS PEDIDOS CUJO FATURAMENTO PERTENCE AO MÊS SELECIONADO ENTRARÃO NO DASHBOARD
   const enrichedSales = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -339,20 +322,29 @@ export default function DashboardPage() {
         if (appliedModalidadeFilter === 'DIGITAL' && fisico) return false;
 
         const ped = normalizarPedido(s.id_pedido);
-        const fatInfo = faturadosMap.get(ped);
+        const dataFat = faturadosMap.get(ped) || s.data_faturamento;
 
-        // Se o canal for digital (ex: Mercado Livre), exigimos validação pelo faturado do mês
-        if (!fisico) {
-          if (!fatInfo) return false;
-          // Verifica se o mês de referência ou a data do faturamento bate com o período selecionado
-          const mesRefAlvo = currentRefMonth.toLowerCase(); // ex: '2026-10' ou 'outubro de 2026'
-          const fatMesRef = fatInfo.mes_referencia.toLowerCase();
-          const fatData = fatInfo.data_faturamento; // yyyy-mm-dd
-
-          const matchMes = fatMesRef.includes(mesRefAlvo) || (fatData && fatData.startsWith(mesRefAlvo));
-          if (!matchMes) return false;
+        if (dataFat) {
+           const d = new Date(dataFat + 'T00:00:00');
+           d.setHours(0, 0, 0, 0);
+           
+           if (appliedDateFilter === 'HOJE' && d.getTime() !== today.getTime()) return false;
+           if (appliedDateFilter === 'SEMANA' && (d < new Date(today.getTime() - 7*24*60*60*1000) || d > today)) return false;
+           if (appliedDateFilter === 'QUINZENA' && (d < new Date(today.getTime() - 15*24*60*60*1000) || d > today)) return false;
+           if (appliedDateFilter === 'MES_ATUAL') {
+              const [ano, mes] = currentMonthDefault.split('-');
+              if (d.getFullYear() !== Number(ano) || (d.getMonth() + 1) !== Number(mes)) return false;
+           }
+           if (appliedDateFilter === 'MES_ANTERIOR') {
+              const [ano, mes] = previousMonthDefault.split('-');
+              if (d.getFullYear() !== Number(ano) || (d.getMonth() + 1) !== Number(mes)) return false;
+           }
+           if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate && appliedEndDate) {
+              const start = new Date(appliedStartDate + 'T00:00:00');
+              const end = new Date(appliedEndDate + 'T23:59:59');
+              if (d < start || d > end) return false;
+           }
         }
-
         return true;
       })
       .map((s: any) => {
@@ -386,6 +378,7 @@ export default function DashboardPage() {
             };
             const resFormula = regraCanal.formula.fn(contextoLinha);
             if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null && resFormula > 0) {
+              // Se for carrinho rateado, preserva o rateio proporcional já efetuado no upload
               if (repasseLiquido <= 0) {
                 repasseLiquido = resFormula;
               }
@@ -405,18 +398,15 @@ export default function DashboardPage() {
            repasseLiquido = Math.max(0, repasseLiquido - taxaVindi);
         }
         
-        const fatInfo = faturadosMap.get(ped);
-
         return { 
           ...s, 
           preco_venda: precoVenda,
           custoCMV, 
           custoFlex, 
-          repasse_liquido: repasseLiquido,
-          data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
+          repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap, faturadosMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, produtosCustoMap, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap, regrasMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
@@ -600,7 +590,11 @@ export default function DashboardPage() {
       const chSales = enrichedSales.filter((s: any) => normalizarTexto(s.canal) === kCanal);
       
       const vendasDoDia = chSales
-        .filter((s: any) => s.data_faturamento === targetDateStr)
+        .filter((s: any) => {
+          const ped = normalizarPedido(s.id_pedido);
+          const dataFat = faturadosMap.get(ped) || s.data_faturamento;
+          return dataFat === targetDateStr;
+        })
         .reduce((sum: number, s: any) => sum + s.preco_venda, 0);
 
       const ruleObj = channelRules.find((r: any) => normalizarTexto(r.canal) === kCanal) || {};
@@ -689,7 +683,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, produtosCustoMap]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap, produtosCustoMap]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
