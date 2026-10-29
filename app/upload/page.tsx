@@ -43,17 +43,6 @@ function letraParaIndice(letra: string): number {
   return Math.max(0, num - 1);
 }
 
-function indiceParaLetra(index: number): string {
-  let n = index + 1;
-  let letters = "";
-  while (n > 0) {
-    let rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return letters;
-}
-
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
@@ -80,85 +69,6 @@ function parseSmartFloat(val: any) {
     strVal = strVal.replace(/\./g, '').replace(',', '.');
   }
   return parseFloat(strVal) || 0;
-}
-
-function compilarFormulaExcel(src: any) {
-  const texto = String(src || '').trim().replace(/^=/, '');
-  if (!texto) return null;
-  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?[0-9]*|[-+*/^()%]/g);
-  if (!tokens || tokens.join('') !== texto.replace(/\s+/g, '')) return null;
-
-  let i = 0;
-  const refs: string[] = [];
-  const peek = () => tokens[i];
-  const next = () => tokens[i++];
-
-  const expr = (): any => {
-    let l = term();
-    while (peek() === '+' || peek() === '-') {
-      const op = next();
-      const r = term();
-      const a = l;
-      l = op === '+' ? (c: any) => (a(c) || 0) + (r(c) || 0) : (c: any) => (a(c) || 0) - (r(c) || 0);
-    }
-    return l;
-  };
-  const term = (): any => {
-    let l = power();
-    while (peek() === '*' || peek() === '/') {
-      const op = next();
-      const r = power();
-      const a = l;
-      l = op === '*' ? (c: any) => (a(c) || 0) * (r(c) || 0) : (c: any) => {
-        const den = r(c) || 1;
-        return den === 0 ? 0 : (a(c) || 0) / den;
-      };
-    }
-    return l;
-  };
-  const power = (): any => {
-    const base = unary();
-    if (peek() === '^') {
-      next();
-      const e = power();
-      return (c: any) => Math.pow(base(c) || 0, e(c) || 0);
-    }
-    return base;
-  };
-  const unary = (): any => {
-    if (peek() === '-') { next(); const x = unary(); return (c: any) => -(x(c) || 0); }
-    if (peek() === '+') { next(); return unary(); }
-    return postfix();
-  };
-  const postfix = (): any => {
-    let n = primary();
-    while (peek() === '%') { next(); const a = n; n = (c: any) => (a(c) || 0) / 100; }
-    return n;
-  };
-  const primary = (): any => {
-    const t = next();
-    if (t === undefined) throw new Error('Fim inesperado');
-    if (t === '(') {
-      const e = expr();
-      if (next() !== ')') throw new Error('Parêntese');
-      return e;
-    }
-    if (/^\d/.test(t)) { const v = Number(t.replace(',', '.')); return () => v; }
-    if (/^\$?[A-Za-z]/.test(t)) {
-      const col = t.replace(/[^A-Za-z]/g, '').toUpperCase();
-      refs.push(col);
-      return (c: any) => (c[col] !== undefined ? c[col] : 0);
-    }
-    throw new Error('Token inválido');
-  };
-
-  try {
-    const fn = expr();
-    if (i !== tokens.length) return null;
-    return { fn, refs };
-  } catch {
-    return null;
-  }
 }
 
 export default function UpdatesPage() {
@@ -528,24 +438,91 @@ export default function UpdatesPage() {
         const idxSku = letraParaIndice(colSkuDef);
         const idxPdv = letraParaIndice(colPdvDef);
         const idxQtd = letraParaIndice(colQtdDef);
-
-        const formulaCompilada = compilarFormulaExcel(regraData?.formula_excel);
+        // Opcional, pegamos a descrição do produto que geralmente fica perto (ex: coluna D) caso precise
+        const idxDescricao = letraParaIndice("D"); 
+        
+        // Coluna T para o repasse total líquido no Mercado Livre (Índice 19)
+        const idxRepasse = letraParaIndice("T");
 
         const novasVendas = [];
         let ignoradosNaoFaturados = 0;
 
-        for (let i = 7; i < json.length; i++) {
+        let i = 0;
+        while (i < json.length) {
           const row = json[i];
-          if (!row || row.length === 0) continue;
+          if (!row || row.length === 0) {
+            i++;
+            continue;
+          }
 
           let rawId = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
           rawId = rawId.replace(/\.0$/, '').replace(/\D/g, '');
 
+          // Ignora se não achou faturamento e se não houver um ID válido
           if (!rawId || !idsFaturadosSet.has(rawId)) {
             ignoradosNaoFaturados++;
+            i++;
             continue;
           }
 
+          const descRaw = idxDescricao >= 0 && row[idxDescricao] !== undefined ? String(row[idxDescricao]).trim() : '';
+
+          // LÓGICA DE CARRINHO (PACOTE DE X PRODUTOS)
+          if (descRaw.toLowerCase().includes("pacote de") && descRaw.toLowerCase().includes("produtos")) {
+            const match = descRaw.match(/\d+/);
+            const qtdItensNoPacote = match ? parseInt(match[0], 10) : 0;
+            
+            if (qtdItensNoPacote > 0) {
+              const repasseTotal = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : 0);
+              const precoTotalDaLinha = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
+
+              let subItens = [];
+              let somaPdvSubItens = 0;
+
+              // Ler as linhas subsequentes do pacote
+              for (let j = 1; j <= qtdItensNoPacote; j++) {
+                const subRow = json[i + j];
+                if (subRow) {
+                  const skuSub = normalizarSku(idxSku >= 0 ? subRow[idxSku] : '');
+                  const pdvSub = parseSmartFloat(idxPdv >= 0 ? subRow[idxPdv] : 0);
+                  const qtdSub = Number(idxQtd >= 0 && subRow[idxQtd] !== undefined ? subRow[idxQtd] : 1) || 1;
+                  
+                  const existe = skuSub && skusBaseSet.has(skuSub);
+                  const skuFinal = existe ? skuSub : (skuSub || 'sem-sku');
+                  const nome = existe ? mapaProdutos.get(skuSub) : 'Produto Carrinho';
+                  
+                  somaPdvSubItens += (pdvSub * qtdSub);
+                  subItens.push({ skuFinal, nome, pdvSub, qtdSub });
+                }
+              }
+
+              // Calcular o rateio do repasse proporcional ao valor de cada item do pacote
+              for (const item of subItens) {
+                let repasseRateado = 0;
+                if (somaPdvSubItens > 0) {
+                  repasseRateado = repasseTotal * ((item.pdvSub * item.qtdSub) / somaPdvSubItens);
+                } else {
+                  repasseRateado = repasseTotal / qtdItensNoPacote;
+                }
+
+                novasVendas.push({
+                  id_pedido: rawId,
+                  canal: canalAlvoDash,
+                  mes_referencia: mesAlvoDash,
+                  sku: item.skuFinal,
+                  produto: item.nome,
+                  quantidade: item.qtdSub,
+                  preco_venda: item.pdvSub,
+                  repasse_liquido: repasseRateado
+                });
+              }
+
+              i += (qtdItensNoPacote + 1); // Pular as linhas do pacote processadas
+              continue;
+            }
+          }
+
+          // LÓGICA NORMAL DE LINHA ÚNICA
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
@@ -553,29 +530,11 @@ export default function UpdatesPage() {
 
           const existeNaBase = skuNorm && skusBaseSet.has(skuNorm);
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
-          const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw ? String(skuRaw).trim() : 'Produto Comercial');
+          const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
-          const contextoLinha: Record<string, number> = {
-            'PDV': precoVenda,
-            [colPdvDef.toUpperCase()]: precoVenda,
-            [colQtdDef.toUpperCase()]: quantidade
-          };
-          for (let c = 0; c < row.length; c++) {
-            const ltr = indiceParaLetra(c);
-            contextoLinha[ltr] = parseSmartFloat(row[c]);
-          }
-
-          let repasseLiquido = precoVenda - (precoVenda * 0.09);
-          if (formulaCompilada) {
-            try {
-              const resFormula = formulaCompilada.fn(contextoLinha);
-              if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
-                repasseLiquido = resFormula;
-              }
-            } catch {}
-          }
-          if (isNaN(repasseLiquido) || repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
-            repasseLiquido = precoVenda - (precoVenda * 0.09);
+          let repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : 0);
+          if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
+            repasseLiquido = precoVenda - (precoVenda * 0.09); // Fallback conservador
           }
 
           novasVendas.push({
@@ -588,17 +547,19 @@ export default function UpdatesPage() {
             preco_venda: precoVenda,
             repasse_liquido: repasseLiquido
           });
+
+          i++;
         }
 
         if (novasVendas.length > 0) {
           await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
-          for (let i = 0; i < novasVendas.length; i += 500) {
-            const { error } = await supabase.from('vendas_canais').insert(novasVendas.slice(i, i + 500));
+          for (let k = 0; k < novasVendas.length; k += 500) {
+            const { error } = await supabase.from('vendas_canais').insert(novasVendas.slice(k, k + 500));
             if (error) throw error;
           }
         }
 
-        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados: ${novasVendas.length} itens\n• Ignorados: ${ignoradosNaoFaturados}`);
+        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Itens importados (incluindo carrinhos): ${novasVendas.length}\n• Pedidos ignorados por não faturamento: ${ignoradosNaoFaturados}`);
         carregarVendasPendentes();
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
@@ -1112,31 +1073,6 @@ export default function UpdatesPage() {
                   <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
                 </div>
                 <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
-              </div>
-            </div>
-
-            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-              <p className="text-xs text-slate-400 mb-6">Suba as planilhas por canal definindo e salvando a coluna onde o SKU será lido.</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {regrasCanais.map((r, idx) => (
-                  <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-white text-sm">{r.canal}</span>
-                      <button onClick={() => limparCanal(r.canal)} className="text-rose-400 text-[10px] font-bold bg-rose-950/40 px-2.5 py-1 rounded cursor-pointer">Limpar</button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Coluna SKU:</label>
-                      <input 
-                        type="text" 
-                        value={r.coluna_sku || "A"} 
-                        onChange={(e) => atualizarColunaSkuCanal(r.id, e.target.value)}
-                        className="w-14 bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" 
-                      />
-                    </div>
-                    <input type="file" multiple accept=".xlsx, .xls, .csv" onChange={(e) => handleUploadCanalMultiplos(r.canal, r.coluna_sku, e)} className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1.5 rounded-lg border border-slate-800" />
-                  </div>
-                ))}
               </div>
             </div>
           </div>
