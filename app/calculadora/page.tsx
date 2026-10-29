@@ -79,7 +79,7 @@ export default function CalculadoraPage() {
   const [canalMassaSelecionado, setCanalMassaSelecionado] = useState("Shopee");
   const [margemMassaGlobal, setMargemMassaGlobal] = useState("30");
   const [resultadosMassa, setResultadosMassa] = useState<any[]>([]);
-  const [carregandoMassa, setCarregandoMassa] = useState(false);
+  const [carregandoMassa, setCarregandoMassa] = useState<boolean>(false);
 
   // Estado para armazenar o valor de rebate inserido por canal
   const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
@@ -690,7 +690,7 @@ export default function CalculadoraPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Margem Global Padrão (%):</label>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Margem Global Padrão (%):</label>
                 <input
                   type="number"
                   value={margemMassaGlobal}
