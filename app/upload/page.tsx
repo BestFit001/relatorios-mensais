@@ -29,7 +29,6 @@ function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  // Remove tudo que não seja alfanumérico para garantir correspondência absoluta
   s = s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
   return s;
 }
@@ -57,7 +56,7 @@ function parseSmartFloat(val: any) {
 function compilarFormulaExcel(src: any) {
   const texto = String(src || '').trim().replace(/^=/, '');
   if (!texto) return null;
-  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?\d*|[-+*/^()%]/g);
+  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?[0-9]*|[-+*/^()%]/g);
   if (!tokens || tokens.join('') !== texto.replace(/\s+/g, '')) return null;
 
   let i = 0;
@@ -267,7 +266,6 @@ export default function UpdatesPage() {
 
       const skusComCusto = new Set((custos || []).map((c: any) => normalizarSku(c.sku)));
 
-      // Filtro corrigido: se o SKU da venda normalizado existe na base de custos, ele NÃO é pendente
       const pendentes = (vendas || []).filter((v: any) => {
         const skuNorm = normalizarSku(v.sku);
         if (!skuNorm || skuNorm === 'semsku') return true;
