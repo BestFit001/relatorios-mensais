@@ -289,7 +289,6 @@ export default function UpdatesPage() {
     try {
       const skuNorm = normalizarSku(novoSku);
 
-      // Busca rigorosa e exata do produto na base de custos usando o SKU normalizado
       const { data: custoMatch } = await supabase
         .from('tabela_custos_skus')
         .select('sku, produto')
@@ -500,7 +499,6 @@ export default function UpdatesPage() {
           .from('tabela_custos_skus')
           .select('sku, produto');
 
-        // Mapeamento inteligente garantindo que o SKU seja normalizado e o nome real do produto seja resgatado
         const mapaProdutos = new Map();
         const skusBaseSet = new Set();
         (custosBanco || []).forEach((c: any) => {
@@ -540,16 +538,16 @@ export default function UpdatesPage() {
           }
 
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
-          const sku = normalizarSku(skuRaw);
+          const skuNorm = normalizarSku(skuRaw);
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
-          // Se o SKU existe na base de custos, puxa o nome real correspondente. Caso contrário, define como 'sem-sku' ou mantém o texto bruto se houver.
-          let nomeProduto = mapaProdutos.get(sku);
-          const skuFinal = (sku && skusBaseSet.has(sku)) ? sku : 'sem-sku';
+          // Validação corrigida: Atribui o SKU correto e puxa o nome do produto da base de custos se existir
+          const skuFinal = (skuNorm && skusBaseSet.has(skuNorm)) ? skuNorm : (skuNorm || 'sem-sku');
+          let nomeProduto = mapaProdutos.get(skuFinal);
 
           if (!nomeProduto || nomeProduto.toLowerCase() === skuFinal) {
-            nomeProduto = skuRaw ? String(skuRaw).trim() : 'Produto Geral';
+            nomeProduto = skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial';
           }
 
           const contextoLinha: Record<string, number> = {
