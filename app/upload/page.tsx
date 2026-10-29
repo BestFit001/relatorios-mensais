@@ -18,17 +18,10 @@ async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo
     }
     
     const { data, error } = await query;
-    if (error || !data) {
-      console.error(`Erro ao buscar ${tabela}:`, error);
-      break;
-    }
-    
+    if (error || !data) break;
     todos = [...todos, ...data];
     from += step;
-    
-    if (data.length < step) {
-      continuar = false;
-    }
+    if (data.length < step) continuar = false;
   }
   return todos;
 }
@@ -40,17 +33,6 @@ function letraParaIndice(letra: string): number {
     num = num * 26 + (l.charCodeAt(i) - 64);
   }
   return Math.max(0, num - 1);
-}
-
-function indiceParaLetra(index: number): string {
-  let n = index + 1;
-  let letters = "";
-  while (n > 0) {
-    let rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return letters;
 }
 
 function normalizarSku(valor: any): string {
@@ -518,7 +500,7 @@ export default function UpdatesPage() {
           }
         });
 
-        const colSkuDef = regraData?.col_sku || 'X';
+        const colSkuDef = regraData?.col_sku || 'E';
         const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || 'I';
         const colQtdDef = regraData?.col_quantidade || 'H';
         const colIdDef = regraData?.col_id_pedido || regraData?.col_estado || 'A';
@@ -528,14 +510,16 @@ export default function UpdatesPage() {
         const idxPdv = letraParaIndice(colPdvDef);
         const idxQtd = letraParaIndice(colQtdDef);
         const idxDescricao = letraParaIndice("D"); 
-        const idxRepasse = letraParaIndice("T"); // Coluna T (Repasse líquido total no ML)
+        const idxRepasse = letraParaIndice("T"); // Coluna T (Repasse líquido total)
+        const idxReceitaProd = letraParaIndice("I"); // Coluna I (Receita por produtos)
 
         const formulaCompilada = compilarFormulaExcel(regraData?.formula_excel);
 
         const novasVendas = [];
-        let ignoradosNaoFaturados = 0;
+        let totalImportados = 0;
+        let ignoradosForaDoMes = 0;
 
-        let i = 0;
+        let i = 6; // Começa exatamente na linha de dados do Excel do Mercado Livre
         while (i < json.length) {
           const row = json[i];
           if (!row || row.length === 0) {
@@ -546,15 +530,21 @@ export default function UpdatesPage() {
           let rawId = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
           rawId = rawId.replace(/\.0$/, '').replace(/\D/g, '');
 
-          if (!rawId || !idsFaturadosSet.has(rawId)) {
-            ignoradosNaoFaturados++;
+          if (!rawId) {
+            i++;
+            continue;
+          }
+
+          // FILTRO TEMPORAL: O pedido precisa estar nos faturados do mês
+          if (!idsFaturadosSet.has(rawId)) {
+            ignoradosForaDoMes++;
             i++;
             continue;
           }
 
           const descRaw = idxDescricao >= 0 && row[idxDescricao] !== undefined ? String(row[idxDescricao]).trim() : '';
 
-          // TRATAMENTO INTELIGENTE DE CARRINHO (PACOTE DE X PRODUTOS)
+          // 1. TRATAMENTO DE CARRINHO / PACOTE DE PRODUTOS
           if (descRaw.toLowerCase().includes("pacote de") && descRaw.toLowerCase().includes("produtos")) {
             const match = descRaw.match(/\d+/);
             const qtdItensNoPacote = match ? parseInt(match[0], 10) : 0;
@@ -568,7 +558,6 @@ export default function UpdatesPage() {
               for (let j = 1; j <= qtdItensNoPacote; j++) {
                 const subRow = json[i + j];
                 if (subRow) {
-                  // SKU nas linhas seguintes está na coluna correta mapeada (ou Coluna X / Índice 23)
                   const skuSub = normalizarSku(subRow[idxSku >= 0 ? idxSku : 23]);
                   const pdvSub = parseSmartFloat(idxPdv >= 0 ? subRow[idxPdv] : 0);
                   const qtdSub = Number(idxQtd >= 0 && subRow[idxQtd] !== undefined ? subRow[idxQtd] : 1) || 1;
@@ -600,6 +589,7 @@ export default function UpdatesPage() {
                   preco_venda: item.pdvSub,
                   repasse_liquido: repasseRateado
                 });
+                totalImportados++;
               }
 
               i += (qtdItensNoPacote + 1);
@@ -607,37 +597,21 @@ export default function UpdatesPage() {
             }
           }
 
-          // VENDAS NORMAIS (LINHA ÚNICA)
+          // 2. VENDAS NORMAIS (ITEM ÚNICO NA MESMA LINHA)
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
-          const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
+          
+          // O preço de venda da linha normal vem da Coluna I (Receita por produtos) ou da coluna configurada de PDV
+          const precoVenda = parseSmartFloat(idxReceitaProd >= 0 && row[idxReceitaProd] !== "" ? row[idxReceitaProd] : (idxPdv >= 0 ? row[idxPdv] : 0));
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
           const existeNaBase = skuNorm && skusBaseSet.has(skuNorm);
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
           const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
-          const contextoLinha: Record<string, number> = {
-            'PDV': precoVenda,
-            [colPdvDef.toUpperCase()]: precoVenda,
-            [colQtdDef.toUpperCase()]: quantidade
-          };
-          for (let c = 0; c < row.length; c++) {
-            const ltr = indiceParaLetra(c);
-            contextoLinha[ltr] = parseSmartFloat(row[c]);
-          }
-
           let repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : 0);
-          if (formulaCompilada) {
-            try {
-              const resFormula = formulaCompilada.fn(contextoLinha);
-              if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
-                repasseLiquido = resFormula;
-              }
-            } catch {}
-          }
-          if (isNaN(repasseLiquido) || repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
-            repasseLiquido = precoVenda - (precoVenda * 0.09);
+          if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
+            repasseLiquido = precoVenda - (precoVenda * 0.09); // Fallback conservador
           }
 
           novasVendas.push({
@@ -650,6 +624,7 @@ export default function UpdatesPage() {
             preco_venda: precoVenda,
             repasse_liquido: repasseLiquido
           });
+          totalImportados++;
 
           i++;
         }
@@ -662,7 +637,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados (com carrinhos processados): ${novasVendas.length} itens\n• Ignorados: ${ignoradosNaoFaturados}`);
+        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados (faturados no mês): ${totalImportados} itens\n• Ignorados (fora do mês/não faturados): ${ignoradosForaDoMes}`);
         carregarVendasPendentes();
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);

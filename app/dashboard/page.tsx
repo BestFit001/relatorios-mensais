@@ -16,6 +16,17 @@ const TABELAS_SUPABASE = [
   'plp_pedidos',
 ] as const;
 
+function indiceParaLetra(index: number): string {
+  let n = index + 1;
+  let letters = "";
+  while (n > 0) {
+    let rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
 function compilarFormulaExcel(src: any) {
   const texto = String(src || '').trim().replace(/^=/, '');
   if (!texto) return null;
@@ -130,8 +141,19 @@ export default function DashboardPage() {
       const resultado: Record<string, any[]> = {};
       await Promise.all(
         TABELAS_SUPABASE.map(async (tabela) => {
-          const { data } = await supabase.from(tabela).select('*');
-          resultado[tabela] = data || [];
+          let allRows: any[] = [];
+          let from = 0;
+          const step = 1000;
+          let keep = true;
+          while (keep) {
+            const { data } = await supabase.from(tabela).select('*').range(from, from + step - 1);
+            if (data && data.length > 0) {
+              allRows = [...allRows, ...data];
+              from += step;
+              if (data.length < step) keep = false;
+            } else keep = false;
+          }
+          resultado[tabela] = allRows;
         })
       );
       setDatabase(resultado);
@@ -230,7 +252,12 @@ export default function DashboardPage() {
     const map = new Map();
     (database.faturados_pedidos || []).forEach((f: any) => {
       const idPed = normalizarPedido(f.id_pedido);
-      if (idPed && f.data_faturamento) map.set(idPed, f.data_faturamento.slice(0, 10));
+      if (idPed) {
+        map.set(idPed, {
+          data_faturamento: f.data_faturamento ? f.data_faturamento.slice(0, 10) : '',
+          mes_referencia: String(f.mes_referencia || '').trim().toLowerCase()
+        });
+      }
     });
     return map;
   }, [database.faturados_pedidos]);
@@ -311,29 +338,18 @@ export default function DashboardPage() {
         if (appliedModalidadeFilter === 'DIGITAL' && fisico) return false;
 
         const ped = normalizarPedido(s.id_pedido);
-        const dataFat = faturadosMap.get(ped) || s.data_faturamento;
+        const fatInfo = faturadosMap.get(ped);
 
-        if (dataFat) {
-           const d = new Date(dataFat + 'T00:00:00');
-           d.setHours(0, 0, 0, 0);
-           
-           if (appliedDateFilter === 'HOJE' && d.getTime() !== today.getTime()) return false;
-           if (appliedDateFilter === 'SEMANA' && (d < new Date(today.getTime() - 7*24*60*60*1000) || d > today)) return false;
-           if (appliedDateFilter === 'QUINZENA' && (d < new Date(today.getTime() - 15*24*60*60*1000) || d > today)) return false;
-           if (appliedDateFilter === 'MES_ATUAL') {
-              const [ano, mes] = currentMonthDefault.split('-');
-              if (d.getFullYear() !== Number(ano) || (d.getMonth() + 1) !== Number(mes)) return false;
-           }
-           if (appliedDateFilter === 'MES_ANTERIOR') {
-              const [ano, mes] = previousMonthDefault.split('-');
-              if (d.getFullYear() !== Number(ano) || (d.getMonth() + 1) !== Number(mes)) return false;
-           }
-           if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate && appliedEndDate) {
-              const start = new Date(appliedStartDate + 'T00:00:00');
-              const end = new Date(appliedEndDate + 'T23:59:59');
-              if (d < start || d > end) return false;
-           }
+        if (!fisico) {
+          if (!fatInfo) return false;
+          const mesRefAlvo = currentRefMonth.toLowerCase();
+          const fatMesRef = fatInfo.mes_referencia.toLowerCase();
+          const fatData = fatInfo.data_faturamento;
+
+          const matchMes = fatMesRef.includes(mesRefAlvo) || (fatData && fatData.startsWith(mesRefAlvo));
+          if (!matchMes) return false;
         }
+
         return true;
       })
       .map((s: any) => {
@@ -367,7 +383,9 @@ export default function DashboardPage() {
             };
             const resFormula = regraCanal.formula.fn(contextoLinha);
             if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null && resFormula > 0) {
-              repasseLiquido = resFormula;
+              if (repasseLiquido <= 0) {
+                repasseLiquido = resFormula;
+              }
             }
           } catch (err) {
             console.error(`Erro ao calcular fórmula para o canal ${s.canal}:`, err);
@@ -384,15 +402,18 @@ export default function DashboardPage() {
            repasseLiquido = Math.max(0, repasseLiquido - taxaVindi);
         }
         
+        const fatInfo = faturadosMap.get(ped);
+
         return { 
           ...s, 
           preco_venda: precoVenda,
           custoCMV, 
           custoFlex, 
-          repasse_liquido: repasseLiquido 
+          repasse_liquido: repasseLiquido,
+          data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, produtosCustoMap, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap, regrasMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap, faturadosMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
@@ -576,11 +597,7 @@ export default function DashboardPage() {
       const chSales = enrichedSales.filter((s: any) => normalizarTexto(s.canal) === kCanal);
       
       const vendasDoDia = chSales
-        .filter((s: any) => {
-          const ped = normalizarPedido(s.id_pedido);
-          const dataFat = faturadosMap.get(ped) || s.data_faturamento;
-          return dataFat === targetDateStr;
-        })
+        .filter((s: any) => s.data_faturamento === targetDateStr)
         .reduce((sum: number, s: any) => sum + s.preco_venda, 0);
 
       const ruleObj = channelRules.find((r: any) => normalizarTexto(r.canal) === kCanal) || {};
@@ -669,7 +686,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, faturadosMap, produtosCustoMap]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, produtosCustoMap]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
