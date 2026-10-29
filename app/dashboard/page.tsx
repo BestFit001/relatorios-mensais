@@ -378,7 +378,7 @@ export default function DashboardPage() {
       }
     });
 
-    // Faturamento Bruto geral subtrai cancelamentos e devoluções
+    // Faturamento Bruto geral do topo já exibe o valor com redutor subtraído
     faturamentoBrutoVendas = Math.max(0, faturamentoBrutoVendas - totalCancelamentosValor - totalDevolucoesPdvValor);
 
     const canceladosDigitais = activeCancelados
@@ -517,10 +517,10 @@ export default function DashboardPage() {
         }
       });
 
-      // FAT. BRUTO: Soma original de todas as vendas brutas do canal
+      // FAT. BRUTO: Soma original de todas as vendas brutas do canal (Ex: 49.978,22)
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
       
-      // C/ REDUTOR: Fat. Bruto menos as devoluções do mês e cancelamentos
+      // C/ REDUTOR: Fat. Bruto - Devoluções do mês - Cancelamentos do mês (Ex: 49.302,82)
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
