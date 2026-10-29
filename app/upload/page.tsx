@@ -63,85 +63,6 @@ function parseSmartFloat(val: any) {
   return parseFloat(strVal) || 0;
 }
 
-function compilarFormulaExcel(src: any) {
-  const texto = String(src || '').trim().replace(/^=/, '');
-  if (!texto) return null;
-  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?[0-9]*|[-+*/^()%]/g);
-  if (!tokens || tokens.join('') !== texto.replace(/\s+/g, '')) return null;
-
-  let i = 0;
-  const refs: string[] = [];
-  const peek = () => tokens[i];
-  const next = () => tokens[i++];
-
-  const expr = (): any => {
-    let l = term();
-    while (peek() === '+' || peek() === '-') {
-      const op = next();
-      const r = term();
-      const a = l;
-      l = op === '+' ? (c: any) => (a(c) || 0) + (r(c) || 0) : (c: any) => (a(c) || 0) - (r(c) || 0);
-    }
-    return l;
-  };
-  const term = (): any => {
-    let l = power();
-    while (peek() === '*' || peek() === '/') {
-      const op = next();
-      const r = power();
-      const a = l;
-      l = op === '*' ? (c: any) => (a(c) || 0) * (r(c) || 0) : (c: any) => {
-        const den = r(c) || 1;
-        return den === 0 ? 0 : (a(c) || 0) / den;
-      };
-    }
-    return l;
-  };
-  const power = (): any => {
-    const base = unary();
-    if (peek() === '^') {
-      next();
-      const e = power();
-      return (c: any) => Math.pow(base(c) || 0, e(c) || 0);
-    }
-    return base;
-  };
-  const unary = (): any => {
-    if (peek() === '-') { next(); const x = unary(); return (c: any) => -(x(c) || 0); }
-    if (peek() === '+') { next(); return unary(); }
-    return postfix();
-  };
-  const postfix = (): any => {
-    let n = primary();
-    while (peek() === '%') { next(); const a = n; n = (c: any) => (a(c) || 0) / 100; }
-    return n;
-  };
-  const primary = (): any => {
-    const t = next();
-    if (t === undefined) throw new Error('Fim inesperado');
-    if (t === '(') {
-      const e = expr();
-      if (next() !== ')') throw new Error('Parêntese');
-      return e;
-    }
-    if (/^\d/.test(t)) { const v = Number(t.replace(',', '.')); return () => v; }
-    if (/^\$?[A-Za-z]/.test(t)) {
-      const col = t.replace(/[^A-Za-z]/g, '').toUpperCase();
-      refs.push(col);
-      return (c: any) => (c[col] !== undefined ? c[col] : 0);
-    }
-    throw new Error('Token inválido');
-  };
-
-  try {
-    const fn = expr();
-    if (i !== tokens.length) return null;
-    return { fn, refs };
-  } catch {
-    return null;
-  }
-}
-
 export default function UpdatesPage() {
   const router = useRouter();
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "vendas_pendentes" | "dashboard_admin">("relatorios");
@@ -227,16 +148,6 @@ export default function UpdatesPage() {
       setRegrasColsCusto({
         custo_sku: getC('custo_sku', 'B'), custo_produto: getC('custo_produto', 'C'), custo_valor: getC('custo_valor', 'E'), custo_marca: getC('custo_marca', 'D')
       });
-
-      const canalCfg = tinyConfig.find((t: any) => t.campo === 'canais_dashboard');
-      if (canalCfg && canalCfg.coluna) {
-        try {
-          const parsed = JSON.parse(canalCfg.coluna);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setCanaisDashList(Array.from(new Set([...parsed, 'Clube Hebraica', 'Clube Paineiras'])));
-          }
-        } catch (e) {}
-      }
     }
 
     const allTiny = await fetchTodosRegistros('cadastros_base_tiny', 'sku, estoque');
@@ -285,7 +196,6 @@ export default function UpdatesPage() {
     setLoading(true);
     try {
       const skuNorm = normalizarSku(novoSku);
-
       const { data: custoMatch } = await supabase
         .from('tabela_custos_skus')
         .select('sku, produto')
@@ -443,7 +353,6 @@ export default function UpdatesPage() {
         }
 
         if (registros.length > 0) {
-          // CORRIGIDO: APONTA PARA A TABELA REAL 'faturados' DO SEU SUPABASE
           await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash);
           for (let i = 0; i < registros.length; i += 500) {
             await supabase.from('faturados').insert(registros.slice(i, i + 500));
@@ -460,6 +369,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // UPLOAD DE VENDAS: LÊ O FATURAMENTO BRUTO (COL I) E O REPASSE LÍQUIDO EXATO DE ACORDO COM A ABA REGRAS
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -473,7 +383,6 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        // CORRIGIDO: BUSCA DA TABELA REAL 'faturados' DO SUPABASE
         const faturadosBanco = await fetchTodosRegistros('faturados', 'id_pedido', 'mes_referencia', mesAlvoDash);
         const idsFaturadosSet = new Set(faturadosBanco.map((f: any) => String(f.id_pedido).trim()));
         
@@ -512,10 +421,10 @@ export default function UpdatesPage() {
         const idxPdv = letraParaIndice(colPdvDef);
         const idxQtd = letraParaIndice(colQtdDef);
         const idxDescricao = letraParaIndice("D"); 
-        const idxRepasse = letraParaIndice("T"); // Coluna T (Repasse líquido total)
-        const idxReceitaProd = letraParaIndice("I"); // Coluna I (Receita por produtos)
+        const idxRepasse = letraParaIndice("T"); // Coluna T (Repasse líquido da plataforma)
+        const idxReceitaProd = letraParaIndice("I"); // Coluna I (Faturamento Bruto / Receita)
 
-        const formulaCompilada = compilarFormulaExcel(regraData?.formula_excel);
+        const formulaStr = regraData?.formula_excel || regraData?.formulaExcel || '';
 
         const novasVendas = [];
         let totalImportados = 0;
@@ -552,7 +461,8 @@ export default function UpdatesPage() {
             const qtdItensNoPacote = match ? parseInt(match[0], 10) : 0;
             
             if (qtdItensNoPacote > 0) {
-              const repasseTotal = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : 0);
+              const pdvPrincipal = parseSmartFloat(idxReceitaProd >= 0 && row[idxReceitaProd] !== "" ? row[idxReceitaProd] : (idxPdv >= 0 ? row[idxPdv] : 0));
+              const repasseTotal = formulaStr ? avaliarFormulaCanalDireto(formulaStr, pdvPrincipal, 1, row) : parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : pdvPrincipal);
 
               let subItens = [];
               let somaPdvSubItens = 0;
@@ -561,8 +471,8 @@ export default function UpdatesPage() {
                 const subRow = json[i + j];
                 if (subRow) {
                   const skuSub = normalizarSku(subRow[idxSku >= 0 ? idxSku : 23]);
-                  const pdvSub = parseSmartFloat(idxPdv >= 0 ? subRow[idxPdv] : 0);
-                  const qtdSub = Number(idxQtd >= 0 && subRow[idxQtd] !== undefined ? subRow[idxQtd] : 1) || 1;
+                  const pdvSub = parseSmartFloat(subRow[idxPdv >= 0 ? idxPdv : 8]);
+                  const qtdSub = Number(subRow[idxQtd >= 0 ? idxQtd : 7] !== undefined ? subRow[idxQtd] : 1) || 1;
                   
                   const existe = skuSub && skusBaseSet.has(skuSub);
                   const skuFinal = existe ? skuSub : (skuSub || 'sem-sku');
@@ -602,6 +512,8 @@ export default function UpdatesPage() {
           // 2. VENDAS NORMAIS (ITEM ÚNICO NA MESMA LINHA)
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
+          
+          // FATURAMENTO BRUTO: Lido estritamente da Coluna I (Receita por produtos)
           const precoVenda = parseSmartFloat(idxReceitaProd >= 0 && row[idxReceitaProd] !== "" ? row[idxReceitaProd] : (idxPdv >= 0 ? row[idxPdv] : 0));
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
@@ -609,17 +521,13 @@ export default function UpdatesPage() {
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
           const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
-          let repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : 0);
-          if (formulaCompilada) {
-            try {
-              const resFormula = formulaCompilada.fn({ 'PDV': precoVenda, 'I': precoVenda, 'H': quantidade });
-              if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
-                repasseLiquido = resFormula;
-              }
-            } catch {}
-          }
-          if (isNaN(repasseLiquido) || repasseLiquido <= 0 || repasseLiquido > precoVenda * 2) {
-            repasseLiquido = precoVenda - (precoVenda * 0.09);
+          // REPASSE LÍQUIDO: Aplicando exatamente a fórmula cadastrada na aba de Regras (Ex: T2 - (I2 * 9%))
+          let repasseLiquido = 0;
+          if (formulaStr) {
+            repasseLiquido = avaliarFormulaCanalDireto(formulaStr, precoVenda, quantidade, row);
+          } else {
+            // Fallback para a Coluna T se nenhuma fórmula for especificada
+            repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : precoVenda);
           }
 
           novasVendas.push({
@@ -655,6 +563,27 @@ export default function UpdatesPage() {
     };
     reader.readAsArrayBuffer(file);
   };
+
+  // AVALIADOR DE FÓRMULA EXATO DA ABA DE REGRAS (EX: T2 - (I2 * 9%))
+  function avaliarFormulaCanalDireto(formulaStr: string, precoVenda: number, qtd: number, row: any[]) {
+    try {
+      let expr = String(formulaStr).trim().replace(/^=/, '').toUpperCase();
+      // Substitui porcentagens (ex: 9% -> 0.09)
+      expr = expr.replace(/(\d+(?:\.\d+)?)%/g, (m, p1) => (parseFloat(p1) / 100).toString());
+      // Substitui referências de colunas da linha do Excel (ex: T2, I2, D2) pelos valores reais das colunas da linha
+      expr = expr.replace(/[A-Z]+\d*/g, (match) => {
+        const colLet = match.replace(/\d+/g, '');
+        const idx = letraParaIndice(colLet);
+        const val = idx >= 0 && row[idx] !== undefined ? parseSmartFloat(row[idx]) : 0;
+        if (match.startsWith('H') || match.startsWith('QTD')) return String(qtd);
+        return String(val > 0 ? val : precoVenda);
+      });
+      const result = new Function(`return ${expr.replace(/[^0-9\.\+\-\*\/\(\)\s]/g, '')};`)();
+      return isNaN(result) ? Math.max(0, precoVenda - (precoVenda * 0.09)) : Math.max(0, result);
+    } catch {
+      return Math.max(0, precoVenda - (precoVenda * 0.09));
+    }
+  }
 
   const handleSubirTarifasSite = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -705,7 +634,6 @@ export default function UpdatesPage() {
     setLoading(true);
     try {
       if (tabela === 'faturados') {
-        // CORRIGIDO: APONTA PARA A TABELA REAL 'faturados'
         await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash);
       } else if (tabela === 'vendas') {
         await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
