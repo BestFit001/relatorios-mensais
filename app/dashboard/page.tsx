@@ -15,35 +15,6 @@ const TABELAS_SUPABASE = [
   'plp_pedidos',
 ] as const;
 
-function indiceParaLetra(index: number): string {
-  let n = index + 1;
-  let letters = "";
-  while (n > 0) {
-    let rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return letters;
-}
-
-// Avaliador inteligente da fórmula cadastrada na aba de Regras para cada canal
-function avaliarFormulaDinamica(formulaStr: string, precoVenda: number, qtd: number, repasseNativo: number) {
-  if (!formulaStr) return repasseNativo > 0 ? repasseNativo : Math.max(0, precoVenda - (precoVenda * 0.09));
-  try {
-    let expr = String(formulaStr).trim().replace(/^=/, '').toUpperCase();
-    expr = expr.replace(/(\d+(?:\.\d+)?)%/g, (m, p1) => (parseFloat(p1) / 100).toString());
-    expr = expr.replace(/[A-Z]+\d*/g, (match) => {
-      if (match.startsWith('H') || match.startsWith('QTD')) return String(qtd);
-      if (match.startsWith('T')) return String(repasseNativo > 0 ? repasseNativo : precoVenda);
-      return String(precoVenda);
-    });
-    const result = new Function(`return ${expr.replace(/[^0-9\.\+\-\*\/\(\)\s]/g, '')};`)();
-    return isNaN(result) ? (repasseNativo > 0 ? repasseNativo : precoVenda) : Math.max(0, result);
-  } catch {
-    return repasseNativo > 0 ? repasseNativo : precoVenda;
-  }
-}
-
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [database, setDatabase] = useState<Record<string, any[]>>({});
@@ -72,6 +43,7 @@ export default function DashboardPage() {
   const [appliedEndDate, setAppliedEndDate] = useState(new Date().toISOString().slice(0, 10));
   
   const [isRecalculating, setIsRecalculating] = useState(false);
+  const [tarifasSiteMap, setTarifasSiteMap] = useState<Record<string, number>>({});
 
   useEffect(() => {
     async function carregarDados() {
@@ -97,6 +69,14 @@ export default function DashboardPage() {
       setLoading(false);
     }
     carregarDados();
+
+    async function fetchTarifas() {
+      try {
+        const { data } = await supabase.from('tb_estado_global').select('dados').eq('chave', 'tarifas_site').single();
+        if (data && data.dados) setTarifasSiteMap(data.dados);
+      } catch (err) {}
+    }
+    fetchTarifas();
   }, []);
 
   const handleRecalculate = () => {
@@ -170,19 +150,6 @@ export default function DashboardPage() {
     return map;
   }, [products]);
 
-  // LEITURA DA FÓRMULA ESPECÍFICA CADASTRADA NA ABA REGRAS
-  const regrasMap = useMemo(() => {
-    const map = new Map();
-    (database.config_regras_canais || []).forEach((r: any) => {
-      map.set(normalizarTexto(r.canal), {
-        formulaExcel: r.formula_excel || r.formulaExcel || '',
-        responsavel: r.responsavel || 'Equipe Best Fit',
-        logoUrl: r.logo_url || null
-      });
-    });
-    return map;
-  }, [database.config_regras_canais]);
-
   const faturadosMap = useMemo(() => {
     const map = new Map();
     (database.faturados || []).forEach((f: any) => {
@@ -196,15 +163,6 @@ export default function DashboardPage() {
     });
     return map;
   }, [database.faturados]);
-
-  const tarifasSiteMap = useMemo(() => {
-    const map = new Map();
-    (database.tarifas_site || []).forEach((t: any) => {
-      const idPed = normalizarPedido(t.id_pedido);
-      if (idPed) map.set(idPed, parseCurrency(t.valor_tarifa));
-    });
-    return map;
-  }, [database.tarifas_site]);
 
   const flexMap = useMemo(() => {
     const map = new Map();
@@ -261,7 +219,7 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
-  // MOTOR DO DASHBOARD: VALIDAÇÃO POR FATURADOS, CMV = (Custo + Emb) * Qtd, E REPASSE VIA FÓRMULA ESPECÍFICA DA ABA REGRAS
+  // MOTOR DO DASHBOARD: VALIDAÇÃO POR FATURADOS, CMV = (Custo + Emb) * Qtd, E REPASSE EXATO DA COLUNA T
   const enrichedSales = useMemo(() => {
     return (sales || []).filter((s: any) => {
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
@@ -302,20 +260,15 @@ export default function DashboardPage() {
         const ped = normalizarPedido(s.id_pedido);
         const custoFlex = flexMap.get(ped) || 0;
         
-        // Repasse Líquido: Consulta a regra específica do canal na aba Regras
-        let repasseNativo = parseCurrency(s.repasse_liquido || precoVenda);
-        let repasseLiquido = 0;
-        const regraCanal = regrasMap.get(normalizarTexto(s.canal));
-        
-        if (regraCanal && regraCanal.formulaExcel) {
-          repasseLiquido = avaliarFormulaDinamica(regraCanal.formulaExcel, precoVenda, qtd, repasseNativo);
-        } else {
-          repasseLiquido = repasseNativo > 0 ? repasseNativo : Math.max(0, precoVenda - (precoVenda * 0.09));
+        // Repasse Líquido: Usa exatamente o repasse gravado (Coluna T)
+        let repasseLiquido = parseCurrency(s.repasse_liquido);
+        if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
+          repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.09));
         }
         
         const nomeCanal = normalizarTexto(s.canal);
-        if ((nomeCanal.includes('site') || nomeCanal.includes('loja virtual')) && tarifasSiteMap.has(ped)) {
-           const taxaVindi = parseCurrency(tarifasSiteMap.get(ped));
+        if ((nomeCanal.includes('site') || nomeCanal.includes('loja virtual')) && tarifasSiteMap[ped]) {
+           const taxaVindi = parseCurrency(tarifasSiteMap[ped]);
            repasseLiquido = Math.max(0, repasseLiquido - taxaVindi);
         }
         
@@ -330,7 +283,7 @@ export default function DashboardPage() {
           data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap, faturadosMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
