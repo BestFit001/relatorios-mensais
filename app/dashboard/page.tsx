@@ -27,82 +27,20 @@ function indiceParaLetra(index: number): string {
   return letters;
 }
 
-function compilarFormulaExcel(src: any) {
-  const texto = String(src || '').trim().replace(/^=/, '');
-  if (!texto) return null;
-  const tokens = texto.match(/\d+(?:[.,]\d+)?|\$?[A-Za-z]{1,3}\$?[0-9]*|[-+*/^()%]/g);
-  if (!tokens || tokens.join('') !== texto.replace(/\s+/g, '')) return null;
-
-  let i = 0;
-  const refs: string[] = [];
-  const peek = () => tokens[i];
-  const next = () => tokens[i++];
-
-  const expr = (): any => {
-    let l = term();
-    while (peek() === '+' || peek() === '-') {
-      const op = next();
-      const r = term();
-      const a = l;
-      l = op === '+' ? (c: any) => (a(c) || 0) + (r(c) || 0) : (c: any) => (a(c) || 0) - (r(c) || 0);
-    }
-    return l;
-  };
-  const term = (): any => {
-    let l = power();
-    while (peek() === '*' || peek() === '/') {
-      const op = next();
-      const r = power();
-      const a = l;
-      l = op === '*' ? (c: any) => (a(c) || 0) * (r(c) || 0) : (c: any) => {
-        const den = r(c) || 1;
-        return den === 0 ? 0 : (a(c) || 0) / den;
-      };
-    }
-    return l;
-  };
-  const power = (): any => {
-    const base = unary();
-    if (peek() === '^') {
-      next();
-      const e = power();
-      return (c: any) => Math.pow(base(c) || 0, e(c) || 0);
-    }
-    return base;
-  };
-  const unary = (): any => {
-    if (peek() === '-') { next(); const x = unary(); return (c: any) => -(x(c) || 0); }
-    if (peek() === '+') { next(); return unary(); }
-    return postfix();
-  };
-  const postfix = (): any => {
-    let n = primary();
-    while (peek() === '%') { next(); const a = n; n = (c: any) => (a(c) || 0) / 100; }
-    return n;
-  };
-  const primary = (): any => {
-    const t = next();
-    if (t === undefined) throw new Error('Fim inesperado');
-    if (t === '(') {
-      const e = expr();
-      if (next() !== ')') throw new Error('Parêntese');
-      return e;
-    }
-    if (/^\d/.test(t)) { const v = Number(t.replace(',', '.')); return () => v; }
-    if (/^\$?[A-Za-z]/.test(t)) {
-      const col = t.replace(/[^A-Za-z]/g, '').toUpperCase();
-      refs.push(col);
-      return (c: any) => (c[col] !== undefined ? c[col] : 0);
-    }
-    throw new Error('Token inválido');
-  };
-
+// Avaliador dinâmico customizado para a fórmula específica de cada canal
+function avaliarFormulaEspecificaCanal(formulaStr: string, precoVenda: number, qtd: number) {
+  if (!formulaStr) return Math.max(0, precoVenda - (precoVenda * 0.09));
   try {
-    const fn = expr();
-    if (i !== tokens.length) return null;
-    return { fn, refs };
+    let expr = String(formulaStr).trim().replace(/^=/, '').toUpperCase();
+    expr = expr.replace(/(\d+(?:\.\d+)?)%/g, (m, p1) => (parseFloat(p1) / 100).toString());
+    expr = expr.replace(/[A-Z]+\d*/g, (match) => {
+      if (match.startsWith('H') || match.startsWith('QTD') || match.startsWith('Q')) return String(qtd);
+      return String(precoVenda);
+    });
+    const result = new Function(`return ${expr.replace(/[^0-9\.\+\-\*\/\(\)\s]/g, '')};`)();
+    return isNaN(result) ? Math.max(0, precoVenda - (precoVenda * 0.09)) : Math.max(0, result);
   } catch {
-    return null;
+    return Math.max(0, precoVenda - (precoVenda * 0.09));
   }
 }
 
@@ -233,14 +171,13 @@ export default function DashboardPage() {
     return map;
   }, [products]);
 
+  // MAPA DE REGRAS INDIVIDUAIS POR CANAL (CONSULTA A ABA REGRAS)
   const regrasMap = useMemo(() => {
     const map = new Map();
     (database.config_regras_canais || []).forEach((r: any) => {
-      const formulaObj = compilarFormulaExcel(r.formula_excel);
+      const formulaStr = r.formula_excel || r.formulaExcel || '';
       map.set(normalizarTexto(r.canal), {
-        formula: formulaObj,
-        colPdv: String(r.col_pdv || r.col_preco_venda || 'I').toUpperCase(),
-        colQtd: String(r.col_quantidade || 'H').toUpperCase(),
+        formulaExcel: formulaStr,
         responsavel: r.responsavel || 'Equipe Best Fit',
         logoUrl: r.logo_url || null
       });
@@ -326,7 +263,7 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
-  // MOTOR DO DASHBOARD: APLICAÇÃO RIGOROSA DA FÓRMULA DE REGRAS E CMV (CUSTO x QTD)
+  // MOTOR DO DASHBOARD: CMV = (Custo Unit + Emb) * Qtd | Repasse = Consulta Fórmula Específica da Aba Regras do Canal
   const enrichedSales = useMemo(() => {
     return (sales || []).filter((s: any) => {
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
@@ -341,7 +278,7 @@ export default function DashboardPage() {
         const qtd = parseCurrency(s.quantidade) || 1;
         const precoVenda = parseCurrency(s.preco_venda || s.valor);
 
-        // 1. CMV PRECISO: Multiplica o custo unitário + embalagem pela quantidade exata de itens
+        // 1. CMV PRECISO: (Custo Unitário + Embalagem) * Quantidade
         let custoCMV = 0;
         if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
           custoCMV = parseCurrency(s.cmv_clube);
@@ -354,31 +291,16 @@ export default function DashboardPage() {
         const ped = normalizarPedido(s.id_pedido);
         const custoFlex = flexMap.get(ped) || 0;
         
-        let repasseLiquido = parseCurrency(s.repasse_liquido);
-
-        // 2. APLICAÇÃO DA FÓRMULA DE REGRAS DO CANAL DIRETAMENTE NO DASHBOARD
+        // 2. REPASSE LÍQUIDO: Consulta a regra/fórmula individual cadastrada para este canal específico na aba Regras
+        let repasseLiquido = 0;
         const regraCanal = regrasMap.get(normalizarTexto(s.canal));
-        if (regraCanal && regraCanal.formula) {
-          try {
-            const contextoLinha: Record<string, number> = {
-              'PDV': precoVenda,
-              'I': precoVenda,
-              'H': qtd,
-              'QTD': qtd,
-              [regraCanal.colPdv]: precoVenda,
-              [regraCanal.colQtd]: qtd,
-            };
-            const resFormula = regraCanal.formula.fn(contextoLinha);
-            if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null && resFormula > 0) {
-              repasseLiquido = resFormula;
-            }
-          } catch (err) {
-            console.error(`Erro ao calcular fórmula para o canal ${s.canal}:`, err);
+        if (regraCanal && regraCanal.formulaExcel) {
+          repasseLiquido = avaliarFormulaEspecificaCanal(regraCanal.formulaExcel, precoVenda, qtd);
+        } else {
+          repasseLiquido = parseCurrency(s.repasse_liquido);
+          if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
+            repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.09));
           }
-        }
-
-        if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
-          repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.09));
         }
         
         const nomeCanal = normalizarTexto(s.canal);
