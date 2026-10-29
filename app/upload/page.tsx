@@ -269,29 +269,6 @@ export default function UpdatesPage() {
     }
   };
 
-  const salvarRegrasMlSupabase = async () => {
-    try {
-      setLoading(true);
-      for (const conta of ["Mercado Livre 1", "Mercado Livre 2"]) {
-        const c = colunasPorConta[conta];
-        await supabase.from('config_regras_canais').upsert({
-          conta,
-          coluna_mlb: c.ml_mlb,
-          coluna_sku: c.ml_sku,
-          coluna_comissao: c.ml_comissao,
-          coluna_peso: c.ml_peso,
-          coluna_altura: c.ml_altura,
-          coluna_largura: c.ml_largura,
-          coluna_comprimento: c.ml_comprimento,
-        }, { onConflict: 'conta' });
-      }
-      alert("✅ Regras de Mercado Livre salvas com sucesso!");
-    } catch (err: any) {
-      alert("Erro ao salvar: " + err.message);
-    }
-    setLoading(false);
-  };
-
   const limparTabelaCustos = async () => {
     if (!confirm("Apagar todos os custos guardados?")) return;
     try {
@@ -362,7 +339,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS CRUZANDO PERFEITAMENTE O SKU E O NOME DO PRODUTO NA TABELA DE CUSTOS
+  // IMPORTAR VENDAS CRUZANDO PERFEITAMENTE O SKU E APLICANDO A FÓRMULA DA ABA DE REGRAS
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -401,9 +378,9 @@ export default function UpdatesPage() {
         const mapaProdutos = new Map(custosBanco?.map((c: any) => [normalizarSku(c.sku), c.produto]) || []);
 
         const colSkuDef = regraData?.col_sku || 'X';
-        const colPdvDef = regraData?.col_pdv || regraData?.coluna_pdv || 'I';
-        const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || 'H';
-        const colIdDef = regraData?.col_id_pedido || regraData?.coluna_id || 'A';
+        const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || 'I';
+        const colQtdDef = regraData?.col_quantidade || 'H';
+        const colIdDef = regraData?.col_id_pedido || regraData?.col_estado || 'A';
 
         const idxId = letraParaIndice(colIdDef);
         const idxSku = letraParaIndice(colSkuDef);
@@ -764,63 +741,6 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    const cols = colunasPorConta[contaMlSelecionada];
-    const idxMlb = letraParaIndice(cols.ml_mlb);
-    const idxSku = letraParaIndice(cols.ml_sku);
-    const idxCom = letraParaIndice(cols.ml_comissao);
-    const idxPeso = cols.ml_peso ? letraParaIndice(cols.ml_peso) : -1;
-    const idxAlt = cols.ml_altura ? letraParaIndice(cols.ml_altura) : -1;
-    const idxLarg = cols.ml_largura ? letraParaIndice(cols.ml_largura) : -1;
-    const idxComp = cols.ml_comprimento ? letraParaIndice(cols.ml_comprimento) : -1;
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        let sheetName = workbook.SheetNames[0];
-        if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
-        const worksheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        const mapaMlPendente = new Map<string, any>();
-        for (let i = 4; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
-          const mlb = String(row[idxMlb] || "").trim().toUpperCase();
-          if (!mlb || !mlb.startsWith("MLB")) continue;
-          let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-          let comissaoNum = 14;
-          let rawComissao = row[idxCom];
-          if (rawComissao !== undefined && rawComissao !== "") {
-            let parsed = parseFloat(String(rawComissao).replace("%", "").trim().replace(",", "."));
-            if (!isNaN(parsed) && parsed > 0) comissaoNum = parsed < 1 ? parsed * 100 : parsed;
-          }
-          let pesoReal = 2.000;
-          if (idxPeso >= 0 && row[idxPeso] !== undefined) {
-            let p = Number(String(row[idxPeso]).replace(",", "."));
-            if (!isNaN(p) && p > 0) pesoReal = p;
-          }
-          const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
-          const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
-          const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
-
-          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada });
-        }
-        const registros = Array.from(mapaMlPendente.values());
-        for (let i = 0; i < registros.length; i += 500) {
-          await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
-        }
-        alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).`);
-        setLoading(false);
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
   const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -904,9 +824,6 @@ export default function UpdatesPage() {
           </button>
           <button onClick={() => setAbaAtiva("custos")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "custos" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             💰 Custos por SKU
-          </button>
-          <button onClick={() => setAbaAtiva("regras_ml")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "regras_ml" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
-            📦 Regras & Medidas ML
           </button>
           <button onClick={() => setAbaAtiva("dashboard_admin")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "dashboard_admin" ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-emerald-400 border border-emerald-800'}`}>
             ⚙️ Updates & Alimenta Dashboard
@@ -1075,60 +992,6 @@ export default function UpdatesPage() {
                 </table>
               </div>
             )}
-          </div>
-        )}
-
-        {/* ABA: REGRAS & MEDIDAS ML */}
-        {abaAtiva === "regras_ml" && (
-          <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-lg font-bold text-white">Regras & Medidas do Mercado Livre</h2>
-                <p className="text-xs text-slate-400">Mapeamento de colunas para leitura de anúncios por conta (MLB, SKU, Comissão, Peso, Altura, Largura, Comprimento).</p>
-              </div>
-              <button onClick={salvarRegrasMlSupabase} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase cursor-pointer">
-                Salvar Configurações
-              </button>
-            </div>
-
-            <div className="flex bg-slate-950 p-2 rounded-xl border border-slate-800 w-fit gap-2">
-              <button type="button" onClick={() => setContaMlSelecionada("Mercado Livre 1")} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer ${contaMlSelecionada === "Mercado Livre 1" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Mercado Livre 1</button>
-              <button type="button" onClick={() => setContaMlSelecionada("Mercado Livre 2")} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer ${contaMlSelecionada === "Mercado Livre 2" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Mercado Livre 2</button>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-950 p-5 rounded-xl border border-slate-800">
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna MLB (ID):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_mlb} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_mlb: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna SKU:</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_sku} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_sku: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Comissão:</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_comissao} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_comissao: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Peso (kg):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_peso} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_peso: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Altura (cm):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_altura} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_altura: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Largura (cm):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_largura} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_largura: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Coluna Comprimento (cm):</label>
-                <input type="text" value={colunasPorConta[contaMlSelecionada].ml_comprimento} onChange={e => setColunasPorConta({...colunasPorConta, [contaMlSelecionada]: {...colunasPorConta[contaMlSelecionada], ml_comprimento: e.target.value.toUpperCase()}})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-              </div>
-            </div>
-
-            <input type="file" accept=".xlsx, .xls" onChange={handleUploadRegrasML} className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
-            <input type="text" value={pesquisaMl} onChange={(e) => setPesquisaMl(e.target.value)} placeholder="🔍 Pesquisar MLB ou SKU..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none" />
           </div>
         )}
 
