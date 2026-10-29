@@ -289,6 +289,7 @@ export default function UpdatesPage() {
     try {
       const skuNorm = normalizarSku(novoSku);
 
+      // Busca rigorosa e exata do produto na base de custos usando o SKU normalizado
       const { data: custoMatch } = await supabase
         .from('tabela_custos_skus')
         .select('sku, produto')
@@ -499,11 +500,16 @@ export default function UpdatesPage() {
           .from('tabela_custos_skus')
           .select('sku, produto');
 
+        // Mapeamento inteligente garantindo que o SKU seja normalizado e o nome real do produto seja resgatado
         const mapaProdutos = new Map();
+        const skusBaseSet = new Set();
         (custosBanco || []).forEach((c: any) => {
           const sNorm = normalizarSku(c.sku);
           const pVal = String(c.produto || "").trim();
-          mapaProdutos.set(sNorm, pVal);
+          if (sNorm) {
+            mapaProdutos.set(sNorm, pVal);
+            skusBaseSet.add(sNorm);
+          }
         });
 
         const colSkuDef = regraData?.col_sku || 'X';
@@ -538,8 +544,11 @@ export default function UpdatesPage() {
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
+          // Se o SKU existe na base de custos, puxa o nome real correspondente. Caso contrário, define como 'sem-sku' ou mantém o texto bruto se houver.
           let nomeProduto = mapaProdutos.get(sku);
-          if (!nomeProduto || nomeProduto.toLowerCase() === sku) {
+          const skuFinal = (sku && skusBaseSet.has(sku)) ? sku : 'sem-sku';
+
+          if (!nomeProduto || nomeProduto.toLowerCase() === skuFinal) {
             nomeProduto = skuRaw ? String(skuRaw).trim() : 'Produto Geral';
           }
 
@@ -570,7 +579,7 @@ export default function UpdatesPage() {
             id_pedido: rawId,
             canal: canalAlvoDash,
             mes_referencia: mesAlvoDash,
-            sku: sku || 'sem-sku',
+            sku: skuFinal,
             produto: nomeProduto,
             quantidade: isNaN(quantidade) ? 1 : quantidade,
             preco_venda: precoVenda,
