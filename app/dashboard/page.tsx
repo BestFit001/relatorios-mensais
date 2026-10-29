@@ -198,6 +198,8 @@ export default function DashboardPage() {
       const formulaObj = compilarFormulaExcel(r.formula_excel);
       map.set(normalizarTexto(r.canal), {
         formula: formulaObj,
+        colPdv: String(r.col_pdv || r.col_preco_venda || 'I').toUpperCase(),
+        colQtd: String(r.col_quantidade || 'H').toUpperCase(),
         responsavel: r.responsavel || 'Equipe Best Fit',
         logoUrl: r.logo_url || null
       });
@@ -334,6 +336,28 @@ export default function DashboardPage() {
         const custoFlex = flexMap.get(ped) || 0;
         
         let repasseLiquido = parseCurrency(s.repasse_liquido);
+
+        // Aplicação estrita da fórmula cadastrada na aba Regras para cada canal
+        const regraCanal = regrasMap.get(normalizarTexto(s.canal));
+        if (regraCanal && regraCanal.formula) {
+          try {
+            const contextoLinha: Record<string, number> = {
+              'PDV': precoVenda,
+              'I': precoVenda,
+              'H': qtd,
+              'QTD': qtd,
+              [regraCanal.colPdv]: precoVenda,
+              [regraCanal.colQtd]: qtd,
+            };
+            const resFormula = regraCanal.formula.fn(contextoLinha);
+            if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
+              repasseLiquido = resFormula;
+            }
+          } catch (err) {
+            console.error(`Erro ao calcular fórmula para o canal ${s.canal}:`, err);
+          }
+        }
+
         if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
           repasseLiquido = precoVenda - (precoVenda * 0.09);
         }
@@ -352,7 +376,7 @@ export default function DashboardPage() {
           repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, products, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, appliedStartDate, appliedEndDate, products, flexMap, currentMonthDefault, previousMonthDefault, tarifasSiteMap, faturadosMap, regrasMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
