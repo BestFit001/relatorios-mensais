@@ -263,7 +263,6 @@ export default function UpdatesPage() {
 
   const carregarVendasPendentes = async () => {
     try {
-      // Puxa todas as vendas e custos para filtrar as que estão sem SKU válido ou sem custo na base
       const { data: vendas } = await supabase.from('vendas_canais').select('*');
       const { data: custos } = await supabase.from('tabela_custos_skus').select('sku');
 
@@ -291,7 +290,6 @@ export default function UpdatesPage() {
     try {
       const skuNorm = normalizarSku(novoSku);
 
-      // Busca o nome do produto na base de custos caso exista
       const { data: custoMatch } = await supabase
         .from('tabela_custos_skus')
         .select('produto')
@@ -830,6 +828,63 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    const cols = colunasPorConta[contaMlSelecionada];
+    const idxMlb = letraParaIndice(cols.ml_mlb);
+    const idxSku = letraParaIndice(cols.ml_sku);
+    const idxCom = letraParaIndice(cols.ml_comissao);
+    const idxPeso = cols.ml_peso ? letraParaIndice(cols.ml_peso) : -1;
+    const idxAlt = cols.ml_altura ? letraParaIndice(cols.ml_altura) : -1;
+    const idxLarg = cols.ml_largura ? letraParaIndice(cols.ml_largura) : -1;
+    const idxComp = cols.ml_comprimento ? letraParaIndice(cols.ml_comprimento) : -1;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        let sheetName = workbook.SheetNames[0];
+        if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
+        const worksheet = workbook.Sheets[sheetName];
+        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+        const mapaMlPendente = new Map<string, any>();
+        for (let i = 4; i < json.length; i++) {
+          const row = json[i];
+          if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
+          const mlb = String(row[idxMlb] || "").trim().toUpperCase();
+          if (!mlb || !mlb.startsWith("MLB")) continue;
+          let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
+          let comissaoNum = 14;
+          let rawComissao = row[idxCom];
+          if (rawComissao !== undefined && rawComissao !== "") {
+            let parsed = parseFloat(String(rawComissao).replace("%", "").trim().replace(",", "."));
+            if (!isNaN(parsed) && parsed > 0) comissaoNum = parsed < 1 ? parsed * 100 : parsed;
+          }
+          let pesoReal = 2.000;
+          if (idxPeso >= 0 && row[idxPeso] !== undefined) {
+            let p = Number(String(row[idxPeso]).replace(",", "."));
+            if (!isNaN(p) && p > 0) pesoReal = p;
+          }
+          const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
+          const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
+          const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
+
+          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada });
+        }
+        const registros = Array.from(mapaMlPendente.values());
+        for (let i = 0; i < registros.length; i += 500) {
+          await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
+        }
+        alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).`);
+        setLoading(false);
+      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -903,7 +958,7 @@ export default function UpdatesPage() {
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO DE ABAS COM A ABA "vendas_pendentes" INCLUSA */}
+        {/* NAVEGAÇÃO DE ABAS */}
         <div className="flex flex-wrap gap-3 mb-6">
           <button onClick={() => setAbaAtiva("relatorios")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "relatorios" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             📊 Relatórios (ABC & Inventário)
