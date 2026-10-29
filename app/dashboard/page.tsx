@@ -219,7 +219,6 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
-  // DEVOLUÇÕES DO MÊS ATUAL: Filtra pelo mês de referência correspondente ou exibe todas as cadastradas do período
   const activeDevolucoes = useMemo(() => {
     if (!devolucoesList) return [];
     return devolucoesList.filter((d: any) => {
@@ -256,7 +255,6 @@ export default function DashboardPage() {
         const qtd = parseCurrency(s.quantidade) || 1;
         const precoVenda = parseCurrency(s.preco_venda || s.valor);
 
-        // CMV Preciso: (Custo Unitário + Embalagem) * Quantidade
         let custoCMV = 0;
         if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
           custoCMV = parseCurrency(s.cmv_clube);
@@ -269,7 +267,6 @@ export default function DashboardPage() {
         const ped = normalizarPedido(s.id_pedido);
         const custoFlex = flexMap.get(ped) || 0;
         
-        // Repasse Líquido exato da Coluna T
         let repasseLiquido = parseCurrency(s.repasse_liquido);
         if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
           repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.09));
@@ -381,6 +378,7 @@ export default function DashboardPage() {
       }
     });
 
+    // Faturamento Bruto geral subtrai cancelamentos e devoluções
     faturamentoBrutoVendas = Math.max(0, faturamentoBrutoVendas - totalCancelamentosValor - totalDevolucoesPdvValor);
 
     const canceladosDigitais = activeCancelados
@@ -519,7 +517,10 @@ export default function DashboardPage() {
         }
       });
 
+      // FAT. BRUTO: Soma original de todas as vendas brutas do canal
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
+      
+      // C/ REDUTOR: Fat. Bruto menos as devoluções do mês e cancelamentos
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
