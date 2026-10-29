@@ -29,6 +29,7 @@ function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
+  // Remove espaços e caracteres especiais para comparação exata
   s = s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
   return s;
 }
@@ -540,9 +541,10 @@ export default function UpdatesPage() {
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
-          // Validação blindada: se o SKU existe na base de custos, usa o SKU normalizado e puxa o nome oficial do produto.
-          const skuFinal = (skuNorm && skusBaseSet.has(skuNorm)) ? skuNorm : (skuNorm || 'sem-sku');
-          const nomeProduto = mapaProdutos.get(skuFinal) || (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
+          // CORREÇÃO DEFINITIVA: Se o SKU normalizado existe na base de custos, usa o SKU limpo E puxa o nome oficial. Caso contrário, joga nas pendências.
+          const existeNaBase = skuNorm && skusBaseSet.has(skuNorm);
+          const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
+          const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
           const contextoLinha: Record<string, number> = {
             'PDV': precoVenda,
