@@ -295,9 +295,7 @@ export default function UpdatesPage() {
         .eq('sku', skuNorm)
         .maybeSingle();
 
-      const produtoNome = custoMatch?.produto && String(custoMatch.produto).trim().toLowerCase() !== skuNorm 
-        ? custoMatch.produto 
-        : "Produto Cadastrado";
+      const produtoNome = custoMatch?.produto ? custoMatch.produto : "Produto Cadastrado";
 
       const { error } = await supabase
         .from('vendas_canais')
@@ -542,13 +540,9 @@ export default function UpdatesPage() {
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
-          // Validação corrigida: Atribui o SKU correto e puxa o nome do produto da base de custos se existir
+          // CORREÇÃO CRUCIAL: Atribui corretamente o SKU na coluna de SKU e o nome correspondente na coluna de produto
           const skuFinal = (skuNorm && skusBaseSet.has(skuNorm)) ? skuNorm : (skuNorm || 'sem-sku');
-          let nomeProduto = mapaProdutos.get(skuFinal);
-
-          if (!nomeProduto || nomeProduto.toLowerCase() === skuFinal) {
-            nomeProduto = skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial';
-          }
+          const nomeProduto = mapaProdutos.get(skuFinal) || (skuRaw ? String(skuRaw).trim() : 'Produto Comercial');
 
           const contextoLinha: Record<string, number> = {
             'PDV': precoVenda,
@@ -1438,7 +1432,7 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
