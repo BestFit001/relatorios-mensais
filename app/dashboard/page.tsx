@@ -5,11 +5,10 @@ import Navbar from '@/app/components/Navbar';
 
 const TABELAS_SUPABASE = [
   'vendas_canais',
-  'faturados_pedidos',
+  'faturados',
   'tarifas_site',
   'tabela_custos_skus',
   'config_regras_canais',
-  'config_regras_tiny',
   'tb_metas',
   'devolucoes',
   'ads_faturamento_canal',
@@ -27,20 +26,20 @@ function indiceParaLetra(index: number): string {
   return letters;
 }
 
-// Avaliador dinâmico customizado para a fórmula específica de cada canal
-function avaliarFormulaEspecificaCanal(formulaStr: string, precoVenda: number, qtd: number) {
-  if (!formulaStr) return Math.max(0, precoVenda - (precoVenda * 0.09));
+function avaliarFormulaCanalDashboard(formulaStr: string, precoVenda: number, qtd: number, repasseNativo: number) {
+  if (!formulaStr) return repasseNativo > 0 ? repasseNativo : Math.max(0, precoVenda - (precoVenda * 0.09));
   try {
     let expr = String(formulaStr).trim().replace(/^=/, '').toUpperCase();
     expr = expr.replace(/(\d+(?:\.\d+)?)%/g, (m, p1) => (parseFloat(p1) / 100).toString());
     expr = expr.replace(/[A-Z]+\d*/g, (match) => {
-      if (match.startsWith('H') || match.startsWith('QTD') || match.startsWith('Q')) return String(qtd);
+      if (match.startsWith('H') || match.startsWith('QTD')) return String(qtd);
+      if (match.startsWith('T')) return String(repasseNativo > 0 ? repasseNativo : precoVenda);
       return String(precoVenda);
     });
     const result = new Function(`return ${expr.replace(/[^0-9\.\+\-\*\/\(\)\s]/g, '')};`)();
-    return isNaN(result) ? Math.max(0, precoVenda - (precoVenda * 0.09)) : Math.max(0, result);
+    return isNaN(result) ? (repasseNativo > 0 ? repasseNativo : precoVenda) : Math.max(0, result);
   } catch {
-    return Math.max(0, precoVenda - (precoVenda * 0.09));
+    return repasseNativo > 0 ? repasseNativo : precoVenda;
   }
 }
 
@@ -84,12 +83,11 @@ export default function DashboardPage() {
           const step = 1000;
           let keep = true;
           while (keep) {
-            const { data } = await supabase.from(tabela).select('*').range(from, from + step - 1);
-            if (data && data.length > 0) {
-              allRows = [...allRows, ...data];
-              from += step;
-              if (data.length < step) keep = false;
-            } else keep = false;
+            const { data, error } = await supabase.from(tabela).select('*').range(from, from + step - 1);
+            if (error || !data) break;
+            allRows = [...allRows, ...data];
+            from += step;
+            if (data.length < step) keep = false;
           }
           resultado[tabela] = allRows;
         })
@@ -171,13 +169,12 @@ export default function DashboardPage() {
     return map;
   }, [products]);
 
-  // MAPA DE REGRAS INDIVIDUAIS POR CANAL (CONSULTA A ABA REGRAS)
+  // LEITURA DA FÓRMULA ESPECÍFICA DE CADA CANAL CADASTRADA NA ABA REGRAS
   const regrasMap = useMemo(() => {
     const map = new Map();
     (database.config_regras_canais || []).forEach((r: any) => {
-      const formulaStr = r.formula_excel || r.formulaExcel || '';
       map.set(normalizarTexto(r.canal), {
-        formulaExcel: formulaStr,
+        formulaExcel: r.formula_excel || r.formulaExcel || '',
         responsavel: r.responsavel || 'Equipe Best Fit',
         logoUrl: r.logo_url || null
       });
@@ -187,7 +184,7 @@ export default function DashboardPage() {
 
   const faturadosMap = useMemo(() => {
     const map = new Map();
-    (database.faturados_pedidos || []).forEach((f: any) => {
+    (database.faturados || []).forEach((f: any) => {
       const idPed = normalizarPedido(f.id_pedido);
       if (idPed) {
         map.set(idPed, {
@@ -197,7 +194,7 @@ export default function DashboardPage() {
       }
     });
     return map;
-  }, [database.faturados_pedidos]);
+  }, [database.faturados]);
 
   const tarifasSiteMap = useMemo(() => {
     const map = new Map();
@@ -263,7 +260,7 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
-  // MOTOR DO DASHBOARD: CMV = (Custo Unit + Emb) * Qtd | Repasse = Consulta Fórmula Específica da Aba Regras do Canal
+  // MOTOR DO DASHBOARD: VALIDAÇÃO POR FATURADOS, CMV = (Custo + Emb) * Qtd, E REPASSE = FÓRMULA DA ABA REGRAS
   const enrichedSales = useMemo(() => {
     return (sales || []).filter((s: any) => {
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
@@ -272,13 +269,26 @@ export default function DashboardPage() {
         if (appliedModalidadeFilter === 'FISICO' && !fisico) return false;
         if (appliedModalidadeFilter === 'DIGITAL' && fisico) return false;
 
+        const ped = normalizarPedido(s.id_pedido);
+        const fatInfo = faturadosMap.get(ped);
+
+        if (!fisico) {
+          if (!fatInfo) return false;
+          const mesRefAlvo = currentRefMonth.toLowerCase();
+          const fatMesRef = fatInfo.mes_referencia.toLowerCase();
+          const fatData = fatInfo.data_faturamento;
+
+          const matchMes = fatMesRef.includes(mesRefAlvo) || (fatData && fatData.startsWith(mesRefAlvo));
+          if (!matchMes) return false;
+        }
+
         return true;
       })
       .map((s: any) => {
         const qtd = parseCurrency(s.quantidade) || 1;
         const precoVenda = parseCurrency(s.preco_venda || s.valor);
 
-        // 1. CMV PRECISO: (Custo Unitário + Embalagem) * Quantidade
+        // CMV Preciso: (Custo Unitário + Embalagem) * Quantidade
         let custoCMV = 0;
         if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
           custoCMV = parseCurrency(s.cmv_clube);
@@ -291,16 +301,15 @@ export default function DashboardPage() {
         const ped = normalizarPedido(s.id_pedido);
         const custoFlex = flexMap.get(ped) || 0;
         
-        // 2. REPASSE LÍQUIDO: Consulta a regra/fórmula individual cadastrada para este canal específico na aba Regras
+        // Repasse Líquido recalculado em tempo real pela fórmula específica do canal na aba Regras
+        let repasseLiquidoNativo = parseCurrency(s.repasse_liquido || precoVenda);
         let repasseLiquido = 0;
         const regraCanal = regrasMap.get(normalizarTexto(s.canal));
+        
         if (regraCanal && regraCanal.formulaExcel) {
-          repasseLiquido = avaliarFormulaEspecificaCanal(regraCanal.formulaExcel, precoVenda, qtd);
+          repasseLiquido = avaliarFormulaCanalDashboard(regraCanal.formulaExcel, precoVenda, qtd, repasseLiquidoNativo);
         } else {
-          repasseLiquido = parseCurrency(s.repasse_liquido);
-          if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
-            repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.09));
-          }
+          repasseLiquido = repasseLiquidoNativo > 0 ? repasseLiquidoNativo : Math.max(0, precoVenda - (precoVenda * 0.09));
         }
         
         const nomeCanal = normalizarTexto(s.canal);
@@ -320,7 +329,7 @@ export default function DashboardPage() {
           data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap, faturadosMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap, faturadosMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
