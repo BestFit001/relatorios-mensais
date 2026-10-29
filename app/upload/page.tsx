@@ -29,11 +29,9 @@ function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  s = s.replace(/\s+/g, '').replace(/[\r\n\t]/g, '');
-  if (/e\+/i.test(s)) {
-    try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
-  }
-  return s.toLowerCase();
+  // Remove tudo que não seja alfanumérico para garantir correspondência absoluta
+  s = s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  return s;
 }
 
 function parseSmartFloat(val: any) {
@@ -269,9 +267,10 @@ export default function UpdatesPage() {
 
       const skusComCusto = new Set((custos || []).map((c: any) => normalizarSku(c.sku)));
 
+      // Filtro corrigido: se o SKU da venda normalizado existe na base de custos, ele NÃO é pendente
       const pendentes = (vendas || []).filter((v: any) => {
         const skuNorm = normalizarSku(v.sku);
-        if (!skuNorm || skuNorm === 'sem-sku') return true;
+        if (!skuNorm || skuNorm === 'semsku') return true;
         return !skusComCusto.has(skuNorm);
       });
 
@@ -294,7 +293,7 @@ export default function UpdatesPage() {
 
       const { data: custoMatch } = await supabase
         .from('tabela_custos_skus')
-        .select('produto')
+        .select('sku, produto')
         .eq('sku', skuNorm)
         .maybeSingle();
 
