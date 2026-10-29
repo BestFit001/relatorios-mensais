@@ -67,7 +67,7 @@ export default function UpdatesPage() {
   const router = useRouter();
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "vendas_pendentes" | "dashboard_admin">("relatorios");
 
-  const [mes, setMes] = useState("09");
+  const [mes, setMes] = useState("10");
   const [ano, setAno] = useState("2026");
   const [ficheiroABC, setFicheiroABC] = useState("");
   const [ficheiroInventario, setFicheiroInventario] = useState("");
@@ -101,7 +101,8 @@ export default function UpdatesPage() {
   const [selecionadosPendentes, setSelecionadosPendentes] = useState<{ [id: number]: boolean }>({});
   const [skuEmLote, setSkuEmLote] = useState("");
 
-  const [mesAlvoDash, setMesAlvoDash] = useState("outubro de 2026");
+  // SELETOR DE MÊS EM LISTA SUSPENSA PADRÃO
+  const [mesAlvoDash, setMesAlvoDash] = useState("2026-10");
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
   const [canaisDashList, setCanaisDashList] = useState<string[]>([
     "Mercado Livre 1", "Mercado Livre 2", "Amazon", "Magalu", "Shopee", "TikTok", "Shein", "Netshoes", "Site", "Clube Hebraica", "Clube Paineiras", "Centauro"
@@ -369,7 +370,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // UPLOAD DE VENDAS: LÊ O FATURAMENTO BRUTO (COL I) E O REPASSE LÍQUIDO EXATO DE ACORDO COM A ABA REGRAS
+  // UPLOAD DE VENDAS: FATURAMENTO BRUTO = COLUNA I, REPASSE LÍQUIDO = COLUNA T
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -421,10 +422,8 @@ export default function UpdatesPage() {
         const idxPdv = letraParaIndice(colPdvDef);
         const idxQtd = letraParaIndice(colQtdDef);
         const idxDescricao = letraParaIndice("D"); 
-        const idxRepasse = letraParaIndice("T"); // Coluna T (Repasse líquido da plataforma)
-        const idxReceitaProd = letraParaIndice("I"); // Coluna I (Faturamento Bruto / Receita)
-
-        const formulaStr = regraData?.formula_excel || regraData?.formulaExcel || '';
+        const idxRepasse = letraParaIndice("T"); // Coluna T (Repasse líquido nativo)
+        const idxReceitaProd = letraParaIndice("I"); // Coluna I (Faturamento Bruto)
 
         const novasVendas = [];
         let totalImportados = 0;
@@ -446,7 +445,6 @@ export default function UpdatesPage() {
             continue;
           }
 
-          // FILTRO TEMPORAL: O pedido precisa estar nos faturados do mês
           if (!idsFaturadosSet.has(rawId)) {
             ignoradosForaDoMes++;
             i++;
@@ -462,7 +460,7 @@ export default function UpdatesPage() {
             
             if (qtdItensNoPacote > 0) {
               const pdvPrincipal = parseSmartFloat(idxReceitaProd >= 0 && row[idxReceitaProd] !== "" ? row[idxReceitaProd] : (idxPdv >= 0 ? row[idxPdv] : 0));
-              const repasseTotal = formulaStr ? avaliarFormulaCanalDireto(formulaStr, pdvPrincipal, 1, row) : parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : pdvPrincipal);
+              const repasseTotal = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : pdvPrincipal);
 
               let subItens = [];
               let somaPdvSubItens = 0;
@@ -513,7 +511,7 @@ export default function UpdatesPage() {
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
           
-          // FATURAMENTO BRUTO: Lido estritamente da Coluna I (Receita por produtos)
+          // FATURAMENTO BRUTO: Coluna I (Receita por produtos)
           const precoVenda = parseSmartFloat(idxReceitaProd >= 0 && row[idxReceitaProd] !== "" ? row[idxReceitaProd] : (idxPdv >= 0 ? row[idxPdv] : 0));
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
@@ -521,14 +519,8 @@ export default function UpdatesPage() {
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
           const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
-          // REPASSE LÍQUIDO: Aplicando exatamente a fórmula cadastrada na aba de Regras (Ex: T2 - (I2 * 9%))
-          let repasseLiquido = 0;
-          if (formulaStr) {
-            repasseLiquido = avaliarFormulaCanalDireto(formulaStr, precoVenda, quantidade, row);
-          } else {
-            // Fallback para a Coluna T se nenhuma fórmula for especificada
-            repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : precoVenda);
-          }
+          // REPASSE LÍQUIDO: Coluna T (Repasse nativo puro da plataforma)
+          const repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : precoVenda);
 
           novasVendas.push({
             id_pedido: rawId,
@@ -563,27 +555,6 @@ export default function UpdatesPage() {
     };
     reader.readAsArrayBuffer(file);
   };
-
-  // AVALIADOR DE FÓRMULA EXATO DA ABA DE REGRAS (EX: T2 - (I2 * 9%))
-  function avaliarFormulaCanalDireto(formulaStr: string, precoVenda: number, qtd: number, row: any[]) {
-    try {
-      let expr = String(formulaStr).trim().replace(/^=/, '').toUpperCase();
-      // Substitui porcentagens (ex: 9% -> 0.09)
-      expr = expr.replace(/(\d+(?:\.\d+)?)%/g, (m, p1) => (parseFloat(p1) / 100).toString());
-      // Substitui referências de colunas da linha do Excel (ex: T2, I2, D2) pelos valores reais das colunas da linha
-      expr = expr.replace(/[A-Z]+\d*/g, (match) => {
-        const colLet = match.replace(/\d+/g, '');
-        const idx = letraParaIndice(colLet);
-        const val = idx >= 0 && row[idx] !== undefined ? parseSmartFloat(row[idx]) : 0;
-        if (match.startsWith('H') || match.startsWith('QTD')) return String(qtd);
-        return String(val > 0 ? val : precoVenda);
-      });
-      const result = new Function(`return ${expr.replace(/[^0-9\.\+\-\*\/\(\)\s]/g, '')};`)();
-      return isNaN(result) ? Math.max(0, precoVenda - (precoVenda * 0.09)) : Math.max(0, result);
-    } catch {
-      return Math.max(0, precoVenda - (precoVenda * 0.09));
-    }
-  }
 
   const handleSubirTarifasSite = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1339,7 +1310,24 @@ export default function UpdatesPage() {
                 <div className="space-y-3">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência dos Faturados</label>
-                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-bold" />
+                    {/* SELETOR DE MÊS EM LISTA SUSPENSA PADRÃO */}
+                    <select 
+                      value={mesAlvoDash} 
+                      onChange={e => setMesAlvoDash(e.target.value)} 
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-bold cursor-pointer"
+                    >
+                      <option value="2026-10">Outubro de 2026</option>
+                      <option value="2026-09">Setembro de 2026</option>
+                      <option value="2026-08">Agosto de 2026</option>
+                      <option value="2026-07">Julho de 2026</option>
+                      <option value="2026-06">Junho de 2026</option>
+                      <option value="2026-05">Maio de 2026</option>
+                      <option value="2026-04">Abril de 2026</option>
+                      <option value="2026-03">Março de 2026</option>
+                      <option value="2026-02">Fevereiro de 2026</option>
+                      <option value="2026-01">Janeiro de 2026</option>
+                      <option value="outubro de 2026">outubro de 2026 (Texto)</option>
+                    </select>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -1366,11 +1354,28 @@ export default function UpdatesPage() {
                 <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência</label>
-                    <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none" />
+                    {/* SELETOR DE MÊS EM LISTA SUSPENSA PADRÃO */}
+                    <select 
+                      value={mesAlvoDash} 
+                      onChange={e => setMesAlvoDash(e.target.value)} 
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold cursor-pointer"
+                    >
+                      <option value="2026-10">Outubro de 2026</option>
+                      <option value="2026-09">Setembro de 2026</option>
+                      <option value="2026-08">Agosto de 2026</option>
+                      <option value="2026-07">Julho de 2026</option>
+                      <option value="2026-06">Junho de 2026</option>
+                      <option value="2026-05">Maio de 2026</option>
+                      <option value="2026-04">Abril de 2026</option>
+                      <option value="2026-03">Março de 2026</option>
+                      <option value="2026-02">Fevereiro de 2026</option>
+                      <option value="2026-01">Janeiro de 2026</option>
+                      <option value="outubro de 2026">outubro de 2026 (Texto)</option>
+                    </select>
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Destino</label>
-                    <select value={canalAlvoDash} onChange={e => setCanalAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold">
+                    <select value={canalAlvoDash} onChange={e => setCanalAlvoDash(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold cursor-pointer">
                       {canaisDashList.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
@@ -1407,7 +1412,17 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <select 
+                  value={mesAlvoDash} 
+                  onChange={e => setMesAlvoDash(e.target.value)} 
+                  className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none cursor-pointer"
+                >
+                  <option value="2026-10">Outubro de 2026</option>
+                  <option value="2026-09">Setembro de 2026</option>
+                  <option value="2026-08">Agosto de 2026</option>
+                  <option value="2026-07">Julho de 2026</option>
+                  <option value="outubro de 2026">outubro de 2026 (Texto)</option>
+                </select>
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
