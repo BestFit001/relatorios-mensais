@@ -79,7 +79,7 @@ export default function CalculadoraPage() {
   const [canalMassaSelecionado, setCanalMassaSelecionado] = useState("Shopee");
   const [margemMassaGlobal, setMargemMassaGlobal] = useState("30");
   const [resultadosMassa, setResultadosMassa] = useState<any[]>([]);
-  const [processandoMassa, setProcessandoMassa] = useState(false);
+  const [carregandoMassa, setCarregandoMassa] = useState(false);
 
   // Estado para armazenar o valor de rebate inserido por canal
   const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
@@ -284,7 +284,7 @@ export default function CalculadoraPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setProcessandoMassa(true);
+    setCarregandoMassa(true);
     const reader = new FileReader();
 
     reader.onload = (evt) => {
@@ -390,11 +390,11 @@ export default function CalculadoraPage() {
         });
 
         setResultadosMassa(resultadosCalculados);
-        setProcessandoMassa(false);
+        setCarregandoMassa(false);
       } catch (err) {
         console.error(err);
         alert("Erro ao processar a planilha.");
-        setProcessandoMassa(false);
+        setCarregandoMassa(false);
       }
     };
 
@@ -710,13 +710,13 @@ export default function CalculadoraPage() {
               </div>
             </div>
 
-            {processandoMassa && (
+            {carregandoMassa && (
               <div className="text-center py-6 text-emerald-400 font-bold animate-pulse text-xs">
                 Processando SKUs e calculando preços de venda em lote...
               </div>
             )}
 
-            {resultadosMassa.length > 0 && !processandoMassa && (
+            {resultadosMassa.length > 0 && !carregandoMassa && (
               <div className="space-y-4 pt-4 border-t border-slate-800">
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-bold text-slate-300">{resultadosMassa.length} SKUs precificados com sucesso para {canalMassaSelecionado}.</span>
