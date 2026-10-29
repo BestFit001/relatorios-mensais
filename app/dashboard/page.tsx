@@ -113,8 +113,8 @@ export default function DashboardPage() {
   const [selectedChannelFilter, setSelectedChannelFilter] = useState('TODOS');
   const [appliedChannelFilter, setAppliedChannelFilter] = useState('TODOS');
   
-  const [modalidadeFilter, setModalidadeFilter] = useState('DIGITAL');
-  const [appliedModalidadeFilter, setAppliedModalidadeFilter] = useState('DIGITAL');
+  const [modalidadeFilter, setModalidadeFilter] = useState('TODAS');
+  const [appliedModalidadeFilter, setAppliedModalidadeFilter] = useState('TODAS');
 
   const [viewMode, setViewMode] = useState<'cards' | 'linhas'>('cards');
 
@@ -248,20 +248,6 @@ export default function DashboardPage() {
     return map;
   }, [database.config_regras_canais]);
 
-  const faturadosMap = useMemo(() => {
-    const map = new Map();
-    (database.faturados_pedidos || []).forEach((f: any) => {
-      const idPed = normalizarPedido(f.id_pedido);
-      if (idPed) {
-        map.set(idPed, {
-          data_faturamento: f.data_faturamento ? f.data_faturamento.slice(0, 10) : '',
-          mes_referencia: String(f.mes_referencia || '').trim().toLowerCase()
-        });
-      }
-    });
-    return map;
-  }, [database.faturados_pedidos]);
-
   const tarifasSiteMap = useMemo(() => {
     const map = new Map();
     (database.tarifas_site || []).forEach((t: any) => {
@@ -326,29 +312,14 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
+  // MOTOR DO DASHBOARD CORRIGIDO E FLEXÍVEL
   const enrichedSales = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     return (sales || []).filter((s: any) => {
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
 
         const fisico = isChannelFisico(s.canal);
         if (appliedModalidadeFilter === 'FISICO' && !fisico) return false;
         if (appliedModalidadeFilter === 'DIGITAL' && fisico) return false;
-
-        const ped = normalizarPedido(s.id_pedido);
-        const fatInfo = faturadosMap.get(ped);
-
-        if (!fisico) {
-          if (!fatInfo) return false;
-          const mesRefAlvo = currentRefMonth.toLowerCase();
-          const fatMesRef = fatInfo.mes_referencia.toLowerCase();
-          const fatData = fatInfo.data_faturamento;
-
-          const matchMes = fatMesRef.includes(mesRefAlvo) || (fatData && fatData.startsWith(mesRefAlvo));
-          if (!matchMes) return false;
-        }
 
         return true;
       })
@@ -402,18 +373,15 @@ export default function DashboardPage() {
            repasseLiquido = Math.max(0, repasseLiquido - taxaVindi);
         }
         
-        const fatInfo = faturadosMap.get(ped);
-
         return { 
           ...s, 
           preco_venda: precoVenda,
           custoCMV, 
           custoFlex, 
-          repasse_liquido: repasseLiquido,
-          data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
+          repasse_liquido: repasseLiquido 
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap, faturadosMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
@@ -1178,7 +1146,7 @@ export default function DashboardPage() {
                   <td className="py-4 px-4 text-right font-mono text-slate-300">R$ {totalGeral.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="py-4 px-4 text-right text-emerald-400">R$ {totalGeral.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="py-4 px-4 text-center text-purple-400">
-                    {totalGeral.metaValor > 0 ? ((totalGeral.faturadoComRedutor / totalGeral.metaValor) * 100).toFixed(1) : '0.0'}%
+                    {totalGeral.projecaoFaturamento > 0 ? '100%' : '0%'}
                   </td>
                   <td className="py-4 px-6 text-right text-emerald-400">-</td>
                 </tr>
