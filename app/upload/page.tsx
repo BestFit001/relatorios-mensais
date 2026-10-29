@@ -5,6 +5,35 @@ import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
 
+// Função para contornar o limite de 1000 linhas do Supabase e buscar tudo
+async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo?: string, eqValor?: any) {
+  let todos: any[] = [];
+  let from = 0;
+  const step = 1000;
+  let continuar = true;
+  
+  while (continuar) {
+    let query = supabase.from(tabela).select(select).range(from, from + step - 1);
+    if (eqCampo && eqValor !== undefined) {
+      query = query.eq(eqCampo, eqValor);
+    }
+    
+    const { data, error } = await query;
+    if (error || !data) {
+      console.error(`Erro ao buscar ${tabela}:`, error);
+      break;
+    }
+    
+    todos = [...todos, ...data];
+    from += step;
+    
+    if (data.length < step) {
+      continuar = false;
+    }
+  }
+  return todos;
+}
+
 function letraParaIndice(letra: string): number {
   let l = (letra || "A").trim().toUpperCase();
   let num = 0;
@@ -229,24 +258,11 @@ export default function UpdatesPage() {
       }
     }
 
-    let allTiny: any[] = [];
-    let rangeStep = 1000;
-    let from = 0;
-    let keepFetching = true;
-    while (keepFetching) {
-      const { data } = await supabase.from('cadastros_base_tiny').select('sku, estoque').range(from, from + rangeStep - 1);
-      if (data && data.length > 0) {
-        allTiny = [...allTiny, ...data];
-        from += rangeStep;
-        if (data.length < rangeStep) keepFetching = false;
-      } else {
-        keepFetching = false;
-      }
-    }
-
-    const { data: statusData } = await supabase.from('status_skus_catalogo').select('sku, status');
+    const allTiny = await fetchTodosRegistros('cadastros_base_tiny', 'sku, estoque');
+    const statusData = await fetchTodosRegistros('status_skus_catalogo', 'sku, status');
+    
     const totalTiny = allTiny.length;
-    const mapaStatus = new Map(statusData?.map(s => [String(s.sku).trim(), s.status]) || []);
+    const mapaStatus = new Map(statusData.map((s: any) => [String(s.sku).trim(), s.status]));
 
     let normais = 0;
     let obsoletos = 0;
@@ -261,12 +277,12 @@ export default function UpdatesPage() {
 
   const carregarVendasPendentes = async () => {
     try {
-      const { data: vendas } = await supabase.from('vendas_canais').select('*');
-      const { data: custos } = await supabase.from('tabela_custos_skus').select('sku');
+      const vendas = await fetchTodosRegistros('vendas_canais');
+      const custos = await fetchTodosRegistros('tabela_custos_skus', 'sku');
 
-      const skusComCusto = new Set((custos || []).map((c: any) => normalizarSku(c.sku)));
+      const skusComCusto = new Set(custos.map((c: any) => normalizarSku(c.sku)));
 
-      const pendentes = (vendas || []).filter((v: any) => {
+      const pendentes = vendas.filter((v: any) => {
         const skuNorm = normalizarSku(v.sku);
         if (!skuNorm || skuNorm === 'semsku') return true;
         return !skusComCusto.has(skuNorm);
@@ -475,12 +491,9 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        const { data: faturadosBanco } = await supabase
-          .from('faturados_pedidos')
-          .select('id_pedido')
-          .eq('mes_referencia', mesAlvoDash);
-
-        const idsFaturadosSet = new Set((faturadosBanco || []).map((f: any) => String(f.id_pedido).trim()));
+        const faturadosBanco = await fetchTodosRegistros('faturados_pedidos', 'id_pedido', 'mes_referencia', mesAlvoDash);
+        const idsFaturadosSet = new Set(faturadosBanco.map((f: any) => String(f.id_pedido).trim()));
+        
         if (idsFaturadosSet.size === 0) {
           alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado em 'faturados_pedidos' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
           setLoading(false);
@@ -493,13 +506,11 @@ export default function UpdatesPage() {
           .eq('canal', canalAlvoDash)
           .maybeSingle();
 
-        const { data: custosBanco } = await supabase
-          .from('tabela_custos_skus')
-          .select('sku, produto');
+        const custosBanco = await fetchTodosRegistros('tabela_custos_skus', 'sku, produto');
 
         const mapaProdutos = new Map();
         const skusBaseSet = new Set();
-        (custosBanco || []).forEach((c: any) => {
+        custosBanco.forEach((c: any) => {
           const sNorm = normalizarSku(c.sku);
           const pVal = String(c.produto || "").trim();
           if (sNorm) {
@@ -941,20 +952,8 @@ export default function UpdatesPage() {
     setLoading(true);
     const indiceColuna = letraParaIndice(letraColuna || "A");
     try {
-      let allTiny: any[] = [];
-      let from = 0;
-      let keepFetching = true;
-      while (keepFetching) {
-        const { data: tinyBatch } = await supabase.from('cadastros_base_tiny').select('sku').range(from, from + 999);
-        if (tinyBatch && tinyBatch.length > 0) {
-          allTiny = [...allTiny, ...tinyBatch];
-          from += 1000;
-          if (tinyBatch.length < 1000) keepFetching = false;
-        } else {
-          keepFetching = false;
-        }
-      }
-      const skusTinySet = new Set(allTiny.map(t => normalizarSku(t.sku)));
+      const allTiny = await fetchTodosRegistros('cadastros_base_tiny', 'sku');
+      const skusTinySet = new Set(allTiny.map((t: any) => normalizarSku(t.sku)));
       const skusEncontradosNoCanal = new Set<string>();
 
       for (let f = 0; f < files.length; f++) {
