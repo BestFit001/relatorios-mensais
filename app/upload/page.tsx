@@ -63,6 +63,12 @@ function parseSmartFloat(val: any) {
   return parseFloat(strVal) || 0;
 }
 
+const MESES_NOMES: Record<string, string> = {
+  "01": "janeiro", "02": "fevereiro", "03": "março", "04": "abril",
+  "05": "maio", "06": "junho", "07": "julho", "08": "agosto",
+  "09": "setembro", "10": "outubro", "11": "novembro", "12": "dezembro"
+};
+
 export default function UpdatesPage() {
   const router = useRouter();
   const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "vendas_pendentes" | "dashboard_admin">("relatorios");
@@ -101,8 +107,13 @@ export default function UpdatesPage() {
   const [selecionadosPendentes, setSelecionadosPendentes] = useState<{ [id: number]: boolean }>({});
   const [skuEmLote, setSkuEmLote] = useState("");
 
-  // SELETOR DE MÊS EM LISTA SUSPENSA PADRÃO
-  const [mesAlvoDash, setMesAlvoDash] = useState("2026-10");
+  // SELETORES DE MÊS E ANO SEPARADOS PARA O UPLOAD DO DASHBOARD
+  const [mesUpload, setMesUpload] = useState("10");
+  const [anoUpload, setAnoUpload] = useState("2026");
+
+  // String combinada gerada automaticamente (Ex: "outubro de 2026")
+  const mesAlvoDash = `${MESES_NOMES[mesUpload] || "outubro"} de ${anoUpload}`;
+
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
   const [canaisDashList, setCanaisDashList] = useState<string[]>([
     "Mercado Livre 1", "Mercado Livre 2", "Amazon", "Magalu", "Shopee", "TikTok", "Shein", "Netshoes", "Site", "Clube Hebraica", "Clube Paineiras", "Centauro"
@@ -360,7 +371,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Faturados salvos na tabela 'faturados'! Total: ${registros.length} registos.`);
+        alert(`✅ Faturados salvos na tabela 'faturados' (${mesAlvoDash})! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Faturados: " + err.message);
@@ -370,7 +381,6 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // UPLOAD DE VENDAS: FATURAMENTO BRUTO = COLUNA I, REPASSE LÍQUIDO = COLUNA T
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -511,7 +521,6 @@ export default function UpdatesPage() {
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
           
-          // FATURAMENTO BRUTO: Coluna I (Receita por produtos)
           const precoVenda = parseSmartFloat(idxReceitaProd >= 0 && row[idxReceitaProd] !== "" ? row[idxReceitaProd] : (idxPdv >= 0 ? row[idxPdv] : 0));
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
@@ -519,7 +528,6 @@ export default function UpdatesPage() {
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
           const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
-          // REPASSE LÍQUIDO: Coluna T (Repasse nativo puro da plataforma)
           const repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : precoVenda);
 
           novasVendas.push({
@@ -545,7 +553,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados (faturados no mês): ${totalImportados} itens\n• Ignorados (fora do mês/não faturados): ${ignoradosForaDoMes}`);
+        alert(`✅ Vendas salvas em 'vendas_canais' (${mesAlvoDash})!\n• Importados: ${totalImportados} itens\n• Ignorados: ${ignoradosForaDoMes}`);
         carregarVendasPendentes();
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
@@ -1310,24 +1318,26 @@ export default function UpdatesPage() {
                 <div className="space-y-3">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência dos Faturados</label>
-                    {/* SELETOR DE MÊS EM LISTA SUSPENSA PADRÃO */}
-                    <select 
-                      value={mesAlvoDash} 
-                      onChange={e => setMesAlvoDash(e.target.value)} 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-bold cursor-pointer"
-                    >
-                      <option value="2026-10">Outubro de 2026</option>
-                      <option value="2026-09">Setembro de 2026</option>
-                      <option value="2026-08">Agosto de 2026</option>
-                      <option value="2026-07">Julho de 2026</option>
-                      <option value="2026-06">Junho de 2026</option>
-                      <option value="2026-05">Maio de 2026</option>
-                      <option value="2026-04">Abril de 2026</option>
-                      <option value="2026-03">Março de 2026</option>
-                      <option value="2026-02">Fevereiro de 2026</option>
-                      <option value="2026-01">Janeiro de 2026</option>
-                      <option value="outubro de 2026">outubro de 2026 (Texto)</option>
-                    </select>
+                    {/* SELETORES DE MÊS E ANO SEPARADOS */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <select 
+                        value={mesUpload} 
+                        onChange={e => setMesUpload(e.target.value)} 
+                        className="bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-bold cursor-pointer"
+                      >
+                        {meses.map(m => <option key={m.valor} value={m.valor}>{m.nome}</option>)}
+                      </select>
+                      <select 
+                        value={anoUpload} 
+                        onChange={e => setAnoUpload(e.target.value)} 
+                        className="bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-bold cursor-pointer"
+                      >
+                        {anos.map(a => <option key={a} value={String(a)}>{a}</option>)}
+                      </select>
+                    </div>
+                    <span className="text-[10px] text-emerald-400 font-bold mt-1.5 block">
+                      Cadastrando como: <span className="font-mono uppercase">{mesAlvoDash}</span>
+                    </span>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -1354,24 +1364,26 @@ export default function UpdatesPage() {
                 <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência</label>
-                    {/* SELETOR DE MÊS EM LISTA SUSPENSA PADRÃO */}
-                    <select 
-                      value={mesAlvoDash} 
-                      onChange={e => setMesAlvoDash(e.target.value)} 
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold cursor-pointer"
-                    >
-                      <option value="2026-10">Outubro de 2026</option>
-                      <option value="2026-09">Setembro de 2026</option>
-                      <option value="2026-08">Agosto de 2026</option>
-                      <option value="2026-07">Julho de 2026</option>
-                      <option value="2026-06">Junho de 2026</option>
-                      <option value="2026-05">Maio de 2026</option>
-                      <option value="2026-04">Abril de 2026</option>
-                      <option value="2026-03">Março de 2026</option>
-                      <option value="2026-02">Fevereiro de 2026</option>
-                      <option value="2026-01">Janeiro de 2026</option>
-                      <option value="outubro de 2026">outubro de 2026 (Texto)</option>
-                    </select>
+                    {/* SELETORES DE MÊS E ANO SEPARADOS */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <select 
+                        value={mesUpload} 
+                        onChange={e => setMesUpload(e.target.value)} 
+                        className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold cursor-pointer"
+                      >
+                        {meses.map(m => <option key={m.valor} value={m.valor}>{m.nome}</option>)}
+                      </select>
+                      <select 
+                        value={anoUpload} 
+                        onChange={e => setAnoUpload(e.target.value)} 
+                        className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none font-bold cursor-pointer"
+                      >
+                        {anos.map(a => <option key={a} value={String(a)}>{a}</option>)}
+                      </select>
+                    </div>
+                    <span className="text-[10px] text-emerald-400 font-bold mt-1.5 block">
+                      Referência: <span className="font-mono uppercase">{mesAlvoDash}</span>
+                    </span>
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal de Destino</label>
@@ -1412,17 +1424,22 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <select 
-                  value={mesAlvoDash} 
-                  onChange={e => setMesAlvoDash(e.target.value)} 
-                  className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none cursor-pointer"
-                >
-                  <option value="2026-10">Outubro de 2026</option>
-                  <option value="2026-09">Setembro de 2026</option>
-                  <option value="2026-08">Agosto de 2026</option>
-                  <option value="2026-07">Julho de 2026</option>
-                  <option value="outubro de 2026">outubro de 2026 (Texto)</option>
-                </select>
+                <div className="grid grid-cols-2 gap-2 w-48">
+                  <select 
+                    value={mesUpload} 
+                    onChange={e => setMesUpload(e.target.value)} 
+                    className="bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-white font-bold outline-none cursor-pointer"
+                  >
+                    {meses.map(m => <option key={m.valor} value={m.valor}>{m.nome}</option>)}
+                  </select>
+                  <select 
+                    value={anoUpload} 
+                    onChange={e => setAnoUpload(e.target.value)} 
+                    className="bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-white font-bold outline-none cursor-pointer"
+                  >
+                    {anos.map(a => <option key={a} value={String(a)}>{a}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
