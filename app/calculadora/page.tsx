@@ -61,7 +61,7 @@ const formatarMoeda = (valor: number) =>
 export default function CalculadoraPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [modoCalculo, setModoCalculo] = useState<"pdv_ideal" | "reversa" | "custo_ideal">("pdv_ideal");
+  const [modoCalculo, setModoCalculo] = useState("pdv_ideal");
 
   const [skuBusca, setSkuBusca] = useState("");
   const [marcaFiltro, setMarcaFiltro] = useState("");
@@ -70,22 +70,22 @@ export default function CalculadoraPage() {
   const [precoAlvoCustoIdeal, setPrecoAlvoCustoIdeal] = useState("100.00");
   const [margemCustoIdeal, setMargemCustoIdeal] = useState("20");
 
-  const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
-
-  const [produtoEncontrado, setProdutoEncontrado] = useState<any>(null);
-  const [custosMap, setCustosMap] = useState>(new Map());
+  const [rebatesCanais, setRebatesCanais] = useState({} as Record<string, string>);
+  const [produtoEncontrado, setProdutoEncontrado] = useState(null as any);
   
-  const [mapeamentoMl1, setMapeamentoMl1] = useState>(new Map());
-  const [mapeamentoMl2, setMapeamentoMl2] = useState>(new Map());
+  // Utilizando construtor direto para evitar problemas no parser TSX do Vercel
+  const [custosMap, setCustosMap] = useState(new Map<string, any>());
+  const [mapeamentoMl1, setMapeamentoMl1] = useState(new Map<string, any[]>());
+  const [mapeamentoMl2, setMapeamentoMl2] = useState(new Map<string, any[]>());
   
-  const [canaisConfig, setCanaisConfig] = useState<string[]>([]);
-  const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
-  const [canaisSelecionados, setCanaisSelecionados] = useState<string[]>([]);
+  const [canaisConfig, setCanaisConfig] = useState([] as string[]);
+  const [regrasTarifacao, setRegrasTarifacao] = useState([] as any[]);
+  const [canaisSelecionados, setCanaisSelecionados] = useState([] as string[]);
 
   // Estados para precificação em massa
   const [canalEmMassa, setCanalEmMassa] = useState("Mercado Livre 1 Clássico");
   const [margemEmMassa, setMargemEmMassa] = useState("30");
-  const [skusMassaCarregados, setSkusMassaCarregados] = useState<string[]>([]);
+  const [skusMassaCarregados, setSkusMassaCarregados] = useState([] as string[]);
   const [nomeArquivoMassa, setNomeArquivoMassa] = useState("");
 
   useEffect(() => {
@@ -147,7 +147,7 @@ export default function CalculadoraPage() {
       } else keep = false;
     }
 
-    const mapaCustos = new Map();
+    const mapaCustos = new Map<string, any>();
     allCustos.forEach((c: any) => {
       const k = normalizarSku(c.sku);
       if (k) mapaCustos.set(k, c);
@@ -166,8 +166,8 @@ export default function CalculadoraPage() {
       } else keep = false;
     }
 
-    const mapaMl1 = new Map();
-    const mapaMl2 = new Map();
+    const mapaMl1 = new Map<string, any[]>();
+    const mapaMl2 = new Map<string, any[]>();
 
     allMlRegras.forEach((m: any) => {
       const k = normalizarSku(m.sku);
@@ -184,11 +184,13 @@ export default function CalculadoraPage() {
         const canalConta = m.canal || (m.id % 2 === 0 ? "Mercado Livre 2" : "Mercado Livre 1");
 
         if (canalConta === "Mercado Livre 2") {
-          if (!mapaMl2.has(k)) mapaMl2.set(k, []);
-          mapaMl2.get(k).push(info);
+          const lista = mapaMl2.get(k) || [];
+          lista.push(info);
+          mapaMl2.set(k, lista);
         } else {
-          if (!mapaMl1.has(k)) mapaMl1.set(k, []);
-          mapaMl1.get(k).push(info);
+          const lista = mapaMl1.get(k) || [];
+          lista.push(info);
+          mapaMl1.set(k, lista);
         }
       }
     });
@@ -323,23 +325,29 @@ export default function CalculadoraPage() {
     const margemAlvoDec = margemDesejadaNum / 100;
     let pdvCalculado = custoProduto * 2;
 
-    for (let iter = 0; iter < 5; iter++) {
-      let tarifaFixa = 0;
-      let freteVariavel = 0;
+    if (modoCalculo === "pdv_ideal" || !modoCalculo) {
+      for (let iter = 0; iter < 5; iter++) {
+        let tarifaFixa = 0;
+        let freteVariavel = 0;
 
-      if (cLower.includes("mercado livre")) {
-        tarifaFixa = pdvCalculado < 79.00 ? 6.50 : 0.00;
-        freteVariavel = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
-      } else {
-        const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
-        comissaoPct = Number(regraTabela.comissao || 14) / 100;
-        tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
-        freteVariavel = Number(regraTabela.frete || 0);
+        if (cLower.includes("mercado livre")) {
+          tarifaFixa = pdvCalculado < 79.00 ? 6.50 : 0.00;
+          freteVariavel = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
+        } else {
+          const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
+          comissaoPct = Number(regraTabela.comissao || 14) / 100;
+          tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
+          freteVariavel = Number(regraTabela.frete || 0);
+        }
+
+        const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
+        const custoEfetivo = Math.max(0, custoProduto - valRebate);
+        pdvCalculado = denominador > 0 ? (custoEfetivo + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
       }
-
-      const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
-      const custoEfetivo = Math.max(0, custoProduto - valRebate);
-      pdvCalculado = denominador > 0 ? (custoEfetivo + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
+    } else if (modoCalculo === "reversa") {
+      pdvCalculado = parseNumero(precoFixo);
+    } else if (modoCalculo === "custo_ideal") {
+      pdvCalculado = parseNumero(precoAlvoCustoIdeal);
     }
 
     let tarifaFixaFinal = 0;
@@ -350,20 +358,34 @@ export default function CalculadoraPage() {
       freteFinal = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
     } else {
       const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
+      if (modoCalculo === "reversa" || modoCalculo === "custo_ideal") {
+         comissaoPct = Number(regraTabela.comissao || 14) / 100;
+      }
       tarifaFixaFinal = Number(regraTabela.tarifa_fixa || 0);
       freteFinal = Number(regraTabela.frete || 0);
     }
 
     const valorComissao = pdvCalculado * comissaoPct;
     const valorImposto = pdvCalculado * impostoPercent;
-    const lucroLiquidoBase = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+    
+    let lucroLiquidoBase = 0;
+    let custoIdealCalc = 0;
+
+    if (modoCalculo === "custo_ideal") {
+        const termoMultiplicador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
+        custoIdealCalc = (pdvCalculado * termoMultiplicador) - tarifaFixaFinal - freteFinal + valRebate;
+        lucroLiquidoBase = pdvCalculado - (custoIdealCalc > 0 ? custoIdealCalc : 0 + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+    } else {
+        lucroLiquidoBase = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+    }
+    
     const lucroLiquido = lucroLiquidoBase + valRebate;
     const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
 
     return {
       canal: canalNome,
       pdv: pdvCalculado,
-      custoProduto,
+      custoProduto: modoCalculo === "custo_ideal" ? (custoIdealCalc > 0 ? custoIdealCalc : 0) : custoProduto,
       comissaoPct: comissaoPct * 100,
       valorComissao,
       tarifaFixa: tarifaFixaFinal,
@@ -371,13 +393,18 @@ export default function CalculadoraPage() {
       valorImposto,
       lucroLiquido,
       margemFinal,
-      rebate: valRebate
+      rebate: valRebate,
+      custoIdealCalculado: modoCalculo === "custo_ideal" ? (custoIdealCalc > 0 ? custoIdealCalc : 0) : null,
+      temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
     };
   };
 
   const calcularResultadosCanais = () => {
     if (!produtoEncontrado) return [];
-    const margemDesejadaNum = parseFloat(margemAlvo) || 30;
+    
+    let margemDesejadaNum = 30;
+    if (modoCalculo === "pdv_ideal") margemDesejadaNum = parseFloat(margemAlvo) || 30;
+    else if (modoCalculo === "custo_ideal") margemDesejadaNum = parseFloat(margemCustoIdeal) || 20;
 
     return canaisConfig
       .filter((canalNome) => canaisSelecionados.includes(canalNome))
@@ -726,21 +753,31 @@ export default function CalculadoraPage() {
             <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col justify-between">
               <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
                 <h3 className="text-sm font-bold text-white">{res.canal}</h3>
-                <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
-                  Comissão: {res.comissaoPct.toFixed(1)}%
-                </span>
+                <div className="flex items-center gap-2">
+                  {res.canal.toLowerCase().includes("mercado livre") && (
+                    <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${res.temMlb ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-amber-950 text-amber-400 border border-amber-800"}`}>
+                      {res.temMlb ? "MLB Encontrado" : "Padrão (Sem MLB)"}
+                    </span>
+                  )}
+                  <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
+                    Comissão: {res.comissaoPct.toFixed(1)}%
+                  </span>
+                </div>
               </div>
 
               <div className="p-5 space-y-3">
                 <div className="flex items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
                   <div>
-                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Preço de Venda (PDV)</span>
-                    <span className="text-xl font-black font-mono mt-0.5 block text-emerald-400">
-                      {formatarMoeda(res.pdv)}
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">
+                      {modoCalculo === "custo_ideal" ? "Custo Máximo (Ideal de Aquisição)" : (modoCalculo === "pdv_ideal" ? "Preço de Venda (PDV Ideal)" : "Preço de Venda (PDV)")}
+                    </span>
+                    <span className={`text-xl font-black font-mono mt-0.5 block ${modoCalculo === "custo_ideal" ? "text-cyan-400" : "text-emerald-400"}`}>
+                      {modoCalculo === "custo_ideal" ? formatarMoeda(res.custoIdealCalculado || 0) : formatarMoeda(res.pdv)}
                     </span>
                   </div>
                 </div>
 
+                {/* CAMPO DE REBATE MANUAL POR CANAL */}
                 <div className="bg-purple-950/20 border border-purple-900/40 p-2.5 rounded-xl flex items-center justify-between gap-2">
                   <span className="text-[10px] font-bold text-purple-300 uppercase">Rebate / Subsídio (R$):</span>
                   <input
@@ -755,8 +792,10 @@ export default function CalculadoraPage() {
 
                 <div className="space-y-1.5 text-xs font-mono text-slate-300 pt-1">
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Custo Produto:</span>
-                    <span className="text-rose-400">- {formatarMoeda(res.custoProduto)}</span>
+                    <span className="text-slate-500">{modoCalculo === "custo_ideal" ? "Custo Ideal Calculado:" : "Custo Produto:"}</span>
+                    <span className={modoCalculo === "custo_ideal" ? "text-cyan-400 font-bold" : "text-rose-400"}>
+                      - {formatarMoeda(modoCalculo === "custo_ideal" ? (res.custoIdealCalculado || 0) : res.custoProduto)}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Comissão ({res.comissaoPct.toFixed(1)}%):</span>
