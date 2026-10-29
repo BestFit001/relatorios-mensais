@@ -156,7 +156,7 @@ export default function UpdatesPage() {
   });
 
   const [regrasColsCusto, setRegrasColsCusto] = useState({
-    custo_sku: 'B', custo_produto: 'C', custo_valor: 'D', custo_marca: 'E'
+    custo_sku: 'B', custo_produto: 'C', custo_valor: 'E', custo_marca: 'D'
   });
 
   const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
@@ -215,7 +215,7 @@ export default function UpdatesPage() {
       const getC = (k: string, d: string) => tinyConfig.find((t: any) => t.campo === k)?.coluna || d;
       setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
       setRegrasColsCusto({
-        custo_sku: getC('custo_sku', 'B'), custo_produto: getC('custo_produto', 'C'), custo_valor: getC('custo_valor', 'D'), custo_marca: getC('custo_marca', 'E')
+        custo_sku: getC('custo_sku', 'B'), custo_produto: getC('custo_produto', 'C'), custo_valor: getC('custo_valor', 'E'), custo_marca: getC('custo_marca', 'D')
       });
 
       const canalCfg = tinyConfig.find((t: any) => t.campo === 'canais_dashboard');
@@ -540,9 +540,9 @@ export default function UpdatesPage() {
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
-          // CORREÇÃO CRUCIAL: Atribui corretamente o SKU na coluna de SKU e o nome correspondente na coluna de produto
+          // Validação blindada: se o SKU existe na base de custos, usa o SKU normalizado e puxa o nome oficial do produto.
           const skuFinal = (skuNorm && skusBaseSet.has(skuNorm)) ? skuNorm : (skuNorm || 'sem-sku');
-          const nomeProduto = mapaProdutos.get(skuFinal) || (skuRaw ? String(skuRaw).trim() : 'Produto Comercial');
+          const nomeProduto = mapaProdutos.get(skuFinal) || (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
           const contextoLinha: Record<string, number> = {
             'PDV': precoVenda,
@@ -1432,7 +1432,7 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
