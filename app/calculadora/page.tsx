@@ -61,6 +61,10 @@ const formatarMoeda = (valor: number) =>
 export default function CalculadoraPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  
+  // Controle das Abas Principais
+  const [abaCalc, setAbaCalc] = useState<"individual" | "massa">("individual");
+  
   const [modoCalculo, setModoCalculo] = useState("pdv_ideal");
 
   const [skuBusca, setSkuBusca] = useState("");
@@ -515,330 +519,361 @@ export default function CalculadoraPage() {
           <Navbar />
         </div>
 
-        {/* SEÇÃO DE PRECIFICAÇÃO EM MASSA VIA PLANILHA */}
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-indigo-600/40 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div>
-              <h2 className="text-sm font-black text-indigo-400 uppercase tracking-wider">📦 Precificação em Massa (Upload de Planilha)</h2>
-              <p className="text-xs text-slate-400">Insira sua planilha com os SKUs na **Coluna A**, selecione o canal, defina a margem e faça o download.</p>
-            </div>
-            {skusMassaCarregados.length > 0 && (
-              <span className="text-xs font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-3 py-1 rounded-xl">
-                ✓ {skusMassaCarregados.length} SKUs prontos para precificar
-              </span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">1. Enviar Planilha (.xlsx/.csv):</label>
-              <input
-                type="file"
-                accept=".xlsx, .xls, .csv"
-                onChange={handleUploadPlanilhaMassa}
-                className="w-full text-xs text-slate-400 file:py-2 file:px-3 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-2 rounded-xl border border-slate-700"
-              />
-              {nomeArquivoMassa && <span className="text-[10px] text-slate-500 mt-1 block">Arquivo: {nomeArquivoMassa}</span>}
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Canal de Destino:</label>
-              <select
-                value={canalEmMassa}
-                onChange={(e) => setCanalEmMassa(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer"
-              >
-                {canaisConfig.map((canal, idx) => (
-                  <option key={idx} value={canal}>{canal}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">3. Margem / Porcentagem (%):</label>
-              <input
-                type="number"
-                value={margemEmMassa}
-                onChange={(e) => setMargemEmMassa(e.target.value)}
-                className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
-              />
-            </div>
-
-            <div>
-              <button
-                type="button"
-                onClick={handleExportarPrecificacaoMassa}
-                disabled={skusMassaCarregados.length === 0}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold py-3 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg"
-              >
-                📥 Baixar Planilha Precificada
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
+        {/* TAB NAVEGAÇÃO PRINCIPAL */}
+        <div className="flex flex-wrap gap-3 mb-4">
           <button
-            onClick={() => setModoCalculo("pdv_ideal")}
-            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
-              modoCalculo === "pdv_ideal" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            onClick={() => setAbaCalc("individual")}
+            className={`px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              abaCalc === "individual" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800"
             }`}
           >
-            Achar PDV Ideal (Margem Alvo)
+            🧑‍💻 Precificação Tradicional
           </button>
           <button
-            onClick={() => setModoCalculo("reversa")}
-            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
-              modoCalculo === "reversa" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            onClick={() => setAbaCalc("massa")}
+            className={`px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+              abaCalc === "massa" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800"
             }`}
           >
-            Margem Reversa (Preço Fixo)
-          </button>
-          <button
-            onClick={() => setModoCalculo("custo_ideal")}
-            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
-              modoCalculo === "custo_ideal" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
-            }`}
-          >
-            Custo Ideal (Margem Desejada)
+            📦 Precificação via Planilha
           </button>
         </div>
 
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU Individual — Digite o SKU:</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={skuBusca}
-                  onChange={(e) => setSkuBusca(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleBuscarProduto()}
-                  placeholder="Ex: 20345042233"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-purple-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleBuscarProduto}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 rounded-xl text-xs uppercase cursor-pointer"
-                >
-                  Buscar
-                </button>
+        {/* ========================================= */}
+        {/* ABA: PRECIFICAÇÃO EM MASSA (VIA PLANILHA) */}
+        {/* ========================================= */}
+        {abaCalc === "massa" && (
+          <div className="bg-slate-900/90 p-6 rounded-2xl border border-indigo-600/40 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h2 className="text-sm font-black text-indigo-400 uppercase tracking-wider">📦 Precificação em Massa (Upload de Planilha)</h2>
+                <p className="text-xs text-slate-400">Insira sua planilha com os SKUs na **Coluna A**, selecione o canal, defina a margem e faça o download.</p>
               </div>
+              {skusMassaCarregados.length > 0 && (
+                <span className="text-xs font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-3 py-1 rounded-xl">
+                  ✓ {skusMassaCarregados.length} SKUs prontos para precificar
+                </span>
+              )}
             </div>
 
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca:</label>
-              <input
-                type="text"
-                value={marcaFiltro}
-                onChange={(e) => setMarcaFiltro(e.target.value)}
-                placeholder="Ex: BEST FIT"
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
-              />
-            </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">1. Enviar Planilha (.xlsx/.csv):</label>
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleUploadPlanilhaMassa}
+                  className="w-full text-xs text-slate-400 file:py-2 file:px-3 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-2 rounded-xl border border-slate-700"
+                />
+                {nomeArquivoMassa && <span className="text-[10px] text-slate-500 mt-1 block">Arquivo: {nomeArquivoMassa}</span>}
+              </div>
 
-            {modoCalculo === "pdv_ideal" && (
-              <div className="md:col-span-2">
-                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Alvo (%):</label>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">2. Canal de Destino:</label>
+                <select
+                  value={canalEmMassa}
+                  onChange={(e) => setCanalEmMassa(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer"
+                >
+                  {canaisConfig.map((canal, idx) => (
+                    <option key={idx} value={canal}>{canal}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">3. Margem / Porcentagem (%):</label>
                 <input
                   type="number"
-                  value={margemAlvo}
-                  onChange={(e) => setMargemAlvo(e.target.value)}
+                  value={margemEmMassa}
+                  onChange={(e) => setMargemEmMassa(e.target.value)}
                   className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
                 />
               </div>
-            )}
 
-            {modoCalculo === "reversa" && (
-              <div className="md:col-span-2">
-                <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Preço Fixo Global (R$):</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={precoFixo}
-                  onChange={(e) => setPrecoFixo(e.target.value)}
-                  className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
-                />
-              </div>
-            )}
-
-            {modoCalculo === "custo_ideal" && (
-              <>
-                <div>
-                  <label className="block text-[10px] font-bold text-cyan-400 uppercase mb-1">Preço de Venda Alvo (R$):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={precoAlvoCustoIdeal}
-                    onChange={(e) => setPrecoAlvoCustoIdeal(e.target.value)}
-                    className="w-full bg-slate-950 border border-cyan-600/50 rounded-xl p-2.5 text-xs font-mono text-cyan-300 font-bold outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Lucro / Margem Desejada (%):</label>
-                  <input
-                    type="number"
-                    value={margemCustoIdeal}
-                    onChange={(e) => setMargemCustoIdeal(e.target.value)}
-                    className="w-full bg-slate-950 border border-emerald-600/50 rounded-xl p-2.5 text-xs font-mono text-emerald-300 font-bold outline-none"
-                  />
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="pt-4 border-t border-slate-800 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Canais Visíveis na Precificação:</span>
-              <div className="flex gap-3 text-xs">
-                <button type="button" onClick={() => selecionarTodosCanais(true)} className="text-purple-400 hover:underline cursor-pointer">
-                  Marcar Todos
-                </button>
-                <span className="text-slate-600">|</span>
-                <button type="button" onClick={() => selecionarTodosCanais(false)} className="text-slate-400 hover:underline cursor-pointer">
-                  Desmarcar Todos
+              <div>
+                <button
+                  type="button"
+                  onClick={handleExportarPrecificacaoMassa}
+                  disabled={skusMassaCarregados.length === 0}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold py-3 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg"
+                >
+                  📥 Baixar Planilha Precificada
                 </button>
               </div>
-            </div>
-            <div className="flex flex-wrap gap-2 pt-1">
-              {canaisConfig.map((canalNome, i) => {
-                const ativo = canaisSelecionados.includes(canalNome);
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => toggleCanalSelecao(canalNome)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
-                      ativo
-                        ? "bg-purple-600/30 text-purple-300 border-purple-500/60 shadow-sm"
-                        : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300"
-                    }`}
-                  >
-                    {ativo ? "✓ " : "+ "} {canalNome}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {produtoEncontrado && (
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <span className="block text-[9px] font-bold text-slate-500 uppercase">SKU</span>
-              <span className="text-xs font-mono font-bold text-indigo-400">{produtoEncontrado.sku}</span>
-            </div>
-            <div>
-              <span className="block text-[9px] font-bold text-slate-500 uppercase">Nome do Produto</span>
-              <span className="text-xs font-bold text-white">{produtoEncontrado.produto}</span>
-            </div>
-            <div>
-              <span className="block text-[9px] font-bold text-slate-500 uppercase">Marca</span>
-              <span className="text-xs font-bold text-slate-300">{produtoEncontrado.marca}</span>
-            </div>
-            <div>
-              <span className="block text-[9px] font-bold text-slate-500 uppercase">Custo Base Atual (CMV)</span>
-              <span className="text-xs font-mono font-bold text-rose-400">{formatarMoeda(produtoEncontrado.custo_unitario)}</span>
-            </div>
-            <div className="bg-emerald-950/40 border border-emerald-900/50 px-3 py-1.5 rounded-xl">
-              <span className="block text-[9px] font-bold text-emerald-400 uppercase">Status do Item</span>
-              <span className="text-xs font-bold text-emerald-300">LINHA NORMAL (Ativo)</span>
             </div>
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {resultadosCanais.map((res, idx) => (
-            <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col justify-between">
-              <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
-                <h3 className="text-sm font-bold text-white">{res.canal}</h3>
-                <div className="flex items-center gap-2">
-                  {res.canal.toLowerCase().includes("mercado livre") && (
-                    <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${res.temMlb ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-amber-950 text-amber-400 border border-amber-800"}`}>
-                      {res.temMlb ? "MLB Encontrado" : "Padrão (Sem MLB)"}
-                    </span>
-                  )}
-                  <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
-                    Comissão: {res.comissaoPct.toFixed(1)}%
-                  </span>
-                </div>
-              </div>
+        {/* ========================================= */}
+        {/* ABA: PRECIFICAÇÃO TRADICIONAL (INDIVIDUAL)*/}
+        {/* ========================================= */}
+        {abaCalc === "individual" && (
+          <>
+            <div className="flex flex-wrap gap-2 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
+              <button
+                onClick={() => setModoCalculo("pdv_ideal")}
+                className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+                  modoCalculo === "pdv_ideal" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Achar PDV Ideal (Margem Alvo)
+              </button>
+              <button
+                onClick={() => setModoCalculo("reversa")}
+                className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+                  modoCalculo === "reversa" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Margem Reversa (Preço Fixo)
+              </button>
+              <button
+                onClick={() => setModoCalculo("custo_ideal")}
+                className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+                  modoCalculo === "custo_ideal" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Custo Ideal (Margem Desejada)
+              </button>
+            </div>
 
-              <div className="p-5 space-y-3">
-                <div className="flex items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
-                  <div>
-                    <span className="block text-[10px] font-bold text-slate-400 uppercase">
-                      {modoCalculo === "custo_ideal" ? "Custo Máximo (Ideal de Aquisição)" : (modoCalculo === "pdv_ideal" ? "Preço de Venda (PDV Ideal)" : "Preço de Venda (PDV)")}
-                    </span>
-                    <span className={`text-xl font-black font-mono mt-0.5 block ${modoCalculo === "custo_ideal" ? "text-cyan-400" : "text-emerald-400"}`}>
-                      {modoCalculo === "custo_ideal" ? formatarMoeda(res.custoIdealCalculado || 0) : formatarMoeda(res.pdv)}
-                    </span>
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU Individual — Digite o SKU:</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={skuBusca}
+                      onChange={(e) => setSkuBusca(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleBuscarProduto()}
+                      placeholder="Ex: 20345042233"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-purple-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleBuscarProduto}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 rounded-xl text-xs uppercase cursor-pointer"
+                    >
+                      Buscar
+                    </button>
                   </div>
                 </div>
 
-                {/* CAMPO DE REBATE MANUAL POR CANAL */}
-                <div className="bg-purple-950/20 border border-purple-900/40 p-2.5 rounded-xl flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-bold text-purple-300 uppercase">Rebate / Subsídio (R$):</span>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca:</label>
                   <input
-                    type="number"
-                    step="0.01"
-                    value={rebatesCanais[res.canal] || ""}
-                    onChange={(e) => setRebatesCanais({ ...rebatesCanais, [res.canal]: e.target.value })}
-                    placeholder="0.00"
-                    className="w-24 bg-slate-950 border border-purple-700/60 rounded-lg p-1 text-xs font-mono font-bold text-purple-200 text-right outline-none"
+                    type="text"
+                    value={marcaFiltro}
+                    onChange={(e) => setMarcaFiltro(e.target.value)}
+                    placeholder="Ex: BEST FIT"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none"
                   />
                 </div>
 
-                <div className="space-y-1.5 text-xs font-mono text-slate-300 pt-1">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">{modoCalculo === "custo_ideal" ? "Custo Ideal Calculado:" : "Custo Produto:"}</span>
-                    <span className={modoCalculo === "custo_ideal" ? "text-cyan-400 font-bold" : "text-rose-400"}>
-                      - {formatarMoeda(modoCalculo === "custo_ideal" ? (res.custoIdealCalculado || 0) : res.custoProduto)}
-                    </span>
+                {modoCalculo === "pdv_ideal" && (
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem Alvo (%):</label>
+                    <input
+                      type="number"
+                      value={margemAlvo}
+                      onChange={(e) => setMargemAlvo(e.target.value)}
+                      className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
+                    />
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Comissão ({res.comissaoPct.toFixed(1)}%):</span>
-                    <span className="text-rose-400">- {formatarMoeda(res.valorComissao)}</span>
+                )}
+
+                {modoCalculo === "reversa" && (
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1">Preço Fixo Global (R$):</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={precoFixo}
+                      onChange={(e) => setPrecoFixo(e.target.value)}
+                      className="w-full bg-slate-950 border border-purple-600/50 rounded-xl p-2.5 text-xs font-mono text-purple-300 font-bold outline-none"
+                    />
                   </div>
-                  {res.tarifaFixa > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Tarifa Fixa:</span>
-                      <span className="text-rose-400">- {formatarMoeda(res.tarifaFixa)}</span>
+                )}
+
+                {modoCalculo === "custo_ideal" && (
+                  <>
+                    <div>
+                      <label className="block text-[10px] font-bold text-cyan-400 uppercase mb-1">Preço de Venda Alvo (R$):</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={precoAlvoCustoIdeal}
+                        onChange={(e) => setPrecoAlvoCustoIdeal(e.target.value)}
+                        className="w-full bg-slate-950 border border-cyan-600/50 rounded-xl p-2.5 text-xs font-mono text-cyan-300 font-bold outline-none"
+                      />
                     </div>
-                  )}
-                  {res.frete > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Frete:</span>
-                      <span className="text-rose-400">- {formatarMoeda(res.frete)}</span>
+                    <div>
+                      <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Lucro / Margem Desejada (%):</label>
+                      <input
+                        type="number"
+                        value={margemCustoIdeal}
+                        onChange={(e) => setMargemCustoIdeal(e.target.value)}
+                        className="w-full bg-slate-950 border border-emerald-600/50 rounded-xl p-2.5 text-xs font-mono text-emerald-300 font-bold outline-none"
+                      />
                     </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Imposto (9%):</span>
-                    <span className="text-rose-400">- {formatarMoeda(res.valorImposto)}</span>
-                  </div>
-                  {res.rebate > 0 && (
-                    <div className="flex justify-between font-bold text-purple-400">
-                      <span>Rebate Adicionado:</span>
-                      <span>+ {formatarMoeda(res.rebate)}</span>
-                    </div>
-                  )}
-                </div>
+                  </>
+                )}
               </div>
 
-              <div className="p-4 bg-emerald-950/20 border-t border-emerald-900/30 flex justify-between items-center">
-                <div>
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Lucro Líquido</span>
-                  <span className="text-sm font-black text-emerald-400 font-mono">{formatarMoeda(res.lucroLiquido)}</span>
+              <div className="pt-4 border-t border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Canais Visíveis na Precificação:</span>
+                  <div className="flex gap-3 text-xs">
+                    <button type="button" onClick={() => selecionarTodosCanais(true)} className="text-purple-400 hover:underline cursor-pointer">
+                      Marcar Todos
+                    </button>
+                    <span className="text-slate-600">|</span>
+                    <button type="button" onClick={() => selecionarTodosCanais(false)} className="text-slate-400 hover:underline cursor-pointer">
+                      Desmarcar Todos
+                    </button>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Margem Final</span>
-                  <span className="text-sm font-black text-emerald-400 font-mono">{res.margemFinal.toFixed(2)}%</span>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {canaisConfig.map((canalNome, i) => {
+                    const ativo = canaisSelecionados.includes(canalNome);
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => toggleCanalSelecao(canalNome)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                          ativo
+                            ? "bg-purple-600/30 text-purple-300 border-purple-500/60 shadow-sm"
+                            : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300"
+                        }`}
+                      >
+                        {ativo ? "✓ " : "+ "} {canalNome}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
-          ))}
-        </div>
+
+            {produtoEncontrado && (
+              <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-500 uppercase">SKU</span>
+                  <span className="text-xs font-mono font-bold text-indigo-400">{produtoEncontrado.sku}</span>
+                </div>
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-500 uppercase">Nome do Produto</span>
+                  <span className="text-xs font-bold text-white">{produtoEncontrado.produto}</span>
+                </div>
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-500 uppercase">Marca</span>
+                  <span className="text-xs font-bold text-slate-300">{produtoEncontrado.marca}</span>
+                </div>
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-500 uppercase">Custo Base Atual (CMV)</span>
+                  <span className="text-xs font-mono font-bold text-rose-400">{formatarMoeda(produtoEncontrado.custo_unitario)}</span>
+                </div>
+                <div className="bg-emerald-950/40 border border-emerald-900/50 px-3 py-1.5 rounded-xl">
+                  <span className="block text-[9px] font-bold text-emerald-400 uppercase">Status do Item</span>
+                  <span className="text-xs font-bold text-emerald-300">LINHA NORMAL (Ativo)</span>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {resultadosCanais.map((res, idx) => (
+                <div key={idx} className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col justify-between">
+                  <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
+                    <h3 className="text-sm font-bold text-white">{res.canal}</h3>
+                    <div className="flex items-center gap-2">
+                      {res.canal.toLowerCase().includes("mercado livre") && (
+                        <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${res.temMlb ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : "bg-amber-950 text-amber-400 border border-amber-800"}`}>
+                          {res.temMlb ? "MLB Encontrado" : "Padrão (Sem MLB)"}
+                        </span>
+                      )}
+                      <span className="text-[10px] font-mono bg-purple-950/60 text-purple-300 border border-purple-800/40 px-2 py-0.5 rounded">
+                        Comissão: {res.comissaoPct.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-5 space-y-3">
+                    <div className="flex items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div>
+                        <span className="block text-[10px] font-bold text-slate-400 uppercase">
+                          {modoCalculo === "custo_ideal" ? "Custo Máximo (Ideal de Aquisição)" : (modoCalculo === "pdv_ideal" ? "Preço de Venda (PDV Ideal)" : "Preço de Venda (PDV)")}
+                        </span>
+                        <span className={`text-xl font-black font-mono mt-0.5 block ${modoCalculo === "custo_ideal" ? "text-cyan-400" : "text-emerald-400"}`}>
+                          {modoCalculo === "custo_ideal" ? formatarMoeda(res.custoIdealCalculado || 0) : formatarMoeda(res.pdv)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* CAMPO DE REBATE MANUAL POR CANAL */}
+                    <div className="bg-purple-950/20 border border-purple-900/40 p-2.5 rounded-xl flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-purple-300 uppercase">Rebate / Subsídio (R$):</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={rebatesCanais[res.canal] || ""}
+                        onChange={(e) => setRebatesCanais({ ...rebatesCanais, [res.canal]: e.target.value })}
+                        placeholder="0.00"
+                        className="w-24 bg-slate-950 border border-purple-700/60 rounded-lg p-1 text-xs font-mono font-bold text-purple-200 text-right outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5 text-xs font-mono text-slate-300 pt-1">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">{modoCalculo === "custo_ideal" ? "Custo Ideal Calculado:" : "Custo Produto:"}</span>
+                        <span className={modoCalculo === "custo_ideal" ? "text-cyan-400 font-bold" : "text-rose-400"}>
+                          - {formatarMoeda(modoCalculo === "custo_ideal" ? (res.custoIdealCalculado || 0) : res.custoProduto)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Comissão ({res.comissaoPct.toFixed(1)}%):</span>
+                        <span className="text-rose-400">- {formatarMoeda(res.valorComissao)}</span>
+                      </div>
+                      {res.tarifaFixa > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Tarifa Fixa:</span>
+                          <span className="text-rose-400">- {formatarMoeda(res.tarifaFixa)}</span>
+                        </div>
+                      )}
+                      {res.frete > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Frete:</span>
+                          <span className="text-rose-400">- {formatarMoeda(res.frete)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Imposto (9%):</span>
+                        <span className="text-rose-400">- {formatarMoeda(res.valorImposto)}</span>
+                      </div>
+                      {res.rebate > 0 && (
+                        <div className="flex justify-between font-bold text-purple-400">
+                          <span>Rebate Adicionado:</span>
+                          <span>+ {formatarMoeda(res.rebate)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-emerald-950/20 border-t border-emerald-900/30 flex justify-between items-center">
+                    <div>
+                      <span className="block text-[9px] font-bold text-slate-400 uppercase">Lucro Líquido</span>
+                      <span className="text-sm font-black text-emerald-400 font-mono">{formatarMoeda(res.lucroLiquido)}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-[9px] font-bold text-slate-400 uppercase">Margem Final</span>
+                      <span className="text-sm font-black text-emerald-400 font-mono">{res.margemFinal.toFixed(2)}%</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
       </div>
     </div>
