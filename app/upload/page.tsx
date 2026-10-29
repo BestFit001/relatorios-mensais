@@ -29,7 +29,6 @@ function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  // Remove todos os espaços e caracteres invisíveis
   s = s.replace(/\s+/g, '').replace(/[\r\n\t]/g, '');
   if (/e\+/i.test(s)) {
     try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
@@ -272,7 +271,8 @@ export default function UpdatesPage() {
 
       const pendentes = (vendas || []).filter((v: any) => {
         const skuNorm = normalizarSku(v.sku);
-        return !skuNorm || skuNorm === 'sem-sku' || !skusComCusto.has(skuNorm);
+        if (!skuNorm || skuNorm === 'sem-sku') return true;
+        return !skusComCusto.has(skuNorm);
       });
 
       setVendasPendentes(pendentes);
@@ -284,7 +284,7 @@ export default function UpdatesPage() {
   const salvarSkuPendente = async (id: number, skuInput?: string) => {
     const novoSku = (skuInput !== undefined ? skuInput : edicoesPendentes[id] || "").trim();
     if (!novoSku) {
-      alert("Digite um SKU válido.");
+      if (skuInput === undefined) alert("Digite um SKU válido.");
       return;
     }
 
@@ -317,7 +317,7 @@ export default function UpdatesPage() {
       });
 
       if (skuInput === undefined) {
-        alert("✅ SKU atualizado com sucesso!");
+        alert("✅ SKU atualizado e validado com sucesso!");
       }
     } catch (err: any) {
       if (skuInput === undefined) alert("Erro ao atualizar SKU: " + err.message);
@@ -537,7 +537,6 @@ export default function UpdatesPage() {
           }
 
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
-          // NORMALIZAÇÃO AGRESSIVA PARA REMOVER ESPAÇOS E CARACTERES OCULTOS
           const sku = normalizarSku(skuRaw);
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
