@@ -75,11 +75,11 @@ export default function CalculadoraPage() {
   const [precoAlvoCustoIdeal, setPrecoAlvoCustoIdeal] = useState("100.00");
   const [margemCustoIdeal, setMargemCustoIdeal] = useState("20");
 
-  // Estados para Precificação em Massa
+  // Novos estados para a Precificação em Massa por Canal
   const [canalMassaSelecionado, setCanalMassaSelecionado] = useState("Shopee");
   const [margemMassaGlobal, setMargemMassaGlobal] = useState("30");
   const [resultadosMassa, setResultadosMassa] = useState<any[]>([]);
-  const [carregandoMassa, setCarregandoMassa] = useState<boolean>(false);
+  const [processandoMassa, setProcessandoMassa] = useState(false);
 
   // Estado para armazenar o valor de rebate inserido por canal
   const [rebatesCanais, setRebatesCanais] = useState<{ [key: string]: string }>({});
@@ -279,12 +279,12 @@ export default function CalculadoraPage() {
     return regrasDoCanal[0];
   };
 
-  // Função de Upload e Precificação em Massa
+  // LÓGICA DE UPLOAD E PRECIFICAÇÃO EM MASSA (Lê SKUs e Margem opcional na Coluna A)
   const handleFileUploadMassa = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setCarregandoMassa(true);
+    setProcessandoMassa(true);
     const reader = new FileReader();
 
     reader.onload = (evt) => {
@@ -310,6 +310,7 @@ export default function CalculadoraPage() {
             if (skuValido(valStr)) {
               skuEncontrado = valStr;
             }
+            // Coluna A (índice 0) pode conter o percentual indicado se não for o SKU
             if (colIdx === 0 && !skuValido(valStr) && parsePorcentagem(cellVal) > 0) {
               margemLinha = parsePorcentagem(cellVal);
             }
@@ -390,11 +391,11 @@ export default function CalculadoraPage() {
         });
 
         setResultadosMassa(resultadosCalculados);
-        setCarregandoMassa(false);
+        setProcessandoMassa(false);
       } catch (err) {
         console.error(err);
         alert("Erro ao processar a planilha.");
-        setCarregandoMassa(false);
+        setProcessandoMassa(false);
       }
     };
 
@@ -459,6 +460,7 @@ export default function CalculadoraPage() {
         const largura = refAnuncio && Number(refAnuncio.largura) > 0 ? Number(refAnuncio.largura) : 10;
         const comprimento = refAnuncio && Number(refAnuncio.comprimento) > 0 ? Number(refAnuncio.comprimento) : 10;
 
+        // Valor de rebate adicionado manualmente pelo usuário para este canal
         const valRebate = parseNumero(rebatesCanais[canalNome] || "0");
 
         if (modoCalculo === "pdv_ideal") {
@@ -481,6 +483,7 @@ export default function CalculadoraPage() {
             }
 
             const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
+            // O rebate reduz o custo efetivo ou soma-se à receita, facilitando o cálculo do PDV ideal
             const custoEfetivo = Math.max(0, custoProduto - valRebate);
             pdvCalculado = denominador > 0 ? (custoEfetivo + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
           }
@@ -500,6 +503,7 @@ export default function CalculadoraPage() {
           const valorComissao = pdvCalculado * comissaoPct;
           const valorImposto = pdvCalculado * impostoPercent;
           
+          // Lucro base + Rebate somado ao líquido/lucro
           const lucroLiquidoBase = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
           const lucroLiquido = lucroLiquidoBase + valRebate;
           const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
@@ -539,6 +543,7 @@ export default function CalculadoraPage() {
           const valorComissao = pdvBase * comissaoPct;
           const valorImposto = pdvBase * impostoPercent;
           
+          // O rebate soma-se ao lucro líquido
           const lucroLiquidoBase = pdvBase - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
           const lucroLiquido = lucroLiquidoBase + valRebate;
           const margemFinal = pdvBase > 0 ? (lucroLiquido / pdvBase) * 100 : 0;
@@ -579,6 +584,7 @@ export default function CalculadoraPage() {
           const valorImposto = pdvAlvo * impostoPercent;
 
           const termoMultiplicador = 1 - (comissaoPct + impostoPercent + margemDesejadaDec);
+          // O rebate ajuda a suportar um custo ideal maior
           let custoIdealCalculado = (pdvAlvo * termoMultiplicador) - tarifaFixaFinal - freteFinal + valRebate;
 
           const lucroLiquidoIdealBase = pdvAlvo - (custoIdealCalculado > 0 ? custoIdealCalculado : 0 + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
@@ -631,7 +637,7 @@ export default function CalculadoraPage() {
           <Navbar />
         </div>
 
-        {/* Abas de Modos de Cálculo */}
+        {/* Abas de Navegação (Incluindo a Nova Aba de Precificação em Massa) */}
         <div className="flex flex-wrap gap-2 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
           <button
             onClick={() => setModoCalculo("pdv_ideal")}
@@ -667,12 +673,12 @@ export default function CalculadoraPage() {
           </button>
         </div>
 
-        {/* CONTEÚDO QUANDO O MODO FOR MASSA */}
+        {/* MODO DE PRECIFICAÇÃO EM MASSA (UPLOAD, SELEÇÃO DE CANAL E DOWNLOAD) */}
         {modoCalculo === "massa" ? (
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-emerald-500/40 shadow-xl space-y-6">
             <div>
               <h2 className="text-lg font-bold text-emerald-400">Precificação em Massa por Canal</h2>
-              <p className="text-xs text-slate-400">Selecione o canal de destino, defina a margem e envie sua planilha contendo os SKUs.</p>
+              <p className="text-xs text-slate-400">Envie uma planilha contendo os SKUs (e opcionalmente a margem na Coluna A), selecione o canal e baixe o resultado precificado.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
@@ -690,7 +696,7 @@ export default function CalculadoraPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Margem Global Padrão (%):</label>
+                <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Margem Global Padrão (%):</label>
                 <input
                   type="number"
                   value={margemMassaGlobal}
@@ -700,7 +706,7 @@ export default function CalculadoraPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Upload Planilha (Crua / SKUs):</label>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Upload Planilha (.xlsx/.csv):</label>
                 <input
                   type="file"
                   accept=".xlsx, .xls, .csv"
@@ -710,13 +716,13 @@ export default function CalculadoraPage() {
               </div>
             </div>
 
-            {carregandoMassa && (
+            {processandoMassa && (
               <div className="text-center py-6 text-emerald-400 font-bold animate-pulse text-xs">
                 Processando SKUs e calculando preços de venda em lote...
               </div>
             )}
 
-            {resultadosMassa.length > 0 && !carregandoMassa && (
+            {resultadosMassa.length > 0 && !processandoMassa && (
               <div className="space-y-4 pt-4 border-t border-slate-800">
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-bold text-slate-300">{resultadosMassa.length} SKUs precificados com sucesso para {canalMassaSelecionado}.</span>
@@ -761,7 +767,7 @@ export default function CalculadoraPage() {
           </div>
         ) : (
           <>
-            {/* CONTEÚDO DOS MODOS INDIVIDUAIS (PDV, Reversa, Custo Ideal) */}
+            {/* MODO DE CÁLCULO INDIVIDUAL (PDV Ideal, Reversa, Custo Ideal) */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                 <div>
@@ -935,6 +941,7 @@ export default function CalculadoraPage() {
                       </div>
                     </div>
 
+                    {/* CAMPO DE REBATE MANUAL POR CANAL */}
                     <div className="bg-purple-950/20 border border-purple-900/40 p-2.5 rounded-xl flex items-center justify-between gap-2">
                       <span className="text-[10px] font-bold text-purple-300 uppercase">Rebate / Subsídio (R$):</span>
                       <input
