@@ -483,9 +483,14 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        // BUSCA TODOS OS FATURADOS DA BASE SEM TRAVA RÍGIDA DE STRING DE MÊS
-        const faturadosBanco = await fetchTodosRegistros('faturados_pedidos', 'id_pedido');
+        const faturadosBanco = await fetchTodosRegistros('faturados_pedidos', 'id_pedido', 'mes_referencia', mesAlvoDash);
         const idsFaturadosSet = new Set(faturadosBanco.map((f: any) => String(f.id_pedido).trim()));
+        
+        if (idsFaturadosSet.size === 0) {
+          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado em 'faturados_pedidos' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
+          setLoading(false);
+          return;
+        }
 
         const { data: regraData } = await supabase
           .from('config_regras_canais')
@@ -525,7 +530,7 @@ export default function UpdatesPage() {
         let totalImportados = 0;
         let ignoradosForaDoMes = 0;
 
-        let i = 6; // Começa na linha de dados do Excel do Mercado Livre
+        let i = 6; // Começa exatamente na linha de dados do Excel do Mercado Livre
         while (i < json.length) {
           const row = json[i];
           if (!row || row.length === 0) {
@@ -541,8 +546,8 @@ export default function UpdatesPage() {
             continue;
           }
 
-          // Se houver faturados cadastrados na base, filtra por eles. Se a base de faturados estiver vazia, aceita todos para teste.
-          if (idsFaturadosSet.size > 0 && !idsFaturadosSet.has(rawId)) {
+          // FILTRO TEMPORAL: O pedido precisa estar nos faturados do mês
+          if (!idsFaturadosSet.has(rawId)) {
             ignoradosForaDoMes++;
             i++;
             continue;
@@ -649,7 +654,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados: ${totalImportados} itens\n• Ignorados (fora do mês/não faturados): ${ignoradosForaDoMes}`);
+        alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados (faturados no mês): ${totalImportados} itens\n• Ignorados (fora do mês/não faturados): ${ignoradosForaDoMes}`);
         carregarVendasPendentes();
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
