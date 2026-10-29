@@ -137,7 +137,7 @@ function compilarFormulaExcel(src: any) {
 
 export default function UpdatesPage() {
   const router = useRouter();
-  const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "dashboard_admin">("relatorios");
+  const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "vendas_pendentes" | "dashboard_admin">("relatorios");
 
   const [mes, setMes] = useState("09");
   const [ano, setAno] = useState("2026");
@@ -166,8 +166,11 @@ export default function UpdatesPage() {
 
   const [pesquisaCusto, setPesquisaCusto] = useState("");
   const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
-
   const [pesquisaMl, setPesquisaMl] = useState("");
+
+  // Estados para Vendas Pendentes de Ajustes
+  const [vendasPendentes, setVendasPendentes] = useState<any[]>([]);
+  const [edicoesPendentes, setEdicoesPendentes] = useState<{ [id: number]: string }>({});
 
   const [mesAlvoDash, setMesAlvoDash] = useState("outubro de 2026");
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
@@ -198,6 +201,7 @@ export default function UpdatesPage() {
       return;
     }
     carregarDadosCadastros();
+    carregarVendasPendentes();
   }, []);
 
   useEffect(() => {
@@ -255,6 +259,65 @@ export default function UpdatesPage() {
     });
 
     setEstatisticas({ totalTiny, normais, obsoletos });
+  };
+
+  const carregarVendasPendentes = async () => {
+    try {
+      // Puxa todas as vendas e custos para filtrar as que estão sem SKU válido ou sem custo na base
+      const { data: vendas } = await supabase.from('vendas_canais').select('*');
+      const { data: custos } = await supabase.from('tabela_custos_skus').select('sku');
+
+      const skusComCusto = new Set((custos || []).map((c: any) => normalizarSku(c.sku)));
+
+      const pendentes = (vendas || []).filter((v: any) => {
+        const skuNorm = normalizarSku(v.sku);
+        return !skuNorm || skuNorm === 'sem-sku' || !skusComCusto.has(skuNorm);
+      });
+
+      setVendasPendentes(pendentes);
+    } catch (err) {
+      console.error("Erro ao carregar vendas pendentes:", err);
+    }
+  };
+
+  const salvarSkuPendente = async (id: number) => {
+    const novoSku = (edicoesPendentes[id] || "").trim();
+    if (!novoSku) {
+      alert("Digite um SKU válido.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const skuNorm = normalizarSku(novoSku);
+
+      // Busca o nome do produto na base de custos caso exista
+      const { data: custoMatch } = await supabase
+        .from('tabela_custos_skus')
+        .select('produto')
+        .eq('sku', skuNorm)
+        .maybeSingle();
+
+      const produtoNome = custoMatch?.produto || "Produto Ajustado Manualmente";
+
+      const { error } = await supabase
+        .from('vendas_canais')
+        .update({ sku: skuNorm, produto: produtoNome })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      alert("✅ SKU atualizado com sucesso! O item foi resolvido.");
+      setEdicoesPendentes(prev => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      carregarVendasPendentes();
+    } catch (err: any) {
+      alert("Erro ao atualizar SKU: " + err.message);
+    }
+    setLoading(false);
   };
 
   const atualizarColunaSkuCanal = async (id: number, novaLetraCol: string) => {
@@ -477,6 +540,7 @@ export default function UpdatesPage() {
         }
 
         alert(`✅ Vendas salvas em 'vendas_canais'!\n• Importados: ${novasVendas.length} itens\n• Ignorados: ${ignoradosNaoFaturados}`);
+        carregarVendasPendentes();
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
       } finally {
@@ -540,6 +604,7 @@ export default function UpdatesPage() {
         await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
       }
       alert(`✅ Registros de ${tabela} limpos.`);
+      carregarVendasPendentes();
     } catch (err: any) {
       alert("Erro: " + err.message);
     }
@@ -554,6 +619,7 @@ export default function UpdatesPage() {
       await supabase.from('faturados_pedidos').delete().neq('id', 0);
       await supabase.from('tarifas_site').delete().neq('id', 0);
       alert("✅ Bases limpas com sucesso!");
+      carregarVendasPendentes();
     } catch (err: any) {
       alert("Erro: " + err.message);
     }
@@ -758,63 +824,7 @@ export default function UpdatesPage() {
         alert(`💰 Custos salvos com sucesso! Total: ${registros.length} registos.`);
         setLoading(false);
         pesquisarCustosNoBanco();
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleUploadRegrasML = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    const cols = colunasPorConta[contaMlSelecionada];
-    const idxMlb = letraParaIndice(cols.ml_mlb);
-    const idxSku = letraParaIndice(cols.ml_sku);
-    const idxCom = letraParaIndice(cols.ml_comissao);
-    const idxPeso = cols.ml_peso ? letraParaIndice(cols.ml_peso) : -1;
-    const idxAlt = cols.ml_altura ? letraParaIndice(cols.ml_altura) : -1;
-    const idxLarg = cols.ml_largura ? letraParaIndice(cols.ml_largura) : -1;
-    const idxComp = cols.ml_comprimento ? letraParaIndice(cols.ml_comprimento) : -1;
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        let sheetName = workbook.SheetNames[0];
-        if (workbook.SheetNames.includes("Anúncios")) sheetName = "Anúncios";
-        const worksheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        const mapaMlPendente = new Map<string, any>();
-        for (let i = 4; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= Math.max(idxMlb, idxSku)) continue;
-          const mlb = String(row[idxMlb] || "").trim().toUpperCase();
-          if (!mlb || !mlb.startsWith("MLB")) continue;
-          let sku = idxSku !== -1 ? normalizarSku(row[idxSku]) : "";
-          let comissaoNum = 14;
-          let rawComissao = row[idxCom];
-          if (rawComissao !== undefined && rawComissao !== "") {
-            let parsed = parseFloat(String(rawComissao).replace("%", "").trim().replace(",", "."));
-            if (!isNaN(parsed) && parsed > 0) comissaoNum = parsed < 1 ? parsed * 100 : parsed;
-          }
-          let pesoReal = 2.000;
-          if (idxPeso >= 0 && row[idxPeso] !== undefined) {
-            let p = Number(String(row[idxPeso]).replace(",", "."));
-            if (!isNaN(p) && p > 0) pesoReal = p;
-          }
-          const altura = idxAlt >= 0 ? Number(String(row[idxAlt] || "0").replace(",", ".")) || 0 : 0;
-          const largura = idxLarg >= 0 ? Number(String(row[idxLarg] || "0").replace(",", ".")) || 0 : 0;
-          const comprimento = idxComp >= 0 ? Number(String(row[idxComp] || "0").replace(",", ".")) || 0 : 0;
-
-          mapaMlPendente.set(mlb, { mlb, sku, comissao: comissaoNum, peso_real: pesoReal, altura, largura, comprimento, canal: contaMlSelecionada });
-        }
-        const registros = Array.from(mapaMlPendente.values());
-        for (let i = 0; i < registros.length; i += 500) {
-          await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
-        }
-        alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).`);
-        setLoading(false);
+        carregarVendasPendentes();
       } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
     };
     reader.readAsArrayBuffer(file);
@@ -893,7 +903,7 @@ export default function UpdatesPage() {
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO DE ABAS COM A ABA "regras_ml" INCLUSA */}
+        {/* NAVEGAÇÃO DE ABAS COM A ABA "vendas_pendentes" INCLUSA */}
         <div className="flex flex-wrap gap-3 mb-6">
           <button onClick={() => setAbaAtiva("relatorios")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "relatorios" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             📊 Relatórios (ABC & Inventário)
@@ -906,6 +916,9 @@ export default function UpdatesPage() {
           </button>
           <button onClick={() => setAbaAtiva("regras_ml")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "regras_ml" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             📦 Regras & Medidas ML
+          </button>
+          <button onClick={() => setAbaAtiva("vendas_pendentes")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "vendas_pendentes" ? 'bg-amber-600 text-white' : 'bg-slate-900 text-amber-400 border border-amber-900/50'}`}>
+            ⚠️ Vendas Pendentes de Ajustes ({vendasPendentes.length})
           </button>
           <button onClick={() => setAbaAtiva("dashboard_admin")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "dashboard_admin" ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-emerald-400 border border-emerald-800'}`}>
             ⚙️ Updates & Alimenta Dashboard
@@ -1077,7 +1090,7 @@ export default function UpdatesPage() {
           </div>
         )}
 
-        {/* ABA: REGRAS & MEDIDAS ML (COMPLETA E COM handleUploadRegrasML) */}
+        {/* ABA: REGRAS & MEDIDAS ML */}
         {abaAtiva === "regras_ml" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
             <div className="flex justify-between items-center">
@@ -1128,6 +1141,73 @@ export default function UpdatesPage() {
 
             <input type="file" accept=".xlsx, .xls" onChange={handleUploadRegrasML} className="block w-full text-xs text-slate-400 file:py-3 file:px-5 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
             <input type="text" value={pesquisaMl} onChange={(e) => setPesquisaMl(e.target.value)} placeholder="🔍 Pesquisar MLB ou SKU..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none" />
+          </div>
+        )}
+
+        {/* ABA: VENDAS PENDENTES DE AJUSTES */}
+        {abaAtiva === "vendas_pendentes" && (
+          <div className="bg-slate-900/90 p-8 rounded-2xl border border-amber-900/50 shadow-xl space-y-6">
+            <div>
+              <h2 className="text-lg font-bold text-white">⚠️ Vendas Pendentes de Ajustes de SKU</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Estes itens foram importados nas vendas, mas o SKU veio inválido, vazio ou não foi encontrado na base de custos (o que geraria distorções no CMV e lucro). Insira o SKU correto e clique em salvar para resolvê-los.
+              </p>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
+              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                  <tr>
+                    <th className="p-3">ID Pedido</th>
+                    <th className="p-3">Canal</th>
+                    <th className="p-3">Mês Ref.</th>
+                    <th className="p-3">Produto (Planilha)</th>
+                    <th className="p-3 text-right">Preço Venda</th>
+                    <th className="p-3 text-center">SKU Atual</th>
+                    <th className="p-3 min-w-[220px]">Atribuir SKU Correto (Base de Custos)</th>
+                    <th className="p-3 text-center">Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                  {vendasPendentes.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                      <td className="p-3 font-mono font-bold text-indigo-400">{item.id_pedido}</td>
+                      <td className="p-3 font-bold text-white">{item.canal}</td>
+                      <td className="p-3 font-mono text-slate-400">{item.mes_referencia}</td>
+                      <td className="p-3 text-slate-300 max-w-[250px] truncate" title={item.produto}>{item.produto}</td>
+                      <td className="p-3 text-right font-mono text-emerald-400 font-bold">R$ {Number(item.preco_venda || item.valor || 0).toFixed(2)}</td>
+                      <td className="p-3 text-center font-mono text-rose-400 font-bold">{item.sku || "vazio"}</td>
+                      <td className="p-3">
+                        <input
+                          type="text"
+                          value={edicoesPendentes[item.id] ?? ""}
+                          onChange={(e) => setEdicoesPendentes({ ...edicoesPendentes, [item.id]: e.target.value })}
+                          placeholder="Digite o SKU correto..."
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-amber-500 uppercase"
+                        />
+                      </td>
+                      <td className="p-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() => salvarSkuPendente(item.id)}
+                          disabled={loading}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer shadow-sm transition-all"
+                        >
+                          Salvar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {vendasPendentes.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="p-12 text-center text-emerald-400 font-bold">
+                        🎉 Parabéns! Não há nenhuma venda pendente de ajustes. Todos os SKUs estão validados com sucesso.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

@@ -337,6 +337,7 @@ export default function DashboardPage() {
         
         let repasseLiquido = parseCurrency(s.repasse_liquido);
 
+        // Aplicação estrita da fórmula da aba Regras com blindagem contra valores negativos
         const regraCanal = regrasMap.get(normalizarTexto(s.canal));
         if (regraCanal && regraCanal.formula) {
           try {
