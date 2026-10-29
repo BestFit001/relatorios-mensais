@@ -219,21 +219,15 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
-  // DEVOLUÇÕES DO MÊS ATUAL: Considera a data em que a devolução foi registrada (ex: outubro)
+  // DEVOLUÇÕES DO MÊS ATUAL: Filtra pelo mês de referência correspondente ou exibe todas as cadastradas do período
   const activeDevolucoes = useMemo(() => {
     if (!devolucoesList) return [];
     return devolucoesList.filter((d: any) => {
-      const dataDev = String(d.data || d.data_devolucao || '').trim();
-      if (!dataDev) return false;
-      let mesDev = '';
-      if (dataDev.includes('-')) mesDev = dataDev.slice(0, 7);
-      else if (dataDev.includes('/')) {
-        const parts = dataDev.split('/');
-        if (parts.length === 3) mesDev = `${parts[2]}-${parts[1]}`;
-      }
-      return mesDev === currentRefMonth;
+      if (d.mes_referencia && d.mes_referencia !== currentRefMonth) return false;
+      if (appliedChannelFilter !== 'TODOS' && d.canal && normalizarTexto(d.canal) !== normalizarTexto(appliedChannelFilter)) return false;
+      return true;
     });
-  }, [devolucoesList, currentRefMonth]);
+  }, [devolucoesList, currentRefMonth, appliedChannelFilter]);
 
   const enrichedSales = useMemo(() => {
     return (sales || []).filter((s: any) => {
@@ -339,7 +333,6 @@ export default function DashboardPage() {
 
       const faturadoPuroCanal = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
       
-      // FATURADO C/ REDUTOR: Subtrai cancelamentos e devoluções registradas no mês
       const faturadoEfetivoCanal = Math.max(0, faturadoPuroCanal - cancelamentosCanal - devolucoesCanal);
       const repasseCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
 
@@ -526,10 +519,7 @@ export default function DashboardPage() {
         }
       });
 
-      // Faturamento Bruto (Soma de todas as vendas brutas do canal)
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
-      
-      // Faturado C/ Redutor: Subtrai as devoluções registradas no mês e os cancelamentos
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
