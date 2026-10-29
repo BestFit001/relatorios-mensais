@@ -267,6 +267,7 @@ export default function UpdatesPage() {
 
       const skusComCusto = new Set((custos || []).map((c: any) => normalizarSku(c.sku)));
 
+      // Considera pendente APENAS se o SKU estiver realmente vazio ou não existir na tabela de custos
       const pendentes = (vendas || []).filter((v: any) => {
         const skuNorm = normalizarSku(v.sku);
         return !skuNorm || skuNorm === 'sem-sku' || !skusComCusto.has(skuNorm);
@@ -295,7 +296,7 @@ export default function UpdatesPage() {
         .eq('sku', skuNorm)
         .maybeSingle();
 
-      const produtoNome = custoMatch?.produto || "Produto Ajustado Manualmente";
+      const produtoNome = custoMatch?.produto && custoMatch.produto !== skuNorm ? custoMatch.produto : "Produto Cadastrado";
 
       const { error } = await supabase
         .from('vendas_canais')
@@ -304,7 +305,7 @@ export default function UpdatesPage() {
 
       if (error) throw error;
 
-      alert("✅ SKU atualizado com sucesso! O item foi resolvido.");
+      alert("✅ SKU atualizado com sucesso!");
       setEdicoesPendentes(prev => {
         const copy = { ...prev };
         delete copy[id];
@@ -457,7 +458,14 @@ export default function UpdatesPage() {
           .from('tabela_custos_skus')
           .select('sku, produto');
 
-        const mapaProdutos = new Map(custosBanco?.map((c: any) => [normalizarSku(c.sku), c.produto]) || []);
+        // Mapeia SKU -> Nome Real do Produto (garantindo que se o produto na base for igual ao SKU ou vazio, ele usa um nome limpo)
+        const mapaProdutos = new Map();
+        (custosBanco || []).forEach((c: any) => {
+          const sNorm = normalizarSku(c.sku);
+          const pVal = String(c.produto || "").trim();
+          // Se o produto cadastrado for diferente do SKU e não vazio, usa ele. Senão, armazena para tratar.
+          mapaProdutos.set(sNorm, pVal);
+        });
 
         const colSkuDef = regraData?.col_sku || 'X';
         const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || 'I';
@@ -491,7 +499,11 @@ export default function UpdatesPage() {
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
-          const nomeProduto = mapaProdutos.get(sku) || (skuRaw ? String(skuRaw).trim() : 'Produto Geral');
+          // Busca inteligente do nome do produto: se estiver na base e for válido, usa; senão usa o SKU cru
+          let nomeProduto = mapaProdutos.get(sku);
+          if (!nomeProduto || nomeProduto.toLowerCase() === sku) {
+            nomeProduto = skuRaw ? String(skuRaw).trim() : 'Produto Geral';
+          }
 
           const contextoLinha: Record<string, number> = {
             'PDV': precoVenda,
@@ -1344,7 +1356,7 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
