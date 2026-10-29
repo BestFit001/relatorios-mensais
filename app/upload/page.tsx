@@ -29,7 +29,8 @@ function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  s = s.replace(/\s+/g, '');
+  // Remove todos os espaços e caracteres invisíveis
+  s = s.replace(/\s+/g, '').replace(/[\r\n\t]/g, '');
   if (/e\+/i.test(s)) {
     try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
   }
@@ -170,6 +171,8 @@ export default function UpdatesPage() {
 
   const [vendasPendentes, setVendasPendentes] = useState<any[]>([]);
   const [edicoesPendentes, setEdicoesPendentes] = useState<{ [id: number]: string }>({});
+  const [selecionadosPendentes, setSelecionadosPendentes] = useState<{ [id: number]: boolean }>({});
+  const [skuEmLote, setSkuEmLote] = useState("");
 
   const [mesAlvoDash, setMesAlvoDash] = useState("outubro de 2026");
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
@@ -278,8 +281,8 @@ export default function UpdatesPage() {
     }
   };
 
-  const salvarSkuPendente = async (id: number) => {
-    const novoSku = (edicoesPendentes[id] || "").trim();
+  const salvarSkuPendente = async (id: number, skuInput?: string) => {
+    const novoSku = (skuInput !== undefined ? skuInput : edicoesPendentes[id] || "").trim();
     if (!novoSku) {
       alert("Digite um SKU válido.");
       return;
@@ -295,7 +298,9 @@ export default function UpdatesPage() {
         .eq('sku', skuNorm)
         .maybeSingle();
 
-      const produtoNome = custoMatch?.produto && custoMatch.produto.toLowerCase() !== skuNorm ? custoMatch.produto : "Produto Cadastrado";
+      const produtoNome = custoMatch?.produto && String(custoMatch.produto).trim().toLowerCase() !== skuNorm 
+        ? custoMatch.produto 
+        : "Produto Cadastrado";
 
       const { error } = await supabase
         .from('vendas_canais')
@@ -304,7 +309,6 @@ export default function UpdatesPage() {
 
       if (error) throw error;
 
-      // Remove imediatamente da lista local para sumir da tela na mesma hora
       setVendasPendentes(prev => prev.filter(item => item.id !== id));
       setEdicoesPendentes(prev => {
         const copy = { ...prev };
@@ -312,9 +316,48 @@ export default function UpdatesPage() {
         return copy;
       });
 
-      alert("✅ SKU atualizado com sucesso!");
+      if (skuInput === undefined) {
+        alert("✅ SKU atualizado com sucesso!");
+      }
     } catch (err: any) {
-      alert("Erro ao atualizar SKU: " + err.message);
+      if (skuInput === undefined) alert("Erro ao atualizar SKU: " + err.message);
+    }
+    setLoading(false);
+  };
+
+  const selecionarTodosPendentes = (e: ChangeEvent<HTMLInputElement>) => {
+    const checked = e.target.checked;
+    const novoMap: { [id: number]: boolean } = {};
+    if (checked) {
+      vendasPendentes.forEach(item => {
+        novoMap[item.id] = true;
+      });
+    }
+    setSelecionadosPendentes(novoMap);
+  };
+
+  const salvarSelecionadosEmLote = async () => {
+    const idsParaSalvar = Object.keys(selecionadosPendentes).filter(id => selecionadosPendentes[Number(id)]);
+    if (idsParaSalvar.length === 0) {
+      alert("Nenhum item selecionado.");
+      return;
+    }
+    if (!skuEmLote.trim()) {
+      alert("Digite o SKU correto para aplicar aos itens selecionados.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      for (const idStr of idsParaSalvar) {
+        await salvarSkuPendente(Number(idStr), skuEmLote);
+      }
+      alert(`✅ ${idsParaSalvar.length} itens atualizados com sucesso em lote!`);
+      setSkuEmLote("");
+      setSelecionadosPendentes({});
+      carregarVendasPendentes();
+    } catch (err: any) {
+      alert("Erro ao salvar em lote: " + err.message);
     }
     setLoading(false);
   };
@@ -494,6 +537,7 @@ export default function UpdatesPage() {
           }
 
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
+          // NORMALIZAÇÃO AGRESSIVA PARA REMOVER ESPAÇOS E CARACTERES OCULTOS
           const sku = normalizarSku(skuRaw);
           const precoVenda = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
@@ -1211,17 +1255,46 @@ export default function UpdatesPage() {
         {/* ABA: VENDAS PENDENTES DE AJUSTES */}
         {abaAtiva === "vendas_pendentes" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-amber-900/50 shadow-xl space-y-6">
-            <div>
-              <h2 className="text-lg font-bold text-white">⚠️ Vendas Pendentes de Ajustes de SKU</h2>
-              <p className="text-xs text-slate-400 mt-1">
-                Estes itens foram importados nas vendas, mas o SKU veio inválido, vazio ou não foi encontrado na base de custos (o que geraria distorções no CMV e lucro). Insira o SKU correto e clique em salvar para resolvê-los.
-              </p>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-white">⚠️ Vendas Pendentes de Ajustes de SKU</h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Estes itens foram importados nas vendas, mas o SKU veio inválido, vazio ou não foi encontrado na base de custos.
+                </p>
+              </div>
+
+              {/* BARRA DE AÇÃO EM LOTE */}
+              <div className="flex flex-wrap items-center gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <input
+                  type="text"
+                  value={skuEmLote}
+                  onChange={(e) => setSkuEmLote(e.target.value)}
+                  placeholder="SKU para aplicar aos selecionados..."
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono uppercase outline-none w-52"
+                />
+                <button
+                  type="button"
+                  onClick={salvarSelecionadosEmLote}
+                  disabled={loading}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-1.5 rounded-lg text-xs uppercase transition cursor-pointer shadow"
+                >
+                  Salvar Selecionados
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
               <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                 <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                   <tr>
+                    <th className="p-3 text-center w-10">
+                      <input 
+                        type="checkbox" 
+                        onChange={selecionarTodosPendentes}
+                        checked={vendasPendentes.length > 0 && vendasPendentes.every(item => selecionadosPendentes[item.id])}
+                        className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      />
+                    </th>
                     <th className="p-3">ID Pedido</th>
                     <th className="p-3">Canal</th>
                     <th className="p-3">Mês Ref.</th>
@@ -1235,6 +1308,14 @@ export default function UpdatesPage() {
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                   {vendasPendentes.map((item) => (
                     <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                      <td className="p-3 text-center">
+                        <input 
+                          type="checkbox"
+                          checked={!!selecionadosPendentes[item.id]}
+                          onChange={(e) => setSelecionadosPendentes({ ...selecionadosPendentes, [item.id]: e.target.checked })}
+                          className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                        />
+                      </td>
                       <td className="p-3 font-mono font-bold text-indigo-400">{item.id_pedido}</td>
                       <td className="p-3 font-bold text-white">{item.canal}</td>
                       <td className="p-3 font-mono text-slate-400">{item.mes_referencia}</td>
@@ -1264,7 +1345,7 @@ export default function UpdatesPage() {
                   ))}
                   {vendasPendentes.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="p-12 text-center text-emerald-400 font-bold">
+                      <td colSpan={9} className="p-12 text-center text-emerald-400 font-bold">
                         🎉 Parabéns! Não há nenhuma venda pendente de ajustes. Todos os SKUs estão validados com sucesso.
                       </td>
                     </tr>
@@ -1335,11 +1416,11 @@ export default function UpdatesPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col ID Pedido</label>
-                      <input type="text" value={colunaIdSite} onChange={e => colunaIdSite && setColunaIdSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                      <input type="text" value={colunaIdSite} onChange={e => setColunaIdSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col Valor Tarifa</label>
-                      <input type="text" value={colunaTarifaSite} onChange={e => colunaTarifaSite && setColunaTarifaSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                      <input type="text" value={colunaTarifaSite} onChange={e => setColunaTarifaSite(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
                     </div>
                   </div>
                   <label className="block w-full text-center bg-indigo-600 hover:bg-indigo-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
