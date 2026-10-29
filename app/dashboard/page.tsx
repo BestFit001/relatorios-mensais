@@ -219,15 +219,7 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
-  const activeDevolucoes = useMemo(() => {
-    if (!devolucoesList) return [];
-    return devolucoesList.filter((d: any) => {
-      if (d.mes_referencia && d.mes_referencia !== currentRefMonth) return false;
-      if (appliedChannelFilter !== 'TODOS' && d.canal && normalizarTexto(d.canal) !== normalizarTexto(appliedChannelFilter)) return false;
-      return true;
-    });
-  }, [devolucoesList, currentRefMonth, appliedChannelFilter]);
-
+  // MOTOR DO DASHBOARD: VALIDAÇÃO POR FATURADOS, CMV = (Custo + Emb) * Qtd, E REPASSE EXATO DA COLUNA T
   const enrichedSales = useMemo(() => {
     return (sales || []).filter((s: any) => {
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
@@ -255,6 +247,7 @@ export default function DashboardPage() {
         const qtd = parseCurrency(s.quantidade) || 1;
         const precoVenda = parseCurrency(s.preco_venda || s.valor);
 
+        // CMV Preciso: (Custo Unitário + Embalagem) * Quantidade
         let custoCMV = 0;
         if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
           custoCMV = parseCurrency(s.cmv_clube);
@@ -267,6 +260,7 @@ export default function DashboardPage() {
         const ped = normalizarPedido(s.id_pedido);
         const custoFlex = flexMap.get(ped) || 0;
         
+        // Repasse Líquido: Usa exatamente o repasse gravado (Coluna T)
         let repasseLiquido = parseCurrency(s.repasse_liquido);
         if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
           repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.09));
@@ -306,7 +300,6 @@ export default function DashboardPage() {
     let cmvDigital = 0;
 
     const totalCancelamentosValor = activeCancelados.reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-    const totalDevolucoesPdvValor = activeDevolucoes.reduce((sum: number, d: any) => sum + parseCurrency(d.pdv || d.valor), 0);
 
     const lojasFisicasDetalhes: any[] = [];
     const lojasFisicasRepasse: any[] = [];
@@ -324,13 +317,9 @@ export default function DashboardPage() {
         .filter((c: any) => normalizarTexto(c.canal) === normalizarTexto(channelName))
         .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
-      const devolucoesCanal = activeDevolucoes
-        .filter((d: any) => normalizarTexto(d.canal) === normalizarTexto(channelName))
-        .reduce((sum: number, d: any) => sum + parseCurrency(d.pdv || d.valor), 0);
-
       const faturadoPuroCanal = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
       
-      const faturadoEfetivoCanal = Math.max(0, faturadoPuroCanal - cancelamentosCanal - devolucoesCanal);
+      const faturadoEfetivoCanal = Math.max(0, faturadoPuroCanal - cancelamentosCanal);
       const repasseCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
 
       let nomeLimpo = channelName.replace(/clube|loja/gi, '').trim();
@@ -378,17 +367,13 @@ export default function DashboardPage() {
       }
     });
 
-    // Faturamento Bruto geral do topo já exibe o valor com redutor subtraído
-    faturamentoBrutoVendas = Math.max(0, faturamentoBrutoVendas - totalCancelamentosValor - totalDevolucoesPdvValor);
+    faturamentoBrutoVendas = Math.max(0, faturamentoBrutoVendas - totalCancelamentosValor);
 
     const canceladosDigitais = activeCancelados
         .filter((c: any) => !isChannelFisico(c.canal))
         .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-    const devolucoesDigitais = activeDevolucoes
-        .filter((d: any) => !isChannelFisico(d.canal))
-        .reduce((sum: number, d: any) => sum + parseCurrency(d.pdv || d.valor), 0);
     
-    fatBrutoDigital = Math.max(0, fatBrutoDigital - canceladosDigitais - devolucoesDigitais);
+    fatBrutoDigital = Math.max(0, fatBrutoDigital - canceladosDigitais);
 
     const progressoDigitalPct = metaDigitalTotal > 0 ? (fatBrutoDigital / metaDigitalTotal) * 100 : 0;
     const diffDigital = Math.abs(progressoDigitalPct - 100);
@@ -423,7 +408,7 @@ export default function DashboardPage() {
       diffDigital,
       totalCancelamentosValor
     };
-  }, [enrichedSales, adsMap, appliedChannelFilter, canais, channelRules, goals, currentRefMonth, activeCancelados, activeDevolucoes]);
+  }, [enrichedSales, adsMap, appliedChannelFilter, canais, channelRules, goals, currentRefMonth, activeCancelados]);
 
   const { targetDateStr, labelVendasDia } = useMemo(() => {
     const d = new Date();
@@ -499,7 +484,7 @@ export default function DashboardPage() {
       let devRepasseLiquido = 0;
       let devCmvTotal = 0;
 
-      activeDevolucoes.forEach((d: any) => {
+      devolucoesList.forEach((d: any) => {
         if (normalizarTexto(d.canal) === kCanal) {
           const pdvVal = parseCurrency(d.pdv || d.valor);
           const freteVal = parseCurrency(d.custo_frete || d.frete);
@@ -517,11 +502,8 @@ export default function DashboardPage() {
         }
       });
 
-      // FAT. BRUTO: Soma original de todas as vendas brutas do canal (Ex: 49.978,22)
-      const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
-      
-      // C/ REDUTOR: Fat. Bruto - Devoluções do mês - Cancelamentos do mês (Ex: 49.302,82)
-      const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
+      const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0) - devPdvBruto;
+      const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
       const repasseLiquidoTotal = repasseVendasCanal - devRepasseLiquido;
@@ -574,7 +556,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, targetDateStr, devolucoesList, produtosCustoMap]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
