@@ -35,17 +35,6 @@ function letraParaIndice(letra: string): number {
   return Math.max(0, num - 1);
 }
 
-function indiceParaLetra(index: number): string {
-  let n = index + 1;
-  let letters = "";
-  while (n > 0) {
-    let rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return letters;
-}
-
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
@@ -454,13 +443,14 @@ export default function UpdatesPage() {
         }
 
         if (registros.length > 0) {
-          await supabase.from('faturados_pedidos').delete().eq('mes_referencia', mesAlvoDash);
+          // CORRIGIDO: APONTA PARA A TABELA REAL 'faturados' DO SEU SUPABASE
+          await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash);
           for (let i = 0; i < registros.length; i += 500) {
-            await supabase.from('faturados_pedidos').insert(registros.slice(i, i + 500));
+            await supabase.from('faturados').insert(registros.slice(i, i + 500));
           }
         }
 
-        alert(`✅ Faturados salvos em 'faturados_pedidos'! Total: ${registros.length} registos.`);
+        alert(`✅ Faturados salvos na tabela 'faturados'! Total: ${registros.length} registos.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Faturados: " + err.message);
@@ -483,11 +473,12 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        const faturadosBanco = await fetchTodosRegistros('faturados_pedidos', 'id_pedido', 'mes_referencia', mesAlvoDash);
+        // CORRIGIDO: BUSCA DA TABELA REAL 'faturados' DO SUPABASE
+        const faturadosBanco = await fetchTodosRegistros('faturados', 'id_pedido', 'mes_referencia', mesAlvoDash);
         const idsFaturadosSet = new Set(faturadosBanco.map((f: any) => String(f.id_pedido).trim()));
         
         if (idsFaturadosSet.size === 0) {
-          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado em 'faturados_pedidos' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
+          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado na tabela 'faturados' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
           setLoading(false);
           return;
         }
@@ -530,7 +521,7 @@ export default function UpdatesPage() {
         let totalImportados = 0;
         let ignoradosForaDoMes = 0;
 
-        let i = 6; // Começa exatamente na linha de dados do Excel do Mercado Livre
+        let i = 6; // Começa na linha de dados do Excel do Mercado Livre
         while (i < json.length) {
           const row = json[i];
           if (!row || row.length === 0) {
@@ -714,7 +705,8 @@ export default function UpdatesPage() {
     setLoading(true);
     try {
       if (tabela === 'faturados') {
-        await supabase.from('faturados_pedidos').delete().eq('mes_referencia', mesAlvoDash);
+        // CORRIGIDO: APONTA PARA A TABELA REAL 'faturados'
+        await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash);
       } else if (tabela === 'vendas') {
         await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
       }
@@ -731,7 +723,7 @@ export default function UpdatesPage() {
     setLoading(true);
     try {
       await supabase.from('vendas_canais').delete().neq('id', 0);
-      await supabase.from('faturados_pedidos').delete().neq('id', 0);
+      await supabase.from('faturados').delete().neq('id', 0);
       await supabase.from('tarifas_site').delete().neq('id', 0);
       alert("✅ Bases limpas com sucesso!");
       carregarVendasPendentes();
@@ -1487,7 +1479,7 @@ export default function UpdatesPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-rose-950/60 shadow-xl space-y-4 max-w-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                 <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">⚠️ Zona de Limpeza de Dados</h3>
-                <input type="text" value={mesAlvoDash} onChange={e => setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
+                <input type="text" value={mesAlvoDash} onChange={e => mesAlvoDash && setMesAlvoDash(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold outline-none" />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
