@@ -337,7 +337,6 @@ export default function DashboardPage() {
         
         let repasseLiquido = parseCurrency(s.repasse_liquido);
 
-        // BLINDAGEM CONTRA REPASSES NEGATIVOS OU FÓRMULAS MAL APLICADAS
         const regraCanal = regrasMap.get(normalizarTexto(s.canal));
         if (regraCanal && regraCanal.formula) {
           try {
@@ -1162,8 +1161,8 @@ export default function DashboardPage() {
               </tfoot>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
