@@ -168,7 +168,6 @@ export default function UpdatesPage() {
   const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
   const [pesquisaMl, setPesquisaMl] = useState("");
 
-  // Estados para Vendas Pendentes de Ajustes
   const [vendasPendentes, setVendasPendentes] = useState<any[]>([]);
   const [edicoesPendentes, setEdicoesPendentes] = useState<{ [id: number]: string }>({});
 
