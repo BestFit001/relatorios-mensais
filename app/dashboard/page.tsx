@@ -337,6 +337,7 @@ export default function DashboardPage() {
         
         let repasseLiquido = parseCurrency(s.repasse_liquido);
 
+        // BLINDAGEM CONTRA REPASSES NEGATIVOS OU FÓRMULAS MAL APLICADAS
         const regraCanal = regrasMap.get(normalizarTexto(s.canal));
         if (regraCanal && regraCanal.formula) {
           try {
@@ -349,7 +350,7 @@ export default function DashboardPage() {
               [regraCanal.colQtd]: qtd,
             };
             const resFormula = regraCanal.formula.fn(contextoLinha);
-            if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null) {
+            if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null && resFormula > 0) {
               repasseLiquido = resFormula;
             }
           } catch (err) {
@@ -358,7 +359,7 @@ export default function DashboardPage() {
         }
 
         if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
-          repasseLiquido = precoVenda - (precoVenda * 0.09);
+          repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.09));
         }
         
         const nomeCanal = normalizarTexto(s.canal);
@@ -1161,8 +1162,8 @@ export default function DashboardPage() {
               </tfoot>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
