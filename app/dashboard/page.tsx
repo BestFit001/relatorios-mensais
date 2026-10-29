@@ -130,8 +130,19 @@ export default function DashboardPage() {
       const resultado: Record<string, any[]> = {};
       await Promise.all(
         TABELAS_SUPABASE.map(async (tabela) => {
-          const { data } = await supabase.from(tabela).select('*');
-          resultado[tabela] = data || [];
+          let allRows: any[] = [];
+          let from = 0;
+          const step = 1000;
+          let keep = true;
+          while (keep) {
+            const { data } = await supabase.from(tabela).select('*').range(from, from + step - 1);
+            if (data && data.length > 0) {
+              allRows = [...allRows, ...data];
+              from += step;
+              if (data.length < step) keep = false;
+            } else keep = false;
+          }
+          resultado[tabela] = allRows;
         })
       );
       setDatabase(resultado);
@@ -367,7 +378,10 @@ export default function DashboardPage() {
             };
             const resFormula = regraCanal.formula.fn(contextoLinha);
             if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null && resFormula > 0) {
-              repasseLiquido = resFormula;
+              // Se for carrinho rateado, preserva o rateio proporcional já efetuado no upload
+              if (repasseLiquido <= 0) {
+                repasseLiquido = resFormula;
+              }
             }
           } catch (err) {
             console.error(`Erro ao calcular fórmula para o canal ${s.canal}:`, err);
