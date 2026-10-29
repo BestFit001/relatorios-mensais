@@ -248,6 +248,20 @@ export default function DashboardPage() {
     return map;
   }, [database.config_regras_canais]);
 
+  const faturadosMap = useMemo(() => {
+    const map = new Map();
+    (database.faturados_pedidos || []).forEach((f: any) => {
+      const idPed = normalizarPedido(f.id_pedido);
+      if (idPed) {
+        map.set(idPed, {
+          data_faturamento: f.data_faturamento ? f.data_faturamento.slice(0, 10) : '',
+          mes_referencia: String(f.mes_referencia || '').trim().toLowerCase()
+        });
+      }
+    });
+    return map;
+  }, [database.faturados_pedidos]);
+
   const tarifasSiteMap = useMemo(() => {
     const map = new Map();
     (database.tarifas_site || []).forEach((t: any) => {
@@ -312,7 +326,7 @@ export default function DashboardPage() {
     });
   }, [cancelados, currentRefMonth, appliedChannelFilter]);
 
-  // MOTOR DO DASHBOARD CORRIGIDO E FLEXÍVEL
+  // MOTOR DO DASHBOARD: APLICAÇÃO RIGOROSA DA FÓRMULA DE REGRAS E CMV (CUSTO x QTD)
   const enrichedSales = useMemo(() => {
     return (sales || []).filter((s: any) => {
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
@@ -327,6 +341,7 @@ export default function DashboardPage() {
         const qtd = parseCurrency(s.quantidade) || 1;
         const precoVenda = parseCurrency(s.preco_venda || s.valor);
 
+        // 1. CMV PRECISO: Multiplica o custo unitário + embalagem pela quantidade exata de itens
         let custoCMV = 0;
         if (isChannelFisico(s.canal) && s.cmv_clube !== undefined && s.cmv_clube !== null) {
           custoCMV = parseCurrency(s.cmv_clube);
@@ -341,6 +356,7 @@ export default function DashboardPage() {
         
         let repasseLiquido = parseCurrency(s.repasse_liquido);
 
+        // 2. APLICAÇÃO DA FÓRMULA DE REGRAS DO CANAL DIRETAMENTE NO DASHBOARD
         const regraCanal = regrasMap.get(normalizarTexto(s.canal));
         if (regraCanal && regraCanal.formula) {
           try {
@@ -354,9 +370,7 @@ export default function DashboardPage() {
             };
             const resFormula = regraCanal.formula.fn(contextoLinha);
             if (!isNaN(resFormula) && resFormula !== undefined && resFormula !== null && resFormula > 0) {
-              if (repasseLiquido <= 0) {
-                repasseLiquido = resFormula;
-              }
+              repasseLiquido = resFormula;
             }
           } catch (err) {
             console.error(`Erro ao calcular fórmula para o canal ${s.canal}:`, err);
@@ -373,15 +387,18 @@ export default function DashboardPage() {
            repasseLiquido = Math.max(0, repasseLiquido - taxaVindi);
         }
         
+        const fatInfo = faturadosMap.get(ped);
+
         return { 
           ...s, 
           preco_venda: precoVenda,
           custoCMV, 
           custoFlex, 
-          repasse_liquido: repasseLiquido 
+          repasse_liquido: repasseLiquido,
+          data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, produtosCustoMap, flexMap, tarifasSiteMap, regrasMap, faturadosMap]);
 
   const kpis = useMemo(() => {
     const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
@@ -1146,7 +1163,7 @@ export default function DashboardPage() {
                   <td className="py-4 px-4 text-right font-mono text-slate-300">R$ {totalGeral.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="py-4 px-4 text-right text-emerald-400">R$ {totalGeral.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="py-4 px-4 text-center text-purple-400">
-                    {totalGeral.projecaoFaturamento > 0 ? '100%' : '0%'}
+                    {totalGeral.metaValor > 0 ? ((totalGeral.faturadoComRedutor / totalGeral.metaValor) * 100).toFixed(1) : '0.0'}%
                   </td>
                   <td className="py-4 px-6 text-right text-emerald-400">-</td>
                 </tr>
