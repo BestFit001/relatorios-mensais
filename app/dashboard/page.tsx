@@ -93,7 +93,7 @@ export default function DashboardPage() {
 
   const normalizarTexto = (v: any) => String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
 
-  // UNIFICAÇÃO DE CANAIS EQUIVALENTES (Ex: Magazine Luiza e Magalu)
+  // UNIFICAÇÃO DE CANAIS EQUIVALENTES (Ex: Magazine Luiza e Magalu unificados no oficial)
   const canonizarCanal = (nomeCanal: any, oficiais: string[]) => {
     const limpo = String(nomeCanal || '').trim();
     const norm = normalizarTexto(limpo);
@@ -131,7 +131,7 @@ export default function DashboardPage() {
     return isNaN(num) ? 0 : num;
   };
 
-  // CANAIS OFICIAIS: Obtidos unicamente da aba de regras (config_regras_canais)
+  // CANAIS OFICIAIS: Obtidos unicamente da aba de Regras (config_regras_canais)
   const canaisOficiais = useMemo(() => {
     const mapa = new Map<string, string>();
     const adicionar = (nome: any) => {
