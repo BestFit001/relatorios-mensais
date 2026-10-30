@@ -124,13 +124,13 @@ type SubItemLive = { sku: string; unidades: string | number; receitaAds: string 
 
 export default function AdsPage() {
   const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes">("campanhas");
-  const [loading, setLoading] = useState(false);
-  const [salvando, setSalvando] = useState(false);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [salvando, setSalvando] = useState<boolean>(false);
   const router = useRouter();
 
-  const [canalSelecionado, setCanalSelecionado] = useState("");
-  const [mesSelecionado, setMesSelecionado] = useState("10/2026");
-  const [mesComparativo, setMesComparativo] = useState("09/2026");
+  const [canalSelecionado, setCanalSelecionado] = useState<string>("");
+  const [mesSelecionado, setMesSelecionado] = useState<string>("10/2026");
+  const [mesComparativo, setMesComparativo] = useState<string>("09/2026");
   
   const [metaTacosGlobal, setMetaTacosGlobal] = useState<number>(2); 
   const [ocultarComparacao, setOcultarComparacao] = useState<boolean>(false);
@@ -307,7 +307,6 @@ export default function AdsPage() {
     setLoading(false);
   };
 
-  // DASHBOARD COMPARATIVO & BUDGET: INTEGRAÇÃO COM AS VENDAS DE LIVES DO TIKTOK
   const carregarDadosDashboard = async () => {
     setLoading(true);
     const listaCanais = canaisAtivos.map(c => c.canal);
@@ -322,7 +321,6 @@ export default function AdsPage() {
     const { data: faturamentosAtual } = await supabase.from('ads_faturamento_canal').select('*').eq('mes_referencia', mesSelecionado);
     const { data: faturamentosAnt } = await supabase.from('ads_faturamento_canal').select('*').eq('mes_referencia', mesComparativo);
 
-    // DADOS DE LIVES ISOLADOS PARA O TIKTOK
     const { data: livesAtualRaw } = await supabase.from('vendas_lives_separadas').select('*');
     const { data: metricasLivesRaw } = await supabase.from('metricas_lives').select('*');
 
@@ -337,7 +335,6 @@ export default function AdsPage() {
       let margemRsAtual = itensA.reduce((sum, i) => sum + Number(i.margem_liquida_rs || 0), 0);
       let invAtual = itensA.reduce((sum, i) => sum + Number(i.investimento || 0), 0);
 
-      // SE FOR TIKTOK, ADICIONA O REPASSE E LIQUIDEZ DAS LIVES DO MÊS
       if (isTikTok && livesAtualRaw) {
         const livesMesAtual = livesAtualRaw.filter(l => verificarDataNoPeriodo(l.data_venda, mesSelecionado));
         const repasseLivesAtual = livesMesAtual.reduce((sum, l) => sum + Number(l.repasse || 0), 0);
@@ -463,7 +460,7 @@ export default function AdsPage() {
     }
 
     setSalvando(true);
-    const novoMapaMl = new Map(regrasMlMap);
+    const novoMapaMl = new Map<string, any>(regrasMlMap);
 
     for (const item of mlbsPendentes) {
       const dadosInsercao = {
@@ -682,10 +679,6 @@ export default function AdsPage() {
   };
 
   const salvarEdicao = async (id: number) => {
-    const unidades = Number(dadosEdicao.unidades_vendidas || 0);
-    const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
-    const investimento = Number(dadosEdicao.investimento || 0);
-
     const skuLimpo = String(dadosEdicao.sku || "").trim();
     const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
     const isMercadoLivre = canalSelecionado.toLowerCase().includes("mercado livre");
