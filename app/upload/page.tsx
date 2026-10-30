@@ -29,7 +29,7 @@ async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo
 function letraParaIndice(letra: string): number {
   if (!letra) return -1;
   let l = letra.trim().toUpperCase();
-  if (!l) return -1;
+  if (!l || !/^[A-Z]+$/.test(l)) return -1;
   let num = 0;
   for (let i = 0; i < l.length; i++) {
     num = num * 26 + (l.charCodeAt(i) - 64);
@@ -85,68 +85,59 @@ function parseSmartFloat(val: any): number {
   return num;
 }
 
-// AVALIADOR DINÂMICO DE REPASSE POR LINHA (FÓRMULA OU COLUNA DIRETA)
-function calcularRepasseLinha({
-  row,
-  idxRepasse,
-  idxPdv,
-  idxQtd,
-  formulaExcel,
-  precoVenda,
-  quantidade
-}: {
-  row: any[];
-  idxRepasse: number;
-  idxPdv: number;
-  idxQtd: number;
-  formulaExcel: string;
-  precoVenda: number;
-  quantidade: number;
-}): number {
-  // 1. Se houver coluna de repasse configurada e preenchida com valor monetário válido
-  if (idxRepasse >= 0 && row[idxRepasse] !== undefined && row[idxRepasse] !== "") {
-    const lido = parseSmartFloat(row[idxRepasse]);
-    if (lido > 0 && lido <= (precoVenda * quantidade) * 1.5) {
-      return lido;
+// AVALIADOR UNIVERSAL: PROCESSA TANTO UMA COLUNA ÚNICA (EX: 'P') QUANTO FÓRMULAS (EX: 'P * O' OU '((P - Q) * O) * 70%')
+function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: number; QTD?: number }): number {
+  if (!expr || !expr.trim()) return 0;
+  const s = expr.trim();
+
+  // Caso 1: Se for estritamente uma única letra de coluna (ex: 'P', 'T', 'AI')
+  if (/^[A-Za-z]{1,3}$/.test(s)) {
+    const idx = letraParaIndice(s);
+    if (idx >= 0 && row[idx] !== undefined) {
+      return parseSmartFloat(row[idx]);
     }
+    return 0;
   }
 
-  // 2. Se houver fórmula de apuração estipulada no canal (ex: "PDV - (PDV * 12%)" ou "(QTD * PDV) - (Comissão * QTD)")
-  if (formulaExcel && formulaExcel.trim()) {
-    try {
-      let exp = formulaExcel.trim();
+  // Caso 2: É uma expressão matemática/fórmula (ex: 'P * O' ou '((P - Q) * O) * 70%')
+  try {
+    let exp = s;
 
-      // Substitui variáveis literais
-      exp = exp.replace(/\bPDV\b/gi, String(precoVenda));
-      exp = exp.replace(/\bQTD\b/gi, String(quantidade));
-      exp = exp.replace(/\bQUANTIDADE\b/gi, String(quantidade));
-
-      // Se houver referências a colunas em Excel (ex: D2 ou D), substitui pelo valor da célula da linha
-      exp = exp.replace(/([A-Z]+)\d*/g, (match, colLetra) => {
-        const cIdx = letraParaIndice(colLetra);
-        if (cIdx >= 0 && row[cIdx] !== undefined) {
-          return String(parseSmartFloat(row[cIdx]));
-        }
-        return match;
-      });
-
-      // Converte notação de porcentagem (ex: 12% -> 0.12)
-      exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
-
-      // Validação estrita de segurança antes de avaliar
-      if (/^[0-9+\-*/().\s]+$/.test(exp)) {
-        const resultado = Function(`"use strict"; return (${exp})`)();
-        if (typeof resultado === 'number' && !isNaN(resultado) && resultado >= 0) {
-          return resultado;
-        }
+    // Substitui variáveis nomeadas se existirem
+    if (variaveis) {
+      if (variaveis.PDV !== undefined) exp = exp.replace(/\bPDV\b/gi, String(variaveis.PDV));
+      if (variaveis.QTD !== undefined) {
+        exp = exp.replace(/\bQTD\b/gi, String(variaveis.QTD));
+        exp = exp.replace(/\bQUANTIDADE\b/gi, String(variaveis.QTD));
       }
-    } catch (err) {
-      // Caso ocorra falha na fórmula, prossegue para o fallback
     }
+
+    // Substitui as letras das colunas pelos valores correspondentes da linha (ex: P, Q, O)
+    exp = exp.replace(/\b([A-Za-z]{1,2})\d*\b/g, (match, colLetra) => {
+      // Se for palavra reservada ou número já substituído, ignora
+      if (/^(true|false|null|undefined)$/i.test(colLetra)) return match;
+      const idx = letraParaIndice(colLetra);
+      if (idx >= 0 && row[idx] !== undefined) {
+        return String(parseSmartFloat(row[idx]));
+      }
+      return '0';
+    });
+
+    // Converte notação de porcentagem (ex: 70% -> (70 / 100))
+    exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
+
+    // Executa a conta em runtime de forma segura
+    if (/^[0-9+\-*/().\s]+$/.test(exp)) {
+      const res = Function(`"use strict"; return (${exp})`)();
+      if (typeof res === 'number' && !isNaN(res)) {
+        return Math.max(0, res);
+      }
+    }
+  } catch (err) {
+    // Em caso de erro na expressão, retorna 0
   }
 
-  // 3. Fallback seguro caso não haja fórmula e a coluna não esteja informada
-  return Math.max(0, precoVenda - (precoVenda * 0.16));
+  return 0;
 }
 
 const MESES_NOMES: Record<string, string> = {
@@ -464,6 +455,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // PASSO 2: IMPORTAR VENDAS COM AVALIAÇÃO DE COLUNA OU FÓRMULA NO PDV E NO LÍQUIDO
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -507,20 +499,17 @@ export default function UpdatesPage() {
 
         const isML = canalAlvoDash.toLowerCase().includes("mercado livre");
 
+        // Expressões ou letras salvas para o canal
+        const colIdDef = regraData?.col_id_pedido || 'A';
         const colSkuDef = regraData?.col_sku || regraData?.coluna_sku || (isML ? 'E' : 'B');
         const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || (isML ? 'I' : 'D');
         const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || (isML ? 'H' : 'C');
-        const colIdDef = regraData?.col_id_pedido || 'A';
         const colRepasseDef = regraData?.col_repasse || regraData?.col_estado || (isML ? 'T' : '');
+        const formulaExcel = regraData?.formula_excel || '';
 
         const idxId = letraParaIndice(colIdDef);
         const idxSku = letraParaIndice(colSkuDef);
-        const idxPdv = letraParaIndice(colPdvDef);
-        const idxQtd = letraParaIndice(colQtdDef);
         const idxDescricao = letraParaIndice(regraData?.col_descricao || "D"); 
-        const idxRepasse = colRepasseDef ? letraParaIndice(colRepasseDef) : -1;
-
-        const formulaCanal = regraData?.formula_excel || '';
 
         const novasVendas = [];
         let totalImportados = 0;
@@ -550,22 +539,21 @@ export default function UpdatesPage() {
 
           const descRaw = idxDescricao >= 0 && row[idxDescricao] !== undefined ? String(row[idxDescricao]).trim() : '';
 
-          // 1. TRATAMENTO DE CARRINHO / PACOTE DE PRODUTOS
-          if (descRaw.toLowerCase().includes("pacote de") && descRaw.toLowerCase().includes("produtos")) {
+          // 1. TRATAMENTO DE CARRINHO / PACOTE DE PRODUTOS (EXCLUSIVO ML)
+          if (isML && descRaw.toLowerCase().includes("pacote de") && descRaw.toLowerCase().includes("produtos")) {
             const match = descRaw.match(/\d+/);
             const qtdItensNoPacote = match ? parseInt(match[0], 10) : 0;
             
             if (qtdItensNoPacote > 0) {
-              const pdvPrincipal = idxPdv >= 0 ? parseSmartFloat(row[idxPdv]) : 0;
-              const repasseTotal = calcularRepasseLinha({
-                row,
-                idxRepasse,
-                idxPdv,
-                idxQtd,
-                formulaExcel: formulaCanal,
-                precoVenda: pdvPrincipal,
-                quantidade: 1
-              });
+              const pdvPrincipal = avaliarExpressaoOuColuna(colPdvDef, row);
+              let repasseTotal = 0;
+
+              if (formulaExcel) {
+                repasseTotal = avaliarExpressaoOuColuna(formulaExcel, row, { PDV: pdvPrincipal, QTD: 1 });
+              } else if (colRepasseDef) {
+                repasseTotal = avaliarExpressaoOuColuna(colRepasseDef, row, { PDV: pdvPrincipal, QTD: 1 });
+              }
+              if (repasseTotal <= 0) repasseTotal = Math.max(0, pdvPrincipal - (pdvPrincipal * 0.16));
 
               let subItens = [];
               let somaPdvSubItens = 0;
@@ -574,8 +562,8 @@ export default function UpdatesPage() {
                 const subRow = json[i + j];
                 if (subRow) {
                   const skuSub = normalizarSku(subRow[idxSku >= 0 ? idxSku : 23]);
-                  const pdvSub = parseSmartFloat(subRow[idxPdv >= 0 ? idxPdv : 8]);
-                  const qtdSub = Number(subRow[idxQtd >= 0 ? idxQtd : 7] !== undefined ? subRow[idxQtd] : 1) || 1;
+                  const pdvSub = parseSmartFloat(subRow[letraParaIndice(colPdvDef) >= 0 ? letraParaIndice(colPdvDef) : 8]);
+                  const qtdSub = Number(subRow[letraParaIndice(colQtdDef) >= 0 ? letraParaIndice(colQtdDef) : 7] !== undefined ? subRow[letraParaIndice(colQtdDef)] : 1) || 1;
                   
                   const existe = skuSub && skusBaseSet.has(skuSub);
                   const skuFinal = existe ? skuSub : (skuSub || 'sem-sku');
@@ -612,26 +600,29 @@ export default function UpdatesPage() {
             }
           }
 
-          // 2. VENDAS NORMAIS (APLICAÇÃO DA COLUNA DE REPASSE OU FÓRMULA LINHA A LINHA)
+          // 2. VENDAS NORMAIS (AVALIA PDV E LÍQUIDO SEJA POR FÓRMULA OU COLUNA)
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
           
-          const precoVenda = idxPdv >= 0 ? parseSmartFloat(row[idxPdv]) : 0;
-          const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
+          const quantidade = Math.max(1, avaliarExpressaoOuColuna(colQtdDef, row) || 1);
+          const precoVenda = avaliarExpressaoOuColuna(colPdvDef, row, { QTD: quantidade });
 
           const existeNaBase = skuNorm && skusBaseSet.has(skuNorm);
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
           const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
-          const repasseLiquido = calcularRepasseLinha({
-            row,
-            idxRepasse,
-            idxPdv,
-            idxQtd,
-            formulaExcel: formulaCanal,
-            precoVenda,
-            quantidade
-          });
+          // CÁLCULO DO LÍQUIDO DO CANAL: PRIORIZA FÓRMULA DE APURAÇÃO, DEPOIS COLUNA DE REPASSE
+          let repasseLiquido = 0;
+          if (formulaExcel && formulaExcel.trim()) {
+            repasseLiquido = avaliarExpressaoOuColuna(formulaExcel, row, { PDV: precoVenda, QTD: quantidade });
+          } else if (colRepasseDef && colRepasseDef.trim()) {
+            repasseLiquido = avaliarExpressaoOuColuna(colRepasseDef, row, { PDV: precoVenda, QTD: quantidade });
+          }
+
+          // Fallback caso não resulte em valor válido
+          if (repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * quantidade * 1.5)) {
+            repasseLiquido = Math.max(0, (precoVenda * quantidade) - ((precoVenda * quantidade) * 0.16));
+          }
 
           novasVendas.push({
             id_pedido: rawId,
@@ -639,7 +630,7 @@ export default function UpdatesPage() {
             mes_referencia: mesAlvoDash,
             sku: skuFinal,
             produto: nomeProduto,
-            quantidade: isNaN(quantidade) ? 1 : quantidade,
+            quantidade: quantidade,
             preco_venda: precoVenda,
             repasse_liquido: repasseLiquido
           });
