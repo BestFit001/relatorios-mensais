@@ -43,7 +43,7 @@ function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura:
   return valorFrete || 0;
 }
 
-function normalizarSku(valor: any) {
+function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
@@ -132,8 +132,8 @@ export default function AdsPage() {
   const [mesSelecionado, setMesSelecionado] = useState("10/2026");
   const [mesComparativo, setMesComparativo] = useState("09/2026");
   
-  const [metaTacosGlobal, setMetaTacosGlobal] = useState(2); 
-  const [ocultarComparacao, setOcultarComparacao] = useState(false);
+  const [metaTacosGlobal, setMetaTacosGlobal] = useState<number>(2); 
+  const [ocultarComparacao, setOcultarComparacao] = useState<boolean>(false);
 
   const [canaisAtivos, setCanaisAtivos] = useState<any[]>([]);
   const [lancamentos, setLancamentos] = useState<any[]>([]);
@@ -151,27 +151,27 @@ export default function AdsPage() {
     { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] as SubItemLive[] }
   ]);
 
-  const [showModalMLB, setShowModalMLB] = useState(false);
+  const [showModalMLB, setShowModalMLB] = useState<boolean>(false);
   const [mlbsPendentes, setMlbsPendentes] = useState<any[]>([]);
   const [dadosPendentesTemp, setDadosPendentesTemp] = useState<any>(null);
   const [modoPendente, setModoPendente] = useState<"novo" | "edicao">("novo");
 
-  const [canalSugestao, setCanalSugestao] = useState("");
-  const [mesSugestao, setMesSugestao] = useState("10/2026");
-  const [matrizPlanilha, setMatrizPlanilha] = useState<any[][]>([]);
-  const [linhaInicial, setLinhaInicial] = useState("7");
-  const [colunaSku, setColunaSku] = useState("W7");
-  const [colunaPdv, setColunaPdv] = useState("I7");
-  const [colunaRepasse, setColunaRepasse] = useState("S7");
-  const [colunaQtd, setColunaQtd] = useState("H7");
-  const [colunaRebate, setColunaRebate] = useState("Q7");
-  const [aliquotaImposto, setAliquotaImposto] = useState("9");
-  const [formulaLiquidez, setFormulaLiquidez] = useState("S - (H * CUSTO) - (I * IMPOSTO) + Q");
+  const [canalSugestao, setCanalSugestao] = useState<string>("");
+  const [mesSugestao, setMesSugestao] = useState<string>("10/2026");
+  const [matrizPlanilha, setMatrizPlanilha] = useState<any[][]>([[]]);
+  const [linhaInicial, setLinhaInicial] = useState<string>("7");
+  const [colunaSku, setColunaSku] = useState<string>("W7");
+  const [colunaPdv, setColunaPdv] = useState<string>("I7");
+  const [colunaRepasse, setColunaRepasse] = useState<string>("S7");
+  const [colunaQtd, setColunaQtd] = useState<string>("H7");
+  const [colunaRebate, setColunaRebate] = useState<string>("Q7");
+  const [aliquotaImposto, setAliquotaImposto] = useState<string>("9");
+  const [formulaLiquidez, setFormulaLiquidez] = useState<string>("S - (H * CUSTO) - (I * IMPOSTO) + Q");
   
   const [sugestoesCalculadas, setSugestoesCalculadas] = useState<any[]>([]);
   const [filtroSugestao, setFiltroSugestao] = useState<"vendas" | "liquidez_valor" | "liquidez_pct">("vendas");
-  const [pesquisaSkuSugestao, setPesquisaSkuSugestao] = useState("");
-  const [apenasPositivos, setApenasPositivos] = useState(false);
+  const [pesquisaSkuSugestao, setPesquisaSkuSugestao] = useState<string>("");
+  const [apenasPositivos, setApenasPositivos] = useState<boolean>(false);
 
   const mesesCompetencia = [
     "TODOS",
@@ -263,7 +263,7 @@ export default function AdsPage() {
         if (data.length < step) keep = false;
       } else keep = false;
     }
-    const mapaC = new Map();
+    const mapaC = new Map<string, any>();
     allCustos.forEach((c: any) => {
       const skuNorm = normalizarSku(c.sku);
       if (skuNorm) mapaC.set(skuNorm, c);
@@ -280,7 +280,7 @@ export default function AdsPage() {
         if (data.length < step) keep = false;
       } else keep = false;
     }
-    const mapaMl = new Map();
+    const mapaMl = new Map<string, any>();
     allMl.forEach((m: any) => {
       const mlbLimpo = String(m.mlb || "").trim().toUpperCase();
       if (mlbLimpo) mapaMl.set(mlbLimpo, m);
@@ -291,7 +291,6 @@ export default function AdsPage() {
     if (tarifacaoData) setRegrasTarifacao(tarifacaoData);
   };
 
-  // BUSCA COM ILIKE: SUPORTA TIKTOK / TIKTOK
   const carregarLancamentos = async () => {
     setLoading(true);
     let query = supabase
@@ -308,7 +307,7 @@ export default function AdsPage() {
     setLoading(false);
   };
 
-  // DASHBOARD COMPARATIVO & BUDGET: INTEGRAÇÃO COM A TABELA ISOLADA DE LIVES PARA O TIKTOK
+  // DASHBOARD COMPARATIVO & BUDGET: INTEGRAÇÃO COM AS VENDAS DE LIVES DO TIKTOK
   const carregarDadosDashboard = async () => {
     setLoading(true);
     const listaCanais = canaisAtivos.map(c => c.canal);
@@ -323,7 +322,7 @@ export default function AdsPage() {
     const { data: faturamentosAtual } = await supabase.from('ads_faturamento_canal').select('*').eq('mes_referencia', mesSelecionado);
     const { data: faturamentosAnt } = await supabase.from('ads_faturamento_canal').select('*').eq('mes_referencia', mesComparativo);
 
-    // CONSULTA A TABELA ISOLADA DE LIVES E MÉTRICAS
+    // DADOS DE LIVES ISOLADOS PARA O TIKTOK
     const { data: livesAtualRaw } = await supabase.from('vendas_lives_separadas').select('*');
     const { data: metricasLivesRaw } = await supabase.from('metricas_lives').select('*');
 
@@ -338,7 +337,7 @@ export default function AdsPage() {
       let margemRsAtual = itensA.reduce((sum, i) => sum + Number(i.margem_liquida_rs || 0), 0);
       let invAtual = itensA.reduce((sum, i) => sum + Number(i.investimento || 0), 0);
 
-      // SE FOR TIKTOK, ADICIONA OS DADOS DA ABA LIVES
+      // SE FOR TIKTOK, ADICIONA O REPASSE E LIQUIDEZ DAS LIVES DO MÊS
       if (isTikTok && livesAtualRaw) {
         const livesMesAtual = livesAtualRaw.filter(l => verificarDataNoPeriodo(l.data_venda, mesSelecionado));
         const repasseLivesAtual = livesMesAtual.reduce((sum, l) => sum + Number(l.repasse || 0), 0);
@@ -512,7 +511,7 @@ export default function AdsPage() {
       if (regrasDoCanal.length > 0) {
         let regraAplicavel = regrasDoCanal[0];
         for (const r of regrasDoCanal) {
-          const numeros = r.faixa_preco.match(/\d+[\.,]?\d*/g);
+          const numeros: RegExpMatchArray | null = r.faixa_preco ? r.faixa_preco.match(/\d+[\.,]?\d*/g) : null;
           if (numeros && numeros.length >= 2) {
             const min = parseFloat(numeros[0].replace(',', '.'));
             const max = parseFloat(numeros[1].replace(',', '.'));
@@ -1422,7 +1421,7 @@ export default function AdsPage() {
             <div className="flex flex-wrap items-center justify-between gap-4 mb-8 pb-6 border-b border-slate-800">
               <div>
                 <h2 className="text-xl font-bold text-white">Dashboard Comparativo de Performance & Budget</h2>
-                <p className="text-xs text-slate-400 mt-1">Comparativo entre o período selecionado e o período anterior (TikTok integrado com as Vendas via Lives).</p>
+                <p className="text-xs text-slate-400 mt-1">Comparativo entre o período selecionado e o período anterior (TikTok integrado com as Vendas de Lives).</p>
               </div>
 
               <div className="flex items-center gap-4">
@@ -2006,19 +2005,19 @@ export default function AdsPage() {
                         <input type="number" step="0.01" value={item.comissao} onChange={(e) => atualizarDadoPendente(index, "comissao", e.target.value)} className="w-full bg-slate-900 border border-rose-500/50 rounded-lg p-2 text-xs text-white outline-none focus:border-rose-400" required />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Peso (kg)</label>
+                        <label className="block text-[10px] font-bold text-rose-300 uppercase mb-1">Peso (kg)</label>
                         <input type="number" step="0.01" value={item.peso_real} onChange={(e) => atualizarDadoPendente(index, "peso_real", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Alt. (cm)</label>
+                        <label className="block text-[10px] font-bold text-rose-300 uppercase mb-1">Alt. (cm)</label>
                         <input type="number" value={item.altura} onChange={(e) => atualizarDadoPendente(index, "altura", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Larg. (cm)</label>
+                        <label className="block text-[10px] font-bold text-rose-300 uppercase mb-1">Larg. (cm)</label>
                         <input type="number" value={item.largura} onChange={(e) => atualizarDadoPendente(index, "largura", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Comp. (cm)</label>
+                        <label className="block text-[10px] font-bold text-rose-300 uppercase mb-1">Comp. (cm)</label>
                         <input type="number" value={item.comprimento} onChange={(e) => atualizarDadoPendente(index, "comprimento", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
                       </div>
                     </div>
