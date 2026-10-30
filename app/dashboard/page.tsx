@@ -93,7 +93,6 @@ export default function DashboardPage() {
 
   const normalizarTexto = (v: any) => String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
 
-  // UNIFICAÇÃO DE CANAIS EQUIVALENTES (Ex: Magazine Luiza e Magalu unificados no oficial)
   const canonizarCanal = (nomeCanal: any, oficiais: string[]) => {
     const limpo = String(nomeCanal || '').trim();
     const norm = normalizarTexto(limpo);
@@ -131,12 +130,13 @@ export default function DashboardPage() {
     return isNaN(num) ? 0 : num;
   };
 
-  // CANAIS OFICIAIS: Obtidos unicamente da aba de Regras (config_regras_canais)
+  // CANAIS OFICIAIS (EXCLUINDO QUALQUER RESQUÍCIO DE "MERCADO LIVRE 3")
   const canaisOficiais = useMemo(() => {
     const mapa = new Map<string, string>();
     const adicionar = (nome: any) => {
       let limpo = String(nome || '').trim();
       if (!limpo) return;
+      if (normalizarTexto(limpo).includes('mercado livre 3')) return; // Bloqueia o ML3 fantasma
       if (normalizarTexto(limpo).includes('magazine luiza')) limpo = 'Magalu';
       mapa.set(normalizarTexto(limpo), limpo);
     };
@@ -266,7 +266,6 @@ export default function DashboardPage() {
       ...s,
       canal: canonizarCanal(s.canal, canaisOficiais)
     })).filter((s: any) => {
-        // PERMITIR APENAS CANAIS PRESENTES NA ABA DE REGRAS
         if (!canaisOficiais.includes(s.canal)) return false;
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
 
