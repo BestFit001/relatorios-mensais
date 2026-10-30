@@ -27,7 +27,9 @@ async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo
 }
 
 function letraParaIndice(letra: string): number {
-  let l = (letra || "A").trim().toUpperCase();
+  if (!letra) return -1;
+  let l = letra.trim().toUpperCase();
+  if (!l || !/^[A-Z]+$/.test(l)) return -1;
   let num = 0;
   for (let i = 0; i < l.length; i++) {
     num = num * 26 + (l.charCodeAt(i) - 64);
@@ -84,6 +86,39 @@ function parseSmartFloat(val: any): number {
   return num;
 }
 
+// AVALIADOR INTELIGENTE DE FÓRMULAS E COLUNAS (Ex: "P * O", "P - Q", "((P - Q) * O) * 78%")
+function avaliarExpressaoLinha(expressao: string, row: any[]): number {
+  if (!expressao) return 0;
+  let expr = expressao.trim().toUpperCase();
+
+  // Se for apenas uma coluna direta (ex: "P" ou "D")
+  if (/^[A-Z]{1,3}$/.test(expr)) {
+    const idx = letraParaIndice(expr);
+    return idx >= 0 && idx < row.length ? parseSmartFloat(row[idx]) : 0;
+  }
+
+  // Trata percentuais: "78%" vira "0.78", "12%" vira "0.12"
+  expr = expr.replace(/(\d+(?:\.\d+)?)\s*%/g, (_, n) => String(Number(n) / 100));
+
+  // Substitui cada letra de coluna (ex: P, O, Q, D2) pelo valor numérico da célula correspondente
+  expr = expr.replace(/\b([A-Z]{1,3})\d*\b/g, (match, colLetra) => {
+    const idx = letraParaIndice(colLetra);
+    const val = (idx >= 0 && idx < row.length) ? parseSmartFloat(row[idx]) : 0;
+    return String(val);
+  });
+
+  // Mantém estritamente números e operadores matemáticos válidos
+  expr = expr.replace(/[^0-9.+\-*/() ]/g, '');
+
+  try {
+    const fn = new Function(`return (${expr});`);
+    const res = fn();
+    return typeof res === 'number' && !isNaN(res) ? res : 0;
+  } catch (err) {
+    return 0;
+  }
+}
+
 const MESES_NOMES: Record<string, string> = {
   "01": "janeiro", "02": "fevereiro", "03": "março", "04": "abril",
   "05": "maio", "06": "junho", "07": "julho", "08": "agosto",
@@ -128,11 +163,9 @@ export default function UpdatesPage() {
   const [selecionadosPendentes, setSelecionadosPendentes] = useState<{ [id: number]: boolean }>({});
   const [skuEmLote, setSkuEmLote] = useState("");
 
-  // SELETORES DE MÊS E ANO SEPARADOS PARA O UPLOAD DO DASHBOARD
   const [mesUpload, setMesUpload] = useState("10");
   const [anoUpload, setAnoUpload] = useState("2026");
 
-  // String combinada gerada automaticamente (Ex: "outubro de 2026")
   const mesAlvoDash = `${MESES_NOMES[mesUpload] || "outubro"} de ${anoUpload}`;
 
   const [canalAlvoDash, setCanalAlvoDash] = useState("Mercado Livre 1");
@@ -402,6 +435,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // PASSO 2: IMPORTAÇÃO E CRUZAMENTO COM SUPORTE A FÓRMULAS E REPASSE DINÂMICO
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -445,16 +479,16 @@ export default function UpdatesPage() {
 
         const isML = canalAlvoDash.toLowerCase().includes("mercado livre");
 
+        // Puxa as definições de colunas e fórmulas do banco
         const colSkuDef = regraData?.col_sku || regraData?.coluna_sku || (isML ? 'E' : 'B');
-        const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || (isML ? 'I' : 'D');
-        const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || (isML ? 'H' : 'C');
+        const colPdvDef = String(regraData?.col_pdv || regraData?.col_preco_venda || (isML ? 'I' : 'D')).trim();
+        const colQtdDef = String(regraData?.col_quantidade || regraData?.coluna_quantidade || (isML ? 'H' : 'C')).trim();
         const colIdDef = regraData?.col_id_pedido || regraData?.col_estado || 'A';
         const colRepasseDef = regraData?.col_repasse || regraData?.coluna_repasse || (isML ? 'T' : '');
+        const formulaRepasseDef = String(regraData?.formula_excel || '').trim();
 
         const idxId = letraParaIndice(colIdDef);
         const idxSku = letraParaIndice(colSkuDef);
-        const idxPdv = letraParaIndice(colPdvDef);
-        const idxQtd = letraParaIndice(colQtdDef);
         const idxDescricao = letraParaIndice(regraData?.col_descricao || "D"); 
         const idxRepasse = colRepasseDef ? letraParaIndice(colRepasseDef) : -1;
 
@@ -462,7 +496,7 @@ export default function UpdatesPage() {
         let totalImportados = 0;
         let ignoradosForaDoMes = 0;
 
-        let i = isML ? 6 : 1; // ML inicia na linha 6; outros canais iniciam na linha 1
+        let i = isML ? 6 : 1; // Mercado Livre inicia na linha 6; canais normais iniciam na linha 1
         while (i < json.length) {
           const row = json[i];
           if (!row || row.length === 0) {
@@ -486,14 +520,14 @@ export default function UpdatesPage() {
 
           const descRaw = idxDescricao >= 0 && row[idxDescricao] !== undefined ? String(row[idxDescricao]).trim() : '';
 
-          // 1. TRATAMENTO DE CARRINHO / PACOTE DE PRODUTOS
-          if (descRaw.toLowerCase().includes("pacote de") && descRaw.toLowerCase().includes("produtos")) {
+          // 1. TRATAMENTO DE CARRINHO / PACOTE DE PRODUTOS (EXCLUSIVO ML)
+          if (isML && descRaw.toLowerCase().includes("pacote de") && descRaw.toLowerCase().includes("produtos")) {
             const match = descRaw.match(/\d+/);
             const qtdItensNoPacote = match ? parseInt(match[0], 10) : 0;
             
             if (qtdItensNoPacote > 0) {
-              const pdvPrincipal = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
-              const repasseTotal = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : pdvPrincipal);
+              const pdvPrincipal = avaliarExpressaoLinha(colPdvDef, row);
+              const repasseTotal = idxRepasse >= 0 ? parseSmartFloat(row[idxRepasse]) : pdvPrincipal;
 
               let subItens = [];
               let somaPdvSubItens = 0;
@@ -502,8 +536,8 @@ export default function UpdatesPage() {
                 const subRow = json[i + j];
                 if (subRow) {
                   const skuSub = normalizarSku(subRow[idxSku >= 0 ? idxSku : 23]);
-                  const pdvSub = parseSmartFloat(subRow[idxPdv >= 0 ? idxPdv : 8]);
-                  const qtdSub = Number(subRow[idxQtd >= 0 ? idxQtd : 7] !== undefined ? subRow[idxQtd] : 1) || 1;
+                  const pdvSub = avaliarExpressaoLinha(colPdvDef, subRow);
+                  const qtdSub = avaliarExpressaoLinha(colQtdDef, subRow) || 1;
                   
                   const existe = skuSub && skusBaseSet.has(skuSub);
                   const skuFinal = existe ? skuSub : (skuSub || 'sem-sku');
@@ -540,18 +574,34 @@ export default function UpdatesPage() {
             }
           }
 
-          // 2. VENDAS NORMAIS (ITEM ÚNICO NA MESMA LINHA)
+          // 2. VENDAS NORMAIS (APLICAÇÃO DINÂMICA DE FÓRMULAS PARA PDV E REPASSE)
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
           
-          const precoVenda = idxPdv >= 0 ? parseSmartFloat(row[idxPdv]) : 0;
-          const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
+          // Calcula o Preço de Venda avaliando se é coluna simples ("P") ou fórmula ("P * O")
+          const precoVenda = avaliarExpressaoLinha(colPdvDef, row);
+          
+          // Calcula a quantidade avaliando se é coluna simples ("O") ou valor
+          const quantidade = avaliarExpressaoLinha(colQtdDef, row) || 1;
 
           const existeNaBase = skuNorm && skusBaseSet.has(skuNorm);
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
           const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
-          let repasseLiquido = idxRepasse >= 0 ? parseSmartFloat(row[idxRepasse]) : 0;
+          // CALCULA O REPASSE LÍQUIDO DINAMICAMENTE
+          let repasseLiquido = 0;
+          if (formulaRepasseDef && formulaRepasseDef.trim() !== '') {
+            // Se houver fórmula de apuração cadastrada no canal (ex: "((P - Q) * O) * 78%" ou "P - Q")
+            repasseLiquido = avaliarExpressaoLinha(formulaRepasseDef, row);
+          } else if (idxRepasse >= 0) {
+            // Se houver uma coluna física de repasse
+            repasseLiquido = parseSmartFloat(row[idxRepasse]);
+          } else {
+            // Caso padrão comissionado
+            repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.16));
+          }
+
+          // Trava de segurança: se o repasse exceder muito o preço de venda bruto, normaliza
           if (repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * 1.5)) {
             repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.16));
           }
@@ -1344,7 +1394,6 @@ export default function UpdatesPage() {
                 <div className="space-y-3">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência dos Faturados</label>
-                    {/* SELETORES DE MÊS E ANO SEPARADOS */}
                     <div className="grid grid-cols-2 gap-2">
                       <select 
                         value={mesUpload} 
@@ -1390,7 +1439,6 @@ export default function UpdatesPage() {
                 <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mês de Referência</label>
-                    {/* SELETORES DE MÊS E ANO SEPARADOS */}
                     <div className="grid grid-cols-2 gap-2">
                       <select 
                         value={mesUpload} 
