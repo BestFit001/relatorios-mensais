@@ -119,7 +119,11 @@ export default function DashboardPage() {
 
   const parseCurrency = (val: any): number => {
     if (val === undefined || val === null || val === '') return 0;
-    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+    if (typeof val === 'number') {
+      if (isNaN(val)) return 0;
+      if (val >= 44000 && val <= 49000 && Number.isInteger(Math.floor(val))) return 0;
+      return val;
+    }
 
     let s = String(val).trim();
     if (/^\d{4}-\d{2}-\d{2}/.test(s) || /^\d{2}\/\d{2}\/\d{4}/.test(s)) return 0;
@@ -146,8 +150,11 @@ export default function DashboardPage() {
     }
 
     const num = parseFloat(s);
-    if (!isNaN(num) && num > 500000) return 0;
-    return isNaN(num) ? 0 : num;
+    if (isNaN(num)) return 0;
+    if (num >= 44000 && num <= 49000 && Number.isInteger(Math.floor(num))) return 0;
+    if (num > 500000) return 0;
+
+    return num;
   };
 
   // CANAIS OFICIAIS (EXCLUINDO QUALQUER RESQUÍCIO DE "MERCADO LIVRE 3")
@@ -156,7 +163,7 @@ export default function DashboardPage() {
     const adicionar = (nome: any) => {
       let limpo = String(nome || '').trim();
       if (!limpo) return;
-      if (normalizarTexto(limpo).includes('mercado livre 3')) return;
+      if (normalizarTexto(limpo).includes('mercado livre 3')) return; // Bloqueia o ML3 fantasma
       if (normalizarTexto(limpo).includes('magazine luiza')) limpo = 'Magalu';
       mapa.set(normalizarTexto(limpo), limpo);
     };
@@ -561,7 +568,10 @@ export default function DashboardPage() {
         }
       });
 
+      // FAT. BRUTO: Soma original de todas as vendas brutas do canal
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
+      
+      // C/ REDUTOR: Faturamento do canal menos as devoluções (PDV) e cancelamentos do mês
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
