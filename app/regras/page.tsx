@@ -17,7 +17,7 @@ export default function RegrasPage() {
   const [canalSelecionado, setCanalSelecionado] = useState('Mercado Livre 1');
   const [novoCanalInput, setNovoCanalInput] = useState('');
 
-  // Estado da regra do canal selecionado (exatamente conforme a sua imagem)
+  // Estado da regra do canal selecionado
   const [metaMes, setMetaMes] = useState('outubro de 2026');
   const [metaValor, setMetaValor] = useState<number | string>(0);
   const [responsavelCanal, setResponsavelCanal] = useState('Equipe Best Fit');
@@ -305,7 +305,7 @@ export default function RegrasPage() {
               </div>
             </div>
 
-            {/* BLOCO DE CONFIGURAÇÃO EXATA DO CANAL SELECIONADO (CONFORME SUA IMAGEM) */}
+            {/* BLOCO DE CONFIGURAÇÃO EXATA DO CANAL SELECIONADO (SEM TRAVA DE 2 CARACTERES) */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
               <div className="flex justify-between items-center border-b border-slate-800 pb-4">
                 <h2 className="text-lg font-extrabold text-indigo-400">Configurando Canal: {canalSelecionado}</h2>
@@ -378,23 +378,23 @@ export default function RegrasPage() {
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
                   <div>
                     <span className="block text-[10px] font-bold text-slate-400 mb-1">ID Pedido</span>
-                    <input type="text" maxLength={2} value={colunasFoco.idPedido} onChange={e => setColunasFoco({...colunasFoco, idPedido: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.idPedido} onChange={e => setColunasFoco({...colunasFoco, idPedido: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-slate-400 mb-1">SKU</span>
-                    <input type="text" maxLength={2} value={colunasFoco.sku} onChange={e => setColunasFoco({...colunasFoco, sku: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.sku} onChange={e => setColunasFoco({...colunasFoco, sku: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-rose-400 mb-1">Cupom/Estado</span>
-                    <input type="text" maxLength={2} value={colunasFoco.cupomEstado} onChange={e => setColunasFoco({...colunasFoco, cupomEstado: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-rose-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.cupomEstado} onChange={e => setColunasFoco({...colunasFoco, cupomEstado: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-rose-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-amber-400 mb-1">Preço Venda (PDV)</span>
-                    <input type="text" maxLength={2} value={colunasFoco.precoVenda} onChange={e => setColunasFoco({...colunasFoco, precoVenda: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-amber-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.precoVenda} onChange={e => setColunasFoco({...colunasFoco, precoVenda: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-amber-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-cyan-400 mb-1">Quantidade</span>
-                    <input type="text" maxLength={2} value={colunasFoco.quantidade} onChange={e => setColunasFoco({...colunasFoco, quantidade: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-cyan-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.quantidade} onChange={e => setColunasFoco({...colunasFoco, quantidade: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-cyan-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                 </div>
               </div>
