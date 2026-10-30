@@ -117,6 +117,7 @@ export default function DashboardPage() {
     return nome.includes('clube') || nome.includes('loja') || nome.includes('paineiras') || nome.includes('hebraica');
   };
 
+  // PARSER UNIVERSAL DE MOEDA COM PROTEÇÃO CONTRA NÚMEROS DE SÉRIE DO EXCEL
   const parseCurrency = (val: any): number => {
     if (val === undefined || val === null || val === '') return 0;
     if (typeof val === 'number') {
@@ -163,7 +164,7 @@ export default function DashboardPage() {
     const adicionar = (nome: any) => {
       let limpo = String(nome || '').trim();
       if (!limpo) return;
-      if (normalizarTexto(limpo).includes('mercado livre 3')) return; // Bloqueia o ML3 fantasma
+      if (normalizarTexto(limpo).includes('mercado livre 3')) return;
       if (normalizarTexto(limpo).includes('magazine luiza')) limpo = 'Magalu';
       mapa.set(normalizarTexto(limpo), limpo);
     };
@@ -288,6 +289,7 @@ export default function DashboardPage() {
     });
   }, [devolucoesList, currentRefMonth, appliedChannelFilter, canaisOficiais]);
 
+  // ENRIQUECIMENTO DAS VENDAS COM AVALIAÇÃO DINÂMICA DA FÓRMULA DE REPASSE
   const enrichedSales = useMemo(() => {
     return (sales || []).map((s: any) => ({
       ...s,
@@ -331,9 +333,31 @@ export default function DashboardPage() {
         const ped = normalizarPedido(s.id_pedido);
         const custoFlex = flexMap.get(ped) || 0;
         
+        // RECUPERA A REGRA COMERCIAL DO CANAL ATUAL
+        const ruleObj = channelRules.find((r: any) => normalizarTexto(canonizarCanal(r.canal, canaisOficiais)) === normalizarTexto(s.canal)) || {};
         let repasseLiquido = parseCurrency(s.repasse_liquido);
-        if (isNaN(repasseLiquido) || repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * 1.5)) {
-          repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.16));
+
+        // SE HOUVER FÓRMULA DE APURAÇÃO NO CANAL (EX: (QTD * PDV) - (PDV * 31.59%)), O DASH EXECUTA
+        if (ruleObj.formula_excel && ruleObj.formula_excel.trim()) {
+          try {
+            let exp = ruleObj.formula_excel.trim();
+            exp = exp.replace(/\bPDV\b/gi, String(precoVenda));
+            exp = exp.replace(/\bQTD\b/gi, String(qtd));
+            exp = exp.replace(/\bQUANTIDADE\b/gi, String(qtd));
+            exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
+
+            if (/^[0-9+\-*/().\s]+$/.test(exp)) {
+              const calc = Function(`"use strict"; return (${exp})`)();
+              if (typeof calc === 'number' && !isNaN(calc) && calc >= 0) {
+                repasseLiquido = calc;
+              }
+            }
+          } catch (e) {}
+        }
+
+        // FALLBACK CASO NÃO HAJA FÓRMULA E O REPASSE SEJA NULO/INVÁLIDO
+        if (isNaN(repasseLiquido) || repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * qtd * 1.5)) {
+          repasseLiquido = Math.max(0, (precoVenda * qtd) - ((precoVenda * qtd) * 0.16));
         }
         
         const nomeCanal = normalizarTexto(s.canal);
@@ -353,7 +377,7 @@ export default function DashboardPage() {
           data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap, canaisOficiais]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules]);
 
   const kpis = useMemo(() => {
     let faturamentoBrutoVendas = 0;
@@ -552,17 +576,34 @@ export default function DashboardPage() {
         if (canonizarCanal(d.canal, canaisOficiais) === channelName) {
           const pdvVal = parseCurrency(d.pdv || d.valor);
           const freteVal = parseCurrency(d.custo_frete || d.frete);
+          const qtdDev = parseCurrency(d.quantidade) || 1;
           devPdvBruto += pdvVal;
           devFreteLiquido += freteVal;
           
           let repDev = parseCurrency(d.repasse_liquido || d.repasse);
+
+          if (ruleObj.formula_excel && ruleObj.formula_excel.trim()) {
+            try {
+              let exp = ruleObj.formula_excel.trim();
+              exp = exp.replace(/\bPDV\b/gi, String(pdvVal));
+              exp = exp.replace(/\bQTD\b/gi, String(qtdDev));
+              exp = exp.replace(/\bQUANTIDADE\b/gi, String(qtdDev));
+              exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
+              if (/^[0-9+\-*/().\s]+$/.test(exp)) {
+                const calcDev = Function(`"use strict"; return (${exp})`)();
+                if (typeof calcDev === 'number' && !isNaN(calcDev) && calcDev >= 0) {
+                  repDev = calcDev;
+                }
+              }
+            } catch (e) {}
+          }
+
           if (isNaN(repDev) || repDev <= 0 || (pdvVal > 0 && repDev > pdvVal * 1.5)) {
             repDev = Math.max(0, pdvVal - (pdvVal * 0.16));
           }
           devRepasseLiquido += repDev;
 
           const skuDev = normalizarSku(d.sku);
-          const qtdDev = parseCurrency(d.quantidade) || 1;
           const custoProd = produtosCustoMap.get(skuDev) || { custo_unitario: 0, custo_embalagem: 0 };
           devCmvTotal += (custoProd.custo_unitario + custoProd.custo_embalagem) * qtdDev;
         }
@@ -572,7 +613,7 @@ export default function DashboardPage() {
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
       
       // C/ REDUTOR: Faturamento do canal menos as devoluções (PDV) e cancelamentos do mês
-      const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
+      const faturadoComRedutor = Math.max(0, faturadoBruroPuro = faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
       const repasseLiquidoTotal = repasseVendasCanal - devRepasseLiquido;
