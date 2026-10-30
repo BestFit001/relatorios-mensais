@@ -92,6 +92,17 @@ export default function DashboardPage() {
   };
 
   const normalizarTexto = (v: any) => String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+  
+  // Função para unificar canais equivalentes (ex: Magazine Luiza e Magalu)
+  const canonizarCanal = (nomeCanal: any) => {
+    const norm = normalizarTexto(nomeCanal);
+    if (norm.includes('magalu') || norm.includes('magazine luiza')) return 'Magalu';
+    if (norm.includes('mercado livre')) return 'Mercado Livre 1'; // ou mantém o nome exato se preferir
+    // Procura na lista de canais oficiais das regras
+    const oficial = canaisOficiais.find(c => normalizarTexto(c) === norm);
+    return oficial || String(nomeCanal || '').trim();
+  };
+
   const normalizarSku = (v: any) => {
     if (v === null || v === undefined) return "";
     let s = String(v).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
@@ -118,11 +129,15 @@ export default function DashboardPage() {
     return isNaN(num) ? 0 : num;
   };
 
-  const canais = useMemo(() => {
+  // CANAIS OFICIAIS: Obtidos unicamente da aba de regras (config_regras_canais) + Lojas Físicas padrão
+  const canaisOficiais = useMemo(() => {
     const mapa = new Map<string, string>();
     const adicionar = (nome: any) => {
-      const limpo = String(nome || '').trim();
-      if (limpo) mapa.set(normalizarTexto(limpo), limpo);
+      let limpo = String(nome || '').trim();
+      if (!limpo) return;
+      // Padroniza Magalu / Magazine Luiza para 'Magalu' (ou o nome que estiver nas regras)
+      if (normalizarTexto(limpo).includes('magazine luiza')) limpo = 'Magalu';
+      mapa.set(normalizarTexto(limpo), limpo);
     };
     (database.config_regras_canais || []).forEach((r: any) => adicionar(r.canal));
     ['Clube Hebraica', 'Clube Paineiras'].forEach(adicionar);
@@ -214,22 +229,40 @@ export default function DashboardPage() {
     if (!cancelados) return [];
     return cancelados.filter((c: any) => {
       if (c.mes_referencia !== currentRefMonth) return false;
-      if (appliedChannelFilter !== 'TODOS' && c.canal !== appliedChannelFilter) return false;
+      const cCanal = canonizarCanal(c.canal);
+      if (appliedChannelFilter !== 'TODOS' && cCanal !== appliedChannelFilter) return false;
       return true;
     });
-  }, [cancelados, currentRefMonth, appliedChannelFilter]);
+  }, [cancelados, currentRefMonth, appliedChannelFilter, canaisOficiais]);
 
   const activeDevolucoes = useMemo(() => {
     if (!devolucoesList) return [];
     return devolucoesList.filter((d: any) => {
-      if (d.mes_referencia && d.mes_referencia !== currentRefMonth) return false;
-      if (appliedChannelFilter !== 'TODOS' && d.canal && normalizarTexto(d.canal) !== normalizarTexto(appliedChannelFilter)) return false;
+      const dataDev = String(d.data || d.data_devolucao || '').trim();
+      let mesDev = '';
+      if (d.mes_referencia) {
+        mesDev = String(d.mes_referencia).trim().toLowerCase();
+      } else if (dataDev) {
+        if (dataDev.includes('-')) mesDev = dataDev.slice(0, 7);
+        else if (dataDev.includes('/')) {
+          const parts = dataDev.split('/');
+          if (parts.length === 3) mesDev = `${parts[2]}-${parts[1]}`;
+        }
+      }
+      const matchMes = mesDev === currentRefMonth || mesDev.includes(currentRefMonth.toLowerCase());
+      if (!matchMes) return false;
+      
+      const dCanal = canonizarCanal(d.canal);
+      if (appliedChannelFilter !== 'TODOS' && d.canal && normalizarTexto(dCanal) !== normalizarTexto(appliedChannelFilter)) return false;
       return true;
     });
-  }, [devolucoesList, currentRefMonth, appliedChannelFilter]);
+  }, [devolucoesList, currentRefMonth, appliedChannelFilter, canaisOficiais]);
 
   const enrichedSales = useMemo(() => {
-    return (sales || []).filter((s: any) => {
+    return (sales || []).map((s: any) => ({
+      ...s,
+      canal: canonizarCanal(s.canal)
+    })).filter((s: any) => {
         if (appliedChannelFilter !== 'TODOS' && s.canal !== appliedChannelFilter) return false;
 
         const fisico = isChannelFisico(s.canal);
@@ -248,6 +281,9 @@ export default function DashboardPage() {
           const matchMes = fatMesRef.includes(mesRefAlvo) || (fatData && fatData.startsWith(mesRefAlvo));
           if (!matchMes) return false;
         }
+
+        // Filtra unicamente canais que estão na lista oficial de regras
+        if (!canaisOficiais.includes(s.canal)) return false;
 
         return true;
       })
@@ -289,11 +325,9 @@ export default function DashboardPage() {
           data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap, canaisOficiais]);
 
   const kpis = useMemo(() => {
-    const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
-    
     let faturamentoBrutoVendas = 0;
     let faturamentoLiquidoRepasse = 0;
     let metaDigitalTotal = 0;
@@ -310,30 +344,25 @@ export default function DashboardPage() {
     const lojasFisicasDetalhes: any[] = [];
     const lojasFisicasRepasse: any[] = [];
 
-    activeChannels.forEach(channelName => {
-      const fisico = isChannelFisico(channelName);
-      const goalObj = goals.find((g: any) => g.canal === channelName && g.mes_referencia === currentRefMonth) 
-                   || goals.find((g: any) => g.canal === channelName) 
-                   || { meta_valor: 0 };
-      const metaCanal = parseCurrency(goalObj.meta_valor);
+    canaisOficiais.forEach(channelName => {
+      if (isChannelFisico(channelName)) {
+        const goalObj = goals.find((g: any) => g.canal === channelName && g.mes_referencia === currentRefMonth) 
+                     || goals.find((g: any) => g.canal === channelName) 
+                     || { meta_valor: 0 };
+        const metaCanal = parseCurrency(goalObj.meta_valor);
 
-      const chSales = enrichedSales.filter((s: any) => s.canal === channelName);
-      
-      const cancelamentosCanal = activeCancelados
-        .filter((c: any) => normalizarTexto(c.canal) === normalizarTexto(channelName))
-        .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
+        const chSales = enrichedSales.filter((s: any) => s.canal === channelName);
+        const cancelamentosCanal = activeCancelados
+          .filter((c: any) => canonizarCanal(c.canal) === channelName)
+          .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
-      const faturadoPuroCanal = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
-      
-      const faturadoEfetivoCanal = Math.max(0, faturadoPuroCanal - cancelamentosCanal);
-      const repasseCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
-
-      let nomeLimpo = channelName.replace(/clube|loja/gi, '').trim();
-      if (!nomeLimpo) nomeLimpo = channelName;
-
-      if (fisico) {
+        const faturadoPuroCanal = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
+        const faturadoEfetivoCanal = Math.max(0, faturadoPuroCanal - cancelamentosCanal);
         const progresso = metaCanal > 0 ? (faturadoEfetivoCanal / metaCanal) * 100 : 0;
         const diff = Math.abs(progresso - 100);
+
+        let nomeLimpo = channelName.replace(/clube|loja/gi, '').trim();
+        if (!nomeLimpo) nomeLimpo = channelName;
 
         lojasFisicasDetalhes.push({
           nome: nomeLimpo,
@@ -342,13 +371,11 @@ export default function DashboardPage() {
           diff,
           abaixo: progresso < 100
         });
-
-        lojasFisicasRepasse.push({
-          nome: nomeLimpo,
-          repasse: repasseCanal
-        });
       } else {
-        metaDigitalTotal += metaCanal;
+        const goalObj = goals.find((g: any) => g.canal === channelName && g.mes_referencia === currentRefMonth) 
+                     || goals.find((g: any) => g.canal === channelName) 
+                     || { meta_valor: 0 };
+        metaDigitalTotal += parseCurrency(goalObj.meta_valor);
       }
     });
 
@@ -373,7 +400,6 @@ export default function DashboardPage() {
       }
     });
 
-    // Faturamento Bruto Geral do topo exibe o bruto puro sem subtrair devoluções consolidadas no total superior
     faturamentoBrutoVendas = Math.max(0, faturamentoBrutoVendas - totalCancelamentosValor);
 
     const canceladosDigitais = activeCancelados
@@ -410,12 +436,11 @@ export default function DashboardPage() {
       lucroDigital,
       totalPedidos: enrichedSales.length,
       lojasFisicasDetalhes,
-      lojasFisicasRepasse,
       progressoDigitalPct,
       diffDigital,
       totalCancelamentosValor
     };
-  }, [enrichedSales, adsMap, appliedChannelFilter, canais, channelRules, goals, currentRefMonth, activeCancelados]);
+  }, [enrichedSales, adsMap, appliedChannelFilter, canaisOficiais, channelRules, goals, currentRefMonth, activeCancelados]);
 
   const { targetDateStr, labelVendasDia } = useMemo(() => {
     const d = new Date();
@@ -430,8 +455,7 @@ export default function DashboardPage() {
   }, []);
 
   const channelAnalytics = useMemo(() => {
-    const activeChannels = Array.from(new Set([...canais, ...channelRules.map((r: any) => r.canal)]));
-    let channelsToAnalyze = appliedChannelFilter === 'TODOS' ? activeChannels : activeChannels.filter(c => normalizarTexto(c) === normalizarTexto(appliedChannelFilter));
+    let channelsToAnalyze = appliedChannelFilter === 'TODOS' ? canaisOficiais : canaisOficiais.filter(c => normalizarTexto(c) === normalizarTexto(appliedChannelFilter));
 
     if (appliedModalidadeFilter === 'FISICO') {
       channelsToAnalyze = channelsToAnalyze.filter(c => isChannelFisico(c));
@@ -470,20 +494,19 @@ export default function DashboardPage() {
     }
 
     return channelsToAnalyze.map(channelName => {
-      const kCanal = normalizarTexto(channelName);
-      const chSales = enrichedSales.filter((s: any) => normalizarTexto(s.canal) === kCanal);
+      const chSales = enrichedSales.filter((s: any) => s.canal === channelName);
       
       const vendasDoDia = chSales
         .filter((s: any) => s.data_faturamento === targetDateStr)
         .reduce((sum: number, s: any) => sum + s.preco_venda, 0);
 
-      const ruleObj = channelRules.find((r: any) => normalizarTexto(r.canal) === kCanal) || {};
-      const goalObj = goals.find((g: any) => normalizarTexto(g.canal) === kCanal && g.mes_referencia === currentRefMonth) 
-                   || goals.find((g: any) => normalizarTexto(g.canal) === kCanal) 
+      const ruleObj = channelRules.find((r: any) => normalizarTexto(r.canal) === normalizarTexto(channelName)) || {};
+      const goalObj = goals.find((g: any) => normalizarTexto(g.canal) === normalizarTexto(channelName) && g.mes_referencia === currentRefMonth) 
+                   || goals.find((g: any) => normalizarTexto(g.canal) === normalizarTexto(channelName)) 
                    || { meta_valor: 0, responsavel: ruleObj.responsavel || 'Equipe Best Fit' };
 
       const cancelamentosMes = activeCancelados
-        .filter((c: any) => normalizarTexto(c.canal) === kCanal)
+        .filter((c: any) => canonizarCanal(c.canal) === channelName)
         .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
       let devPdvBruto = 0;
@@ -492,7 +515,7 @@ export default function DashboardPage() {
       let devCmvTotal = 0;
 
       activeDevolucoes.forEach((d: any) => {
-        if (normalizarTexto(d.canal) === kCanal) {
+        if (canonizarCanal(d.canal) === channelName) {
           const pdvVal = parseCurrency(d.pdv || d.valor);
           const freteVal = parseCurrency(d.custo_frete || d.frete);
           devPdvBruto += pdvVal;
@@ -509,23 +532,20 @@ export default function DashboardPage() {
         }
       });
 
-      // FAT. BRUTO: Soma original pura de todas as vendas do canal
+      // FAT. BRUTO: Soma original de todas as vendas brutas do canal
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
       
       // C/ REDUTOR: Faturamento do canal - Devoluções (PDV) - Cancelamentos do mês
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
-      
-      // REPASSE LÍQUIDO TOTAL: Desconta o repasse da devolução
       const repasseLiquidoTotal = repasseVendasCanal - devRepasseLiquido;
 
-      const canalAds = adsMap.get(kCanal) || 0;
+      const canalAds = adsMap.get(normalizarTexto(channelName)) || 0;
       const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0);
       const cmvCanalTotal = cmvVendasCanal + devCmvTotal;
       const flexCanal = chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
 
-      // LUCRO LÍQUIDO REAL: Desconta do líquido o frete reverso, frete flex e adsense
       const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - flexCanal - canalAds - devFreteLiquido;
       
       const metaBase = parseCurrency(goalObj.meta_valor);
@@ -569,7 +589,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canaisOficiais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
@@ -695,7 +715,7 @@ export default function DashboardPage() {
             <i className="fa-solid fa-store text-purple-400 pl-2 text-xs"></i>
             <select value={selectedChannelFilter} onChange={(e) => setSelectedChannelFilter(e.target.value)} className="bg-transparent text-purple-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
               <option value="TODOS" className="bg-slate-900 text-white">Todos os Canais</option>
-              {canais.map((ch: string) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
+              {canaisOficiais.map((ch: string) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
             </select>
           </div>
 
