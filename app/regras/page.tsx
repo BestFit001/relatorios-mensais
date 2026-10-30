@@ -143,8 +143,10 @@ export default function RegrasPage() {
   const salvarRegrasCanalAtual = async () => {
     setSalvando(true);
     try {
-      const repasseCol = colunasFoco.repasse.toUpperCase().trim();
-      await supabase.from('config_regras_canais').upsert([{
+      const repasseCol = colunasFoco.repasse ? colunasFoco.repasse.toUpperCase().trim() : '';
+
+      // 1. Salva regras do canal checando erro explicitamente
+      const { error: erroRegra } = await supabase.from('config_regras_canais').upsert([{
         canal: canalSelecionado,
         formula_excel: formulaApuracao,
         responsavel: responsavelCanal,
@@ -152,23 +154,29 @@ export default function RegrasPage() {
         col_id_pedido: colunasFoco.idPedido.toUpperCase(),
         col_sku: colunasFoco.sku.toUpperCase(),
         col_repasse: repasseCol,
-        col_estado: repasseCol, // Mantém compatibilidade com a coluna legada no banco
+        col_estado: repasseCol,
         col_pdv: colunasFoco.precoVenda.toUpperCase(),
         col_quantidade: colunasFoco.quantidade.toUpperCase()
       }], { onConflict: 'canal' });
 
-      await supabase.from('tb_metas').upsert([{
+      if (erroRegra) throw new Error("Erro ao salvar regras: " + erroRegra.message);
+
+      // 2. Salva meta do mês checando erro explicitamente
+      const { error: erroMeta } = await supabase.from('tb_metas').upsert([{
         canal: canalSelecionado,
         mes_referencia: metaMes,
         meta_valor: Number(metaValor) || 0,
         responsavel: responsavelCanal
       }], { onConflict: 'canal, mes_referencia' });
 
+      if (erroMeta) throw new Error("Erro ao salvar meta: " + erroMeta.message);
+
       alert(`✅ Regras, coluna de repasse e meta do canal "${canalSelecionado}" salvas com sucesso!`);
     } catch (err: any) {
-      alert("Erro ao salvar: " + err.message);
+      alert("❌ " + err.message);
+    } finally {
+      setSalvando(false);
     }
-    setSalvando(false);
   };
 
   const adicionarNovoCanalGeral = async () => {
@@ -366,7 +374,7 @@ export default function RegrasPage() {
               </div>
 
               <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-300">Fórmula de Apuração do Repasse (Ex: (QTD * PDV) - (PDV * 12%)):</label>
+                <label className="block text-xs font-bold text-slate-300">Fórmula de Apuração do Repasse (Ex: PDV - Q ou (QTD * PDV) - (PDV * 12%)):</label>
                 <input 
                   type="text" 
                   value={formulaApuracao} 
@@ -388,7 +396,7 @@ export default function RegrasPage() {
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-emerald-400 mb-1">Coluna Repasse</span>
-                    <input type="text" value={colunasFoco.repasse} onChange={e => setColunasFoco({...colunasFoco, repasse: e.target.value.toUpperCase()})} placeholder="Ex: T ou C" className="w-full bg-slate-900 border border-emerald-500/40 rounded-lg p-2.5 text-xs text-emerald-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.repasse} onChange={e => setColunasFoco({...colunasFoco, repasse: e.target.value.toUpperCase()})} placeholder="Ex: T ou Q" className="w-full bg-slate-900 border border-emerald-500/40 rounded-lg p-2.5 text-xs text-emerald-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-amber-400 mb-1">Preço Venda (PDV)</span>
