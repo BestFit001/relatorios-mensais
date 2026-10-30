@@ -139,8 +139,8 @@ export default function AdsPage() {
   const [lancamentos, setLancamentos] = useState<any[]>([]);
   const [dadosComparativo, setDadosComparativo] = useState<any[]>([]);
 
-  const [custosMap, setCustosMap] = useState>(new Map());
-  const [regrasMlMap, setRegrasMlMap] = useState>(new Map());
+  const [custosMap, setCustosMap] = useState>(new Map<string, any>());
+  const [regrasMlMap, setRegrasMlMap] = useState>(new Map<string, any>());
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
 
   const [idEditando, setIdEditando] = useState<number | null>(null);
@@ -679,6 +679,10 @@ export default function AdsPage() {
   };
 
   const salvarEdicao = async (id: number) => {
+    const unidades = Number(dadosEdicao.unidades_vendidas || 0);
+    const receitaAds = Number(dadosEdicao.retorno_bruto || 0);
+    const investimento = Number(dadosEdicao.investimento || 0);
+
     const skuLimpo = String(dadosEdicao.sku || "").trim();
     const mlbLimpo = String(dadosEdicao.identificador_anuncio || "").trim().toUpperCase();
     const isMercadoLivre = canalSelecionado.toLowerCase().includes("mercado livre");
@@ -1998,19 +2002,19 @@ export default function AdsPage() {
                         <input type="number" step="0.01" value={item.comissao} onChange={(e) => atualizarDadoPendente(index, "comissao", e.target.value)} className="w-full bg-slate-900 border border-rose-500/50 rounded-lg p-2 text-xs text-white outline-none focus:border-rose-400" required />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-rose-300 uppercase mb-1">Peso (kg)</label>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Peso (kg)</label>
                         <input type="number" step="0.01" value={item.peso_real} onChange={(e) => atualizarDadoPendente(index, "peso_real", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-rose-300 uppercase mb-1">Alt. (cm)</label>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Alt. (cm)</label>
                         <input type="number" value={item.altura} onChange={(e) => atualizarDadoPendente(index, "altura", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-rose-300 uppercase mb-1">Larg. (cm)</label>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Larg. (cm)</label>
                         <input type="number" value={item.largura} onChange={(e) => atualizarDadoPendente(index, "largura", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-rose-300 uppercase mb-1">Comp. (cm)</label>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Comp. (cm)</label>
                         <input type="number" value={item.comprimento} onChange={(e) => atualizarDadoPendente(index, "comprimento", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none" />
                       </div>
                     </div>
