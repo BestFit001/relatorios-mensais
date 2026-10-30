@@ -43,24 +43,45 @@ function normalizarSku(valor: any): string {
   return s;
 }
 
-function parseSmartFloat(val: any) {
+function parseSmartFloat(val: any): number {
   if (val === undefined || val === null || val === '') return 0;
-  if (typeof val === 'number') return val;
+  if (typeof val === 'number') {
+    if (isNaN(val)) return 0;
+    // Bloqueia números de série de datas do Excel (anos de 2024 a 2030 correspondem a 44000 até 49000)
+    if (val >= 44000 && val <= 49000 && Number.isInteger(Math.floor(val))) return 0;
+    return val;
+  }
+
   let strVal = String(val).trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(strVal) || /^\d{2}\/\d{2}\/\d{4}/.test(strVal)) return 0;
-  strVal = strVal.replace(/[a-zA-Z$\s]/g, '');
-  if (strVal.includes(',') && strVal.includes('.')) {
-    const lastComma = strVal.lastIndexOf(',');
-    const lastDot = strVal.lastIndexOf('.');
-    if (lastComma > lastDot) {
+
+  strVal = strVal.replace(/[^\d.,-]/g, '');
+  if (!strVal) return 0;
+
+  const hasComma = strVal.includes(',');
+  const hasDot = strVal.includes('.');
+
+  if (hasComma && hasDot) {
+    if (strVal.lastIndexOf(',') > strVal.lastIndexOf('.')) {
       strVal = strVal.replace(/\./g, '').replace(',', '.');
     } else {
       strVal = strVal.replace(/,/g, '');
     }
-  } else if (strVal.includes(',')) {
+  } else if (hasComma && !hasDot) {
     strVal = strVal.replace(/\./g, '').replace(',', '.');
+  } else if (hasDot && !hasComma) {
+    const parts = strVal.split('.');
+    if (parts.length > 2) {
+      strVal = strVal.replace(/\./g, '');
+    }
   }
-  return parseFloat(strVal) || 0;
+
+  const num = parseFloat(strVal);
+  if (isNaN(num)) return 0;
+  if (num >= 44000 && num <= 49000 && Number.isInteger(Math.floor(num))) return 0;
+  if (num > 500000) return 0;
+
+  return num;
 }
 
 const MESES_NOMES: Record<string, string> = {
@@ -422,24 +443,26 @@ export default function UpdatesPage() {
           }
         });
 
-        const colSkuDef = regraData?.col_sku || 'E';
-        const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || 'I';
-        const colQtdDef = regraData?.col_quantidade || 'H';
+        const isML = canalAlvoDash.toLowerCase().includes("mercado livre");
+
+        const colSkuDef = regraData?.col_sku || regraData?.coluna_sku || (isML ? 'E' : 'B');
+        const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || (isML ? 'I' : 'D');
+        const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || (isML ? 'H' : 'C');
         const colIdDef = regraData?.col_id_pedido || regraData?.col_estado || 'A';
+        const colRepasseDef = regraData?.col_repasse || regraData?.coluna_repasse || (isML ? 'T' : '');
 
         const idxId = letraParaIndice(colIdDef);
         const idxSku = letraParaIndice(colSkuDef);
         const idxPdv = letraParaIndice(colPdvDef);
         const idxQtd = letraParaIndice(colQtdDef);
-        const idxDescricao = letraParaIndice("D"); 
-        const idxRepasse = letraParaIndice("T"); // Coluna T (Repasse líquido nativo)
-        const idxReceitaProd = letraParaIndice("I"); // Coluna I (Faturamento Bruto)
+        const idxDescricao = letraParaIndice(regraData?.col_descricao || "D"); 
+        const idxRepasse = colRepasseDef ? letraParaIndice(colRepasseDef) : -1;
 
         const novasVendas = [];
         let totalImportados = 0;
         let ignoradosForaDoMes = 0;
 
-        let i = 6; // Começa na linha de dados do Excel do Mercado Livre
+        let i = isML ? 6 : 1; // ML inicia na linha 6; outros canais iniciam na linha 1
         while (i < json.length) {
           const row = json[i];
           if (!row || row.length === 0) {
@@ -469,7 +492,7 @@ export default function UpdatesPage() {
             const qtdItensNoPacote = match ? parseInt(match[0], 10) : 0;
             
             if (qtdItensNoPacote > 0) {
-              const pdvPrincipal = parseSmartFloat(idxReceitaProd >= 0 && row[idxReceitaProd] !== "" ? row[idxReceitaProd] : (idxPdv >= 0 ? row[idxPdv] : 0));
+              const pdvPrincipal = parseSmartFloat(idxPdv >= 0 ? row[idxPdv] : 0);
               const repasseTotal = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : pdvPrincipal);
 
               let subItens = [];
@@ -521,14 +544,17 @@ export default function UpdatesPage() {
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
           
-          const precoVenda = parseSmartFloat(idxReceitaProd >= 0 && row[idxReceitaProd] !== "" ? row[idxReceitaProd] : (idxPdv >= 0 ? row[idxPdv] : 0));
+          const precoVenda = idxPdv >= 0 ? parseSmartFloat(row[idxPdv]) : 0;
           const quantidade = Number(idxQtd >= 0 && row[idxQtd] !== undefined ? row[idxQtd] : 1) || 1;
 
           const existeNaBase = skuNorm && skusBaseSet.has(skuNorm);
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
           const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
 
-          const repasseLiquido = parseSmartFloat(idxRepasse >= 0 ? row[idxRepasse] : precoVenda);
+          let repasseLiquido = idxRepasse >= 0 ? parseSmartFloat(row[idxRepasse]) : 0;
+          if (repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * 1.5)) {
+            repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.16));
+          }
 
           novasVendas.push({
             id_pedido: rawId,
