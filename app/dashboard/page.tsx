@@ -9,6 +9,7 @@ const TABELAS_SUPABASE = [
   'tarifas_site',
   'tabela_custos_skus',
   'config_regras_canais',
+  'config_regras_tiny',
   'tb_metas',
   'devolucoes',
   'ads_faturamento_canal',
@@ -157,7 +158,6 @@ export default function DashboardPage() {
     return num;
   };
 
-  // CANAIS OFICIAIS (EXCLUINDO QUALQUER RESQUÍCIO DE "MERCADO LIVRE 3")
   const canaisOficiais = useMemo(() => {
     const mapa = new Map<string, string>();
     const adicionar = (nome: any) => {
@@ -178,6 +178,12 @@ export default function DashboardPage() {
   const goals = database.tb_metas || [];
   const cancelados = database.cancelados || [];
   const users = database.usuarios_permissoes || [];
+
+  // Alíquota de imposto global sobre o faturamento faturado
+  const aliquotaImpostoGlobal = useMemo(() => {
+    const cfg = (database.config_regras_tiny || []).find((c: any) => c.campo === 'imposto_global');
+    return cfg && cfg.coluna ? parseCurrency(cfg.coluna) : 6.0;
+  }, [database.config_regras_tiny]);
 
   const produtosCustoMap = useMemo(() => {
     const map = new Map();
@@ -469,9 +475,9 @@ export default function DashboardPage() {
       .filter(([canal]) => appliedChannelFilter === 'TODOS' || normalizarTexto(canal) === normalizarTexto(appliedChannelFilter))
       .reduce((sum, [, val]) => sum + parseCurrency(val), 0);
     
-    const lucroLiquidoReal = faturamentoLiquidoRepasse - custoTotalCMV - totalFlexCost - totalAdsCost;
-    const lucroFisico = repasseFisico - cmvFisico;
-    const lucroDigital = repasseDigital - cmvDigital - totalFlexCost - totalAdsCost;
+    // IMPOSTO GLOBAL: Deduzido da liquidez real
+    const totalImpostoGlobal = (faturamentoBrutoVendas * aliquotaImpostoGlobal) / 100;
+    const lucroLiquidoReal = faturamentoLiquidoRepasse - custoTotalCMV - totalImpostoGlobal - totalFlexCost - totalAdsCost;
 
     return { 
       faturamentoBrutoVendas, 
@@ -483,9 +489,8 @@ export default function DashboardPage() {
       custoTotalCMV, 
       cmvFisico,
       cmvDigital,
+      totalImpostoGlobal,
       lucroLiquidoReal, 
-      lucroFisico,
-      lucroDigital,
       totalPedidos: enrichedSales.length,
       lojasFisicasDetalhes,
       lojasFisicasRepasse,
@@ -493,7 +498,7 @@ export default function DashboardPage() {
       diffDigital,
       totalCancelamentosValor
     };
-  }, [enrichedSales, adsMap, appliedChannelFilter, canaisOficiais, goals, currentRefMonth, activeCancelados]);
+  }, [enrichedSales, adsMap, appliedChannelFilter, canaisOficiais, goals, currentRefMonth, activeCancelados, aliquotaImpostoGlobal]);
 
   const { targetDateStr, labelVendasDia } = useMemo(() => {
     const d = new Date();
@@ -618,7 +623,11 @@ export default function DashboardPage() {
       const cmvCanalTotal = cmvVendasCanal + devCmvTotal;
       const flexCanal = chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
 
-      const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - flexCanal - canalAds - devFreteLiquido;
+      // IMPOSTO DO CANAL: % sobre o faturamento com redutor
+      const impostoCanal = (faturadoComRedutor * aliquotaImpostoGlobal) / 100;
+
+      // LUCRO LÍQUIDO REAL (LIQUIDEZ REAL): Deduz CMV, Imposto, Ads, Flex e Fretes de Devolução
+      const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - impostoCanal - flexCanal - canalAds - devFreteLiquido;
       
       const metaBase = parseCurrency(goalObj.meta_valor);
       const progressoMetaPct = metaBase > 0 ? (faturadoComRedutor / metaBase) * 100 : 0;
@@ -655,13 +664,14 @@ export default function DashboardPage() {
         adsCanal: canalAds,
         flexCanal,
         cmvCanal: cmvCanalTotal,
+        impostoCanal,
         repasseLiquidoTotal,
         isCurrentMonth,
         logoUrl,
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canaisOficiais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canaisOficiais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap, aliquotaImpostoGlobal]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
@@ -743,7 +753,7 @@ export default function DashboardPage() {
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900 p-5 rounded-2xl border border-slate-800 gap-4">
         <div>
           <h2 className="text-xl font-bold text-white tracking-tight">Dashboard Best Fit</h2>
-          <p className="text-xs text-slate-400 mt-1">Cálculo de Margem Real = Repasse Líq - CMV - Fretes Flex (PLPs) - Devoluções - ADS</p>
+          <p className="text-xs text-slate-400 mt-1">Cálculo de Margem Real = Repasse Líq - CMV - Imposto ({aliquotaImpostoGlobal}%) - Fretes Flex - Devoluções - ADS</p>
         </div>
         
         <div className="flex flex-wrap gap-3 items-center w-full lg:w-auto">
@@ -897,15 +907,16 @@ export default function DashboardPage() {
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
             <h3 className="text-2xl font-black text-emerald-400 mt-1">R$ {kpis.lucroLiquidoReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <span className="text-[9px] text-slate-400 font-mono block mt-0.5">Imposto Geral: - R$ {kpis.totalImpostoGlobal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
             <div>
               <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-1">Lojas Físicas</span>
-              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.lucroFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.repasseFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
             <div className="pt-2 border-t border-slate-800/50">
               <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
-              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.lucroDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.repasseDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
           </div>
         </div>
@@ -958,6 +969,13 @@ export default function DashboardPage() {
                      <span className="text-slate-400 font-bold uppercase">CMV (Custo Produtos):</span>
                      <span className="text-amber-400 font-bold">- R$ {item.cmvCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                    </div>
+
+                   {/* IMPOSTO DEDUZIDO DA LIQUIDEZ */}
+                   <div className="flex justify-between items-center text-[10px]">
+                     <span className="text-slate-400 font-bold uppercase">Imposto ({aliquotaImpostoGlobal}% PDV):</span>
+                     <span className="text-rose-400 font-bold">- R$ {item.impostoCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                   </div>
+
                    <div className="flex justify-between items-center text-[10px]">
                      <span className="text-slate-400 font-bold uppercase">Abatimento Devoluções (PDV):</span>
                      <span className="text-rose-400 font-bold">- R$ {item.devolucoesPdv.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
