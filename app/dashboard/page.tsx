@@ -117,7 +117,6 @@ export default function DashboardPage() {
     return nome.includes('clube') || nome.includes('loja') || nome.includes('paineiras') || nome.includes('hebraica');
   };
 
-  // PARSER UNIVERSAL DE MOEDA COM PROTEÇÃO CONTRA NÚMEROS DE SÉRIE DO EXCEL
   const parseCurrency = (val: any): number => {
     if (val === undefined || val === null || val === '') return 0;
     if (typeof val === 'number') {
@@ -289,7 +288,6 @@ export default function DashboardPage() {
     });
   }, [devolucoesList, currentRefMonth, appliedChannelFilter, canaisOficiais]);
 
-  // ENRIQUECIMENTO DAS VENDAS COM AVALIAÇÃO DINÂMICA DA FÓRMULA DE REPASSE
   const enrichedSales = useMemo(() => {
     return (sales || []).map((s: any) => ({
       ...s,
@@ -333,11 +331,9 @@ export default function DashboardPage() {
         const ped = normalizarPedido(s.id_pedido);
         const custoFlex = flexMap.get(ped) || 0;
         
-        // RECUPERA A REGRA COMERCIAL DO CANAL ATUAL
         const ruleObj = channelRules.find((r: any) => normalizarTexto(canonizarCanal(r.canal, canaisOficiais)) === normalizarTexto(s.canal)) || {};
         let repasseLiquido = parseCurrency(s.repasse_liquido);
 
-        // SE HOUVER FÓRMULA DE APURAÇÃO NO CANAL (EX: (QTD * PDV) - (PDV * 31.59%)), O DASH EXECUTA
         if (ruleObj.formula_excel && ruleObj.formula_excel.trim()) {
           try {
             let exp = ruleObj.formula_excel.trim();
@@ -355,7 +351,6 @@ export default function DashboardPage() {
           } catch (e) {}
         }
 
-        // FALLBACK CASO NÃO HAJA FÓRMULA E O REPASSE SEJA NULO/INVÁLIDO
         if (isNaN(repasseLiquido) || repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * qtd * 1.5)) {
           repasseLiquido = Math.max(0, (precoVenda * qtd) - ((precoVenda * qtd) * 0.16));
         }
@@ -613,7 +608,7 @@ export default function DashboardPage() {
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
       
       // C/ REDUTOR: Faturamento do canal menos as devoluções (PDV) e cancelamentos do mês
-      const faturadoComRedutor = Math.max(0, faturadoBruroPuro = faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
+      const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
       const repasseLiquidoTotal = repasseVendasCanal - devRepasseLiquido;
