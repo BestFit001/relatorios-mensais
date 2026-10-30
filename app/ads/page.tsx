@@ -99,7 +99,6 @@ function verificarDataNoPeriodo(dataStr: any, periodoCompetencia: string): boole
   const [mesAlvo, anoAlvo] = periodoCompetencia.split("/");
   const str = String(dataStr).trim();
 
-  // Formato YYYY-MM-DD
   if (str.includes("-")) {
     const partes = str.split("-");
     if (partes.length >= 3) {
@@ -109,7 +108,6 @@ function verificarDataNoPeriodo(dataStr: any, periodoCompetencia: string): boole
     }
   }
 
-  // Formato DD/MM/YYYY
   if (str.includes("/")) {
     const partes = str.split("/");
     if (partes.length === 3) {
@@ -141,8 +139,8 @@ export default function AdsPage() {
   const [lancamentos, setLancamentos] = useState<any[]>([]);
   const [dadosComparativo, setDadosComparativo] = useState<any[]>([]);
 
-  const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
-  const [regrasMlMap, setRegrasMlMap] = useState<Map<string, any>>(new Map());
+  const [custosMap, setCustosMap] = useState>(new Map());
+  const [regrasMlMap, setRegrasMlMap] = useState>(new Map());
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
 
   const [idEditando, setIdEditando] = useState<number | null>(null);
@@ -158,7 +156,6 @@ export default function AdsPage() {
   const [dadosPendentesTemp, setDadosPendentesTemp] = useState<any>(null);
   const [modoPendente, setModoPendente] = useState<"novo" | "edicao">("novo");
 
-  // ==================== ESTADOS DA ABA SUGESTÕES ====================
   const [canalSugestao, setCanalSugestao] = useState("");
   const [mesSugestao, setMesSugestao] = useState("10/2026");
   const [matrizPlanilha, setMatrizPlanilha] = useState<any[][]>([]);
@@ -294,19 +291,24 @@ export default function AdsPage() {
     if (tarifacaoData) setRegrasTarifacao(tarifacaoData);
   };
 
+  // BUSCA COM ILIKE: SUPORTA TIKTOK / TIKTOK
   const carregarLancamentos = async () => {
     setLoading(true);
-    const { data } = await supabase
+    let query = supabase
       .from('ads_campanhas_lancamentos')
       .select('*')
-      .eq('canal', canalSelecionado)
-      .eq('mes_referencia', mesSelecionado)
-      .order('id');
+      .ilike('canal', canalSelecionado);
 
+    if (mesSelecionado !== "TODOS") {
+      query = query.eq('mes_referencia', mesSelecionado);
+    }
+
+    const { data } = await query.order('id');
     if (data) setLancamentos(data);
     setLoading(false);
   };
 
+  // DASHBOARD COMPARATIVO & BUDGET: INTEGRAÇÃO COM A TABELA ISOLADA DE LIVES PARA O TIKTOK
   const carregarDadosDashboard = async () => {
     setLoading(true);
     const listaCanais = canaisAtivos.map(c => c.canal);
@@ -321,35 +323,54 @@ export default function AdsPage() {
     const { data: faturamentosAtual } = await supabase.from('ads_faturamento_canal').select('*').eq('mes_referencia', mesSelecionado);
     const { data: faturamentosAnt } = await supabase.from('ads_faturamento_canal').select('*').eq('mes_referencia', mesComparativo);
 
-    const consolidado = listaCanais.map(canal => {
-      const itensA = dadosAtual?.filter(d => d.canal === canal) || [];
-      const itensB = dadosAnterior?.filter(d => d.canal === canal) || [];
+    // CONSULTA A TABELA ISOLADA DE LIVES E MÉTRICAS
+    const { data: livesAtualRaw } = await supabase.from('vendas_lives_separadas').select('*');
+    const { data: metricasLivesRaw } = await supabase.from('metricas_lives').select('*');
 
-      const fatAdsAtual = itensA.reduce((sum, i) => sum + Number(i.retorno_bruto || 0), 0);
+    const consolidado = listaCanais.map(canal => {
+      const cNorm = canal.toLowerCase().trim();
+      const isTikTok = cNorm.includes('tiktok');
+
+      const itensA = dadosAtual?.filter(d => String(d.canal || '').toLowerCase().trim() === cNorm) || [];
+      const itensB = dadosAnterior?.filter(d => String(d.canal || '').toLowerCase().trim() === cNorm) || [];
+
+      let fatAdsAtual = itensA.reduce((sum, i) => sum + Number(i.retorno_bruto || 0), 0);
+      let margemRsAtual = itensA.reduce((sum, i) => sum + Number(i.margem_liquida_rs || 0), 0);
+      let invAtual = itensA.reduce((sum, i) => sum + Number(i.investimento || 0), 0);
+
+      // SE FOR TIKTOK, ADICIONA OS DADOS DA ABA LIVES
+      if (isTikTok && livesAtualRaw) {
+        const livesMesAtual = livesAtualRaw.filter(l => verificarDataNoPeriodo(l.data_venda, mesSelecionado));
+        const repasseLivesAtual = livesMesAtual.reduce((sum, l) => sum + Number(l.repasse || 0), 0);
+        const liquidezLivesAtual = livesMesAtual.reduce((sum, l) => sum + Number(l.liquidez || 0), 0);
+        const custoLivesTotal = (metricasLivesRaw || []).reduce((sum, m) => sum + Number(m.custo_total || 0), 0);
+
+        fatAdsAtual += repasseLivesAtual;
+        margemRsAtual += (liquidezLivesAtual - custoLivesTotal);
+      }
+
       const fatAdsAnt = itensB.reduce((sum, i) => sum + Number(i.retorno_bruto || 0), 0);
       const diffAds = fatAdsAtual - fatAdsAnt;
 
-      const invAtual = itensA.reduce((sum, i) => sum + Number(i.investimento || 0), 0);
       const invAnt = itensB.reduce((sum, i) => sum + Number(i.investimento || 0), 0);
 
       const roasAtual = invAtual > 0 ? fatAdsAtual / invAtual : 0;
       const roasAnt = invAnt > 0 ? fatAdsAnt / invAnt : 0;
 
-      const dadosFatAtual = faturamentosAtual?.find(f => f.canal === canal);
+      const dadosFatAtual = faturamentosAtual?.find(f => String(f.canal || '').toLowerCase().trim() === cNorm);
       const fatCanalBrutoAtual = dadosFatAtual?.faturamento_total || "";
       const gastoAdsBrutoAtual = dadosFatAtual?.gasto_ads || "";
       
       const fatCanalAtualDB = Number(fatCanalBrutoAtual);
       const totFatAtual = fatCanalAtualDB > 0 ? fatCanalAtualDB : fatAdsAtual;
 
-      const dadosFatAnt = faturamentosAnt?.find(f => f.canal === canal);
+      const dadosFatAnt = faturamentosAnt?.find(f => String(f.canal || '').toLowerCase().trim() === cNorm);
       const fatCanalAntDB = Number(dadosFatAnt?.faturamento_total || 0);
       const totFatAnt = fatCanalAntDB > 0 ? fatCanalAntDB : fatAdsAnt;
 
       const tacosAtual = totFatAtual > 0 ? (invAtual / totFatAtual) * 100 : 0;
       const tacosAnt = totFatAnt > 0 ? (invAnt / totFatAnt) * 100 : 0;
 
-      const margemRsAtual = itensA.reduce((sum, i) => sum + Number(i.margem_liquida_rs || 0), 0);
       const margemRsAnt = itensB.reduce((sum, i) => sum + Number(i.margem_liquida_rs || 0), 0);
       const diffMargemRs = margemRsAtual - margemRsAnt;
 
@@ -373,7 +394,10 @@ export default function AdsPage() {
     if (isNaN(numVal)) return;
 
     const { data: existente } = await supabase.from('ads_faturamento_canal')
-      .select('*').eq('canal', canal).eq('mes_referencia', mesSelecionado).maybeSingle();
+      .select('*')
+      .ilike('canal', canal)
+      .eq('mes_referencia', mesSelecionado)
+      .maybeSingle();
 
     const payload = {
       canal,
@@ -770,11 +794,16 @@ export default function AdsPage() {
   const limparCanalInteiro = async () => {
     if (!confirm(`ATENÇÃO: Tem certeza que deseja apagar TODOS os registos do canal "${canalSelecionado}" para o período ${mesSelecionado}?`)) return;
 
-    const { error } = await supabase
+    let query = supabase
       .from('ads_campanhas_lancamentos')
       .delete()
-      .eq('canal', canalSelecionado)
-      .eq('mes_referencia', mesSelecionado);
+      .ilike('canal', canalSelecionado);
+
+    if (mesSelecionado !== "TODOS") {
+      query = query.eq('mes_referencia', mesSelecionado);
+    }
+
+    const { error } = await query;
 
     if (error) alert("Erro ao limpar canal: " + error.message);
     else {
@@ -783,8 +812,6 @@ export default function AdsPage() {
       carregarLancamentos();
     }
   };
-
-  // ==================== PROCESSAMENTO DE SUGESTÕES VIA COORDENADAS ====================
 
   const handleUploadPlanilhaSugestao = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -852,7 +879,6 @@ export default function AdsPage() {
 
     salvarConfiguracoesSugestao(canalSugestao);
 
-    // 1. CARREGAMENTO EM TEMPO REAL DAS DEVOLUÇÕES DO SUPABASE
     const { data: dadosDevolucaoRaw } = await supabase
       .from("devolucoes")
       .select("sku, data_retorno, canal");
@@ -860,7 +886,6 @@ export default function AdsPage() {
     const mapaDevContagem = new Map<string, number>();
     if (dadosDevolucaoRaw && dadosDevolucaoRaw.length > 0) {
       dadosDevolucaoRaw.forEach((d: any) => {
-        // Validação da data no período selecionado
         const bateuPeriodo = verificarDataNoPeriodo(d.data_retorno, mesSugestao);
         if (bateuPeriodo) {
           const skuKey = normalizarSku(d.sku);
@@ -871,7 +896,6 @@ export default function AdsPage() {
       });
     }
 
-    // 2. BUSCA DAS VENDAS DA CURVA ABC NO PERÍODO
     const mapaVendasAbc = new Map<string, number>();
     if (mesSugestao !== "TODOS") {
       const { data: dadosAbcRaw } = await supabase
@@ -931,7 +955,6 @@ export default function AdsPage() {
       const impostoLinha = pdv * (impostoPct / 100);
       const custoLinha = qtd * custoUnitario;
 
-      // Execução da fórmula
       let liquidezLinha = 0;
       try {
         let formulaProcessada = formulaLiquidez
@@ -941,7 +964,6 @@ export default function AdsPage() {
           .replace(/\bIMPOSTO\b/gi, `(${impostoPct}/100)`)
           .replace(/(\d+(?:\.\d+)?)%/g, '($1/100)');
 
-        // Substituição das células com linha (ex: S7, H7, I7, Q7)
         formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]+)\d+\b/g, (_match, colLetters) => {
           const cIndex = colLetraParaIndice(colLetters);
           if (cIndex >= 0 && cIndex < row.length) {
@@ -950,7 +972,6 @@ export default function AdsPage() {
           return "0";
         });
 
-        // Letras soltas (ex: S, H, I, Q)
         formulaProcessada = formulaProcessada.replace(/\b([A-Za-z]{1,2})\b/g, (match) => {
           const cIndex = colLetraParaIndice(match);
           if (cIndex >= 0 && cIndex < row.length) {
@@ -997,7 +1018,6 @@ export default function AdsPage() {
       const skuKey = normalizarSku(item.sku);
       const margemPct = item.pdvTotal > 0 ? (item.liquidezValor / item.pdvTotal) * 100 : 0;
       
-      // Cruzamento de devoluções e taxa
       const vendasTotais = mapaVendasAbc.get(skuKey) || item.quantidade;
       const totalDev = mapaDevContagem.get(skuKey) || 0;
       const taxaDevolucao = vendasTotais > 0 ? (totalDev / vendasTotais) * 100 : 0;
@@ -1402,7 +1422,7 @@ export default function AdsPage() {
             <div className="flex flex-wrap items-center justify-between gap-4 mb-8 pb-6 border-b border-slate-800">
               <div>
                 <h2 className="text-xl font-bold text-white">Dashboard Comparativo de Performance & Budget</h2>
-                <p className="text-xs text-slate-400 mt-1">Comparativo entre o período selecionado e o período anterior.</p>
+                <p className="text-xs text-slate-400 mt-1">Comparativo entre o período selecionado e o período anterior (TikTok integrado com as Vendas via Lives).</p>
               </div>
 
               <div className="flex items-center gap-4">

@@ -44,7 +44,6 @@ function normalizarSku(valor: any): string {
   return s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 }
 
-// NORMALIZADOR UNIVERSAL DE PEDIDOS (PRESERVA HIFENS E LETRAS PARA AMAZON E MAGALU)
 function normalizarIdPedido(val: any): string {
   if (val === null || val === undefined) return "";
   return String(val)
@@ -60,7 +59,6 @@ function parseSmartFloat(val: any): number {
   if (val === undefined || val === null || val === '') return 0;
   if (typeof val === 'number') {
     if (isNaN(val)) return 0;
-    // Bloqueia números de série de datas do Excel (44000 a 49000)
     if (val >= 44000 && val <= 49000 && Number.isInteger(Math.floor(val))) return 0;
     return val;
   }
@@ -97,12 +95,11 @@ function parseSmartFloat(val: any): number {
   return num;
 }
 
-// AVALIADOR UNIVERSAL: PROCESSA COLUNA DIRETA OU EXPRESSÃO MATEMÁTICA
+// AVALIADOR UNIVERSAL: SUPORTA CONDICIONAIS (EX: Q >= 79 ? 21.95 : 0)
 function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: number; QTD?: number }): number {
   if (!expr || !expr.trim()) return 0;
   const s = expr.trim();
 
-  // Caso 1: Coluna única de letras (ex: 'P', 'Q', 'AI')
   if (/^[A-Za-z]{1,3}$/.test(s)) {
     const idx = letraParaIndice(s);
     if (idx >= 0 && row[idx] !== undefined) {
@@ -111,7 +108,6 @@ function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: 
     return 0;
   }
 
-  // Caso 2: Expressão matemática com operadores
   try {
     let exp = s;
 
@@ -123,7 +119,6 @@ function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: 
       }
     }
 
-    // Substitui letras isoladas de colunas pelos valores numéricos da linha
     exp = exp.replace(/\b([A-Za-z]{1,2})\d*\b/g, (match, colLetra) => {
       if (/^(true|false|null|undefined)$/i.test(colLetra)) return match;
       const idx = letraParaIndice(colLetra);
@@ -135,7 +130,8 @@ function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: 
 
     exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
 
-    if (/^[0-9+\-*/().\s]+$/.test(exp)) {
+    // REGEX EXPANDIDA: Permite números, operadores matemáticos e operadores condicionais (><=?:!&|)
+    if (/^[0-9+\-*/().\s><=?:!&|]+$/.test(exp)) {
       const res = Function(`"use strict"; return (${exp})`)();
       if (typeof res === 'number' && !isNaN(res)) {
         return Math.max(0, res);
@@ -402,7 +398,6 @@ export default function UpdatesPage() {
     }
   };
 
-  // PASSO 1: SUBIR FATURADOS DA NF-E (EXTRAI TODOS OS FORMATOS DE PEDIDOS)
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -427,15 +422,10 @@ export default function UpdatesPage() {
           
           let pedidoId = null;
 
-          // Padrão 1: Amazon (ex: 701-1168445-0815401 ou 702-8487790-0090662)
           const matchAmazon = rawObs.match(/\b\d{3}-\d{7}-\d{7}\b/);
-          // Padrão 2: Magalu (ex: LU-1574170105895889)
           const matchMagalu = rawObs.match(/\bLU-[A-Z0-9-]+\b/i);
-          // Padrão 3: Mercado Livre (ex: 2000018693952114)
           const matchML = rawObs.match(/\b20000\d+\b/);
-          // Padrão 4: Centauro ou Numérico Longo (ex: 100259330101 ou 58632...)
           const matchNum = rawObs.match(/\b\d{10,20}\b/);
-          // Padrão 5: Alfanumérico geral
           const matchGen = rawObs.match(/\b[A-Z0-9]{8,22}\b/i);
 
           if (matchAmazon) pedidoId = matchAmazon[0].trim();
@@ -472,7 +462,6 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS POR CANAL (COMPATIBILIDADE UNIVERSAL: AMAZON, MAGALU, CENTAURO, CLUBES E ML)
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -486,16 +475,13 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
-        // IDENTIFICAÇÃO DO TIPO DE CANAL
         const canalNorm = canalAlvoDash.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const isFisico = canalNorm.includes("clube") || canalNorm.includes("hebraica") || canalNorm.includes("paineiras");
         const isML = canalNorm.includes("mercado livre");
         const isAmazon = canalNorm.includes("amazon");
 
-        // CARREGA FATURADOS PARA VALIDAÇÃO
         const faturadosBanco = await fetchTodosRegistros('faturados', 'id_pedido', 'mes_referencia', mesAlvoDash);
         
-        // Mapeamentos para garantir matching exato e matching sem traços se necessário
         const idsFaturadosSet = new Set<string>();
         const idsFaturadosSemTracos = new Set<string>();
 
@@ -513,7 +499,6 @@ export default function UpdatesPage() {
           return;
         }
 
-        // CARREGA REGRAS DO CANAL DO BANCO
         const { data: regraData } = await supabase
           .from('config_regras_canais')
           .select('*')
@@ -532,7 +517,6 @@ export default function UpdatesPage() {
           }
         });
 
-        // MAPEAMENTO PADRÃO INTELIGENTE POR CANAL
         const colIdDef = regraData?.col_id_pedido || 'A';
         const colSkuDef = regraData?.col_sku || regraData?.coluna_sku || (isML ? 'E' : (isAmazon ? 'L' : 'B'));
         const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || (isML ? 'I' : (isAmazon ? 'Q' : 'P'));
@@ -548,7 +532,6 @@ export default function UpdatesPage() {
         let totalImportados = 0;
         let ignoradosForaDoMes = 0;
 
-        // O Mercado Livre começa na linha 7 (índice 6); os demais relatórios começam na linha 2 (índice 1)
         let i = isML ? 6 : 1;
 
         while (i < json.length) {
@@ -560,7 +543,6 @@ export default function UpdatesPage() {
 
           let rawId = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
 
-          // Lojas físicas sem ID geram um identificador único de linha
           if (isFisico && !rawId) {
             rawId = `${canalAlvoDash.replace(/\s+/g, '').toUpperCase()}-${i}`;
           }
@@ -573,7 +555,6 @@ export default function UpdatesPage() {
           const idFormatado = normalizarIdPedido(rawId);
           const idSemTracos = idFormatado.replace(/[^A-Z0-9]/g, '');
 
-          // Validação de pedidos contra o faturamento (apenas para canais digitais)
           if (!isFisico) {
             const faturado = idsFaturadosSet.has(idFormatado) || idsFaturadosSemTracos.has(idSemTracos);
             if (!faturado) {
@@ -585,7 +566,6 @@ export default function UpdatesPage() {
 
           const descRaw = idxDescricao >= 0 && row[idxDescricao] !== undefined ? String(row[idxDescricao]).trim() : '';
 
-          // 1. CARRINHO DE PRODUTOS (EXCLUSIVO MERCADO LIVRE)
           if (isML && descRaw.toLowerCase().includes("pacote de") && descRaw.toLowerCase().includes("produtos")) {
             const match = descRaw.match(/\d+/);
             const qtdItensNoPacote = match ? parseInt(match[0], 10) : 0;
@@ -646,7 +626,6 @@ export default function UpdatesPage() {
             }
           }
 
-          // 2. VENDAS NORMAIS (AMAZON, CENTAURO, MAGALU, CLUBES, ETC.)
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
           
@@ -657,7 +636,6 @@ export default function UpdatesPage() {
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
           const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (descRaw || (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial'));
 
-          // CÁLCULO DO REPASSE DA PLATAFORMA (FÓRMULA OU COLUNA DIRETA)
           let repasseLiquido = 0;
           if (formulaExcel && formulaExcel.trim()) {
             repasseLiquido = avaliarExpressaoOuColuna(formulaExcel, row, { PDV: precoVenda, QTD: quantidade });
@@ -665,11 +643,9 @@ export default function UpdatesPage() {
             repasseLiquido = avaliarExpressaoOuColuna(colRepasseDef, row, { PDV: precoVenda, QTD: quantidade });
           }
 
-          // Nas lojas físicas (clubes), o repasse é 100% da venda
           if (isFisico && repasseLiquido <= 0) {
             repasseLiquido = precoVenda;
           } else if (repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * quantidade * 1.5)) {
-            // Taxa padrão da Amazon é em torno de 14%; fallback geral de 16%
             const taxaFallback = isAmazon ? 0.14 : 0.16;
             repasseLiquido = Math.max(0, (precoVenda * quantidade) - ((precoVenda * quantidade) * taxaFallback));
           }
