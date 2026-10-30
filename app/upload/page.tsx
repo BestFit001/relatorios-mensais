@@ -41,14 +41,26 @@ function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  s = s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-  return s;
+  return s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+}
+
+// NORMALIZADOR UNIVERSAL DE PEDIDOS (PRESERVA HIFENS E LETRAS PARA AMAZON E MAGALU)
+function normalizarIdPedido(val: any): string {
+  if (val === null || val === undefined) return "";
+  return String(val)
+    .trim()
+    .replace(/\.0$/, "")
+    .replace(/^['"]/, "")
+    .replace(/['"]$/, "")
+    .replace(/\s+/g, "")
+    .toUpperCase();
 }
 
 function parseSmartFloat(val: any): number {
   if (val === undefined || val === null || val === '') return 0;
   if (typeof val === 'number') {
     if (isNaN(val)) return 0;
+    // Bloqueia números de série de datas do Excel (44000 a 49000)
     if (val >= 44000 && val <= 49000 && Number.isInteger(Math.floor(val))) return 0;
     return val;
   }
@@ -85,12 +97,12 @@ function parseSmartFloat(val: any): number {
   return num;
 }
 
-// AVALIADOR UNIVERSAL: PROCESSA TANTO UMA COLUNA ÚNICA (EX: 'P') QUANTO FÓRMULAS (EX: 'P * O' OU '((P - Q) * O) * 70%')
+// AVALIADOR UNIVERSAL: PROCESSA COLUNA DIRETA OU EXPRESSÃO MATEMÁTICA
 function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: number; QTD?: number }): number {
   if (!expr || !expr.trim()) return 0;
   const s = expr.trim();
 
-  // Caso 1: Se for estritamente uma única letra de coluna (ex: 'P', 'T', 'AI')
+  // Caso 1: Coluna única de letras (ex: 'P', 'Q', 'AI')
   if (/^[A-Za-z]{1,3}$/.test(s)) {
     const idx = letraParaIndice(s);
     if (idx >= 0 && row[idx] !== undefined) {
@@ -99,11 +111,10 @@ function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: 
     return 0;
   }
 
-  // Caso 2: É uma expressão matemática/fórmula (ex: 'P * O' ou '((P - Q) * O) * 70%')
+  // Caso 2: Expressão matemática com operadores
   try {
     let exp = s;
 
-    // Substitui variáveis nomeadas se existirem
     if (variaveis) {
       if (variaveis.PDV !== undefined) exp = exp.replace(/\bPDV\b/gi, String(variaveis.PDV));
       if (variaveis.QTD !== undefined) {
@@ -112,9 +123,8 @@ function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: 
       }
     }
 
-    // Substitui as letras das colunas pelos valores correspondentes da linha (ex: P, Q, O)
+    // Substitui letras isoladas de colunas pelos valores numéricos da linha
     exp = exp.replace(/\b([A-Za-z]{1,2})\d*\b/g, (match, colLetra) => {
-      // Se for palavra reservada ou número já substituído, ignora
       if (/^(true|false|null|undefined)$/i.test(colLetra)) return match;
       const idx = letraParaIndice(colLetra);
       if (idx >= 0 && row[idx] !== undefined) {
@@ -123,19 +133,15 @@ function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: 
       return '0';
     });
 
-    // Converte notação de porcentagem (ex: 70% -> (70 / 100))
     exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
 
-    // Executa a conta em runtime de forma segura
     if (/^[0-9+\-*/().\s]+$/.test(exp)) {
       const res = Function(`"use strict"; return (${exp})`)();
       if (typeof res === 'number' && !isNaN(res)) {
         return Math.max(0, res);
       }
     }
-  } catch (err) {
-    // Em caso de erro na expressão, retorna 0
-  }
+  } catch (err) {}
 
   return 0;
 }
@@ -396,6 +402,7 @@ export default function UpdatesPage() {
     }
   };
 
+  // PASSO 1: SUBIR FATURADOS DA NF-E (EXTRAI TODOS OS FORMATOS DE PEDIDOS)
   const handleSubirFaturados = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -419,19 +426,29 @@ export default function UpdatesPage() {
           const rawObs = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
           
           let pedidoId = null;
-          const matchId = rawObs.match(/\b\d{10,20}\b/) || rawObs.match(/\b[A-Z]+-\d+\b/) || rawObs.match(/\d{3}-\d{7}-\d{7}/) || rawObs.match(/20000[0-9]+/) || rawObs.match(/\b[A-Z0-9]{6,}\b/);
-          if (matchId) {
-            pedidoId = matchId[0].trim();
-          } else if (rawObs) {
-            const numbersOnly = rawObs.replace(/\D/g, '');
-            if (numbersOnly.length >= 8) pedidoId = numbersOnly;
-          }
+
+          // Padrão 1: Amazon (ex: 701-1168445-0815401 ou 702-8487790-0090662)
+          const matchAmazon = rawObs.match(/\b\d{3}-\d{7}-\d{7}\b/);
+          // Padrão 2: Magalu (ex: LU-1574170105895889)
+          const matchMagalu = rawObs.match(/\bLU-[A-Z0-9-]+\b/i);
+          // Padrão 3: Mercado Livre (ex: 2000018693952114)
+          const matchML = rawObs.match(/\b20000\d+\b/);
+          // Padrão 4: Centauro ou Numérico Longo (ex: 100259330101 ou 58632...)
+          const matchNum = rawObs.match(/\b\d{10,20}\b/);
+          // Padrão 5: Alfanumérico geral
+          const matchGen = rawObs.match(/\b[A-Z0-9]{8,22}\b/i);
+
+          if (matchAmazon) pedidoId = matchAmazon[0].trim();
+          else if (matchMagalu) pedidoId = matchMagalu[0].trim();
+          else if (matchML) pedidoId = matchML[0].trim();
+          else if (matchNum) pedidoId = matchNum[0].trim();
+          else if (matchGen) pedidoId = matchGen[0].trim();
 
           const dataFaturamento = String(row[idxData] || "").trim();
 
           if (pedidoId) {
             registros.push({
-              id_pedido: pedidoId,
+              id_pedido: normalizarIdPedido(pedidoId),
               data_faturamento: dataFaturamento || new Date().toISOString().slice(0, 10),
               mes_referencia: mesAlvoDash
             });
@@ -445,7 +462,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Faturados salvos na tabela 'faturados' (${mesAlvoDash})! Total: ${registros.length} registos.`);
+        alert(`✅ Faturados salvos na tabela 'faturados' (${mesAlvoDash})!\nTotal: ${registros.length} pedidos identificados.`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Faturados: " + err.message);
@@ -455,7 +472,7 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // PASSO 2: IMPORTAR VENDAS COM AVALIAÇÃO DE COLUNA OU FÓRMULA NO PDV E NO LÍQUIDO
+  // PASSO 2: IMPORTAR VENDAS POR CANAL (COMPATIBILIDADE UNIVERSAL: AMAZON, MAGALU, CENTAURO, CLUBES E ML)
   const handleSubirVendasCanal = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -469,15 +486,34 @@ export default function UpdatesPage() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
 
+        // IDENTIFICAÇÃO DO TIPO DE CANAL
+        const canalNorm = canalAlvoDash.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const isFisico = canalNorm.includes("clube") || canalNorm.includes("hebraica") || canalNorm.includes("paineiras");
+        const isML = canalNorm.includes("mercado livre");
+        const isAmazon = canalNorm.includes("amazon");
+
+        // CARREGA FATURADOS PARA VALIDAÇÃO
         const faturadosBanco = await fetchTodosRegistros('faturados', 'id_pedido', 'mes_referencia', mesAlvoDash);
-        const idsFaturadosSet = new Set(faturadosBanco.map((f: any) => String(f.id_pedido).trim()));
         
-        if (idsFaturadosSet.size === 0) {
+        // Mapeamentos para garantir matching exato e matching sem traços se necessário
+        const idsFaturadosSet = new Set<string>();
+        const idsFaturadosSemTracos = new Set<string>();
+
+        faturadosBanco.forEach((f: any) => {
+          const idLimpo = normalizarIdPedido(f.id_pedido);
+          if (idLimpo) {
+            idsFaturadosSet.add(idLimpo);
+            idsFaturadosSemTracos.add(idLimpo.replace(/[^A-Z0-9]/g, ''));
+          }
+        });
+        
+        if (!isFisico && idsFaturadosSet.size === 0) {
           alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado na tabela 'faturados' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
           setLoading(false);
           return;
         }
 
+        // CARREGA REGRAS DO CANAL DO BANCO
         const { data: regraData } = await supabase
           .from('config_regras_canais')
           .select('*')
@@ -485,7 +521,6 @@ export default function UpdatesPage() {
           .maybeSingle();
 
         const custosBanco = await fetchTodosRegistros('tabela_custos_skus', 'sku, produto');
-
         const mapaProdutos = new Map();
         const skusBaseSet = new Set();
         custosBanco.forEach((c: any) => {
@@ -497,25 +532,25 @@ export default function UpdatesPage() {
           }
         });
 
-        const isML = canalAlvoDash.toLowerCase().includes("mercado livre");
-
-        // Expressões ou letras salvas para o canal
+        // MAPEAMENTO PADRÃO INTELIGENTE POR CANAL
         const colIdDef = regraData?.col_id_pedido || 'A';
-        const colSkuDef = regraData?.col_sku || regraData?.coluna_sku || (isML ? 'E' : 'B');
-        const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || (isML ? 'I' : 'D');
-        const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || (isML ? 'H' : 'C');
+        const colSkuDef = regraData?.col_sku || regraData?.coluna_sku || (isML ? 'E' : (isAmazon ? 'L' : 'B'));
+        const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || (isML ? 'I' : (isAmazon ? 'Q' : 'P'));
+        const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || (isML ? 'H' : (isAmazon ? 'O' : 'O'));
         const colRepasseDef = regraData?.col_repasse || regraData?.col_estado || (isML ? 'T' : '');
         const formulaExcel = regraData?.formula_excel || '';
 
         const idxId = letraParaIndice(colIdDef);
         const idxSku = letraParaIndice(colSkuDef);
-        const idxDescricao = letraParaIndice(regraData?.col_descricao || "D"); 
+        const idxDescricao = letraParaIndice(regraData?.col_descricao || (isAmazon ? 'K' : 'D')); 
 
         const novasVendas = [];
         let totalImportados = 0;
         let ignoradosForaDoMes = 0;
 
+        // O Mercado Livre começa na linha 7 (índice 6); os demais relatórios começam na linha 2 (índice 1)
         let i = isML ? 6 : 1;
+
         while (i < json.length) {
           const row = json[i];
           if (!row || row.length === 0) {
@@ -524,22 +559,33 @@ export default function UpdatesPage() {
           }
 
           let rawId = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
-          rawId = rawId.replace(/\.0$/, '').replace(/\D/g, '');
+
+          // Lojas físicas sem ID geram um identificador único de linha
+          if (isFisico && !rawId) {
+            rawId = `${canalAlvoDash.replace(/\s+/g, '').toUpperCase()}-${i}`;
+          }
 
           if (!rawId) {
             i++;
             continue;
           }
 
-          if (!idsFaturadosSet.has(rawId)) {
-            ignoradosForaDoMes++;
-            i++;
-            continue;
+          const idFormatado = normalizarIdPedido(rawId);
+          const idSemTracos = idFormatado.replace(/[^A-Z0-9]/g, '');
+
+          // Validação de pedidos contra o faturamento (apenas para canais digitais)
+          if (!isFisico) {
+            const faturado = idsFaturadosSet.has(idFormatado) || idsFaturadosSemTracos.has(idSemTracos);
+            if (!faturado) {
+              ignoradosForaDoMes++;
+              i++;
+              continue;
+            }
           }
 
           const descRaw = idxDescricao >= 0 && row[idxDescricao] !== undefined ? String(row[idxDescricao]).trim() : '';
 
-          // 1. TRATAMENTO DE CARRINHO / PACOTE DE PRODUTOS (EXCLUSIVO ML)
+          // 1. CARRINHO DE PRODUTOS (EXCLUSIVO MERCADO LIVRE)
           if (isML && descRaw.toLowerCase().includes("pacote de") && descRaw.toLowerCase().includes("produtos")) {
             const match = descRaw.match(/\d+/);
             const qtdItensNoPacote = match ? parseInt(match[0], 10) : 0;
@@ -583,7 +629,7 @@ export default function UpdatesPage() {
                 }
 
                 novasVendas.push({
-                  id_pedido: rawId,
+                  id_pedido: idFormatado,
                   canal: canalAlvoDash,
                   mes_referencia: mesAlvoDash,
                   sku: item.skuFinal,
@@ -600,7 +646,7 @@ export default function UpdatesPage() {
             }
           }
 
-          // 2. VENDAS NORMAIS (AVALIA PDV E LÍQUIDO SEJA POR FÓRMULA OU COLUNA)
+          // 2. VENDAS NORMAIS (AMAZON, CENTAURO, MAGALU, CLUBES, ETC.)
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
           const skuNorm = normalizarSku(skuRaw);
           
@@ -609,9 +655,9 @@ export default function UpdatesPage() {
 
           const existeNaBase = skuNorm && skusBaseSet.has(skuNorm);
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
-          const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial');
+          const nomeProduto = existeNaBase ? mapaProdutos.get(skuNorm) : (descRaw || (skuRaw && isNaN(Number(skuRaw)) ? String(skuRaw).trim() : 'Produto Comercial'));
 
-          // CÁLCULO DO LÍQUIDO DO CANAL: PRIORIZA FÓRMULA DE APURAÇÃO, DEPOIS COLUNA DE REPASSE
+          // CÁLCULO DO REPASSE DA PLATAFORMA (FÓRMULA OU COLUNA DIRETA)
           let repasseLiquido = 0;
           if (formulaExcel && formulaExcel.trim()) {
             repasseLiquido = avaliarExpressaoOuColuna(formulaExcel, row, { PDV: precoVenda, QTD: quantidade });
@@ -619,13 +665,17 @@ export default function UpdatesPage() {
             repasseLiquido = avaliarExpressaoOuColuna(colRepasseDef, row, { PDV: precoVenda, QTD: quantidade });
           }
 
-          // Fallback caso não resulte em valor válido
-          if (repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * quantidade * 1.5)) {
-            repasseLiquido = Math.max(0, (precoVenda * quantidade) - ((precoVenda * quantidade) * 0.16));
+          // Nas lojas físicas (clubes), o repasse é 100% da venda
+          if (isFisico && repasseLiquido <= 0) {
+            repasseLiquido = precoVenda;
+          } else if (repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * quantidade * 1.5)) {
+            // Taxa padrão da Amazon é em torno de 14%; fallback geral de 16%
+            const taxaFallback = isAmazon ? 0.14 : 0.16;
+            repasseLiquido = Math.max(0, (precoVenda * quantidade) - ((precoVenda * quantidade) * taxaFallback));
           }
 
           novasVendas.push({
-            id_pedido: rawId,
+            id_pedido: idFormatado,
             canal: canalAlvoDash,
             mes_referencia: mesAlvoDash,
             sku: skuFinal,
@@ -647,7 +697,7 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Vendas salvas em 'vendas_canais' (${mesAlvoDash})!\n• Importados: ${totalImportados} itens\n• Ignorados: ${ignoradosForaDoMes}`);
+        alert(`✅ Vendas salvas em 'vendas_canais' (${mesAlvoDash})!\n• Canal: ${canalAlvoDash} ${isFisico ? '(Loja Física)' : ''}\n• Importados com sucesso: ${totalImportados} itens\n• Descartados (não faturados): ${ignoradosForaDoMes}`);
         carregarVendasPendentes();
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
@@ -1308,7 +1358,6 @@ export default function UpdatesPage() {
                 </p>
               </div>
 
-              {/* BARRA DE AÇÃO EM LOTE */}
               <div className="flex flex-wrap items-center gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
                 <input
                   type="text"
