@@ -117,16 +117,36 @@ export default function DashboardPage() {
     return nome.includes('clube') || nome.includes('loja') || nome.includes('paineiras') || nome.includes('hebraica');
   };
 
-  const parseCurrency = (val: any) => {
+  const parseCurrency = (val: any): number => {
+    if (val === undefined || val === null || val === '') return 0;
     if (typeof val === 'number') return isNaN(val) ? 0 : val;
-    if (!val) return 0;
-    let s = String(val).trim().replace('R$', '').replace('R', '').trim();
-    if (s.includes('.') && s.includes(',')) {
+
+    let s = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(s) || /^\d{2}\/\d{2}\/\d{4}/.test(s)) return 0;
+
+    s = s.replace(/[^\d.,-]/g, '');
+    if (!s) return 0;
+
+    const hasComma = s.includes(',');
+    const hasDot = s.includes('.');
+
+    if (hasComma && hasDot) {
+      if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+        s = s.replace(/\./g, '').replace(',', '.');
+      } else {
+        s = s.replace(/,/g, '');
+      }
+    } else if (hasComma && !hasDot) {
       s = s.replace(/\./g, '').replace(',', '.');
-    } else if (s.includes(',')) {
-      s = s.replace(',', '.');
+    } else if (hasDot && !hasComma) {
+      const parts = s.split('.');
+      if (parts.length > 2) {
+        s = s.replace(/\./g, '');
+      }
     }
-    const num = Number(s);
+
+    const num = parseFloat(s);
+    if (!isNaN(num) && num > 500000) return 0;
     return isNaN(num) ? 0 : num;
   };
 
@@ -136,7 +156,7 @@ export default function DashboardPage() {
     const adicionar = (nome: any) => {
       let limpo = String(nome || '').trim();
       if (!limpo) return;
-      if (normalizarTexto(limpo).includes('mercado livre 3')) return; // Bloqueia o ML3 fantasma
+      if (normalizarTexto(limpo).includes('mercado livre 3')) return;
       if (normalizarTexto(limpo).includes('magazine luiza')) limpo = 'Magalu';
       mapa.set(normalizarTexto(limpo), limpo);
     };
@@ -305,8 +325,8 @@ export default function DashboardPage() {
         const custoFlex = flexMap.get(ped) || 0;
         
         let repasseLiquido = parseCurrency(s.repasse_liquido);
-        if (isNaN(repasseLiquido) || repasseLiquido <= 0) {
-          repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.09));
+        if (isNaN(repasseLiquido) || repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * 1.5)) {
+          repasseLiquido = Math.max(0, precoVenda - (precoVenda * 0.16));
         }
         
         const nomeCanal = normalizarTexto(s.canal);
@@ -447,7 +467,7 @@ export default function DashboardPage() {
       diffDigital,
       totalCancelamentosValor
     };
-  }, [enrichedSales, adsMap, appliedChannelFilter, canaisOficiais, channelRules, goals, currentRefMonth, activeCancelados]);
+  }, [enrichedSales, adsMap, appliedChannelFilter, canaisOficiais, goals, currentRefMonth, activeCancelados]);
 
   const { targetDateStr, labelVendasDia } = useMemo(() => {
     const d = new Date();
@@ -529,7 +549,9 @@ export default function DashboardPage() {
           devFreteLiquido += freteVal;
           
           let repDev = parseCurrency(d.repasse_liquido || d.repasse);
-          if (isNaN(repDev) || repDev <= 0) repDev = pdvVal - (pdvVal * 0.09);
+          if (isNaN(repDev) || repDev <= 0 || (pdvVal > 0 && repDev > pdvVal * 1.5)) {
+            repDev = Math.max(0, pdvVal - (pdvVal * 0.16));
+          }
           devRepasseLiquido += repDev;
 
           const skuDev = normalizarSku(d.sku);
@@ -539,10 +561,7 @@ export default function DashboardPage() {
         }
       });
 
-      // FAT. BRUTO: Soma original de todas as vendas brutas do canal
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
-      
-      // C/ REDUTOR: Faturamento do canal menos as devoluções (PDV) e cancelamentos do mês
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
