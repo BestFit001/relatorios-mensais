@@ -22,11 +22,11 @@ export default function RegrasPage() {
   const [metaValor, setMetaValor] = useState<number | string>(0);
   const [responsavelCanal, setResponsavelCanal] = useState('Equipe Best Fit');
   const [logoUrl, setLogoUrl] = useState('');
-  const [formulaApuracao, setFormulaApuracao] = useState('D2 - (D2 * 12%)');
+  const [formulaApuracao, setFormulaApuracao] = useState('PDV - (PDV * 12%)');
   const [colunasFoco, setColunasFoco] = useState({
     idPedido: 'A',
     sku: 'B',
-    cupomEstado: 'C',
+    repasse: 'C',
     precoVenda: 'D',
     quantidade: 'G'
   });
@@ -105,21 +105,21 @@ export default function RegrasPage() {
   const carregarRegrasCanalEspecifico = async (canal: string) => {
     const { data: regraDb } = await supabase.from('config_regras_canais').select('*').eq('canal', canal).maybeSingle();
     if (regraDb) {
-      setFormulaApuracao(regraDb.formula_excel || 'D2 - (D2 * 12%)');
+      setFormulaApuracao(regraDb.formula_excel || 'PDV - (PDV * 12%)');
       setResponsavelCanal(regraDb.responsavel || 'Equipe Best Fit');
       setLogoUrl(regraDb.logo_url || '');
       setColunasFoco({
         idPedido: regraDb.col_id_pedido || 'A',
         sku: regraDb.col_sku || 'B',
-        cupomEstado: regraDb.col_estado || 'C',
+        repasse: regraDb.col_repasse || regraDb.col_estado || 'C',
         precoVenda: regraDb.col_pdv || regraDb.col_preco_venda || 'D',
         quantidade: regraDb.col_quantidade || 'G'
       });
     } else {
-      setFormulaApuracao('D2 - (D2 * 12%)');
+      setFormulaApuracao('PDV - (PDV * 12%)');
       setResponsavelCanal('Equipe Best Fit');
       setLogoUrl('');
-      setColunasFoco({ idPedido: 'A', sku: 'B', cupomEstado: 'C', precoVenda: 'D', quantidade: 'G' });
+      setColunasFoco({ idPedido: 'A', sku: 'B', repasse: 'C', precoVenda: 'D', quantidade: 'G' });
     }
 
     const { data: metaDb } = await supabase.from('tb_metas').select('*').eq('canal', canal).maybeSingle();
@@ -143,6 +143,7 @@ export default function RegrasPage() {
   const salvarRegrasCanalAtual = async () => {
     setSalvando(true);
     try {
+      const repasseCol = colunasFoco.repasse.toUpperCase().trim();
       await supabase.from('config_regras_canais').upsert([{
         canal: canalSelecionado,
         formula_excel: formulaApuracao,
@@ -150,7 +151,8 @@ export default function RegrasPage() {
         logo_url: logoUrl,
         col_id_pedido: colunasFoco.idPedido.toUpperCase(),
         col_sku: colunasFoco.sku.toUpperCase(),
-        col_estado: colunasFoco.cupomEstado.toUpperCase(),
+        col_repasse: repasseCol,
+        col_estado: repasseCol, // Mantém compatibilidade com a coluna legada no banco
         col_pdv: colunasFoco.precoVenda.toUpperCase(),
         col_quantidade: colunasFoco.quantidade.toUpperCase()
       }], { onConflict: 'canal' });
@@ -162,7 +164,7 @@ export default function RegrasPage() {
         responsavel: responsavelCanal
       }], { onConflict: 'canal, mes_referencia' });
 
-      alert(`✅ Regras e meta do canal "${canalSelecionado}" salvas com sucesso na nuvem!`);
+      alert(`✅ Regras, coluna de repasse e meta do canal "${canalSelecionado}" salvas com sucesso!`);
     } catch (err: any) {
       alert("Erro ao salvar: " + err.message);
     }
@@ -305,7 +307,7 @@ export default function RegrasPage() {
               </div>
             </div>
 
-            {/* BLOCO DE CONFIGURAÇÃO EXATA DO CANAL SELECIONADO (SEM TRAVA DE 2 CARACTERES) */}
+            {/* BLOCO DE CONFIGURAÇÃO DO CANAL SELECIONADO */}
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
               <div className="flex justify-between items-center border-b border-slate-800 pb-4">
                 <h2 className="text-lg font-extrabold text-indigo-400">Configurando Canal: {canalSelecionado}</h2>
@@ -364,7 +366,7 @@ export default function RegrasPage() {
               </div>
 
               <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-300">Fórmula de Apuração (Ex: D2 - (D2 * 12%)):</label>
+                <label className="block text-xs font-bold text-slate-300">Fórmula de Apuração do Repasse (Ex: (QTD * PDV) - (PDV * 12%)):</label>
                 <input 
                   type="text" 
                   value={formulaApuracao} 
@@ -385,8 +387,8 @@ export default function RegrasPage() {
                     <input type="text" value={colunasFoco.sku} onChange={e => setColunasFoco({...colunasFoco, sku: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
-                    <span className="block text-[10px] font-bold text-rose-400 mb-1">Cupom/Estado</span>
-                    <input type="text" value={colunasFoco.cupomEstado} onChange={e => setColunasFoco({...colunasFoco, cupomEstado: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-rose-400 font-mono font-bold text-center uppercase outline-none" />
+                    <span className="block text-[10px] font-bold text-emerald-400 mb-1">Coluna Repasse</span>
+                    <input type="text" value={colunasFoco.repasse} onChange={e => setColunasFoco({...colunasFoco, repasse: e.target.value.toUpperCase()})} placeholder="Ex: T ou C" className="w-full bg-slate-900 border border-emerald-500/40 rounded-lg p-2.5 text-xs text-emerald-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-amber-400 mb-1">Preço Venda (PDV)</span>
@@ -502,7 +504,7 @@ export default function RegrasPage() {
               </div>
             </div>
 
-            {/* CONFIGURAÇÕES GERAIS TNY & CUSTOS */}
+            {/* CONFIGURAÇÕES GERAIS TINY & CUSTOS */}
             <form onSubmit={salvarConfiguracoesGeraisTiny} className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
               
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
