@@ -10,12 +10,16 @@ export default function RegrasPage() {
   const [salvando, setSalvando] = useState(false);
   const router = useRouter();
 
-  // Canais disponíveis no seletor (incluindo as lojas físicas obrigatórias e os de marketplace)
+  // Canais disponíveis no seletor
   const [canais, setCanais] = useState<string[]>([
     'Mercado Livre 1', 'Mercado Livre 2', 'Amazon', 'Magalu', 'Shopee', 'TikTok', 'Shein', 'Netshoes', 'Site', 'Clube Hebraica', 'Clube Paineiras', 'Centauro'
   ]);
   const [canalSelecionado, setCanalSelecionado] = useState('Mercado Livre 1');
   const [novoCanalInput, setNovoCanalInput] = useState('');
+
+  // Configuração global de Imposto sobre Vendas (válido para todos os canais)
+  const [impostoGlobal, setImpostoGlobal] = useState<string>("6.00");
+  const [salvandoImposto, setSalvandoImposto] = useState(false);
 
   // Estado da regra do canal selecionado
   const [metaMes, setMetaMes] = useState('outubro de 2026');
@@ -26,12 +30,12 @@ export default function RegrasPage() {
   const [colunasFoco, setColunasFoco] = useState({
     idPedido: 'A',
     sku: 'B',
-    repasse: 'C',
-    precoVenda: 'D',
-    quantidade: 'G'
+    precoVenda: 'P',
+    quantidade: 'O',
+    repasseDireto: ''
   });
 
-  // Estados do outro app mantidos (Tiny, Custos e ML)
+  // Estados mantidos (Tiny, Custos e ML)
   const [metaTacos, setMetaTacos] = useState("2"); 
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   const [regrasCustos, setRegrasCustos] = useState({ sku: 'A', produto: 'B', custo: 'C', marca: 'D' });
@@ -74,6 +78,9 @@ export default function RegrasPage() {
       const tacosSalvo = configs.find((t: any) => t.campo === 'meta_tacos')?.coluna || "2";
       setMetaTacos(tacosSalvo);
 
+      const impostoSalvo = configs.find((t: any) => t.campo === 'imposto_global')?.coluna || "6.00";
+      setImpostoGlobal(impostoSalvo);
+
       const canaisSalvos = configs.find((t: any) => t.campo === 'canais_dashboard');
       if (canaisSalvos && canaisSalvos.coluna) {
         try {
@@ -111,15 +118,15 @@ export default function RegrasPage() {
       setColunasFoco({
         idPedido: regraDb.col_id_pedido || 'A',
         sku: regraDb.col_sku || 'B',
-        repasse: regraDb.col_repasse || regraDb.col_estado || 'C',
-        precoVenda: regraDb.col_pdv || regraDb.col_preco_venda || 'D',
-        quantidade: regraDb.col_quantidade || 'G'
+        precoVenda: regraDb.col_pdv || regraDb.col_preco_venda || 'P',
+        quantidade: regraDb.col_quantidade || 'O',
+        repasseDireto: regraDb.col_repasse || regraDb.col_estado || ''
       });
     } else {
       setFormulaApuracao('PDV - (PDV * 12%)');
       setResponsavelCanal('Equipe Best Fit');
       setLogoUrl('');
-      setColunasFoco({ idPedido: 'A', sku: 'B', repasse: 'C', precoVenda: 'D', quantidade: 'G' });
+      setColunasFoco({ idPedido: 'A', sku: 'B', precoVenda: 'P', quantidade: 'O', repasseDireto: '' });
     }
 
     const { data: metaDb } = await supabase.from('tb_metas').select('*').eq('canal', canal).maybeSingle();
@@ -143,9 +150,8 @@ export default function RegrasPage() {
   const salvarRegrasCanalAtual = async () => {
     setSalvando(true);
     try {
-      const repasseCol = colunasFoco.repasse ? colunasFoco.repasse.toUpperCase().trim() : '';
+      const repasseCol = colunasFoco.repasseDireto ? colunasFoco.repasseDireto.toUpperCase().trim() : '';
 
-      // 1. Salva regras do canal checando erro explicitamente
       const { error: erroRegra } = await supabase.from('config_regras_canais').upsert([{
         canal: canalSelecionado,
         formula_excel: formulaApuracao,
@@ -161,7 +167,6 @@ export default function RegrasPage() {
 
       if (erroRegra) throw new Error("Erro ao salvar regras: " + erroRegra.message);
 
-      // 2. Salva meta do mês checando erro explicitamente
       const { error: erroMeta } = await supabase.from('tb_metas').upsert([{
         canal: canalSelecionado,
         mes_referencia: metaMes,
@@ -171,11 +176,28 @@ export default function RegrasPage() {
 
       if (erroMeta) throw new Error("Erro ao salvar meta: " + erroMeta.message);
 
-      alert(`✅ Regras, coluna de repasse e meta do canal "${canalSelecionado}" salvas com sucesso!`);
+      alert(`✅ Configurações e fórmula do canal "${canalSelecionado}" salvas com sucesso!`);
     } catch (err: any) {
       alert("❌ " + err.message);
     } finally {
       setSalvando(false);
+    }
+  };
+
+  const salvarImpostoGlobal = async () => {
+    setSalvandoImposto(true);
+    try {
+      const { error } = await supabase.from('config_regras_tiny').upsert([{
+        campo: 'imposto_global',
+        coluna: impostoGlobal.toString().trim()
+      }], { onConflict: 'campo' });
+
+      if (error) throw error;
+      alert(`✅ Alíquota de imposto (${impostoGlobal}%) salva para todos os canais!`);
+    } catch (err: any) {
+      alert("Erro ao salvar imposto: " + err.message);
+    } finally {
+      setSalvandoImposto(false);
     }
   };
 
@@ -205,6 +227,7 @@ export default function RegrasPage() {
 
     const configs = [
       { campo: 'meta_tacos', coluna: metaTacos.toString() },
+      { campo: 'imposto_global', coluna: impostoGlobal.toString() },
       { campo: 'sku', coluna: regrasTiny.sku.toUpperCase() },
       { campo: 'estoque', coluna: regrasTiny.estoque.toUpperCase() },
       { campo: 'status_sku', coluna: regrasTiny.status_sku.toUpperCase() },
@@ -267,8 +290,8 @@ export default function RegrasPage() {
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Central de Regras</h1>
-            <p className="text-sm font-medium text-slate-400">Configure canais, fórmulas de apuração do Dashboard e regras de colunas</p>
+            <h1 className="text-2xl font-black text-white tracking-tight">Central de Regras & Parametrização</h1>
+            <p className="text-sm font-medium text-slate-400">Configure alíquotas fiscais, fórmulas de apuração de canais e colunas de relatórios.</p>
           </div>
           <Navbar />
         </div>
@@ -277,6 +300,40 @@ export default function RegrasPage() {
           <p className="p-8 text-center text-slate-400">A carregar configurações...</p>
         ) : (
           <div className="space-y-8">
+
+            {/* CARD GLOBAL DE IMPOSTO SOBRE VENDAS */}
+            <div className="bg-gradient-to-r from-slate-900 to-indigo-950/70 p-6 rounded-2xl border border-indigo-800/40 shadow-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 block mb-1">Fiscal Omnichannel</span>
+                <h2 className="text-lg font-black text-white">Alíquota de Imposto sobre Vendas (Simples Nacional)</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Esta alíquota será multiplicada pelo PDV faturado e <strong>descontada da liquidez real</strong> (não do repasse da plataforma).
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 bg-slate-950 p-2 rounded-xl border border-slate-800">
+                <div className="flex items-center gap-1.5 px-3">
+                  <span className="text-xs font-bold text-slate-400">%</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={impostoGlobal}
+                    onChange={e => setImpostoGlobal(e.target.value)}
+                    placeholder="Ex: 6.00"
+                    className="w-20 bg-transparent text-emerald-400 font-mono font-black text-base outline-none text-right"
+                  />
+                  <span className="text-xs text-slate-400 font-bold">%</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={salvarImpostoGlobal}
+                  disabled={salvandoImposto}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-lg transition uppercase tracking-wider cursor-pointer shadow"
+                >
+                  {salvandoImposto ? "Salvando..." : "Salvar Imposto"}
+                </button>
+              </div>
+            </div>
 
             {/* SELETOR DE CANAIS E ADICIONAR NOVO CANAL */}
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
@@ -303,7 +360,7 @@ export default function RegrasPage() {
                   value={novoCanalInput} 
                   onChange={e => setNovoCanalInput(e.target.value)} 
                   placeholder="Novo canal (ex: Dafiti)..." 
-                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none"
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none" 
                 />
                 <button 
                   type="button" 
@@ -319,7 +376,7 @@ export default function RegrasPage() {
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
               <div className="flex justify-between items-center border-b border-slate-800 pb-4">
                 <h2 className="text-lg font-extrabold text-indigo-400">Configurando Canal: {canalSelecionado}</h2>
-                <span className="text-xs text-slate-400 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">Parâmetros do Dash</span>
+                <span className="text-xs text-slate-400 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">Parâmetros de Apuração</span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -373,38 +430,49 @@ export default function RegrasPage() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-300">Fórmula de Apuração do Repasse (Ex: PDV - Q ou (QTD * PDV) - (PDV * 12%)):</label>
+              {/* FÓRMULA DE APURAÇÃO DO REPASSE / LÍQUIDO DO CANAL */}
+              <div className="space-y-2 bg-slate-950 p-5 rounded-xl border border-purple-900/40">
+                <div className="flex justify-between items-center">
+                  <label className="block text-xs font-bold text-purple-300 uppercase tracking-wider">
+                    Fórmula de Apuração do Líquido / Repasse da Plataforma:
+                  </label>
+                  <span className="text-[10px] text-emerald-400 font-mono font-bold">Calculado Linha a Linha</span>
+                </div>
                 <input 
                   type="text" 
                   value={formulaApuracao} 
                   onChange={e => setFormulaApuracao(e.target.value)} 
-                  className="w-full bg-slate-950 border border-purple-500/40 rounded-xl p-3 font-mono text-xs font-bold text-purple-300 outline-none" 
+                  placeholder="Ex: (P - Q) * O ou (QTD * PDV) - (PDV * 12%) ou PDV - Q" 
+                  className="w-full bg-slate-900 border border-purple-500/50 rounded-xl p-3.5 font-mono text-xs font-bold text-purple-200 outline-none focus:border-purple-400 shadow-inner" 
                 />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Exemplos: Centauro = <code className="text-purple-300 font-bold">(P - Q) * O</code> ou <code className="text-purple-300 font-bold">PDV - Q</code>. Se a planilha já trouxer o líquido pronto (como o Mercado Livre na coluna T), pode deixar este campo em branco e preencher a coluna direta abaixo[cite: 17, 19].
+                </p>
               </div>
 
+              {/* MAPEAMENTO DAS 4 COLUNAS FOCO + REPASSE DIRETO */}
               <div className="space-y-3 pt-2">
-                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Mapeamento das 5 Colunas Foco:</label>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Mapeamento das Colunas da Planilha:</label>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
                   <div>
                     <span className="block text-[10px] font-bold text-slate-400 mb-1">ID Pedido</span>
-                    <input type="text" value={colunasFoco.idPedido} onChange={e => setColunasFoco({...colunasFoco, idPedido: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.idPedido} onChange={e => setColunasFoco({...colunasFoco, idPedido: e.target.value.toUpperCase()})} placeholder="Ex: A" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-slate-400 mb-1">SKU</span>
-                    <input type="text" value={colunasFoco.sku} onChange={e => setColunasFoco({...colunasFoco, sku: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
-                  </div>
-                  <div>
-                    <span className="block text-[10px] font-bold text-emerald-400 mb-1">Coluna Repasse</span>
-                    <input type="text" value={colunasFoco.repasse} onChange={e => setColunasFoco({...colunasFoco, repasse: e.target.value.toUpperCase()})} placeholder="Ex: T ou Q" className="w-full bg-slate-900 border border-emerald-500/40 rounded-lg p-2.5 text-xs text-emerald-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.sku} onChange={e => setColunasFoco({...colunasFoco, sku: e.target.value.toUpperCase()})} placeholder="Ex: N ou B" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-amber-400 mb-1">Preço Venda (PDV)</span>
-                    <input type="text" value={colunasFoco.precoVenda} onChange={e => setColunasFoco({...colunasFoco, precoVenda: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-amber-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.precoVenda} onChange={e => setColunasFoco({...colunasFoco, precoVenda: e.target.value.toUpperCase()})} placeholder="Ex: P" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-amber-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                   <div>
                     <span className="block text-[10px] font-bold text-cyan-400 mb-1">Quantidade</span>
-                    <input type="text" value={colunasFoco.quantidade} onChange={e => setColunasFoco({...colunasFoco, quantidade: e.target.value.toUpperCase()})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-cyan-400 font-mono font-bold text-center uppercase outline-none" />
+                    <input type="text" value={colunasFoco.quantidade} onChange={e => setColunasFoco({...colunasFoco, quantidade: e.target.value.toUpperCase()})} placeholder="Ex: O" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-cyan-400 font-mono font-bold text-center uppercase outline-none" />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-slate-400 mb-1">Repasse Direto (Opc.)</span>
+                    <input type="text" value={colunasFoco.repasseDireto} onChange={e => setColunasFoco({...colunasFoco, repasseDireto: e.target.value.toUpperCase()})} placeholder="Ex: T (ML)" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-300 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                 </div>
               </div>
@@ -416,7 +484,7 @@ export default function RegrasPage() {
                   disabled={salvando}
                   className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-8 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-purple-950/50"
                 >
-                  {salvando ? "A salvar..." : `Salvar Alterações de ${canalSelecionado}`}
+                  {salvando ? "A salvar..." : `Salvar Regras de ${canalSelecionado}`}
                 </button>
               </div>
             </div>
