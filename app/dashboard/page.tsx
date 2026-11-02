@@ -160,6 +160,43 @@ export default function DashboardPage() {
     return isNaN(num) ? 0 : num;
   };
 
+  // Avaliador de expressões matemáticas e condicionais (ex: ternários como Q >= 79 ? 21.95 : 0)
+  const avaliarFormulaRepasse = (formula: string, pdv: number, qtd: number, colPdv?: string, colQtd?: string): number | null => {
+    if (!formula || !formula.trim()) return null;
+    try {
+      let exp = formula.trim();
+
+      // Substituição de variáveis nomeadas
+      exp = exp.replace(/\bPDV\b/gi, String(pdv));
+      exp = exp.replace(/\bQTD\b/gi, String(qtd));
+      exp = exp.replace(/\bQUANTIDADE\b/gi, String(qtd));
+
+      // Substituição caso a letra da coluna tenha sido usada na fórmula (ex: coluna Q ou P para PDV, O para QTD)
+      if (colPdv && colPdv.trim()) {
+        const regexPdv = new RegExp(`\\b${colPdv.trim()}\\b`, 'gi');
+        exp = exp.replace(regexPdv, String(pdv));
+      }
+      if (colQtd && colQtd.trim()) {
+        const regexQtd = new RegExp(`\\b${colQtd.trim()}\\b`, 'gi');
+        exp = exp.replace(regexQtd, String(qtd));
+      }
+
+      // Converte percentagens (ex: 14% -> (14 / 100))
+      exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
+
+      // Validação expandida com suporte a operadores lógicos e ternários (><=?:!&|)
+      if (/^[0-9+\-*/().\s><=?:!&|]+$/.test(exp)) {
+        const calc = Function(`"use strict"; return (${exp})`)();
+        if (typeof calc === 'number' && !isNaN(calc) && calc >= 0) {
+          return calc;
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao avaliar fórmula:", e);
+    }
+    return null;
+  };
+
   // Harmonização universal de formatos de mês (ex: 2026-10 <-> 10/2026 <-> outubro de 2026)
   const currentRefMonth = useMemo(() => {
     if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate) return appliedStartDate.slice(0, 7);
@@ -365,22 +402,14 @@ export default function DashboardPage() {
         const ruleObj = channelRules.find((r: any) => normalizarTexto(canonizarCanal(r.canal, canaisOficiais)) === normalizarTexto(s.canal)) || {};
         let repasseLiquido = parseCurrency(s.repasse_liquido);
 
-        // Aplicação da fórmula do canal cadastrada na aba de Regras
+        // Avaliação da fórmula dinâmica cadastrada no canal
         if (ruleObj.formula_excel && ruleObj.formula_excel.trim()) {
-          try {
-            let exp = ruleObj.formula_excel.trim();
-            exp = exp.replace(/\bPDV\b/gi, String(precoVenda));
-            exp = exp.replace(/\bQTD\b/gi, String(qtd));
-            exp = exp.replace(/\bQUANTIDADE\b/gi, String(qtd));
-            exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
-
-            if (/^[0-9+\-*/().\s]+$/.test(exp)) {
-              const calc = Function(`"use strict"; return (${exp})`)();
-              if (typeof calc === 'number' && !isNaN(calc) && calc >= 0) {
-                repasseLiquido = calc;
-              }
-            }
-          } catch (e) {}
+          const colPdv = ruleObj.col_pdv || ruleObj.col_preco_venda || 'P';
+          const colQtd = ruleObj.col_quantidade || 'O';
+          const calculado = avaliarFormulaRepasse(ruleObj.formula_excel, precoVenda, qtd, colPdv, colQtd);
+          if (calculado !== null) {
+            repasseLiquido = calculado;
+          }
         }
 
         if (isNaN(repasseLiquido) || repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * qtd * 1.5)) {
@@ -503,19 +532,12 @@ export default function DashboardPage() {
           let repDev = parseCurrency(d.repasse_liquido || d.repasse);
 
           if (ruleObj.formula_excel && ruleObj.formula_excel.trim()) {
-            try {
-              let exp = ruleObj.formula_excel.trim();
-              exp = exp.replace(/\bPDV\b/gi, String(pdvVal));
-              exp = exp.replace(/\bQTD\b/gi, String(qtdDev));
-              exp = exp.replace(/\bQUANTIDADE\b/gi, String(qtdDev));
-              exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
-              if (/^[0-9+\-*/().\s]+$/.test(exp)) {
-                const calcDev = Function(`"use strict"; return (${exp})`)();
-                if (typeof calcDev === 'number' && !isNaN(calcDev) && calcDev >= 0) {
-                  repDev = calcDev;
-                }
-              }
-            } catch (e) {}
+            const colPdv = ruleObj.col_pdv || ruleObj.col_preco_venda || 'P';
+            const colQtd = ruleObj.col_quantidade || 'O';
+            const calculadoDev = avaliarFormulaRepasse(ruleObj.formula_excel, pdvVal, qtdDev, colPdv, colQtd);
+            if (calculadoDev !== null) {
+              repDev = calculadoDev;
+            }
           }
 
           if (isNaN(repDev) || repDev <= 0 || (pdvVal > 0 && repDev > pdvVal * 1.5)) {
