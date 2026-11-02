@@ -5,24 +5,27 @@ import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 
 const rotasDisponiveis = [
-  { id: "/", nome: "Dashboard (Curva ABC)" },
-  { id: "/marketing", nome: "Marketing (Postagens)" },
+  { id: "/", nome: "Curva ABC (Início)" },
+  { id: "/dashboard", nome: "Dashboard de Faturamento" },
+  { id: "/reputacao", nome: "Reputação dos Canais" },
+  { id: "/marketing", nome: "Marketing" },
   { id: "/mapeamento", nome: "Cadastros" },
   { id: "/ads", nome: "Adsense" },
   { id: "/devolucoes", nome: "Devoluções" },
-  { id: "/full", nome: "FULL / FBA" },
-  { id: "/plp", nome: "PLPs" },
+  { id: "/full", nome: "Fulfillment (FULL / FBA)" },
+  { id: "/lives", nome: "Lives" },
+  { id: "/plp", nome: "PLPs (Expedição)" },
   { id: "/calculadora", nome: "Calculadora" },
+  { id: "/produtos", nome: "Produtos & Vídeos" },
+  { id: "/padronizacao", nome: "Padronização IA" },
   { id: "/promocoes/ml", nome: "Promoções: Mercado Livre" },
   { id: "/promocoes/magalu", nome: "Promoções: Magazine Luiza" },
   { id: "/promocoes/shopee", nome: "Promoções: Shopee" },
   { id: "/promocoes/tiktok", nome: "Promoções: TikTok Shop" },
-  { id: "/produtos", nome: "Produtos" },
-  { id: "/padronizacao", nome: "Padronização" },
   { id: "/agenda", nome: "Agenda (Restrito)" }, 
-  { id: "/regras", nome: "Regras" },
-  { id: "/upload", nome: "Uploads" },
-  { id: "/admin", nome: "Admin" }
+  { id: "/regras", nome: "Regras Gerais" },
+  { id: "/upload", nome: "Uploads Base" },
+  { id: "/admin", nome: "Painel Admin" }
 ];
 
 export default function AdminPage() {
@@ -65,6 +68,14 @@ export default function AdminPage() {
     } else {
       setPaginasSelecionadas(["/"]);
     }
+  };
+
+  const selecionarTodas = () => {
+    setPaginasSelecionadas(rotasDisponiveis.map(r => r.id));
+  };
+
+  const desmarcarTodas = () => {
+    setPaginasSelecionadas(["/"]);
   };
 
   const togglePagina = (id: string) => {
@@ -165,6 +176,7 @@ export default function AdminPage() {
           <Navbar />
         </div>
 
+        {/* MONITORIZAÇÃO DB */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex flex-col md:flex-row items-center justify-between gap-6">
           <div>
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
@@ -188,12 +200,13 @@ export default function AdminPage() {
           </div>
         </div>
 
+        {/* CADASTRO DE NOVO UTILIZADOR */}
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
           <h2 className="text-lg font-bold mb-4 text-white">Cadastrar Novo Utilizador</h2>
           <form onSubmit={cadastrarUsuario} className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <input 
               type="email" 
-              placeholder="felipe.camargo@usebestfit.com.br" 
+              placeholder="utilizador@usebestfit.com.br" 
               value={email} 
               onChange={(e) => setEmail(e.target.value)} 
               required
@@ -212,22 +225,43 @@ export default function AdminPage() {
               onChange={(e) => handlePerfilChange(e.target.value)}
               className="border border-slate-700 rounded-xl p-3 bg-slate-950 text-white text-xs outline-none cursor-pointer focus:border-indigo-500"
             >
-              <option value="compras">Comprador(a) / Operacional</option>
+              <option value="compras">Operacional / Visualizador</option>
               <option value="admin">Administrador (Total Acesso)</option>
             </select>
 
             <div className="md:col-span-3 bg-slate-950 p-5 rounded-xl border border-slate-800">
-              <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-3">Marque as Abas Permitidas para este utilizador:</label>
-              <div className="flex flex-wrap gap-3">
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  Marque as Páginas Permitidas:
+                </label>
+                <div className="flex gap-2">
+                  <button 
+                    type="button" 
+                    onClick={selecionarTodas} 
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase cursor-pointer"
+                  >
+                    Marcar Todas
+                  </button>
+                  <span className="text-slate-600">|</span>
+                  <button 
+                    type="button" 
+                    onClick={desmarcarTodas} 
+                    className="text-[10px] text-slate-500 hover:text-slate-400 font-bold uppercase cursor-pointer"
+                  >
+                    Limpar
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
                 {rotasDisponiveis.map(rota => (
-                  <label key={rota.id} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-200 bg-slate-900 px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors">
+                  <label key={rota.id} className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-slate-200 bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 hover:border-slate-700 hover:bg-slate-850 transition-colors">
                     <input 
                       type="checkbox" 
                       checked={paginasSelecionadas.includes(rota.id)} 
                       onChange={() => togglePagina(rota.id)} 
                       className="accent-indigo-600 w-4 h-4 cursor-pointer" 
                     />
-                    {rota.nome}
+                    <span className="truncate">{rota.nome}</span>
                   </label>
                 ))}
               </div>
@@ -245,6 +279,7 @@ export default function AdminPage() {
           </form>
         </div>
 
+        {/* TABELA DE UTILIZADORES */}
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
           <h2 className="text-lg font-bold mb-4 text-white">Utilizadores Registados e Permissões</h2>
           
@@ -292,7 +327,7 @@ export default function AdminPage() {
                           {isEditing ? (
                             <div className="flex flex-wrap gap-2 max-w-xl">
                               {rotasDisponiveis.map(rota => (
-                                <label key={rota.id} className="flex items-center gap-1.5 cursor-pointer text-[10px] font-semibold bg-slate-950 px-2.5 py-1.5 rounded border border-slate-700">
+                                <label key={rota.id} className="flex items-center gap-1.5 cursor-pointer text-[10px] font-semibold bg-slate-950 px-2 py-1.5 rounded border border-slate-700">
                                   <input 
                                     type="checkbox" 
                                     checked={editandoPaginas.includes(rota.id)} 
