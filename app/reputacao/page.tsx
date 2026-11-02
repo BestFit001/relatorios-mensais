@@ -3,26 +3,13 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "../components/Navbar";
-import { 
-  BarChart3, 
-  Plus, 
-  Settings2, 
-  Calendar, 
-  AlertCircle, 
-  CheckCircle2, 
-  TrendingDown, 
-  TrendingUp, 
-  Save, 
-  Trash2,
-  FileSpreadsheet
-} from "lucide-react";
 
 interface MetricaConfig {
   id: string;
   nome: string;
   tipo: "numero" | "percentual";
   meta: number;
-  sentido: "menor_melhor" | "maior_melhor"; // ex: Cancelamento (menor melhor), Desempenho Envio (maior melhor)
+  sentido: "menor_melhor" | "maior_melhor";
 }
 
 interface Canal {
@@ -86,7 +73,7 @@ export default function ReputacaoPage() {
     if (!canalSelecionadoId || !dataSelecionada) return;
     setCarregandoDados(true);
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("reputacao_registros")
       .select("*")
       .eq("canal_id", canalSelecionadoId)
@@ -235,7 +222,7 @@ export default function ReputacaoPage() {
                 abaAtiva === "alimentacao" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
               }`}
             >
-              <FileSpreadsheet className="w-4 h-4" />
+              <span>📋</span>
               Alimentar Dados
             </button>
             <button
@@ -244,7 +231,7 @@ export default function ReputacaoPage() {
                 abaAtiva === "dashboard" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
               }`}
             >
-              <BarChart3 className="w-4 h-4" />
+              <span>📊</span>
               Dashboard Analítico
             </button>
             <button
@@ -253,7 +240,7 @@ export default function ReputacaoPage() {
                 abaAtiva === "config" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
               }`}
             >
-              <Settings2 className="w-4 h-4" />
+              <span>⚙️</span>
               Configurar Campos
             </button>
           </div>
@@ -285,7 +272,7 @@ export default function ReputacaoPage() {
               </div>
 
               <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-700">
-                <Calendar className="w-4 h-4 text-indigo-400" />
+                <span className="text-xs">📅</span>
                 <input
                   type="date"
                   value={dataSelecionada}
@@ -299,7 +286,7 @@ export default function ReputacaoPage() {
               <p className="text-center py-10 text-slate-500 text-xs">Carregando formulário...</p>
             ) : !canalAtual || canalAtual.metricas.length === 0 ? (
               <div className="text-center py-12 border border-dashed border-slate-800 rounded-xl">
-                <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                <p className="text-2xl mb-2">⚠️</p>
                 <p className="text-sm font-bold text-slate-300">Nenhum campo cadastrado para este canal.</p>
                 <p className="text-xs text-slate-500 mb-4">Vá até a aba "Configurar Campos" para incluir as métricas (ex: Cancelamentos, Atrasos).</p>
                 <button
@@ -361,7 +348,7 @@ export default function ReputacaoPage() {
                   disabled={salvando}
                   className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg transition cursor-pointer"
                 >
-                  <Save className="w-4 h-4" />
+                  <span>💾</span>
                   {salvando ? "Gravando no Supabase..." : "Salvar Medições do Dia"}
                 </button>
               </form>
@@ -402,12 +389,12 @@ export default function ReputacaoPage() {
 
                     <div className="mt-3 flex items-center gap-1.5 text-[11px]">
                       {temValor && dentroDaMeta ? (
-                        <span className="text-emerald-400 flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Na meta
+                        <span className="text-emerald-400 flex items-center gap-1 font-bold">
+                          ✅ Na meta
                         </span>
                       ) : temValor && !dentroDaMeta ? (
                         <span className="text-rose-400 flex items-center gap-1 font-bold">
-                          <AlertCircle className="w-3.5 h-3.5" /> Fora da meta
+                          ⚠️ Fora da meta
                         </span>
                       ) : (
                         <span className="text-slate-600">Sem dados recentes</span>
@@ -421,7 +408,7 @@ export default function ReputacaoPage() {
             {/* TABELA DE HISTÓRICO COM LOG DE AÇÕES */}
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-indigo-400" />
+                <span>📅</span>
                 Histórico Diário & Tratativas — {canalAtual?.nome}
               </h3>
 
@@ -497,7 +484,7 @@ export default function ReputacaoPage() {
                   onClick={adicionarCanal}
                   className="bg-indigo-600 hover:bg-indigo-500 text-white p-2.5 rounded-lg text-xs font-bold cursor-pointer"
                 >
-                  <Plus className="w-4 h-4" />
+                  ➕
                 </button>
               </div>
             </div>
@@ -578,7 +565,7 @@ export default function ReputacaoPage() {
                       onClick={() => removerMetrica(m.id)}
                       className="text-rose-400 hover:text-rose-300 p-1 rounded cursor-pointer"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      🗑️
                     </button>
                   </div>
                 ))}
