@@ -15,8 +15,8 @@ export default function AgendaPage() {
   const [filtroPrioridade, setFiltroPrioridade] = useState("");
   const [assuntosDisponiveis, setAssuntosDisponiveis] = useState<string[]>([]);
   
-  // Novo Estado de Filtro de Status (Inicia sempre em "pendentes")
-  const [filtroStatus, setFiltroStatus] = useState<"pendentes" | "entregues" | "todas">("pendentes");
+  // Abas de Status: "em_andamento" ou "concluidos"
+  const [abaAtiva, setAbaAtiva] = useState<"em_andamento" | "concluidos" | "todos">("em_andamento");
 
   // Estado do Formulário de Inserção
   const hoje = new Date().toISOString().split('T')[0];
@@ -25,12 +25,14 @@ export default function AgendaPage() {
     data_entrega: "", tratativa: "" 
   };
   const [novaTarefa, setNovaTarefa] = useState(linhaVazia);
+  const [prazoIndeterminadoNovo, setPrazoIndeterminadoNovo] = useState(false);
   const [arquivoAnexo, setArquivoAnexo] = useState<File | null>(null);
 
-  // Estado da Tabela
+  // Estado da Tabela e Edição
   const [tarefas, setTarefas] = useState<any[]>([]);
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [dadosEdicao, setDadosEdicao] = useState<any>({});
+  const [prazoIndeterminadoEdicao, setPrazoIndeterminadoEdicao] = useState(false);
   const [arquivoEdicao, setArquivoEdicao] = useState<File | null>(null);
 
   useEffect(() => {
@@ -40,7 +42,7 @@ export default function AgendaPage() {
       return;
     }
     const user = JSON.parse(usuarioLogado);
-    if (user.perfil !== "admin" && !user.paginas_permitidas.includes("/agenda")) {
+    if (user.perfil !== "admin" && !user.paginas_permitidas?.includes("/agenda")) {
       alert("Acesso restrito a Administradores.");
       router.push("/");
       return;
@@ -73,9 +75,7 @@ export default function AgendaPage() {
       .from('anexos')
       .upload(filePath, ficheiro);
 
-    if (uploadError) {
-      throw uploadError;
-    }
+    if (uploadError) throw uploadError;
 
     const { data: publicUrlData } = supabase.storage.from('anexos').getPublicUrl(filePath);
     return publicUrlData.publicUrl;
@@ -98,9 +98,10 @@ export default function AgendaPage() {
         responsavel: novaTarefa.responsavel.trim(),
         prioridade: novaTarefa.prioridade,
         data_solicitacao: hoje,
-        data_entrega: novaTarefa.data_entrega || null,
+        data_entrega: prazoIndeterminadoNovo ? null : (novaTarefa.data_entrega || null),
         tratativa: novaTarefa.tratativa.trim(),
-        anexo_url: anexoUrl
+        anexo_url: anexoUrl,
+        finalizado: false
       };
 
       const { error } = await supabase.from('agenda_tarefas').insert([insercao]);
@@ -108,6 +109,7 @@ export default function AgendaPage() {
       if (error) throw error;
       
       setNovaTarefa(linhaVazia);
+      setPrazoIndeterminadoNovo(false);
       setArquivoAnexo(null);
       carregarTarefas();
       
@@ -121,6 +123,7 @@ export default function AgendaPage() {
   const iniciarEdicao = (item: any) => {
     setEditandoId(item.id);
     setDadosEdicao(item);
+    setPrazoIndeterminadoEdicao(!item.data_entrega);
     setArquivoEdicao(null);
   };
 
@@ -138,7 +141,7 @@ export default function AgendaPage() {
         assunto: dadosEdicao.assunto.toUpperCase(),
         responsavel: dadosEdicao.responsavel,
         prioridade: dadosEdicao.prioridade,
-        data_entrega: dadosEdicao.data_entrega || null,
+        data_entrega: prazoIndeterminadoEdicao ? null : (dadosEdicao.data_entrega || null),
         tratativa: dadosEdicao.tratativa,
         anexo_url: anexoUrlUpdate
       }).eq('id', id);
@@ -165,10 +168,16 @@ export default function AgendaPage() {
     const novoStatusFinalizado = !item.finalizado;
     let statusTexto = "";
 
-    if (novoStatusFinalizado && item.data_entrega) {
-      if (hoje < item.data_entrega) statusTexto = "Entregue c/ antecedência";
-      else if (hoje === item.data_entrega) statusTexto = "Entregue na data";
-      else statusTexto = "Entregue c/ atraso";
+    if (novoStatusFinalizado) {
+      if (!item.data_entrega) {
+        statusTexto = "Concluído";
+      } else if (hoje < item.data_entrega) {
+        statusTexto = "Entregue c/ antecedência";
+      } else if (hoje === item.data_entrega) {
+        statusTexto = "Entregue na data";
+      } else {
+        statusTexto = "Entregue c/ atraso";
+      }
     }
 
     const { error } = await supabase.from('agenda_tarefas').update({
@@ -180,20 +189,23 @@ export default function AgendaPage() {
     else carregarTarefas();
   };
 
-  // Filtragem combinada (Assunto, Prioridade e Status da Aba)
+  // Filtragem: Abas de Concluído / Em Andamento + Filtros de Topo
   const dadosFiltrados = tarefas.filter(t => {
     const matchAssunto = filtroAssunto === "" || t.assunto === filtroAssunto;
     const matchPrioridade = filtroPrioridade === "" || t.prioridade === filtroPrioridade;
     
-    let matchStatus = true;
-    if (filtroStatus === "pendentes") {
-      matchStatus = !t.finalizado;
-    } else if (filtroStatus === "entregues") {
-      matchStatus = !!t.finalizado;
+    let matchAba = true;
+    if (abaAtiva === "em_andamento") {
+      matchAba = !t.finalizado;
+    } else if (abaAtiva === "concluidos") {
+      matchAba = !!t.finalizado;
     }
 
-    return matchAssunto && matchPrioridade && matchStatus;
+    return matchAssunto && matchPrioridade && matchAba;
   });
+
+  const totalEmAndamento = tarefas.filter(t => !t.finalizado).length;
+  const totalConcluidos = tarefas.filter(t => !!t.finalizado).length;
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -213,32 +225,85 @@ export default function AgendaPage() {
           <form onSubmit={adicionarTarefa} className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
             <div className="md:col-span-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Atividade (Descrição)</label>
-              <input type="text" value={novaTarefa.atividade} onChange={e => setNovaTarefa({...novaTarefa, atividade: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500" required />
+              <input 
+                type="text" 
+                value={novaTarefa.atividade} 
+                onChange={e => setNovaTarefa({...novaTarefa, atividade: e.target.value})} 
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500" 
+                required 
+              />
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Assunto</label>
-              <input type="text" value={novaTarefa.assunto} onChange={e => setNovaTarefa({...novaTarefa, assunto: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500 uppercase" required />
+              <input 
+                type="text" 
+                value={novaTarefa.assunto} 
+                onChange={e => setNovaTarefa({...novaTarefa, assunto: e.target.value})} 
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500 uppercase" 
+                required 
+              />
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Responsável</label>
-              <input type="text" value={novaTarefa.responsavel} onChange={e => setNovaTarefa({...novaTarefa, responsavel: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500" required />
+              <input 
+                type="text" 
+                value={novaTarefa.responsavel} 
+                onChange={e => setNovaTarefa({...novaTarefa, responsavel: e.target.value})} 
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500" 
+                required 
+              />
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Prioridade</label>
-              <select value={novaTarefa.prioridade} onChange={e => setNovaTarefa({...novaTarefa, prioridade: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none cursor-pointer">
+              <select 
+                value={novaTarefa.prioridade} 
+                onChange={e => setNovaTarefa({...novaTarefa, prioridade: e.target.value})} 
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none cursor-pointer"
+              >
                 <option value="Alta">Alta</option>
                 <option value="Média">Média</option>
                 <option value="Baixa">Baixa</option>
               </select>
             </div>
+
+            {/* CAMPO DE DATA COM OPÇÃO DE PRAZO INDETERMINADO */}
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entrega</label>
-              <input type="date" value={novaTarefa.data_entrega} onChange={e => setNovaTarefa({...novaTarefa, data_entrega: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none cursor-pointer" required />
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase">Data Entrega</label>
+                <label className="flex items-center gap-1 text-[10px] text-amber-400 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={prazoIndeterminadoNovo} 
+                    onChange={e => {
+                      setPrazoIndeterminadoNovo(e.target.checked);
+                      if (e.target.checked) setNovaTarefa({...novaTarefa, data_entrega: ""});
+                    }} 
+                    className="accent-amber-400 cursor-pointer w-3 h-3"
+                  />
+                  <span>Sem prazo</span>
+                </label>
+              </div>
+              <input 
+                type="date" 
+                disabled={prazoIndeterminadoNovo}
+                value={prazoIndeterminadoNovo ? "" : novaTarefa.data_entrega} 
+                onChange={e => setNovaTarefa({...novaTarefa, data_entrega: e.target.value})} 
+                className={`w-full bg-slate-950 border rounded-lg p-2.5 text-xs text-white outline-none ${
+                  prazoIndeterminadoNovo ? "border-slate-800 opacity-40 cursor-not-allowed" : "border-slate-700 cursor-pointer"
+                }`} 
+                required={!prazoIndeterminadoNovo} 
+              />
             </div>
             
             <div className="md:col-span-4">
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Tratativa Inicial (Opcional)</label>
-              <input type="text" value={novaTarefa.tratativa} onChange={e => setNovaTarefa({...novaTarefa, tratativa: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500" placeholder="Ações tomadas..." />
+              <input 
+                type="text" 
+                value={novaTarefa.tratativa} 
+                onChange={e => setNovaTarefa({...novaTarefa, tratativa: e.target.value})} 
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500" 
+                placeholder="Ações tomadas..." 
+              />
             </div>
             <div className="md:col-span-1">
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Anexar Evidência</label>
@@ -253,7 +318,7 @@ export default function AgendaPage() {
               <button 
                 type="submit" 
                 disabled={salvando} 
-                className={`w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-lg text-xs uppercase tracking-wider cursor-pointer shadow-lg`}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-lg text-xs uppercase tracking-wider cursor-pointer shadow-lg transition-all"
               >
                 {salvando ? "A salvar..." : "Adicionar"}
               </button>
@@ -264,40 +329,44 @@ export default function AgendaPage() {
         {/* LISTAGEM DE TAREFAS */}
         <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden mb-8">
           
-          {/* ABAS / FILTROS DE STATUS E OUTROS FILTROS */}
+          {/* ABAS E FILTROS */}
           <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
             
-            {/* Abas de Navegação de Status */}
+            {/* Abas: Em Andamento / Concluídos */}
             <div className="flex gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
               <button
-                onClick={() => setFiltroStatus("pendentes")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
-                  filtroStatus === "pendentes" 
-                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-950/50" 
+                onClick={() => setAbaAtiva("em_andamento")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer flex items-center gap-2 ${
+                  abaAtiva === "em_andamento" 
+                    ? "bg-amber-600 text-white shadow-md shadow-amber-950/50" 
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                ⏳ Tarefas em Aberto
+                <span>⏳ Em Andamento</span>
+                <span className="text-[10px] bg-slate-900/80 px-1.5 py-0.5 rounded-full">{totalEmAndamento}</span>
               </button>
+              
               <button
-                onClick={() => setFiltroStatus("entregues")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
-                  filtroStatus === "entregues" 
-                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-950/50" 
+                onClick={() => setAbaAtiva("concluidos")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer flex items-center gap-2 ${
+                  abaAtiva === "concluidos" 
+                    ? "bg-emerald-600 text-white shadow-md shadow-emerald-950/50" 
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                ✅ Tarefas Entregues
+                <span>✅ Concluídos</span>
+                <span className="text-[10px] bg-slate-900/80 px-1.5 py-0.5 rounded-full">{totalConcluidos}</span>
               </button>
+
               <button
-                onClick={() => setFiltroStatus("todas")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
-                  filtroStatus === "todas" 
-                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-950/50" 
-                    : "text-slate-400 hover:text-white"
+                onClick={() => setAbaAtiva("todos")}
+                className={`px-3 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                  abaAtiva === "todos" 
+                    ? "bg-slate-700 text-white" 
+                    : "text-slate-500 hover:text-white"
                 }`}
               >
-                📁 Todas as Tarefas
+                📁 Todos
               </button>
             </div>
 
@@ -319,7 +388,7 @@ export default function AgendaPage() {
 
               <button 
                 onClick={() => setVisaoSimplificada(!visaoSimplificada)} 
-                className={`bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2.5 px-5 rounded-xl text-[11px] uppercase tracking-wider cursor-pointer transition-all`}
+                className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2.5 px-5 rounded-xl text-[11px] uppercase tracking-wider cursor-pointer transition-all"
               >
                 {visaoSimplificada ? "👁️ Mostrar Todas as Colunas" : "👁️ Visão Simplificada"}
               </button>
@@ -330,7 +399,11 @@ export default function AgendaPage() {
           {loading ? (
             <p className="p-8 text-center text-slate-400">A carregar agenda...</p>
           ) : dadosFiltrados.length === 0 ? (
-            <p className="p-8 text-center text-slate-500">Nenhuma solicitação encontrada para este filtro.</p>
+            <p className="p-8 text-center text-slate-500">
+              {abaAtiva === "concluidos" 
+                ? "Nenhum item marcado como concluído até o momento." 
+                : "Nenhuma tarefa em andamento no momento."}
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
@@ -353,26 +426,39 @@ export default function AgendaPage() {
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                   {dadosFiltrados.map((item) => {
                     const isEditing = editandoId === item.id;
-                    const atrasado = !item.finalizado && item.data_entrega && hoje > item.data_entrega;
+                    const temPrazo = Boolean(item.data_entrega);
+                    const atrasado = !item.finalizado && temPrazo && hoje > item.data_entrega;
 
                     return (
-                      <tr key={item.id} className={`transition-colors ${item.finalizado ? 'bg-emerald-900/20 hover:bg-emerald-900/30' : 'hover:bg-slate-800/40'}`}>
+                      <tr key={item.id} className={`transition-colors ${item.finalizado ? 'bg-emerald-900/10 hover:bg-emerald-900/20' : 'hover:bg-slate-800/40'}`}>
                         <td className="p-3 text-center font-black text-indigo-400 text-sm">
                           {String(item.id).padStart(2, '0')}
                         </td>
 
                         <td className="p-3">
                           {isEditing ? (
-                            <input type="text" value={dadosEdicao.atividade} onChange={e => setDadosEdicao({...dadosEdicao, atividade: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
+                            <input 
+                              type="text" 
+                              value={dadosEdicao.atividade} 
+                              onChange={e => setDadosEdicao({...dadosEdicao, atividade: e.target.value})} 
+                              className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white" 
+                            />
                           ) : (
-                            <span className={`font-bold ${item.finalizado ? 'text-emerald-400' : atrasado ? 'text-rose-400' : 'text-slate-200'} whitespace-normal line-clamp-2`}>{item.atividade}</span>
+                            <span className={`font-bold ${item.finalizado ? 'line-through text-slate-500' : atrasado ? 'text-rose-400' : 'text-slate-200'} whitespace-normal line-clamp-2`}>
+                              {item.atividade}
+                            </span>
                           )}
                         </td>
 
                         {!visaoSimplificada && (
                           <td className="p-3">
                             {isEditing ? (
-                              <input type="text" value={dadosEdicao.assunto} onChange={e => setDadosEdicao({...dadosEdicao, assunto: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1.5 text-white uppercase" />
+                              <input 
+                                type="text" 
+                                value={dadosEdicao.assunto} 
+                                onChange={e => setDadosEdicao({...dadosEdicao, assunto: e.target.value})} 
+                                className="w-24 bg-slate-900 border border-slate-700 rounded p-1.5 text-white uppercase" 
+                              />
                             ) : (
                               <span className="text-slate-300 font-bold">{item.assunto}</span>
                             )}
@@ -382,7 +468,12 @@ export default function AgendaPage() {
                         {!visaoSimplificada && (
                           <td className="p-3">
                             {isEditing ? (
-                              <input type="text" value={dadosEdicao.responsavel} onChange={e => setDadosEdicao({...dadosEdicao, responsavel: e.target.value})} className="w-24 bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
+                              <input 
+                                type="text" 
+                                value={dadosEdicao.responsavel} 
+                                onChange={e => setDadosEdicao({...dadosEdicao, responsavel: e.target.value})} 
+                                className="w-24 bg-slate-900 border border-slate-700 rounded p-1.5 text-white" 
+                              />
                             ) : (
                               <span className="bg-amber-400/20 text-amber-400 px-2 py-1 rounded font-bold">{item.responsavel}</span>
                             )}
@@ -391,18 +482,26 @@ export default function AgendaPage() {
 
                         {!visaoSimplificada && (
                           <td className="p-3 text-center font-mono text-slate-400">
-                            {item.data_solicitacao.split('-').reverse().join('/')}
+                            {item.data_solicitacao ? item.data_solicitacao.split('-').reverse().join('/') : '-'}
                           </td>
                         )}
 
                         {!visaoSimplificada && (
                           <td className="p-3 text-center">
                             {isEditing ? (
-                              <select value={dadosEdicao.prioridade} onChange={e => setDadosEdicao({...dadosEdicao, prioridade: e.target.value})} className="w-20 bg-slate-900 border border-slate-700 rounded p-1.5 text-white cursor-pointer">
-                                <option value="Alta">Alta</option><option value="Média">Média</option><option value="Baixa">Baixa</option>
+                              <select 
+                                value={dadosEdicao.prioridade} 
+                                onChange={e => setDadosEdicao({...dadosEdicao, prioridade: e.target.value})} 
+                                className="w-20 bg-slate-900 border border-slate-700 rounded p-1.5 text-white cursor-pointer"
+                              >
+                                <option value="Alta">Alta</option>
+                                <option value="Média">Média</option>
+                                <option value="Baixa">Baixa</option>
                               </select>
                             ) : (
-                              <span className={`font-bold ${item.prioridade === 'Alta' ? 'text-rose-400' : item.prioridade === 'Média' ? 'text-amber-400' : 'text-emerald-400'}`}>{item.prioridade}</span>
+                              <span className={`font-bold ${item.prioridade === 'Alta' ? 'text-rose-400' : item.prioridade === 'Média' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                {item.prioridade}
+                              </span>
                             )}
                           </td>
                         )}
@@ -410,10 +509,35 @@ export default function AgendaPage() {
                         {!visaoSimplificada && (
                           <td className="p-3 text-center font-mono">
                             {isEditing ? (
-                              <input type="date" value={dadosEdicao.data_entrega} onChange={e => setDadosEdicao({...dadosEdicao, data_entrega: e.target.value})} className="w-28 bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
-                            ) : (
+                              <div className="flex flex-col gap-1 items-center">
+                                <label className="flex items-center gap-1 text-[9px] text-amber-400 cursor-pointer">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={prazoIndeterminadoEdicao} 
+                                    onChange={e => {
+                                      setPrazoIndeterminadoEdicao(e.target.checked);
+                                      if (e.target.checked) setDadosEdicao({...dadosEdicao, data_entrega: ""});
+                                    }} 
+                                    className="accent-amber-400 w-3 h-3"
+                                  />
+                                  <span>Sem prazo</span>
+                                </label>
+                                {!prazoIndeterminadoEdicao && (
+                                  <input 
+                                    type="date" 
+                                    value={dadosEdicao.data_entrega || ""} 
+                                    onChange={e => setDadosEdicao({...dadosEdicao, data_entrega: e.target.value})} 
+                                    className="w-28 bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-white" 
+                                  />
+                                )}
+                              </div>
+                            ) : item.data_entrega ? (
                               <span className={`font-bold ${atrasado ? 'text-rose-500' : 'text-slate-300'}`}>
-                                {item.data_entrega ? item.data_entrega.split('-').reverse().join('/') : '-'}
+                                {item.data_entrega.split('-').reverse().join('/')}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-500 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                                Indeterminado
                               </span>
                             )}
                           </td>
@@ -440,9 +564,16 @@ export default function AgendaPage() {
 
                         <td className="p-3">
                           {isEditing ? (
-                            <input type="text" value={dadosEdicao.tratativa} onChange={e => setDadosEdicao({...dadosEdicao, tratativa: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white" />
+                            <input 
+                              type="text" 
+                              value={dadosEdicao.tratativa} 
+                              onChange={e => setDadosEdicao({...dadosEdicao, tratativa: e.target.value})} 
+                              className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-white" 
+                            />
                           ) : (
-                            <span className={`italic whitespace-normal line-clamp-2 ${item.finalizado ? 'text-emerald-200/70' : 'text-slate-400'}`}>{item.tratativa || "-"}</span>
+                            <span className={`italic whitespace-normal line-clamp-2 ${item.finalizado ? 'text-emerald-200/50' : 'text-slate-400'}`}>
+                              {item.tratativa || "-"}
+                            </span>
                           )}
                         </td>
 
@@ -450,9 +581,10 @@ export default function AgendaPage() {
                           <td className="p-3 text-center">
                             <input 
                               type="checkbox" 
-                              checked={item.finalizado} 
+                              checked={!!item.finalizado} 
                               onChange={() => alternarFinalizado(item)}
                               className="w-5 h-5 accent-emerald-500 cursor-pointer"
+                              title={item.finalizado ? "Mover para Em Andamento" : "Mover para Concluídos"}
                             />
                           </td>
                         )}
@@ -460,7 +592,7 @@ export default function AgendaPage() {
                         {!visaoSimplificada && (
                           <td className="p-3">
                             <span className={`font-bold text-[10px] uppercase ${item.status_entrega?.includes('antecedência') ? 'text-indigo-400' : item.status_entrega?.includes('atraso') ? 'text-rose-400' : 'text-emerald-400'}`}>
-                              {item.status_entrega}
+                              {item.status_entrega || "-"}
                             </span>
                           </td>
                         )}
