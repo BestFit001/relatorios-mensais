@@ -16,6 +16,12 @@ const TABELAS_SUPABASE = [
   'plp_pedidos',
 ] as const;
 
+const MESES_MAP: Record<string, string> = {
+  '01': 'janeiro', '02': 'fevereiro', '03': 'março', '04': 'abril',
+  '05': 'maio', '06': 'junho', '07': 'julho', '08': 'agosto',
+  '09': 'setembro', '10': 'outubro', '11': 'novembro', '12': 'dezembro'
+};
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [database, setDatabase] = useState<Record<string, any[]>>({});
@@ -66,18 +72,19 @@ export default function DashboardPage() {
           resultado[tabela] = allRows;
         })
       );
+
+      // Mapeamento direto de Tarifas do Site
+      const mapaTarifas: Record<string, number> = {};
+      (resultado.tarifas_site || []).forEach((t: any) => {
+        const idPed = normalizarPedido(t.id_pedido);
+        if (idPed) mapaTarifas[idPed] = parseCurrency(t.valor_tarifa);
+      });
+      setTarifasSiteMap(mapaTarifas);
+
       setDatabase(resultado);
       setLoading(false);
     }
     carregarDados();
-
-    async function fetchTarifas() {
-      try {
-        const { data } = await supabase.from('tb_estado_global').select('dados').eq('chave', 'tarifas_site').single();
-        if (data && data.dados) setTarifasSiteMap(data.dados);
-      } catch (err) {}
-    }
-    fetchTarifas();
   }, []);
 
   const handleRecalculate = () => {
@@ -92,7 +99,8 @@ export default function DashboardPage() {
     }, 300);
   };
 
-  const normalizarTexto = (v: any) => String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+  const normalizarTexto = (v: any) => 
+    String(v ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
 
   const canonizarCanal = (nomeCanal: any, oficiais: string[]) => {
     const limpo = String(nomeCanal || '').trim();
@@ -111,7 +119,9 @@ export default function DashboardPage() {
     if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
     return s.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
   };
-  const normalizarPedido = (v: any) => String(v ?? '').trim().replace(/\.0$/, '').replace(/\s+/g, '').toLowerCase();
+
+  const normalizarPedido = (v: any) => 
+    String(v ?? '').trim().replace(/\.0$/, '').replace(/\s+/g, '').toLowerCase();
 
   const isChannelFisico = (canalName: string) => {
     const nome = normalizarTexto(canalName);
@@ -120,11 +130,7 @@ export default function DashboardPage() {
 
   const parseCurrency = (val: any): number => {
     if (val === undefined || val === null || val === '') return 0;
-    if (typeof val === 'number') {
-      if (isNaN(val)) return 0;
-      if (val >= 44000 && val <= 49000 && Number.isInteger(Math.floor(val))) return 0;
-      return val;
-    }
+    if (typeof val === 'number') return isNaN(val) ? 0 : val;
 
     let s = String(val).trim();
     if (/^\d{4}-\d{2}-\d{2}/.test(s) || /^\d{2}\/\d{2}\/\d{4}/.test(s)) return 0;
@@ -151,12 +157,25 @@ export default function DashboardPage() {
     }
 
     const num = parseFloat(s);
-    if (isNaN(num)) return 0;
-    if (num >= 44000 && num <= 49000 && Number.isInteger(Math.floor(num))) return 0;
-    if (num > 500000) return 0;
-
-    return num;
+    return isNaN(num) ? 0 : num;
   };
+
+  // Harmonização universal de formatos de mês (ex: 2026-10 <-> 10/2026 <-> outubro de 2026)
+  const currentRefMonth = useMemo(() => {
+    if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate) return appliedStartDate.slice(0, 7);
+    if (appliedDateFilter === 'MES_ANTERIOR') return previousMonthDefault;
+    return currentMonthDefault;
+  }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
+
+  const mesRefFormatos = useMemo(() => {
+    const [ano, mes] = currentRefMonth.split('-');
+    const nomeExtenso = MESES_MAP[mes] || 'outubro';
+    return {
+      iso: currentRefMonth,                         // "2026-10"
+      barra: `${mes}/${ano}`,                       // "10/2026"
+      extenso: `${nomeExtenso} de ${ano}`           // "outubro de 2026"
+    };
+  }, [currentRefMonth]);
 
   const canaisOficiais = useMemo(() => {
     const mapa = new Map<string, string>();
@@ -179,7 +198,7 @@ export default function DashboardPage() {
   const cancelados = database.cancelados || [];
   const users = database.usuarios_permissoes || [];
 
-  // Alíquota de imposto global sobre o faturamento faturado
+  // Alíquota de imposto configurada na aba de Regras (padrão 6.00%)
   const aliquotaImpostoGlobal = useMemo(() => {
     const cfg = (database.config_regras_tiny || []).find((c: any) => c.campo === 'imposto_global');
     return cfg && cfg.coluna ? parseCurrency(cfg.coluna) : 6.0;
@@ -225,31 +244,23 @@ export default function DashboardPage() {
     return map;
   }, [database.plp_pedidos]);
 
-  const currentRefMonth = useMemo(() => {
-    if (appliedDateFilter === 'PERSONALIZADO' && appliedStartDate) return appliedStartDate.slice(0, 7);
-    if (appliedDateFilter === 'MES_ANTERIOR') return previousMonthDefault;
-    return currentMonthDefault;
-  }, [appliedDateFilter, appliedStartDate, currentMonthDefault, previousMonthDefault]);
-
+  // Busca do gasto de Ads por canal respeitando as variações de formato de mês
   const adsMap = useMemo(() => {
     const map = new Map();
-    let formatoMMYYYY = currentRefMonth;
-    if (currentRefMonth.includes('-')) {
-      const [ano, mes] = currentRefMonth.split('-');
-      formatoMMYYYY = `${mes}/${ano}`;
-    }
-
     (database.ads_faturamento_canal || []).forEach((a: any) => {
-      const mesRefDb = String(a.mes_referencia || '').trim();
-      if (mesRefDb === currentRefMonth || mesRefDb === formatoMMYYYY) {
+      const mesRefDb = String(a.mes_referencia || '').trim().toLowerCase();
+      const matchPeriodo = 
+        mesRefDb === mesRefFormatos.iso || 
+        mesRefDb === mesRefFormatos.barra || 
+        mesRefDb === mesRefFormatos.extenso;
+
+      if (matchPeriodo) {
         const k = normalizarTexto(canonizarCanal(a.canal, canaisOficiais));
         map.set(k, parseCurrency(a.gasto_ads));
       }
     });
     return map;
-  }, [database.ads_faturamento_canal, currentRefMonth, canaisOficiais]);
-
-  const devolucoesList = database.devolucoes || [];
+  }, [database.ads_faturamento_canal, mesRefFormatos, canaisOficiais]);
 
   const channelLogos = useMemo(() => {
     const map: Record<string, string> = {};
@@ -262,18 +273,22 @@ export default function DashboardPage() {
   const activeCancelados = useMemo(() => {
     if (!cancelados) return [];
     return cancelados.filter((c: any) => {
-      if (c.mes_referencia !== currentRefMonth) return false;
+      const mRef = String(c.mes_referencia || '').trim().toLowerCase();
+      const matchPeriodo = mRef === mesRefFormatos.iso || mRef === mesRefFormatos.barra || mRef === mesRefFormatos.extenso;
+      if (!matchPeriodo) return false;
+
       const cCanal = canonizarCanal(c.canal, canaisOficiais);
       if (!canaisOficiais.includes(cCanal)) return false;
       if (appliedChannelFilter !== 'TODOS' && cCanal !== appliedChannelFilter) return false;
       return true;
     });
-  }, [cancelados, currentRefMonth, appliedChannelFilter, canaisOficiais]);
+  }, [cancelados, mesRefFormatos, appliedChannelFilter, canaisOficiais]);
 
+  // Devoluções ativas do período (lendo data_retorno e mes_referencia)
   const activeDevolucoes = useMemo(() => {
-    if (!devolucoesList) return [];
-    return devolucoesList.filter((d: any) => {
-      const dataDev = String(d.data || d.data_devolucao || '').trim();
+    const lista = database.devolucoes || [];
+    return lista.filter((d: any) => {
+      const dataDev = String(d.data_retorno || d.data || d.data_devolucao || '').trim();
       let mesDev = '';
       if (d.mes_referencia) {
         mesDev = String(d.mes_referencia).trim().toLowerCase();
@@ -284,15 +299,21 @@ export default function DashboardPage() {
           if (parts.length === 3) mesDev = `${parts[2]}-${parts[1]}`;
         }
       }
-      const matchMes = mesDev === currentRefMonth || mesDev.includes(currentRefMonth.toLowerCase());
+
+      const matchMes = 
+        mesDev === mesRefFormatos.iso || 
+        mesDev === mesRefFormatos.barra || 
+        mesDev.includes(mesRefFormatos.iso) || 
+        mesDev.includes(mesRefFormatos.extenso);
+
       if (!matchMes) return false;
 
       const dCanal = canonizarCanal(d.canal, canaisOficiais);
       if (!canaisOficiais.includes(dCanal)) return false;
-      if (appliedChannelFilter !== 'TODOS' && d.canal && normalizarTexto(dCanal) !== normalizarTexto(appliedChannelFilter)) return false;
+      if (appliedChannelFilter !== 'TODOS' && normalizarTexto(dCanal) !== normalizarTexto(appliedChannelFilter)) return false;
       return true;
     });
-  }, [devolucoesList, currentRefMonth, appliedChannelFilter, canaisOficiais]);
+  }, [database.devolucoes, mesRefFormatos, appliedChannelFilter, canaisOficiais]);
 
   const enrichedSales = useMemo(() => {
     return (sales || []).map((s: any) => ({
@@ -311,11 +332,15 @@ export default function DashboardPage() {
 
         if (!fisico) {
           if (!fatInfo) return false;
-          const mesRefAlvo = currentRefMonth.toLowerCase();
           const fatMesRef = fatInfo.mes_referencia.toLowerCase();
           const fatData = fatInfo.data_faturamento;
 
-          const matchMes = fatMesRef.includes(mesRefAlvo) || (fatData && fatData.startsWith(mesRefAlvo));
+          const matchMes = 
+            fatMesRef.includes(mesRefFormatos.iso) ||
+            fatMesRef.includes(mesRefFormatos.barra) ||
+            fatMesRef.includes(mesRefFormatos.extenso) ||
+            (fatData && fatData.startsWith(mesRefFormatos.iso));
+
           if (!matchMes) return false;
         }
 
@@ -340,6 +365,7 @@ export default function DashboardPage() {
         const ruleObj = channelRules.find((r: any) => normalizarTexto(canonizarCanal(r.canal, canaisOficiais)) === normalizarTexto(s.canal)) || {};
         let repasseLiquido = parseCurrency(s.repasse_liquido);
 
+        // Aplicação da fórmula do canal cadastrada na aba de Regras
         if (ruleObj.formula_excel && ruleObj.formula_excel.trim()) {
           try {
             let exp = ruleObj.formula_excel.trim();
@@ -361,6 +387,7 @@ export default function DashboardPage() {
           repasseLiquido = Math.max(0, (precoVenda * qtd) - ((precoVenda * qtd) * 0.16));
         }
         
+        // Desconto da tarifa do gateway/site (se houver)
         const nomeCanal = normalizarTexto(s.canal);
         if ((nomeCanal.includes('site') || nomeCanal.includes('loja virtual')) && tarifasSiteMap[ped]) {
            const taxaVindi = parseCurrency(tarifasSiteMap[ped]);
@@ -378,127 +405,7 @@ export default function DashboardPage() {
           data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, appliedDateFilter, currentRefMonth, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules]);
-
-  const kpis = useMemo(() => {
-    let faturamentoBrutoVendas = 0;
-    let faturamentoLiquidoRepasse = 0;
-    let metaDigitalTotal = 0;
-    let fatBrutoFisico = 0;
-    let fatBrutoDigital = 0;
-    let repasseFisico = 0;
-    let repasseDigital = 0;
-    let custoTotalCMV = 0;
-    let cmvFisico = 0;
-    let cmvDigital = 0;
-
-    const totalCancelamentosValor = activeCancelados.reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-
-    const lojasFisicasDetalhes: any[] = [];
-    const lojasFisicasRepasse: any[] = [];
-
-    canaisOficiais.forEach(channelName => {
-      const fisico = isChannelFisico(channelName);
-      const goalObj = goals.find((g: any) => canonizarCanal(g.canal, canaisOficiais) === channelName && g.mes_referencia === currentRefMonth) 
-                   || goals.find((g: any) => canonizarCanal(g.canal, canaisOficiais) === channelName) 
-                   || { meta_valor: 0 };
-      const metaCanal = parseCurrency(goalObj.meta_valor);
-
-      const chSales = enrichedSales.filter((s: any) => s.canal === channelName);
-      const cancelamentosCanal = activeCancelados
-        .filter((c: any) => canonizarCanal(c.canal, canaisOficiais) === channelName)
-        .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-
-      const faturadoPuroCanal = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
-      const faturadoEfetivoCanal = Math.max(0, faturadoPuroCanal - cancelamentosCanal);
-      const repasseCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
-
-      let nomeLimpo = channelName.replace(/clube|loja/gi, '').trim();
-      if (!nomeLimpo) nomeLimpo = channelName;
-
-      if (fisico) {
-        const progresso = metaCanal > 0 ? (faturadoEfetivoCanal / metaCanal) * 100 : 0;
-        const diff = Math.abs(progresso - 100);
-
-        lojasFisicasDetalhes.push({
-          nome: nomeLimpo,
-          faturado: faturadoEfetivoCanal,
-          progresso,
-          diff,
-          abaixo: progresso < 100
-        });
-
-        lojasFisicasRepasse.push({
-          nome: nomeLimpo,
-          repasse: repasseCanal
-        });
-      } else {
-        metaDigitalTotal += metaCanal;
-      }
-    });
-
-    enrichedSales.forEach((s: any) => {
-      const fisico = isChannelFisico(s.canal);
-      const valBruto = s.preco_venda;
-      const valRepasse = s.repasse_liquido;
-      const valCmv = s.custoCMV;
-
-      faturamentoBrutoVendas += valBruto;
-      faturamentoLiquidoRepasse += valRepasse;
-      custoTotalCMV += valCmv;
-
-      if (fisico) {
-        fatBrutoFisico += valBruto;
-        repasseFisico += valRepasse;
-        cmvFisico += valCmv;
-      } else {
-        fatBrutoDigital += valBruto;
-        repasseDigital += valRepasse;
-        cmvDigital += valCmv;
-      }
-    });
-
-    faturamentoBrutoVendas = Math.max(0, faturamentoBrutoVendas - totalCancelamentosValor);
-
-    const canceladosDigitais = activeCancelados
-        .filter((c: any) => !isChannelFisico(c.canal))
-        .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
-    
-    fatBrutoDigital = Math.max(0, fatBrutoDigital - canceladosDigitais);
-
-    const progressoDigitalPct = metaDigitalTotal > 0 ? (fatBrutoDigital / metaDigitalTotal) * 100 : 0;
-    const diffDigital = Math.abs(progressoDigitalPct - 100);
-
-    const totalFlexCost = enrichedSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
-    
-    const totalAdsCost = Array.from(adsMap.entries())
-      .filter(([canal]) => appliedChannelFilter === 'TODOS' || normalizarTexto(canal) === normalizarTexto(appliedChannelFilter))
-      .reduce((sum, [, val]) => sum + parseCurrency(val), 0);
-    
-    // IMPOSTO GLOBAL: Deduzido da liquidez real
-    const totalImpostoGlobal = (faturamentoBrutoVendas * aliquotaImpostoGlobal) / 100;
-    const lucroLiquidoReal = faturamentoLiquidoRepasse - custoTotalCMV - totalImpostoGlobal - totalFlexCost - totalAdsCost;
-
-    return { 
-      faturamentoBrutoVendas, 
-      fatBrutoFisico,
-      fatBrutoDigital,
-      faturamentoLiquidoRepasse, 
-      repasseFisico,
-      repasseDigital,
-      custoTotalCMV, 
-      cmvFisico,
-      cmvDigital,
-      totalImpostoGlobal,
-      lucroLiquidoReal, 
-      totalPedidos: enrichedSales.length,
-      lojasFisicasDetalhes,
-      lojasFisicasRepasse,
-      progressoDigitalPct,
-      diffDigital,
-      totalCancelamentosValor
-    };
-  }, [enrichedSales, adsMap, appliedChannelFilter, canaisOficiais, goals, currentRefMonth, activeCancelados, aliquotaImpostoGlobal]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, mesRefFormatos, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules]);
 
   const { targetDateStr, labelVendasDia } = useMemo(() => {
     const d = new Date();
@@ -512,8 +419,11 @@ export default function DashboardPage() {
     };
   }, []);
 
+  // Consolidação analítica e apuração de cada canal
   const channelAnalytics = useMemo(() => {
-    let channelsToAnalyze = appliedChannelFilter === 'TODOS' ? canaisOficiais : canaisOficiais.filter(c => normalizarTexto(c) === normalizarTexto(appliedChannelFilter));
+    let channelsToAnalyze = appliedChannelFilter === 'TODOS' 
+      ? canaisOficiais 
+      : canaisOficiais.filter(c => normalizarTexto(c) === normalizarTexto(appliedChannelFilter));
 
     if (appliedModalidadeFilter === 'FISICO') {
       channelsToAnalyze = channelsToAnalyze.filter(c => isChannelFisico(c));
@@ -559,9 +469,18 @@ export default function DashboardPage() {
         .reduce((sum: number, s: any) => sum + s.preco_venda, 0);
 
       const ruleObj = channelRules.find((r: any) => normalizarTexto(r.canal) === normalizarTexto(channelName)) || {};
-      const goalObj = goals.find((g: any) => normalizarTexto(canonizarCanal(g.canal, canaisOficiais)) === normalizarTexto(channelName) && g.mes_referencia === currentRefMonth) 
-                   || goals.find((g: any) => normalizarTexto(canonizarCanal(g.canal, canaisOficiais)) === normalizarTexto(channelName)) 
-                   || { meta_valor: 0, responsavel: ruleObj.responsavel || 'Equipe Best Fit' };
+      
+      // Busca a meta comparando tanto formato "2026-10" quanto "outubro de 2026"
+      const goalObj = goals.find((g: any) => {
+        const cNome = normalizarTexto(canonizarCanal(g.canal, canaisOficiais));
+        const mMes = String(g.mes_referencia || '').trim().toLowerCase();
+        return cNome === normalizarTexto(channelName) && (
+          mMes === mesRefFormatos.iso ||
+          mMes === mesRefFormatos.barra ||
+          mMes === mesRefFormatos.extenso
+        );
+      }) || goals.find((g: any) => normalizarTexto(canonizarCanal(g.canal, canaisOficiais)) === normalizarTexto(channelName))
+         || { meta_valor: 0, responsavel: ruleObj.responsavel || 'Equipe Best Fit' };
 
       const cancelamentosMes = activeCancelados
         .filter((c: any) => canonizarCanal(c.canal, canaisOficiais) === channelName)
@@ -577,6 +496,7 @@ export default function DashboardPage() {
           const pdvVal = parseCurrency(d.pdv || d.valor);
           const freteVal = parseCurrency(d.custo_frete || d.frete);
           const qtdDev = parseCurrency(d.quantidade) || 1;
+          
           devPdvBruto += pdvVal;
           devFreteLiquido += freteVal;
           
@@ -609,24 +529,24 @@ export default function DashboardPage() {
         }
       });
 
-      // FAT. BRUTO: Soma original de todas as vendas brutas do canal
+      // Faturamento Bruto Integral das vendas do canal
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
       
-      // C/ REDUTOR: Faturamento do canal menos as devoluções (PDV) e cancelamentos do mês
+      // Faturamento com Redutor: Abate devoluções (PDV) e cancelamentos do canal
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
       const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
-      const repasseLiquidoTotal = repasseVendasCanal - devRepasseLiquido;
+      const repasseLiquidoTotal = Math.max(0, repasseVendasCanal - devRepasseLiquido);
 
       const canalAds = adsMap.get(normalizarTexto(channelName)) || 0;
       const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0);
-      const cmvCanalTotal = cmvVendasCanal + devCmvTotal;
+      const cmvCanalTotal = Math.max(0, cmvVendasCanal - devCmvTotal);
       const flexCanal = chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
 
-      // IMPOSTO DO CANAL: % sobre o faturamento com redutor
+      // Imposto proporcional sobre o faturamento efetivo (com redutor)
       const impostoCanal = (faturadoComRedutor * aliquotaImpostoGlobal) / 100;
 
-      // LUCRO LÍQUIDO REAL (LIQUIDEZ REAL): Deduz CMV, Imposto, Ads, Flex e Fretes de Devolução
+      // Lucro Líquido Real = Repasse Líq - CMV - Imposto Global - Fretes Flex - ADS - Frete Reverso Devoluções
       const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - impostoCanal - flexCanal - canalAds - devFreteLiquido;
       
       const metaBase = parseCurrency(goalObj.meta_valor);
@@ -671,7 +591,64 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, canaisOficiais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap, aliquotaImpostoGlobal]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, mesRefFormatos, canaisOficiais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap, aliquotaImpostoGlobal]);
+
+  // Totalizadores Globais (KPIs do Topo) com sincronia completa dos canais
+  const kpis = useMemo(() => {
+    const faturamentoBrutoVendas = channelAnalytics.reduce((acc, c) => acc + c.faturadoComRedutor, 0);
+    const faturamentoLiquidoRepasse = channelAnalytics.reduce((acc, c) => acc + c.repasseLiquidoTotal, 0);
+    const custoTotalCMV = channelAnalytics.reduce((acc, c) => acc + c.cmvCanal, 0);
+    const totalImpostoGlobal = channelAnalytics.reduce((acc, c) => acc + c.impostoCanal, 0);
+    const lucroLiquidoReal = channelAnalytics.reduce((acc, c) => acc + c.lucroLiquidoReal, 0);
+
+    const fatBrutoFisico = channelAnalytics.filter(c => c.isFisico).reduce((acc, c) => acc + c.faturadoComRedutor, 0);
+    const fatBrutoDigital = channelAnalytics.filter(c => !c.isFisico).reduce((acc, c) => acc + c.faturadoComRedutor, 0);
+
+    const repasseFisico = channelAnalytics.filter(c => c.isFisico).reduce((acc, c) => acc + c.repasseLiquidoTotal, 0);
+    const repasseDigital = channelAnalytics.filter(c => !c.isFisico).reduce((acc, c) => acc + c.repasseLiquidoTotal, 0);
+
+    const cmvFisico = channelAnalytics.filter(c => c.isFisico).reduce((acc, c) => acc + c.cmvCanal, 0);
+    const cmvDigital = channelAnalytics.filter(c => !c.isFisico).reduce((acc, c) => acc + c.cmvCanal, 0);
+
+    const metaDigitalTotal = channelAnalytics.filter(c => !c.isFisico).reduce((acc, c) => acc + c.metaValor, 0);
+    const progressoDigitalPct = metaDigitalTotal > 0 ? (fatBrutoDigital / metaDigitalTotal) * 100 : 0;
+    const diffDigital = Math.abs(progressoDigitalPct - 100);
+
+    const lojasFisicasDetalhes = channelAnalytics.filter(c => c.isFisico).map(c => ({
+      nome: c.canal.replace(/clube|loja/gi, '').trim() || c.canal,
+      faturado: c.faturadoComRedutor,
+      progresso: c.progressoMetaPct,
+      diff: Math.abs(c.progressoMetaPct - 100),
+      abaixo: c.progressoMetaPct < 100
+    }));
+
+    const lojasFisicasRepasse = channelAnalytics.filter(c => c.isFisico).map(c => ({
+      nome: c.canal.replace(/clube|loja/gi, '').trim() || c.canal,
+      repasse: c.repasseLiquidoTotal
+    }));
+
+    const totalRedutores = channelAnalytics.reduce((acc, c) => acc + c.devolucoesPdv + c.cancelamentosMes, 0);
+
+    return {
+      faturamentoBrutoVendas,
+      fatBrutoFisico,
+      fatBrutoDigital,
+      faturamentoLiquidoRepasse,
+      repasseFisico,
+      repasseDigital,
+      custoTotalCMV,
+      cmvFisico,
+      cmvDigital,
+      totalImpostoGlobal,
+      lucroLiquidoReal,
+      totalPedidos: enrichedSales.length,
+      lojasFisicasDetalhes,
+      lojasFisicasRepasse,
+      progressoDigitalPct,
+      diffDigital,
+      totalCancelamentosValor: totalRedutores
+    };
+  }, [channelAnalytics, enrichedSales]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
@@ -708,18 +685,18 @@ export default function DashboardPage() {
 
   const handleEnviarEmailAlerta = () => {
     const emailsCadastrados = users && users.length > 0 
-      ? users.map((u: any) => u.username).filter(Boolean).join(';') 
+      ? users.map((u: any) => u.email || u.username).filter(Boolean).join(';') 
       : "gisele@usebestfit.com.br";
     
     const dataHoje = new Date().toLocaleDateString('pt-BR');
     const assunto = encodeURIComponent(`📊 Resumo de Vendas - Lojas Físicas e Online (${dataHoje})`);
 
-    const hebraicaObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('hebraica')) || { faturadoBruto: 0, progressoMetaPct: 0 };
-    const paineirasObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('paineiras')) || { faturadoBruto: 0, progressoMetaPct: 0 };
+    const hebraicaObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('hebraica')) || { faturadoComRedutor: 0, progressoMetaPct: 0 };
+    const paineirasObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('paineiras')) || { faturadoComRedutor: 0, progressoMetaPct: 0 };
     
     const fatDigitalTotal = channelAnalytics
       .filter(c => !isChannelFisico(c.canal))
-      .reduce((acc, c) => acc + c.faturadoBruto, 0);
+      .reduce((acc, c) => acc + c.faturadoComRedutor, 0);
     
     const metaDigitalTotal = channelAnalytics
       .filter(c => !isChannelFisico(c.canal))
@@ -727,11 +704,11 @@ export default function DashboardPage() {
     
     const progressoDigitalPct = metaDigitalTotal > 0 ? (fatDigitalTotal / metaDigitalTotal) * 100 : 0;
 
-    let corpoTexto = `Olá, tudo bem? Segue resumo das vendas das lojas fisica e onlines do dia ${dataHoje}.\n\n`;
-    corpoTexto += `Hebraica: R$ ${hebraicaObj.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${hebraicaObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
-    corpoTexto += `Paineiras: R$ ${paineirasObj.faturadoBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${paineirasObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
+    let corpoTexto = `Olá, tudo bem? Segue resumo das vendas das lojas físicas e online do dia ${dataHoje}.\n\n`;
+    corpoTexto += `Hebraica: R$ ${hebraicaObj.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${hebraicaObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
+    corpoTexto += `Paineiras: R$ ${paineirasObj.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${paineirasObj.progressoMetaPct.toFixed(1)}% da meta)\n`;
     corpoTexto += `E-commerce: R$ ${fatDigitalTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${progressoDigitalPct.toFixed(1)}% da meta)\n\n`;
-    corpoTexto += `Caso queiram visualiza-lo, acessem o link a seguir: https://dashboard-e-commerce-nine.vercel.app/\n`;
+    corpoTexto += `Para visualizar o painel completo, acesse: https://dashboard-e-commerce-nine.vercel.app/\n`;
 
     const corpoEncoded = encodeURIComponent(corpoTexto);
     window.location.href = `mailto:${emailsCadastrados}?subject=${assunto}&body=${corpoEncoded}`;
@@ -750,10 +727,14 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#07090e] p-6 text-slate-100 font-sans space-y-6">
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900 p-5 rounded-2xl border border-slate-800 gap-4">
+      
+      {/* BARRA SUPERIOR DE FILTROS */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900 p-5 rounded-2xl border border-slate-800 gap-4 shadow-xl">
         <div>
-          <h2 className="text-xl font-bold text-white tracking-tight">Dashboard Best Fit</h2>
-          <p className="text-xs text-slate-400 mt-1">Cálculo de Margem Real = Repasse Líq - CMV - Imposto ({aliquotaImpostoGlobal}%) - Fretes Flex - Devoluções - ADS</p>
+          <h2 className="text-xl font-bold text-white tracking-tight">Dashboard de Faturamento</h2>
+          <p className="text-xs text-slate-400 mt-1">
+            Apuração com Redutores | Imposto Global: <strong className="text-emerald-400">{aliquotaImpostoGlobal}%</strong>
+          </p>
         </div>
         
         <div className="flex flex-wrap gap-3 items-center w-full lg:w-auto">
@@ -762,17 +743,14 @@ export default function DashboardPage() {
             onClick={handleEnviarEmailAlerta} 
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 transition text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-2 cursor-pointer"
           >
-            <i className="fa-solid fa-envelope"></i> Enviar Relatório por E-mail
+            ✉️ Enviar Relatório
           </button>
 
           <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
-            <i className="fa-regular fa-calendar text-indigo-400 pl-2 text-xs"></i>
+            <span className="text-xs pl-2">📅</span>
             <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="bg-transparent text-indigo-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
-              <option value="MES_ATUAL" className="bg-slate-900 text-white">Mês Atual (Padrão Metas)</option>
+              <option value="MES_ATUAL" className="bg-slate-900 text-white">Mês Atual ({mesRefFormatos.barra})</option>
               <option value="MES_ANTERIOR" className="bg-slate-900 text-white">Mês Anterior</option>
-              <option value="HOJE" className="bg-slate-900 text-white">Hoje</option>
-              <option value="SEMANA" className="bg-slate-900 text-white">Últimos 7 dias</option>
-              <option value="QUINZENA" className="bg-slate-900 text-white">Últimos 15 dias</option>
               <option value="PERSONALIZADO" className="bg-slate-900 text-white">Personalizado</option>
             </select>
           </div>
@@ -785,7 +763,7 @@ export default function DashboardPage() {
           )}
 
           <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
-            <i className="fa-solid fa-layer-group text-emerald-400 pl-2 text-xs"></i>
+            <span className="text-xs pl-2">🏷️</span>
             <select value={modalidadeFilter} onChange={(e) => setModalidadeFilter(e.target.value)} className="bg-transparent text-emerald-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
               <option value="TODAS" className="bg-slate-900 text-white">Todas as Modalidades</option>
               <option value="FISICO" className="bg-slate-900 text-white">Lojas Físicas</option>
@@ -794,7 +772,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-700">
-            <i className="fa-solid fa-store text-purple-400 pl-2 text-xs"></i>
+            <span className="text-xs pl-2">🏪</span>
             <select value={selectedChannelFilter} onChange={(e) => setSelectedChannelFilter(e.target.value)} className="bg-transparent text-purple-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer">
               <option value="TODOS" className="bg-slate-900 text-white">Todos os Canais</option>
               {canaisOficiais.map((ch: string) => <option key={ch} value={ch} className="bg-slate-900 text-white">{ch}</option>)}
@@ -807,8 +785,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* SELETOR DE MODO DE VISUALIZAÇÃO */}
       <div className="flex justify-between items-center bg-slate-900/60 px-5 py-3 rounded-xl border border-slate-800">
-        <span className="text-xs text-slate-300 font-bold">Modo de Visualização dos Canais:</span>
+        <span className="text-xs text-slate-300 font-bold">Modo de Exibição:</span>
         <div className="flex items-center gap-4">
           <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-200 select-none">
             <input 
@@ -817,7 +796,7 @@ export default function DashboardPage() {
               onChange={() => setViewMode('cards')} 
               className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-purple-500 cursor-pointer"
             />
-            <i className="fa-solid fa-grip text-purple-400"></i> Visualização em Cards
+            <span>Visualização em Cards</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-200 select-none">
             <input 
@@ -826,20 +805,28 @@ export default function DashboardPage() {
               onChange={() => setViewMode('linhas')} 
               className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-purple-500 cursor-pointer"
             />
-            <i className="fa-solid fa-table-list text-emerald-400"></i> Visualização em Linhas (Tabela Executiva)
+            <span>Tabela Executiva (Linhas)</span>
           </label>
         </div>
       </div>
 
+      {/* 4 CARDS TOTALIZADORES DO TOPO */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         
-        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center">
+        {/* Card 1: Faturamento com Redutor */}
+        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center shadow-lg">
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento Bruto</span>
-            <h3 className="text-2xl font-black text-white mt-1">R$ {kpis.faturamentoBrutoVendas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Faturamento Efetivo (c/ Redutor)</span>
+            <h3 className="text-2xl font-black text-white mt-1">
+              R$ {kpis.faturamentoBrutoVendas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
             <p className="text-[10px] text-slate-500 mt-1">
               {kpis.totalPedidos} itens validados
-              {kpis.totalCancelamentosValor > 0 && <span className="text-rose-400 block mt-0.5">Redutor Consolidado: - R$ {kpis.totalCancelamentosValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>}
+              {kpis.totalCancelamentosValor > 0 && (
+                <span className="text-rose-400 block mt-0.5">
+                  Devoluções/Cancelamentos: - R$ {kpis.totalCancelamentosValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              )}
             </p>
           </div>
           
@@ -849,10 +836,10 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-2">
                 {kpis.lojasFisicasDetalhes.map((loja: any) => (
                   <div key={loja.nome} className="bg-slate-950/50 p-2 rounded-xl border border-slate-800/50">
-                    <span className="font-bold text-slate-200 text-xs block">{loja.nome}</span>
+                    <span className="font-bold text-slate-200 text-xs block truncate">{loja.nome}</span>
                     <span className="text-xs font-black text-white block mt-0.5">R$ {loja.faturado.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     <span className={`text-[9px] font-black block mt-0.5 ${loja.abaixo ? 'text-rose-400' : 'text-emerald-400'}`}>
-                      {loja.abaixo ? `▼ ${loja.diff.toFixed(1)}% abaixo` : `▲ ${loja.diff.toFixed(1)}% acima`}
+                      {loja.abaixo ? `▼ ${loja.diff.toFixed(1)}%` : `▲ ${loja.diff.toFixed(1)}%`}
                     </span>
                   </div>
                 ))}
@@ -869,10 +856,13 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center">
+        {/* Card 2: Repasse das Plataformas */}
+        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center shadow-lg">
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase">Repasse Total das Plataformas</span>
-            <h3 className="text-2xl font-black text-purple-400 mt-1">R$ {kpis.faturamentoLiquidoRepasse.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Repasse Líquido das Plataformas</span>
+            <h3 className="text-2xl font-black text-purple-400 mt-1">
+              R$ {kpis.faturamentoLiquidoRepasse.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
             <div>
@@ -886,10 +876,13 @@ export default function DashboardPage() {
           </div>
         </div>
         
-        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center">
+        {/* Card 3: CMV */}
+        <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between text-center shadow-lg">
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase">CMV Total (Custos de SKU x Qtd)</span>
-            <h3 className="text-2xl font-black text-amber-400 mt-1">R$ {kpis.custoTotalCMV.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">CMV Total (Custos de SKU)</span>
+            <h3 className="text-2xl font-black text-amber-400 mt-1">
+              R$ {kpis.custoTotalCMV.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
             <div>
@@ -903,11 +896,16 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="bg-slate-900 p-5 rounded-2xl border border-emerald-500/20 flex flex-col justify-between text-center">
+        {/* Card 4: Lucro Líquido Real */}
+        <div className="bg-slate-900 p-5 rounded-2xl border border-emerald-500/20 flex flex-col justify-between text-center shadow-lg">
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase">Lucro Líquido Real</span>
-            <h3 className="text-2xl font-black text-emerald-400 mt-1">R$ {kpis.lucroLiquidoReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
-            <span className="text-[9px] text-slate-400 font-mono block mt-0.5">Imposto Geral: - R$ {kpis.totalImpostoGlobal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Lucro Líquido Real</span>
+            <h3 className="text-2xl font-black text-emerald-400 mt-1">
+              R$ {kpis.lucroLiquidoReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
+            <span className="text-[9px] text-slate-400 font-mono block mt-0.5">
+              Imposto Total ({aliquotaImpostoGlobal}%): - R$ {kpis.totalImpostoGlobal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
             <div>
@@ -923,6 +921,7 @@ export default function DashboardPage() {
 
       </div>
 
+      {/* EXIBIÇÃO: CARDS OU TABELA */}
       {viewMode === 'cards' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {channelAnalytics.map((item: any) => {
@@ -931,7 +930,11 @@ export default function DashboardPage() {
               <div key={item.canal} className="bg-slate-900 p-5 rounded-2xl border border-slate-800 space-y-4 flex flex-col justify-between hover:border-slate-700 transition duration-300 shadow-sm">
                  <div className="flex justify-between items-start border-b border-slate-800 pb-3 gap-3">
                    <div className="flex items-center gap-3">
-                     {item.logoUrl ? <img src={item.logoUrl} alt={item.canal} className="w-11 h-11 rounded-xl bg-white object-contain p-1 border border-slate-700 shadow" /> : <div className="w-11 h-11 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[10px] font-bold">Logo</div>}
+                     {item.logoUrl ? (
+                       <img src={item.logoUrl} alt={item.canal} className="w-11 h-11 rounded-xl bg-white object-contain p-1 border border-slate-700 shadow" />
+                     ) : (
+                       <div className="w-11 h-11 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[10px] font-bold">Logo</div>
+                     )}
                      <div>
                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wide">{item.responsavel || 'Equipe'}</span>
                        <h4 className="font-black text-white text-sm tracking-tight">{item.canal}</h4>
@@ -940,8 +943,7 @@ export default function DashboardPage() {
                    
                    <div className="flex flex-col items-end gap-1">
                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 whitespace-nowrap ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
-                        {metaBatida ? <i className="fa-solid fa-arrow-trend-up"></i> : <i className="fa-solid fa-arrow-trend-down"></i>}
-                        {item.progressoMetaPct.toFixed(1)}% da meta atingida
+                        {metaBatida ? '▲' : '▼'} {item.progressoMetaPct.toFixed(1)}% da meta
                       </span>
                       <span className="text-[9px] font-bold text-slate-400 tracking-tight">
                         Meta: R$ {item.metaValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -964,15 +966,15 @@ export default function DashboardPage() {
                    </div>
                  </div>
 
+                 {/* DETALHAMENTO DE DEDUÇÕES DO CANAL */}
                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 space-y-1.5 text-xs text-slate-300">
                    <div className="flex justify-between items-center text-[10px]">
                      <span className="text-slate-400 font-bold uppercase">CMV (Custo Produtos):</span>
                      <span className="text-amber-400 font-bold">- R$ {item.cmvCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                    </div>
 
-                   {/* IMPOSTO DEDUZIDO DA LIQUIDEZ */}
                    <div className="flex justify-between items-center text-[10px]">
-                     <span className="text-slate-400 font-bold uppercase">Imposto ({aliquotaImpostoGlobal}% PDV):</span>
+                     <span className="text-slate-400 font-bold uppercase">Imposto ({aliquotaImpostoGlobal}%):</span>
                      <span className="text-rose-400 font-bold">- R$ {item.impostoCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                    </div>
 
@@ -980,14 +982,17 @@ export default function DashboardPage() {
                      <span className="text-slate-400 font-bold uppercase">Abatimento Devoluções (PDV):</span>
                      <span className="text-rose-400 font-bold">- R$ {item.devolucoesPdv.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                    </div>
+                   
                    <div className="flex justify-between items-center text-[10px]">
                      <span className="text-slate-400 font-bold uppercase">Frete Reverso Devoluções:</span>
                      <span className="text-rose-400 font-bold">- R$ {item.devolucoesFrete.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                    </div>
+                   
                    <div className="flex justify-between items-center text-[10px]">
                      <span className="text-slate-400 font-bold uppercase">Adsense (Ads):</span>
                      <span className="text-rose-400 font-bold">- R$ {item.adsCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                    </div>
+                   
                    <div className="flex justify-between items-center text-[10px]">
                      <span className="text-slate-400 font-bold uppercase">Frete Flex (PLP):</span>
                      <span className="text-rose-400 font-bold">- R$ {item.flexCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -1006,12 +1011,14 @@ export default function DashboardPage() {
                      <span className="text-[10px] text-slate-400 font-bold uppercase">
                         {item.isCurrentMonth ? 'Projeção Fechamento:' : 'Faturamento Final:'}
                      </span>
-                     <strong className="text-xs font-black text-indigo-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                     <strong className="text-xs font-black text-indigo-300">
+                       R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                     </strong>
                    </div>
 
                    <div className="flex justify-between items-center pt-1 border-t border-slate-900">
                      {item.valorFaltante === 0 ? (
-                       <span className="w-full text-center text-xs font-black text-emerald-400 py-0.5">🎉 Parabéns, meta batida!</span>
+                       <span className="w-full text-center text-xs font-black text-emerald-400 py-0.5">🎉 Meta batida!</span>
                      ) : (
                        <>
                          <span className="text-[10px] text-slate-400 font-bold uppercase">
@@ -1029,7 +1036,9 @@ export default function DashboardPage() {
                    {item.cancelamentosMes > 0 && (
                      <div className="flex justify-between items-center pt-1 border-t border-slate-900">
                        <span className="text-[10px] text-slate-400 font-bold uppercase">Cancelamentos do Mês:</span>
-                       <strong className="text-xs font-black text-rose-400">- R$ {item.cancelamentosMes.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                       <strong className="text-xs font-black text-rose-400">
+                         - R$ {item.cancelamentosMes.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                       </strong>
                      </div>
                    )}
                  </div>
@@ -1068,8 +1077,8 @@ export default function DashboardPage() {
                 {ecommerceChannels.length > 0 && (
                   <>
                     <tr className="bg-slate-950/80 font-black text-white text-xs border-y border-slate-800">
-                      <td colSpan={7} className="py-3 px-6 text-indigo-400 flex items-center gap-2">
-                        <i className="fa-solid fa-globe"></i> E-COMMERCE
+                      <td colSpan={7} className="py-3 px-6 text-indigo-400">
+                        E-COMMERCE
                       </td>
                     </tr>
                     {ecommerceChannels.map((item: any) => {
@@ -1078,7 +1087,11 @@ export default function DashboardPage() {
                         <tr key={item.canal} className="hover:bg-slate-800/40 transition">
                           <td className="py-3.5 px-6">
                             <div className="flex items-center gap-3">
-                              {item.logoUrl ? <img src={item.logoUrl} alt={item.canal} className="w-8 h-8 rounded-lg bg-white object-contain p-0.5 border border-slate-700" /> : <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[9px] font-bold">Logo</div>}
+                              {item.logoUrl ? (
+                                <img src={item.logoUrl} alt={item.canal} className="w-8 h-8 rounded-lg bg-white object-contain p-0.5 border border-slate-700" />
+                              ) : (
+                                <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[9px] font-bold">Logo</div>
+                              )}
                               <div>
                                 <span className="font-bold text-white text-xs block">{item.canal}</span>
                                 <span className="text-[9px] uppercase font-bold text-slate-400">{item.responsavel}</span>
@@ -1091,8 +1104,7 @@ export default function DashboardPage() {
                           <td className="py-3.5 px-4 text-right font-bold text-indigo-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                           <td className="py-3.5 px-4 text-center">
                             <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
-                              {metaBatida ? <i className="fa-solid fa-arrow-trend-up"></i> : <i className="fa-solid fa-arrow-trend-down"></i>}
-                              {item.progressoMetaPct.toFixed(1)}%
+                              {metaBatida ? '▲' : '▼'} {item.progressoMetaPct.toFixed(1)}%
                             </span>
                           </td>
                           <td className="py-3.5 px-6 text-right font-black text-emerald-400">{item.margemLiquidaPct.toFixed(1)}%</td>
@@ -1116,8 +1128,8 @@ export default function DashboardPage() {
                 {physicalChannels.length > 0 && (
                   <>
                     <tr className="bg-slate-950/80 font-black text-white text-xs border-y border-slate-800">
-                      <td colSpan={7} className="py-3 px-6 text-emerald-400 flex items-center gap-2">
-                        <i className="fa-solid fa-store"></i> LOJAS FÍSICAS
+                      <td colSpan={7} className="py-3 px-6 text-emerald-400">
+                        LOJAS FÍSICAS
                       </td>
                     </tr>
                     {physicalChannels.map((item: any) => {
@@ -1126,7 +1138,11 @@ export default function DashboardPage() {
                         <tr key={item.canal} className="hover:bg-slate-800/40 transition">
                           <td className="py-3.5 px-6">
                             <div className="flex items-center gap-3">
-                              {item.logoUrl ? <img src={item.logoUrl} alt={item.canal} className="w-8 h-8 rounded-lg bg-white object-contain p-0.5 border border-slate-700" /> : <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[9px] font-bold">Logo</div>}
+                              {item.logoUrl ? (
+                                <img src={item.logoUrl} alt={item.canal} className="w-8 h-8 rounded-lg bg-white object-contain p-0.5 border border-slate-700" />
+                              ) : (
+                                <div className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 text-[9px] font-bold">Logo</div>
+                              )}
                               <div>
                                 <span className="font-bold text-white text-xs block">{item.canal}</span>
                                 <span className="text-[9px] uppercase font-bold text-slate-400">{item.responsavel}</span>
@@ -1139,8 +1155,7 @@ export default function DashboardPage() {
                           <td className="py-3.5 px-4 text-right font-bold text-emerald-300">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                           <td className="py-3.5 px-4 text-center">
                             <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${metaBatida ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border-rose-500/40'}`}>
-                              {metaBatida ? <i className="fa-solid fa-arrow-trend-up"></i> : <i className="fa-solid fa-arrow-trend-down"></i>}
-                              {item.progressoMetaPct.toFixed(1)}%
+                              {metaBatida ? '▲' : '▼'} {item.progressoMetaPct.toFixed(1)}%
                             </span>
                           </td>
                           <td className="py-3.5 px-6 text-right font-black text-emerald-400">{item.margemLiquidaPct.toFixed(1)}%</td>
