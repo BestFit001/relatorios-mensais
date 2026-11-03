@@ -372,7 +372,6 @@ export default function PainelExecutivoPage() {
     });
   }, [sales, mesRefFormatos, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules]);
 
-  // Vendas do mês anterior para cálculo de Proj x Mês Anterior
   const previousMonthSales = useMemo(() => {
     return (sales || []).map((s: any) => ({
       ...s,
@@ -556,7 +555,7 @@ export default function PainelExecutivoPage() {
 
   const enrichTotals = (totals: any) => {
     const margemBrutaAtingida = totals.faturadoBrutoPuro > 0 ? (totals.repasseTotal / totals.faturadoBrutoPuro) * 100 : 0;
-    const margemLiqAtingida = totals.faturadoBrutoPuro > 0 ? (totals.lucroLiquidoFinal / totals.faturadoBrutoPuro) * 100 : 0;
+    const margemLiqAtingida = totals.faturadoBrutoPuro > 0 ? (totals.lucroLiquidoFinal / totals.faturadoBruroPuro || totals.faturadoBrutoPuro) * 100 : 0;
     const metaMargemBruta = totals.metaValor > 0 ? totals.metaBrutaPonderada / totals.metaValor : 0;
     const metaMargemLiq = totals.metaValor > 0 ? totals.metaLiqPonderada / totals.metaValor : 0;
 
@@ -583,7 +582,7 @@ export default function PainelExecutivoPage() {
     metaValor: totalEcomRaw.metaValor + totalFisicoRaw.metaValor,
     projecaoFaturamento: totalEcomRaw.projecaoFaturamento + totalFisicoRaw.projecaoFaturamento,
     faturadoMesAnterior: totalEcomRaw.faturadoMesAnterior + totalFisicoRaw.faturadoMesAnterior,
-    faturadoBrutoPuro: totalEcomRaw.faturadoBruroPuro || (totalEcomRaw.faturadoBrutoPuro + totalFisicoRaw.faturadoBrutoPuro),
+    faturadoBrutoPuro: totalEcomRaw.faturadoBrutoPuro + totalFisicoRaw.faturadoBrutoPuro,
     repasseTotal: totalEcomRaw.repasseTotal + totalFisicoRaw.repasseTotal,
     lucroLiquidoFinal: totalEcomRaw.lucroLiquidoFinal + totalFisicoRaw.lucroLiquidoFinal,
     metaBrutaPonderada: totalEcomRaw.metaBrutaPonderada + totalFisicoRaw.metaBrutaPonderada,
@@ -619,7 +618,9 @@ export default function PainelExecutivoPage() {
     if (!tableRef.current) return;
     try {
       setIsProcessing(true);
-      const { toBlob } = await import('html-to-image');
+      // @ts-ignore
+      const htmlToImage = await import('html-to-image');
+      const toBlob = htmlToImage.toBlob;
       
       const fullWidth = tableRef.current.scrollWidth;
       const fullHeight = tableRef.current.scrollHeight;
@@ -662,9 +663,9 @@ export default function PainelExecutivoPage() {
       corpoTexto += `Acesse o sistema para conferir a visão completa: https://dashboard-e-commerce-nine.vercel.app/executivo`;
       
       window.location.href = `mailto:${emailsCadastrados}?subject=${assunto}&body=${encodeURIComponent(corpoTexto)}`;
-      alert('✅ Tabela completa copiada em alta resolução! No corpo do e-mail, aperte Ctrl + V para colar a imagem.');
+      alert('✅ Imagem capturada para a área de transferência! Cole com Ctrl + V no corpo do e-mail.');
     } catch (err: any) {
-      alert(`Erro ao copiar print/abrir e-mail: ${err.message}`);
+      alert(`Erro ao capturar print: ${err.message}`);
     } finally {
       setIsProcessing(false);
     }
@@ -684,7 +685,7 @@ export default function PainelExecutivoPage() {
   return (
     <div className="min-h-screen bg-[#07090e] p-6 text-slate-100 font-sans space-y-4 text-[10px]">
       
-      {/* CABEÇALHO COM NAVEGAÇÃO E BOTÃO DE DISPARO */}
+      {/* CABEÇALHO */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-900 px-4 py-3 rounded-xl border border-slate-800 gap-3">
         <div className="flex items-center gap-3">
           <Navbar />
@@ -705,7 +706,7 @@ export default function PainelExecutivoPage() {
         </button>
       </div>
 
-      {/* TABELA PANORÂMICA EXECUTIVA */}
+      {/* TABELA PANORÂMICA */}
       <div className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-2xl p-1">
         <div className="overflow-x-auto">
           <table ref={tableRef} className="w-full text-left text-slate-200 border-collapse bg-slate-900">
