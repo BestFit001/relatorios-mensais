@@ -1,4 +1,7 @@
 "use client";
+
+export const dynamic = "force-dynamic";
+
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
@@ -38,9 +41,44 @@ function parseNumeroBruto(valor: any): number {
   return isNaN(num) ? 0 : num;
 }
 
+// Converte qualquer data (DD/MM/YYYY, YYYY-MM-DD ou Date) para timestamp limpo em milissegundos
+function parseDataParaTimestamp(dataStr: any): number | null {
+  if (!dataStr) return null;
+  const s = String(dataStr).trim().split(" ")[0];
+
+  // Caso 1: Formato DD/MM/YYYY
+  if (s.includes("/")) {
+    const partes = s.split("/");
+    if (partes.length === 3) {
+      const dia = parseInt(partes[0], 10);
+      const mes = parseInt(partes[1], 10) - 1;
+      let ano = parseInt(partes[2], 10);
+      if (ano < 100) ano += 2000;
+      const d = new Date(ano, mes, dia);
+      return isNaN(d.getTime()) ? null : d.setHours(0, 0, 0, 0);
+    }
+  }
+
+  // Caso 2: Formato ISO YYYY-MM-DD
+  if (s.includes("-")) {
+    const partes = s.split("-");
+    if (partes.length === 3) {
+      const ano = parseInt(partes[0], 10);
+      const mes = parseInt(partes[1], 10) - 1;
+      const dia = parseInt(partes[2], 10);
+      const d = new Date(ano, mes, dia);
+      return isNaN(d.getTime()) ? null : d.setHours(0, 0, 0, 0);
+    }
+  }
+
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d.setHours(0, 0, 0, 0);
+}
+
 function formatarDataCurta(dataStr: any): string {
   if (!dataStr) return "";
   const s = String(dataStr).trim();
+  if (s.includes("/")) return s.split(" ")[0];
   try {
     const d = new Date(s);
     if (!isNaN(d.getTime())) {
@@ -74,7 +112,7 @@ export default function RelatorioLivesPage() {
   // Dados
   const [dadosBrutos, setDadosBrutos] = useState<any[]>([]);
   const [custosLiveBrutos, setCustosLiveBrutos] = useState<any[]>([]);
-  const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
+  const [custosMap, setCustosMap] = useState>(new Map());
   const [paginaAtual, setPaginaAtual] = useState(1);
   const itensPorPagina = 10;
 
@@ -85,8 +123,6 @@ export default function RelatorioLivesPage() {
   const [dataFim, setDataFim] = useState("");
 
   const statusPermitidos = ["aguardando envio", "em trânsito", "concluído", "entregue", "enviado", "a ser enviado", "paid", "completed"];
-
-  // TABELA ISOLADA PARA AS LIVES (NÃO AFETA O DASHBOARD)
   const TABELA_DESTINO_LIVES = "vendas_lives_separadas";
 
   useEffect(() => {
@@ -137,7 +173,6 @@ export default function RelatorioLivesPage() {
         });
       }
 
-      // Carregar exclusivamente da tabela isolada de lives
       let allVendas: any[] = [];
       let vFrom = 0;
       let vKeep = true;
@@ -255,7 +290,6 @@ export default function RelatorioLivesPage() {
           });
         }
 
-        // SALVA EXCLUSIVAMENTE NA TABELA ISOLADA, SEM MEXER NO DASHBOARD
         await supabase.from(TABELA_DESTINO_LIVES).delete().neq("id", 0);
 
         const registrosParaSalvar = novasLinhas.map(row => {
@@ -351,6 +385,7 @@ export default function RelatorioLivesPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // Processamento e Filtragem Corrigida por Timestamp
   const dadosProcessados = dadosBrutos.map((row) => {
     const skuRaw = row.sku;
     const skuNorm = normalizarSku(skuRaw);
@@ -370,6 +405,7 @@ export default function RelatorioLivesPage() {
     const valorPdv = pdv > 0 ? pdv : repasse;
     const percentualLucroPdv = valorPdv > 0 ? (liquidez / valorPdv) * 100 : 0;
     const dataCurta = formatarDataCurta(dataPagamento);
+    const timestamp = parseDataParaTimestamp(dataCurta);
 
     return {
       sku: skuRaw,
@@ -383,6 +419,7 @@ export default function RelatorioLivesPage() {
       liquidez,
       percentualLucroPdv,
       data: dataCurta,
+      timestamp,
       status: statusVenda,
     };
   }).filter(item => {
@@ -392,20 +429,30 @@ export default function RelatorioLivesPage() {
     const statusValido = statusPermitidos.some(st => statusLimpo.includes(st.toLowerCase()));
     if (!statusValido) return false;
 
+    // Filtro de Busca (SKU ou Nome)
     if (buscaSku && !item.skuNorm.includes(buscaSku.toLowerCase()) && !item.nomeProduto.toLowerCase().includes(buscaSku.toLowerCase())) {
       return false;
     }
 
-    if (filtroMes && item.data) {
-      const partes = item.data.split("/");
-      if (partes.length === 3) {
-        const mesAno = `${partes[2]}-${partes[1]}`;
-        if (mesAno !== filtroMes) return false;
-      }
+    // Filtro por Mês (YYYY-MM)
+    if (filtroMes && item.timestamp) {
+      const d = new Date(item.timestamp);
+      const ano = d.getFullYear();
+      const mes = String(d.getMonth() + 1).padStart(2, "0");
+      if (`${ano}-${mes}` !== filtroMes) return false;
     }
 
-    if (dataInicio && item.data && item.data < dataInicio) return false;
-    if (dataFim && item.data && item.data > dataFim) return false;
+    // Filtro por Período de Datas via Timestamp (Elimina erro de string)
+    const tsInicio = dataInicio ? parseDataParaTimestamp(dataInicio) : null;
+    const tsFim = dataFim ? parseDataParaTimestamp(dataFim) : null;
+
+    if (tsInicio !== null && item.timestamp !== null && item.timestamp < tsInicio) {
+      return false;
+    }
+
+    if (tsFim !== null && item.timestamp !== null && item.timestamp > tsFim) {
+      return false;
+    }
 
     return true;
   });
