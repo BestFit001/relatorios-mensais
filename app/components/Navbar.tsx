@@ -1,12 +1,11 @@
-"use client";
+'use client';
+
+export const dynamic = 'force-dynamic';
 
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "../components/Navbar";
 
-// ==========================================
-// TIPAGENS - REPUTAÇÃO
-// ==========================================
 interface MetricaReputacaoConfig {
   id: string;
   nome: string;
@@ -29,9 +28,6 @@ interface RegistroReputacao {
   acao_corretiva?: string;
 }
 
-// ==========================================
-// TIPAGENS - ANÁLISE DE VENDAS
-// ==========================================
 interface MetricaVendasConfig {
   id: string;
   nome: string;
@@ -49,18 +45,11 @@ interface RegistroVendas {
 }
 
 export default function MonitoramentoPage() {
-  // Aba Principal: Métricas por Canal (Reputação) OU Análise de Vendas
   const [moduloAtivo, setModuloAtivo] = useState<"metricas_canal" | "analise_vendas">("metricas_canal");
-
-  // Sub-abas (Alimentação, Dash, Config)
   const [subAba, setSubAba] = useState<"alimentacao" | "dashboard" | "config">("alimentacao");
-
-  // Data global selecionada
   const [dataSelecionada, setDataSelecionada] = useState<string>(new Date().toISOString().split("T")[0]);
 
-  // ==========================================
-  // ESTADOS - MÉTRICAS POR CANAL (REPUTAÇÃO)
-  // ==========================================
+  // Estados - Métricas por Canal
   const [canaisReputacao, setCanaisReputacao] = useState<CanalReputacao[]>([]);
   const [canalReputacaoId, setCanalReputacaoId] = useState<string>("");
   const [valoresReputacaoForm, setValoresReputacaoForm] = useState<Record<string, string>>({});
@@ -73,9 +62,7 @@ export default function MonitoramentoPage() {
     meta: 0
   });
 
-  // ==========================================
-  // ESTADOS - ANÁLISE DE VENDAS
-  // ==========================================
+  // Estados - Análise de Vendas
   const [canaisVendas, setCanaisVendas] = useState<string[]>([
     "Mercado Livre 1", "Mercado Livre 2", "Amazon", "Shopee", "Magalu", "TikTok", "Site", "Clube Hebraica", "Clube Paineiras"
   ]);
@@ -100,9 +87,6 @@ export default function MonitoramentoPage() {
     carregarConfiguracoesVendas();
   }, []);
 
-  // ------------------------------------------
-  // CARREGAMENTOS REPUTAÇÃO
-  // ------------------------------------------
   const carregarCanaisReputacao = async () => {
     const { data } = await supabase.from("reputacao_canais").select("*").order("nome");
     if (data && data.length > 0) {
@@ -152,9 +136,6 @@ export default function MonitoramentoPage() {
     setHistoricoReputacao(data || []);
   };
 
-  // ------------------------------------------
-  // CARREGAMENTOS ANÁLISE DE VENDAS
-  // ------------------------------------------
   const carregarCanaisVendas = async () => {
     const { data } = await supabase.from("config_regras_canais").select("canal").order("id");
     if (data && data.length > 0) {
@@ -216,9 +197,6 @@ export default function MonitoramentoPage() {
     }
   }, [moduloAtivo, subAba, canalReputacaoId, canalVendasSelecionado, dataSelecionada]);
 
-  // ------------------------------------------
-  // ACTIONS - REPUTAÇÃO
-  // ------------------------------------------
   const salvarRegistroReputacao = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canalReputacaoId) return;
@@ -241,7 +219,7 @@ export default function MonitoramentoPage() {
     );
 
     if (error) alert("Erro ao gravar: " + error.message);
-    else alert("✅ Métricas de reputação salvas com sucesso!");
+    else alert("✅ Métricas de reputação guardadas com sucesso!");
     setSalvando(false);
   };
 
@@ -293,9 +271,6 @@ export default function MonitoramentoPage() {
     carregarCanaisReputacao();
   };
 
-  // ------------------------------------------
-  // ACTIONS - ANÁLISE DE VENDAS
-  // ------------------------------------------
   const salvarRegistroVendas = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
@@ -317,7 +292,7 @@ export default function MonitoramentoPage() {
     );
 
     if (error) alert("Erro ao gravar: " + error.message);
-    else alert("✅ Análise de vendas gravada com sucesso!");
+    else alert("✅ Análise de vendas guardada com sucesso!");
     setSalvando(false);
   };
 
@@ -365,7 +340,7 @@ export default function MonitoramentoPage() {
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO SUPERIOR: MÉTRICAS POR CANAL (REPUTAÇÃO) vs ANÁLISE DE VENDAS */}
+        {/* ABAS PRINCIPAIS */}
         <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
           <button
             onClick={() => { setModuloAtivo("metricas_canal"); setSubAba("alimentacao"); }}
@@ -389,7 +364,7 @@ export default function MonitoramentoPage() {
           </button>
         </div>
 
-        {/* SUB-MENU (ALIMENTAÇÃO, DASH, CONFIG) + SELEÇÃO DE CANAL */}
+        {/* SUB-MENU */}
         <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-900/60 p-3.5 rounded-xl border border-slate-800">
           <div className="flex gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
             <button
@@ -444,9 +419,7 @@ export default function MonitoramentoPage() {
           </div>
         </div>
 
-        {/* ======================================================== */}
-        {/* MÓDULO 1: MÉTRICAS POR CANAL (REPUTAÇÃO)                 */}
-        {/* ======================================================== */}
+        {/* MÓDULO 1: MÉTRICAS POR CANAL */}
         {moduloAtivo === "metricas_canal" && (
           <>
             {subAba === "alimentacao" && (
@@ -665,9 +638,7 @@ export default function MonitoramentoPage() {
           </>
         )}
 
-        {/* ======================================================== */}
-        {/* MÓDULO 2: ANÁLISE DE VENDAS                             */}
-        {/* ======================================================== */}
+        {/* MÓDULO 2: ANÁLISE DE VENDAS */}
         {moduloAtivo === "analise_vendas" && (
           <>
             {subAba === "alimentacao" && (
@@ -675,7 +646,7 @@ export default function MonitoramentoPage() {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-4">
                   <div>
                     <h2 className="text-lg font-bold text-white">Análise Comercial — {canalVendasSelecionado}</h2>
-                    <p className="text-xs text-slate-400">Preencha os indicadores de venda diários</p>
+                    <p className="text-xs text-slate-400">Preencha os indicadores diários de venda</p>
                   </div>
 
                   <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-700">
