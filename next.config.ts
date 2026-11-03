@@ -5,14 +5,11 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "xlsx",
     "html-to-image",
-    "@google/genai"
+    "@google/genai",
+    "@supabase/supabase-js"
   ],
   typescript: {
     ignoreBuildErrors: true,
-  },
-  experimental: {
-    // Reduz workers concorrentes para manter o heap do processo sob controle
-    cpus: 1,
   },
 };
 
