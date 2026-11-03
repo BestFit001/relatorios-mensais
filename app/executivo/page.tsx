@@ -480,6 +480,30 @@ export default function PainelExecutivoPage() {
         .filter((c: any) => canonizarCanal(c.canal) === channelName)
         .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
+
+      // ESTORNO INTEGRAL DOS CANCELADOS: além da receita (já abatida acima), saem junto o repasse
+      // (taxas/comissões/frete), o CMV e o frete Flex da venda cancelada. Casa pelo id_pedido;
+      // sem id_pedido, usa sku x quantidade da planilha de cancelamentos para estornar o custo.
+      let estRepasseCanc = 0, estCmvCanc = 0, estFlexCanc = 0;
+      const pedidosEstornados = new Set<string>();
+      activeCancelados.forEach((c: any) => {
+        if (canonizarCanal(c.canal) !== channelName) return;
+        const ped = normalizarPedido(c.id_pedido);
+        const vendasDoPedido = ped ? chSales.filter((s: any) => normalizarPedido(s.id_pedido) === ped) : [];
+        if (vendasDoPedido.length > 0) {
+          if (pedidosEstornados.has(ped)) return;
+          pedidosEstornados.add(ped);
+          vendasDoPedido.forEach((s: any) => {
+            estRepasseCanc += s.repasse_liquido || 0;
+            estCmvCanc += s.custoCMV || 0;
+            estFlexCanc += s.custoFlex || 0;
+          });
+        } else if (c.sku) {
+          const custoP = produtosCustoMap.get(normalizarSku(c.sku)) || { custo_unitario: 0, custo_embalagem: 0 };
+          estCmvCanc += (custoP.custo_unitario + custoP.custo_embalagem) * (parseCurrency(c.quantidade) || 1);
+        }
+      });
+
       let devPdvBruto = 0;
       let devFreteLiquido = 0;
       let devRepasseLiquido = 0;
@@ -517,13 +541,13 @@ export default function PainelExecutivoPage() {
       const faturadoBrutoPuro = chSales.reduce((sum: number, s: any) => sum + s.preco_venda, 0);
       const faturadoComRedutor = Math.max(0, faturadoBrutoPuro - devPdvBruto - cancelamentosMes);
       
-      const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0);
+      const repasseVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.repasse_liquido, 0) - estRepasseCanc;
       const repasseTotal = Math.max(0, repasseVendasCanal - devRepasseLiquido);
       
       const canalAds = adsMap.get(normalizarTexto(channelName)) || 0;
-      const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0);
+      const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0) - estCmvCanc;
       const cmvCanal = Math.max(0, cmvVendasCanal - devCmvTotal);
-      const flexCanal = chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0);
+      const flexCanal = Math.max(0, chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0) - estFlexCanc);
       const impostoCanal = (faturadoComRedutor * aliquotaImpostoGlobal) / 100;
 
       const lucroLiquidoFinal = repasseTotal - cmvCanal - impostoCanal - flexCanal - canalAds - devFreteLiquido;
