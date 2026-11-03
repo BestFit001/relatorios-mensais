@@ -149,7 +149,6 @@ export default function RegrasPage() {
       setColunasFoco({ idPedido: 'A', sku: 'B', precoVenda: 'P', quantidade: 'O', repasseDireto: '' });
     }
 
-    // Busca a meta cadastrada para o canal e competência específicos
     const { data: metaDb } = await supabase
       .from('tb_metas')
       .select('*')
@@ -421,7 +420,7 @@ export default function RegrasPage() {
                   </div>
                 </div>
 
-                {/* SELEÇÃO POR MÊS E ANO (SUBSTITUIU O CAMPO DE DIGITAÇÃO) */}
+                {/* SELEÇÃO POR MÊS E ANO */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-slate-300">Mês de Referência (Histórico da Meta):</label>
                   <div className="grid grid-cols-2 gap-3">
@@ -495,7 +494,7 @@ export default function RegrasPage() {
                   className="w-full bg-slate-900 border border-purple-500/50 rounded-xl p-3.5 font-mono text-xs font-bold text-purple-200 outline-none focus:border-purple-400 shadow-inner" 
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
-                  Exemplos: Amazon = <code className="text-purple-300 font-bold">PDV - (PDV * 14%) - 4 - (PDV >= 79 ? 21.95 : 0)</code> ou Centauro = <code className="text-purple-300 font-bold">(P - Q) * O</code>.
+                  Exemplos: Amazon = <code className="text-purple-300 font-bold">{"PDV - (PDV * 14%) - 4 - (PDV >= 79 ? 21.95 : 0)"}</code> ou Centauro = <code className="text-purple-300 font-bold">{"(P - Q) * O"}</code>.
                 </p>
               </div>
 
