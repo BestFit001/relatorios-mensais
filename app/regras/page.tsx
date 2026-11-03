@@ -5,6 +5,23 @@ import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
+const MESES_OPCOES = [
+  { valor: "janeiro", nome: "Janeiro" },
+  { valor: "fevereiro", nome: "Fevereiro" },
+  { valor: "março", nome: "Março" },
+  { valor: "abril", nome: "Abril" },
+  { valor: "maio", nome: "Maio" },
+  { valor: "junho", nome: "Junho" },
+  { valor: "julho", nome: "Julho" },
+  { valor: "agosto", nome: "Agosto" },
+  { valor: "setembro", nome: "Setembro" },
+  { valor: "outubro", nome: "Outubro" },
+  { valor: "novembro", nome: "Novembro" },
+  { valor: "dezembro", nome: "Dezembro" }
+];
+
+const ANOS_OPCOES = ["2025", "2026", "2027", "2028"];
+
 export default function RegrasPage() {
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -21,8 +38,11 @@ export default function RegrasPage() {
   const [impostoGlobal, setImpostoGlobal] = useState<string>("6.00");
   const [salvandoImposto, setSalvandoImposto] = useState(false);
 
-  // Estado da regra do canal selecionado
-  const [metaMes, setMetaMes] = useState('outubro de 2026');
+  // Estados de Seleção de Mês e Ano
+  const [mesSelecionado, setMesSelecionado] = useState("outubro");
+  const [anoSelecionado, setAnoSelecionado] = useState("2026");
+  const metaMesFormatado = `${mesSelecionado} de ${anoSelecionado}`;
+
   const [metaValor, setMetaValor] = useState<number | string>(0);
   const [responsavelCanal, setResponsavelCanal] = useState('Equipe Best Fit');
   const [logoUrl, setLogoUrl] = useState('');
@@ -64,9 +84,9 @@ export default function RegrasPage() {
 
   useEffect(() => {
     if (canalSelecionado) {
-      carregarRegrasCanalEspecifico(canalSelecionado);
+      carregarRegrasCanalEspecifico(canalSelecionado, metaMesFormatado);
     }
-  }, [canalSelecionado]);
+  }, [canalSelecionado, mesSelecionado, anoSelecionado]);
 
   const carregarDadosGlobais = async () => {
     setLoading(true);
@@ -109,7 +129,7 @@ export default function RegrasPage() {
     setLoading(false);
   };
 
-  const carregarRegrasCanalEspecifico = async (canal: string) => {
+  const carregarRegrasCanalEspecifico = async (canal: string, periodoFormatado: string) => {
     const { data: regraDb } = await supabase.from('config_regras_canais').select('*').eq('canal', canal).maybeSingle();
     if (regraDb) {
       setFormulaApuracao(regraDb.formula_excel || 'PDV - (PDV * 12%)');
@@ -129,10 +149,16 @@ export default function RegrasPage() {
       setColunasFoco({ idPedido: 'A', sku: 'B', precoVenda: 'P', quantidade: 'O', repasseDireto: '' });
     }
 
-    const { data: metaDb } = await supabase.from('tb_metas').select('*').eq('canal', canal).maybeSingle();
+    // Busca a meta cadastrada para o canal e competência específicos
+    const { data: metaDb } = await supabase
+      .from('tb_metas')
+      .select('*')
+      .eq('canal', canal)
+      .eq('mes_referencia', periodoFormatado)
+      .maybeSingle();
+
     if (metaDb) {
       setMetaValor(metaDb.meta_valor || 0);
-      if (metaDb.mes_referencia) setMetaMes(metaDb.mes_referencia);
     } else {
       setMetaValor(0);
     }
@@ -169,14 +195,14 @@ export default function RegrasPage() {
 
       const { error: erroMeta } = await supabase.from('tb_metas').upsert([{
         canal: canalSelecionado,
-        mes_referencia: metaMes,
+        mes_referencia: metaMesFormatado,
         meta_valor: Number(metaValor) || 0,
         responsavel: responsavelCanal
       }], { onConflict: 'canal, mes_referencia' });
 
       if (erroMeta) throw new Error("Erro ao salvar meta: " + erroMeta.message);
 
-      alert(`✅ Configurações e fórmula do canal "${canalSelecionado}" salvas com sucesso!`);
+      alert(`✅ Configurações e meta do canal "${canalSelecionado}" (${metaMesFormatado}) salvas com sucesso!`);
     } catch (err: any) {
       alert("❌ " + err.message);
     } finally {
@@ -395,14 +421,37 @@ export default function RegrasPage() {
                   </div>
                 </div>
 
+                {/* SELEÇÃO POR MÊS E ANO (SUBSTITUIU O CAMPO DE DIGITAÇÃO) */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-slate-300">Mês de Referência (Histórico da Meta):</label>
-                  <input 
-                    type="text" 
-                    value={metaMes} 
-                    onChange={e => setMetaMes(e.target.value)} 
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-indigo-300 font-bold outline-none" 
-                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <select
+                      value={mesSelecionado}
+                      onChange={e => setMesSelecionado(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-indigo-300 font-bold outline-none cursor-pointer"
+                    >
+                      {MESES_OPCOES.map(m => (
+                        <option key={m.valor} value={m.valor} className="bg-slate-900 text-white">
+                          {m.nome}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={anoSelecionado}
+                      onChange={e => setAnoSelecionado(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-indigo-300 font-bold outline-none cursor-pointer"
+                    >
+                      {ANOS_OPCOES.map(a => (
+                        <option key={a} value={a} className="bg-slate-900 text-white">
+                          {a}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-1 block">
+                    Salvando como: <strong className="text-slate-300 uppercase">{metaMesFormatado}</strong>
+                  </span>
                 </div>
               </div>
 
@@ -419,7 +468,7 @@ export default function RegrasPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-300">Meta de Faturamento (R$) para o mês selecionado:</label>
+                  <label className="block text-xs font-bold text-slate-300">Meta de Faturamento (R$) para {metaMesFormatado}:</label>
                   <input 
                     type="number" 
                     step="0.01"
@@ -442,11 +491,11 @@ export default function RegrasPage() {
                   type="text" 
                   value={formulaApuracao} 
                   onChange={e => setFormulaApuracao(e.target.value)} 
-                  placeholder="Ex: (P - Q) * O ou (QTD * PDV) - (PDV * 12%) ou PDV - Q" 
+                  placeholder="Ex: PDV - (PDV * 14%) - 4 - (PDV >= 79 ? 21.95 : 0)" 
                   className="w-full bg-slate-900 border border-purple-500/50 rounded-xl p-3.5 font-mono text-xs font-bold text-purple-200 outline-none focus:border-purple-400 shadow-inner" 
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
-                  Exemplos: Centauro = <code className="text-purple-300 font-bold">(P - Q) * O</code> ou <code className="text-purple-300 font-bold">PDV - Q</code>. Se a planilha já trouxer o líquido pronto (como o Mercado Livre na coluna T), pode deixar este campo em branco e preencher a coluna direta abaixo[cite: 17, 19].
+                  Exemplos: Amazon = <code className="text-purple-300 font-bold">PDV - (PDV * 14%) - 4 - (PDV >= 79 ? 21.95 : 0)</code> ou Centauro = <code className="text-purple-300 font-bold">(P - Q) * O</code>.
                 </p>
               </div>
 
