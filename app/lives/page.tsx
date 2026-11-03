@@ -108,7 +108,7 @@ export default function RelatorioLivesPage() {
   // Dados
   const [dadosBrutos, setDadosBrutos] = useState<any[]>([]);
   const [custosLiveBrutos, setCustosLiveBrutos] = useState<any[]>([]);
-  const [custosMap, setCustosMap] = useState>(new Map());
+  const [custosMap, setCustosMap] = useState<Map<string, any>>(new Map());
   const [paginaAtual, setPaginaAtual] = useState(1);
   const itensPorPagina = 10;
 
