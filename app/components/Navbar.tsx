@@ -39,13 +39,14 @@ export default function Navbar() {
         setEmailUsuario(user.email || "");
         setPerfilUsuario(user.perfil || "compras");
         if (user.perfil === "admin") {
-          // Lista unificada de todas as páginas existentes no sistema
+          // Lista completa com todas as rotas ativas do sistema
           setPaginasPermitidas([
             "/",
             "/dashboard",
             "/executivo",
             "/reputacao",
             "/marketing",
+            "/marketing/ajustes",
             "/mapeamento",
             "/ads",
             "/devolucoes",
@@ -107,7 +108,7 @@ export default function Navbar() {
         setLogoUrl(data.coluna);
       }
     } catch (err) {
-      console.error("Erro ao carregar logo:", err);
+      console.error("Erro ao carregar logótipo:", err);
     }
   };
 
@@ -136,9 +137,9 @@ export default function Navbar() {
       );
 
       setLogoUrl(urlPublica);
-      alert("✅ Logotipo atualizado e salvo no Supabase para todo o sistema!");
+      alert("✅ Logótipo atualizado e guardado no Supabase para todo o sistema!");
     } catch (err: any) {
-      alert("Erro ao fazer upload do logotipo: " + err.message);
+      alert("Erro ao enviar o logótipo: " + err.message);
     }
     setUploadingLogo(false);
   };
@@ -259,18 +260,54 @@ export default function Navbar() {
             </Link>
           )}
 
-          {/* MARKETING */}
-          {temPermissao("/marketing") && (
-            <Link
-              href="/marketing"
-              title="Marketing"
-              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
-                pathname?.includes("/marketing") ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-              }`}
-            >
-              <span className="text-sm flex-shrink-0">📣</span>
-              {sidebarAberta && <span className="truncate">Marketing</span>}
-            </Link>
+          {/* MARKETING (POSTAGENS & AJUSTES NO SITE) */}
+          {(temPermissao("/marketing") || temPermissao("/marketing/ajustes")) && (
+            <div>
+              <button
+                onClick={() => sidebarAberta && toggleSecao("marketing")}
+                title="Marketing"
+                className="w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900/60 transition-all cursor-pointer"
+              >
+                <span className="flex items-center gap-3">
+                  <span className="text-sm flex-shrink-0">📣</span>
+                  {sidebarAberta && <span className="truncate">Marketing</span>}
+                </span>
+                {sidebarAberta && (
+                  <span className={`transform transition-transform text-[9px] ${menuExpandido === "marketing" ? "rotate-180" : ""}`}>
+                    ▼
+                  </span>
+                )}
+              </button>
+
+              {sidebarAberta && menuExpandido === "marketing" && (
+                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
+                  {temPermissao("/marketing") && (
+                    <Link 
+                      href="/marketing" 
+                      className={`block px-2.5 py-1.5 rounded-lg transition-all ${
+                        pathname === "/marketing" 
+                          ? "text-indigo-400 font-bold bg-indigo-950/40" 
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      Postagens
+                    </Link>
+                  )}
+                  {temPermissao("/marketing/ajustes") && (
+                    <Link 
+                      href="/marketing/ajustes" 
+                      className={`block px-2.5 py-1.5 rounded-lg transition-all ${
+                        pathname === "/marketing/ajustes" 
+                          ? "text-indigo-400 font-bold bg-indigo-950/40" 
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      Ajustes no Site
+                    </Link>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           {/* RELATÓRIOS E OPERAÇÃO */}
