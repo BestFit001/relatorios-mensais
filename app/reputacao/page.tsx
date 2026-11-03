@@ -1,10 +1,12 @@
-"use client";
+'use client';
+
+export const dynamic = 'force-dynamic';
 
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "../components/Navbar";
 
-interface MetricaConfig {
+interface MetricaReputacaoConfig {
   id: string;
   nome: string;
   tipo: "numero" | "percentual";
@@ -12,13 +14,13 @@ interface MetricaConfig {
   sentido: "menor_melhor" | "maior_melhor";
 }
 
-interface Canal {
+interface CanalReputacao {
   id: string;
   nome: string;
-  metricas: MetricaConfig[];
+  metricas: MetricaReputacaoConfig[];
 }
 
-interface RegistroDiario {
+interface RegistroReputacao {
   id?: string;
   canal_id: string;
   data: string;
@@ -26,57 +28,85 @@ interface RegistroDiario {
   acao_corretiva?: string;
 }
 
-export default function ReputacaoPage() {
-  const [abaAtiva, setAbaAtiva] = useState<"alimentacao" | "dashboard" | "config">("alimentacao");
-  const [canais, setCanais] = useState<Canal[]>([]);
-  const [canalSelecionadoId, setCanalSelecionadoId] = useState<string>("");
-  const [dataSelecionada, setDataSelecionada] = useState<string>(new Date().toISOString().split("T")[0]);
-  
-  // Estados de formulário diário
-  const [valoresForm, setValoresForm] = useState<Record<string, string>>({});
-  const [acaoCorretiva, setAcaoCorretiva] = useState<string>("");
-  const [salvando, setSalvando] = useState(false);
-  const [carregandoDados, setCarregandoDados] = useState(false);
+interface MetricaVendasConfig {
+  id: string;
+  nome: string;
+  tipo: "numero" | "percentual" | "moeda";
+  meta: number;
+  sentido: "maior_melhor" | "menor_melhor";
+}
 
-  // Estados de Configuração de Metricas
+interface RegistroVendas {
+  id?: string;
+  canal: string;
+  data: string;
+  valores: Record<string, number>;
+  observacoes?: string;
+}
+
+export default function MonitoramentoPage() {
+  const [moduloAtivo, setModuloAtivo] = useState<"metricas_canal" | "analise_vendas">("metricas_canal");
+  const [subAba, setSubAba] = useState<"alimentacao" | "dashboard" | "config">("alimentacao");
+  const [dataSelecionada, setDataSelecionada] = useState<string>(new Date().toISOString().split("T")[0]);
+
+  // Estados - Métricas por Canal
+  const [canaisReputacao, setCanaisReputacao] = useState<CanalReputacao[]>([]);
+  const [canalReputacaoId, setCanalReputacaoId] = useState<string>("");
+  const [valoresReputacaoForm, setValoresReputacaoForm] = useState<Record<string, string>>({});
+  const [acaoCorretiva, setAcaoCorretiva] = useState<string>("");
+  const [historicoReputacao, setHistoricoReputacao] = useState<RegistroReputacao[]>([]);
   const [novoCanalNome, setNovoCanalNome] = useState("");
-  const [novaMetrica, setNovaMetrica] = useState<Partial<MetricaConfig>>({
+  const [novaMetricaRep, setNovaMetricaRep] = useState<Partial<MetricaReputacaoConfig>>({
     tipo: "percentual",
     sentido: "menor_melhor",
     meta: 0
   });
 
-  // Histórico para o Dashboard
-  const [historicoCanal, setHistoricoCanal] = useState<RegistroDiario[]>([]);
+  // Estados - Análise de Vendas
+  const [canaisVendas, setCanaisVendas] = useState<string[]>([
+    "Mercado Livre 1", "Mercado Livre 2", "Amazon", "Shopee", "Magalu", "TikTok", "Site", "Clube Hebraica", "Clube Paineiras"
+  ]);
+  const [canalVendasSelecionado, setCanalVendasSelecionado] = useState<string>("Mercado Livre 1");
+  const [valoresVendasForm, setValoresVendasForm] = useState<Record<string, string>>({});
+  const [obsVendas, setObsVendas] = useState("");
+  const [metricasVendas, setMetricasVendas] = useState<MetricaVendasConfig[]>([]);
+  const [historicoVendas, setHistoricoVendas] = useState<RegistroVendas[]>([]);
+  const [novaMetricaVenda, setNovaMetricaVenda] = useState<Partial<MetricaVendasConfig>>({
+    nome: "",
+    tipo: "numero",
+    meta: 0,
+    sentido: "maior_melhor"
+  });
 
-  // 1. Carrega os canais
-  const carregarCanais = async () => {
-    const { data, error } = await supabase.from("reputacao_canais").select("*").order("nome");
-    if (!error && data) {
-      setCanais(data);
-      if (data.length > 0 && !canalSelecionadoId) {
-        setCanalSelecionadoId(data[0].id);
-      }
+  const [salvando, setSalvando] = useState(false);
+  const [carregandoDados, setCarregandoDados] = useState(false);
+
+  useEffect(() => {
+    carregarCanaisReputacao();
+    carregarCanaisVendas();
+    carregarConfiguracoesVendas();
+  }, []);
+
+  const carregarCanaisReputacao = async () => {
+    const { data } = await supabase.from("reputacao_canais").select("*").order("nome");
+    if (data && data.length > 0) {
+      setCanaisReputacao(data);
+      if (!canalReputacaoId) setCanalReputacaoId(data[0].id);
     }
   };
 
-  useEffect(() => {
-    carregarCanais();
-  }, []);
+  const canalReputacaoAtual = useMemo(() => {
+    return canaisReputacao.find((c) => c.id === canalReputacaoId);
+  }, [canaisReputacao, canalReputacaoId]);
 
-  const canalAtual = useMemo(() => {
-    return canais.find(c => c.id === canalSelecionadoId);
-  }, [canais, canalSelecionadoId]);
-
-  // 2. Carrega registro do dia selecionado
-  const carregarRegistroDoDia = async () => {
-    if (!canalSelecionadoId || !dataSelecionada) return;
+  const carregarRegistroReputacaoDia = async () => {
+    if (!canalReputacaoId || !dataSelecionada) return;
     setCarregandoDados(true);
 
     const { data } = await supabase
       .from("reputacao_registros")
       .select("*")
-      .eq("canal_id", canalSelecionadoId)
+      .eq("canal_id", canalReputacaoId)
       .eq("data", dataSelecionada)
       .maybeSingle();
 
@@ -85,53 +115,102 @@ export default function ReputacaoPage() {
       Object.entries(data.valores || {}).forEach(([k, v]) => {
         vMap[k] = String(v);
       });
-      setValoresForm(vMap);
+      setValoresReputacaoForm(vMap);
       setAcaoCorretiva(data.acao_corretiva || "");
     } else {
-      setValoresForm({});
+      setValoresReputacaoForm({});
       setAcaoCorretiva("");
     }
     setCarregandoDados(false);
   };
 
-  // 3. Carrega histórico dos últimos 30 dias para o Dashboard
-  const carregarHistoricoDashboard = async () => {
-    if (!canalSelecionadoId) return;
+  const carregarHistoricoReputacao = async () => {
+    if (!canalReputacaoId) return;
     const { data } = await supabase
       .from("reputacao_registros")
       .select("*")
-      .eq("canal_id", canalSelecionadoId)
+      .eq("canal_id", canalReputacaoId)
       .order("data", { ascending: false })
-      .limit(30);
+      .limit(31);
 
-    setHistoricoCanal(data || []);
+    setHistoricoReputacao(data || []);
+  };
+
+  const carregarCanaisVendas = async () => {
+    const { data } = await supabase.from("config_regras_canais").select("canal").order("id");
+    if (data && data.length > 0) {
+      const lista = Array.from(new Set([...data.map((c: any) => c.canal), "Clube Hebraica", "Clube Paineiras"]));
+      setCanaisVendas(lista);
+      if (!canalVendasSelecionado) setCanalVendasSelecionado(lista[0]);
+    }
+  };
+
+  const carregarConfiguracoesVendas = async () => {
+    const { data } = await supabase.from("analise_vendas_metricas").select("*").order("nome");
+    if (data) setMetricasVendas(data);
+  };
+
+  const carregarRegistroVendasDia = async () => {
+    if (!canalVendasSelecionado || !dataSelecionada) return;
+    setCarregandoDados(true);
+
+    const { data } = await supabase
+      .from("analise_vendas_registros")
+      .select("*")
+      .eq("canal", canalVendasSelecionado)
+      .eq("data", dataSelecionada)
+      .maybeSingle();
+
+    if (data) {
+      const vMap: Record<string, string> = {};
+      Object.entries(data.valores || {}).forEach(([k, v]) => {
+        vMap[k] = String(v);
+      });
+      setValoresVendasForm(vMap);
+      setObsVendas(data.observacoes || "");
+    } else {
+      setValoresVendasForm({});
+      setObsVendas("");
+    }
+    setCarregandoDados(false);
+  };
+
+  const carregarHistoricoVendas = async () => {
+    if (!canalVendasSelecionado) return;
+    const { data } = await supabase
+      .from("analise_vendas_registros")
+      .select("*")
+      .eq("canal", canalVendasSelecionado)
+      .order("data", { ascending: false })
+      .limit(31);
+
+    setHistoricoVendas(data || []);
   };
 
   useEffect(() => {
-    if (abaAtiva === "alimentacao") {
-      carregarRegistroDoDia();
-    } else if (abaAtiva === "dashboard") {
-      carregarHistoricoDashboard();
+    if (moduloAtivo === "metricas_canal") {
+      if (subAba === "alimentacao") carregarRegistroReputacaoDia();
+      else if (subAba === "dashboard") carregarHistoricoReputacao();
+    } else {
+      if (subAba === "alimentacao") carregarRegistroVendasDia();
+      else if (subAba === "dashboard") carregarHistoricoVendas();
     }
-  }, [canalSelecionadoId, dataSelecionada, abaAtiva]);
+  }, [moduloAtivo, subAba, canalReputacaoId, canalVendasSelecionado, dataSelecionada]);
 
-  // Salvar input diário
-  const salvarRegistroDiario = async (e: React.FormEvent) => {
+  const salvarRegistroReputacao = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canalSelecionadoId) return;
+    if (!canalReputacaoId) return;
     setSalvando(true);
 
     const payloadValores: Record<string, number> = {};
-    Object.entries(valoresForm).forEach(([k, val]) => {
+    Object.entries(valoresReputacaoForm).forEach(([k, val]) => {
       const parsed = parseFloat(val.replace(",", "."));
-      if (!isNaN(parsed)) {
-        payloadValores[k] = parsed;
-      }
+      if (!isNaN(parsed)) payloadValores[k] = parsed;
     });
 
     const { error } = await supabase.from("reputacao_registros").upsert(
       {
-        canal_id: canalSelecionadoId,
+        canal_id: canalReputacaoId,
         data: dataSelecionada,
         valores: payloadValores,
         acao_corretiva: acaoCorretiva.trim() || null
@@ -139,440 +218,632 @@ export default function ReputacaoPage() {
       { onConflict: "canal_id,data" }
     );
 
-    if (error) {
-      alert("Erro ao gravar dados: " + error.message);
-    } else {
-      alert("Métricas salvas com sucesso!");
-    }
+    if (error) alert("Erro ao salvar: " + error.message);
+    else alert("✅ Métricas de reputação salvas com sucesso!");
     setSalvando(false);
   };
 
-  // Cadastrar Novo Canal
-  const adicionarCanal = async () => {
+  const adicionarCanalReputacao = async () => {
     if (!novoCanalNome.trim()) return;
-    const { error } = await supabase.from("reputacao_canais").insert([
-      { nome: novoCanalNome.trim(), metricas: [] }
-    ]);
-    if (error) {
-      alert("Erro: " + error.message);
-    } else {
+    const { error } = await supabase.from("reputacao_canais").insert([{ nome: novoCanalNome.trim(), metricas: [] }]);
+    if (error) alert("Erro: " + error.message);
+    else {
       setNovoCanalNome("");
-      carregarCanais();
+      carregarCanaisReputacao();
     }
   };
 
-  // Adicionar campo/métrica no canal atual
-  const adicionarMetrica = async () => {
-    if (!canalAtual || !novaMetrica.nome?.trim()) return;
+  const adicionarMetricaReputacao = async () => {
+    if (!canalReputacaoAtual || !novaMetricaRep.nome?.trim()) return;
 
-    const idMetrica = novaMetrica.nome
+    const idMetrica = novaMetricaRep.nome
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9]/g, "_");
 
-    const novaConfig: MetricaConfig = {
+    const novaConfig: MetricaReputacaoConfig = {
       id: idMetrica,
-      nome: novaMetrica.nome.trim(),
-      tipo: novaMetrica.tipo || "percentual",
-      meta: Number(novaMetrica.meta || 0),
-      sentido: novaMetrica.sentido || "menor_melhor"
+      nome: novaMetricaRep.nome.trim(),
+      tipo: novaMetricaRep.tipo || "percentual",
+      meta: Number(novaMetricaRep.meta || 0),
+      sentido: novaMetricaRep.sentido || "menor_melhor"
     };
 
-    const metricasAtualizadas = [...canalAtual.metricas.filter(m => m.id !== idMetrica), novaConfig];
+    const metricasAtualizadas = [...canalReputacaoAtual.metricas.filter((m) => m.id !== idMetrica), novaConfig];
 
     const { error } = await supabase
       .from("reputacao_canais")
       .update({ metricas: metricasAtualizadas })
-      .eq("id", canalAtual.id);
+      .eq("id", canalReputacaoAtual.id);
 
-    if (error) {
-      alert("Erro: " + error.message);
-    } else {
-      setNovaMetrica({ tipo: "percentual", sentido: "menor_melhor", meta: 0, nome: "" });
-      carregarCanais();
+    if (error) alert("Erro: " + error.message);
+    else {
+      setNovaMetricaRep({ tipo: "percentual", sentido: "menor_melhor", meta: 0, nome: "" });
+      carregarCanaisReputacao();
     }
   };
 
-  // Excluir métrica
-  const removerMetrica = async (metricaId: string) => {
-    if (!canalAtual) return;
-    const metricasFiltradas = canalAtual.metricas.filter(m => m.id !== metricaId);
-    await supabase.from("reputacao_canais").update({ metricas: metricasFiltradas }).eq("id", canalAtual.id);
-    carregarCanais();
+  const removerMetricaReputacao = async (metricaId: string) => {
+    if (!canalReputacaoAtual) return;
+    const metricasFiltradas = canalReputacaoAtual.metricas.filter((m) => m.id !== metricaId);
+    await supabase.from("reputacao_canais").update({ metricas: metricasFiltradas }).eq("id", canalReputacaoAtual.id);
+    carregarCanaisReputacao();
+  };
+
+  const salvarRegistroVendas = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSalvando(true);
+
+    const payloadValores: Record<string, number> = {};
+    Object.entries(valoresVendasForm).forEach(([k, val]) => {
+      const parsed = parseFloat(val.replace(",", "."));
+      if (!isNaN(parsed)) payloadValores[k] = parsed;
+    });
+
+    const { error } = await supabase.from("analise_vendas_registros").upsert(
+      {
+        canal: canalVendasSelecionado,
+        data: dataSelecionada,
+        valores: payloadValores,
+        observacoes: obsVendas.trim() || null
+      },
+      { onConflict: "canal,data" }
+    );
+
+    if (error) alert("Erro ao salvar: " + error.message);
+    else alert("✅ Análise de vendas salva com sucesso!");
+    setSalvando(false);
+  };
+
+  const adicionarCampoVendas = async () => {
+    if (!novaMetricaVenda.nome?.trim()) return;
+
+    const payload = {
+      nome: novaMetricaVenda.nome.trim(),
+      tipo: novaMetricaVenda.tipo || "numero",
+      meta: Number(novaMetricaVenda.meta || 0),
+      sentido: novaMetricaVenda.sentido || "maior_melhor"
+    };
+
+    const { error } = await supabase.from("analise_vendas_metricas").insert([payload]);
+
+    if (error) alert("Erro ao adicionar: " + error.message);
+    else {
+      setNovaMetricaVenda({ nome: "", tipo: "numero", meta: 0, sentido: "maior_melhor" });
+      carregarConfiguracoesVendas();
+    }
+  };
+
+  const removerCampoVendas = async (id: string) => {
+    if (!confirm("Remover esta métrica de vendas?")) return;
+    await supabase.from("analise_vendas_metricas").delete().eq("id", id);
+    carregarConfiguracoesVendas();
+  };
+
+  const formatarValorVendas = (valor: number, tipo: "numero" | "percentual" | "moeda") => {
+    if (tipo === "percentual") return `${valor.toFixed(1)}%`;
+    if (tipo === "moeda") return `R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return valor.toLocaleString("pt-BR");
   };
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
-      <div className="max-w-[98%] mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div className="max-w-[98%] mx-auto space-y-6">
+        
+        {/* CABEÇALHO */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Reputação dos Canais</h1>
-            <p className="text-sm font-medium text-slate-400">Controle diário de métricas e planos de ação</p>
+            <h1 className="text-2xl font-black text-white tracking-tight">Monitoramento & Indicadores</h1>
+            <p className="text-sm font-medium text-slate-400">Acompanhamento diário de métricas operacionais e comerciais</p>
           </div>
           <Navbar />
         </div>
 
-        {/* NAVEGAÇÃO DE ABAS */}
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4 mb-6">
-          <div className="flex gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+        {/* NAVEGAÇÃO ENTRE MÓDULOS */}
+        <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
+          <button
+            onClick={() => { setModuloAtivo("metricas_canal"); setSubAba("alimentacao"); }}
+            className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              moduloAtivo === "metricas_canal"
+                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50"
+                : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800"
+            }`}
+          >
+            🛡️ Métricas por Canal
+          </button>
+          <button
+            onClick={() => { setModuloAtivo("analise_vendas"); setSubAba("alimentacao"); }}
+            className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              moduloAtivo === "analise_vendas"
+                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50"
+                : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800"
+            }`}
+          >
+            📈 Análise de Vendas
+          </button>
+        </div>
+
+        {/* SUB-MENU */}
+        <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-900/60 p-3.5 rounded-xl border border-slate-800">
+          <div className="flex gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
             <button
-              onClick={() => setAbaAtiva("alimentacao")}
-              className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all flex items-center gap-2 cursor-pointer ${
-                abaAtiva === "alimentacao" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+              onClick={() => setSubAba("alimentacao")}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                subAba === "alimentacao" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
               }`}
             >
-              <span>📋</span>
-              Alimentar Dados
+              📋 Alimentar Dados
             </button>
             <button
-              onClick={() => setAbaAtiva("dashboard")}
-              className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all flex items-center gap-2 cursor-pointer ${
-                abaAtiva === "dashboard" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+              onClick={() => setSubAba("dashboard")}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                subAba === "dashboard" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
               }`}
             >
-              <span>📊</span>
-              Dashboard Analítico
+              📊 Painel Comparativo
             </button>
             <button
-              onClick={() => setAbaAtiva("config")}
-              className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all flex items-center gap-2 cursor-pointer ${
-                abaAtiva === "config" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+              onClick={() => setSubAba("config")}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${
+                subAba === "config" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
               }`}
             >
-              <span>⚙️</span>
-              Configurar Campos
+              ⚙️ Configurar Campos
             </button>
           </div>
 
-          {/* SELETOR GLOBAL DE CANAL */}
           <div className="flex items-center gap-3">
             <span className="text-xs font-bold text-slate-400 uppercase">Canal:</span>
-            <select
-              value={canalSelecionadoId}
-              onChange={(e) => setCanalSelecionadoId(e.target.value)}
-              className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white font-bold outline-none cursor-pointer"
-            >
-              {canais.map((c) => (
-                <option key={c.id} value={c.id}>{c.nome}</option>
-              ))}
-            </select>
+            {moduloAtivo === "metricas_canal" ? (
+              <select
+                value={canalReputacaoId}
+                onChange={(e) => setCanalReputacaoId(e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white font-bold outline-none cursor-pointer"
+              >
+                {canaisReputacao.map((c) => (
+                  <option key={c.id} value={c.id}>{c.nome}</option>
+                ))}
+              </select>
+            ) : (
+              <select
+                value={canalVendasSelecionado}
+                onChange={(e) => setCanalVendasSelecionado(e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white font-bold outline-none cursor-pointer"
+              >
+                {canaisVendas.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
 
-        {/* ABA 1: ALIMENTAÇÃO DIÁRIA */}
-        {abaAtiva === "alimentacao" && (
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6 md:p-8 shadow-xl max-w-4xl mx-auto">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-6 mb-6">
-              <div>
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  Registro de Reputação — {canalAtual?.nome || "Selecione o Canal"}
-                </h2>
-                <p className="text-xs text-slate-400">Preencha as medições apuradas no painel do canal</p>
-              </div>
+        {/* MÓDULO 1: MÉTRICAS POR CANAL */}
+        {moduloAtivo === "metricas_canal" && (
+          <>
+            {subAba === "alimentacao" && (
+              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6 md:p-8 shadow-xl max-w-4xl mx-auto space-y-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-white">
+                      Registro de Métricas — {canalReputacaoAtual?.nome || "Selecione o Canal"}
+                    </h2>
+                    <p className="text-xs text-slate-400">Preencha os indicadores de saúde do canal</p>
+                  </div>
 
-              <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-700">
-                <span className="text-xs">📅</span>
-                <input
-                  type="date"
-                  value={dataSelecionada}
-                  onChange={(e) => setDataSelecionada(e.target.value)}
-                  className="bg-transparent text-xs text-white outline-none cursor-pointer"
-                />
-              </div>
-            </div>
+                  <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-700">
+                    <span className="text-xs">📅</span>
+                    <input
+                      type="date"
+                      value={dataSelecionada}
+                      onChange={(e) => setDataSelecionada(e.target.value)}
+                      className="bg-transparent text-xs text-white outline-none cursor-pointer"
+                    />
+                  </div>
+                </div>
 
-            {carregandoDados ? (
-              <p className="text-center py-10 text-slate-500 text-xs">Carregando formulário...</p>
-            ) : !canalAtual || canalAtual.metricas.length === 0 ? (
-              <div className="text-center py-12 border border-dashed border-slate-800 rounded-xl">
-                <p className="text-2xl mb-2">⚠️</p>
-                <p className="text-sm font-bold text-slate-300">Nenhum campo cadastrado para este canal.</p>
-                <p className="text-xs text-slate-500 mb-4">Vá até a aba "Configurar Campos" para incluir as métricas (ex: Cancelamentos, Atrasos).</p>
-                <button
-                  onClick={() => setAbaAtiva("config")}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-4 rounded-lg text-xs uppercase cursor-pointer"
-                >
-                  Configurar Agora
-                </button>
+                {carregandoDados ? (
+                  <p className="text-center py-10 text-slate-500 text-xs">Carregando...</p>
+                ) : !canalReputacaoAtual || canalReputacaoAtual.metricas.length === 0 ? (
+                  <div className="text-center py-12 border border-dashed border-slate-800 rounded-xl">
+                    <p className="text-sm font-bold text-slate-300">Nenhum campo cadastrado para este canal.</p>
+                    <button
+                      onClick={() => setSubAba("config")}
+                      className="mt-3 bg-indigo-600 text-white font-bold py-1.5 px-4 rounded-lg text-xs uppercase cursor-pointer"
+                    >
+                      Configurar Agora
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={salvarRegistroReputacao} className="space-y-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                      {canalReputacaoAtual.metricas.map((metrica) => (
+                        <div key={metrica.id} className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+                          <div className="flex justify-between items-center mb-1.5">
+                            <label className="text-[11px] font-bold text-slate-300 uppercase truncate">{metrica.nome}</label>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              Meta: {metrica.meta}{metrica.tipo === "percentual" ? "%" : ""}
+                            </span>
+                          </div>
+                          <div className="relative">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={valoresReputacaoForm[metrica.id] || ""}
+                              placeholder="0.00"
+                              onChange={(e) => setValoresReputacaoForm({ ...valoresReputacaoForm, [metrica.id]: e.target.value })}
+                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500 font-mono"
+                            />
+                            <span className="absolute right-3 top-2.5 text-xs text-slate-500 font-bold">
+                              {metrica.tipo === "percentual" ? "%" : "#"}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800">
+                      <label className="text-xs font-bold text-slate-300 uppercase block mb-2">Plano de Ação Corretiva do Dia (Opcional)</label>
+                      <textarea
+                        rows={3}
+                        value={acaoCorretiva}
+                        onChange={(e) => setAcaoCorretiva(e.target.value)}
+                        placeholder="Descreva as medidas tomadas caso algum indicador tenha desrespeitado a meta..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs text-slate-200 outline-none focus:border-indigo-500 resize-none"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={salvando}
+                      className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider shadow cursor-pointer"
+                    >
+                      {salvando ? "Salvando..." : "💾 Salvar Medições"}
+                    </button>
+                  </form>
+                )}
               </div>
-            ) : (
-              <form onSubmit={salvarRegistroDiario} className="space-y-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                  {canalAtual.metricas.map((metrica) => (
-                    <div key={metrica.id} className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
-                      <div className="flex justify-between items-center mb-1.5">
-                        <label className="text-[11px] font-bold text-slate-300 uppercase truncate">
-                          {metrica.nome}
-                        </label>
-                        <span className="text-[10px] text-slate-500 font-mono">
-                          Meta: {metrica.meta}{metrica.tipo === "percentual" ? "%" : ""}
-                        </span>
+            )}
+
+            {subAba === "dashboard" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  {canalReputacaoAtual?.metricas.map((metrica) => {
+                    const ultimo = historicoReputacao[0];
+                    const valorAtual = ultimo?.valores?.[metrica.id];
+                    const temValor = valorAtual !== undefined;
+                    const dentroDaMeta = temValor ? (metrica.sentido === "menor_melhor" ? valorAtual <= metrica.meta : valorAtual >= metrica.meta) : true;
+
+                    return (
+                      <div key={metrica.id} className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl">
+                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{metrica.nome}</span>
+                        <div className="flex items-baseline justify-between mt-2">
+                          <span className={`text-2xl font-black ${!temValor ? "text-slate-600" : dentroDaMeta ? "text-emerald-400" : "text-rose-400"}`}>
+                            {temValor ? `${valorAtual}${metrica.tipo === "percentual" ? "%" : ""}` : "--"}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">Meta: {metrica.meta}{metrica.tipo === "percentual" ? "%" : ""}</span>
+                        </div>
                       </div>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={valoresForm[metrica.id] || ""}
-                          placeholder="0.00"
-                          onChange={(e) => setValoresForm({ ...valoresForm, [metrica.id]: e.target.value })}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500 font-mono"
-                        />
-                        <span className="absolute right-3 top-2.5 text-xs text-slate-500 font-bold">
-                          {metrica.tipo === "percentual" ? "%" : "#"}
-                        </span>
+                    );
+                  })}
+                </div>
+
+                <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4">Histórico — {canalReputacaoAtual?.nome}</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-[10px] font-bold uppercase text-slate-400 font-sans">
+                          <th className="p-3 w-28">Data</th>
+                          {canalReputacaoAtual?.metricas.map((m) => (
+                            <th key={m.id} className="p-3 text-center">{m.nome}</th>
+                          ))}
+                          <th className="p-3 min-w-[280px]">Plano de Ação Corretiva</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {historicoReputacao.map((reg) => (
+                          <tr key={reg.id} className="hover:bg-slate-800/30">
+                            <td className="p-3 text-slate-300 font-bold whitespace-nowrap">{reg.data.split("-").reverse().join("/")}</td>
+                            {canalReputacaoAtual?.metricas.map((m) => {
+                              const val = reg.valores?.[m.id];
+                              const ok = val !== undefined ? (m.sentido === "menor_melhor" ? val <= m.meta : val >= m.meta) : true;
+                              return (
+                                <td key={m.id} className="p-3 text-center">
+                                  {val !== undefined ? (
+                                    <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${ok ? "text-emerald-400 bg-emerald-950/40" : "text-rose-400 bg-rose-950/40"}`}>
+                                      {val}{m.tipo === "percentual" ? "%" : ""}
+                                    </span>
+                                  ) : "-"}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-sans text-xs">{reg.acao_corretiva || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {subAba === "config" && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800">
+                  <h3 className="text-sm font-bold text-white mb-4">Novo Canal</h3>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Ex: Dafiti..."
+                      value={novoCanalNome}
+                      onChange={(e) => setNovoCanalNome(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none"
+                    />
+                    <button onClick={adicionarCanalReputacao} className="bg-indigo-600 text-white p-2.5 rounded-lg text-xs font-bold cursor-pointer">➕</button>
+                  </div>
+                </div>
+
+                <div className="md:col-span-2 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 space-y-4">
+                  <h3 className="text-sm font-bold text-white">Adicionar Campo ao Canal: <span className="text-indigo-400">{canalReputacaoAtual?.nome}</span></h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800 items-end">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nome do Campo</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Cancelamentos"
+                        value={novaMetricaRep.nome || ""}
+                        onChange={(e) => setNovaMetricaRep({ ...novaMetricaRep, nome: e.target.value })}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Tipo</label>
+                      <select
+                        value={novaMetricaRep.tipo}
+                        onChange={(e) => setNovaMetricaRep({ ...novaMetricaRep, tipo: e.target.value as any })}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer"
+                      >
+                        <option value="percentual">Percentual (%)</option>
+                        <option value="numero">Numérico (#)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Meta</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={novaMetricaRep.meta}
+                        onChange={(e) => setNovaMetricaRep({ ...novaMetricaRep, meta: parseFloat(e.target.value) })}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <button onClick={adicionarMetricaReputacao} className="w-full bg-indigo-600 text-white font-bold py-2 rounded-lg text-xs uppercase cursor-pointer">Salvar</button>
+                    </div>
+                  </div>
+
+                  <div className="divide-y divide-slate-800">
+                    {canalReputacaoAtual?.metricas.map((m) => (
+                      <div key={m.id} className="py-2.5 flex items-center justify-between text-xs">
+                        <span>{m.nome} (Meta: {m.meta}{m.tipo === "percentual" ? "%" : ""})</span>
+                        <button onClick={() => removerMetricaReputacao(m.id)} className="text-rose-400 cursor-pointer font-bold">🗑️</button>
                       </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* MÓDULO 2: ANÁLISE DE VENDAS */}
+        {moduloAtivo === "analise_vendas" && (
+          <>
+            {subAba === "alimentacao" && (
+              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6 md:p-8 shadow-xl max-w-4xl mx-auto space-y-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-white">Análise Comercial — {canalVendasSelecionado}</h2>
+                    <p className="text-xs text-slate-400">Preencha os indicadores diários de venda</p>
+                  </div>
+
+                  <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-700">
+                    <span className="text-xs">📅</span>
+                    <input
+                      type="date"
+                      value={dataSelecionada}
+                      onChange={(e) => setDataSelecionada(e.target.value)}
+                      className="bg-transparent text-xs text-white outline-none cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {carregandoDados ? (
+                  <p className="text-center py-10 text-slate-500 text-xs">Carregando...</p>
+                ) : metricasVendas.length === 0 ? (
+                  <div className="text-center py-12 border border-dashed border-slate-800 rounded-xl">
+                    <p className="text-sm font-bold text-slate-300">Nenhuma métrica de vendas cadastrada.</p>
+                    <button
+                      onClick={() => setSubAba("config")}
+                      className="mt-3 bg-indigo-600 text-white font-bold py-1.5 px-4 rounded-lg text-xs uppercase cursor-pointer"
+                    >
+                      Cadastrar Campos de Venda
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={salvarRegistroVendas} className="space-y-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                      {metricasVendas.map((metrica) => (
+                        <div key={metrica.id} className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+                          <div className="flex justify-between items-center mb-1.5">
+                            <label className="text-[11px] font-bold text-slate-300 uppercase truncate">{metrica.nome}</label>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              Meta: {formatarValorVendas(metrica.meta, metrica.tipo)}
+                            </span>
+                          </div>
+                          <div className="relative">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={valoresVendasForm[metrica.nome] || ""}
+                              placeholder="0.00"
+                              onChange={(e) => setValoresVendasForm({ ...valoresVendasForm, [metrica.nome]: e.target.value })}
+                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500 font-mono"
+                            />
+                            <span className="absolute right-3 top-2.5 text-xs text-slate-500 font-bold">
+                              {metrica.tipo === "percentual" ? "%" : metrica.tipo === "moeda" ? "R$" : "#"}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800">
+                      <label className="text-xs font-bold text-slate-300 uppercase block mb-2">Diagnósticos / Observações Comerciais</label>
+                      <textarea
+                        rows={3}
+                        value={obsVendas}
+                        onChange={(e) => setObsVendas(e.target.value)}
+                        placeholder="Ex: Tráfego alto mas conversão baixa; ticket médio alavancado por kits de produto..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs text-slate-200 outline-none focus:border-indigo-500 resize-none"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={salvando}
+                      className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider shadow cursor-pointer"
+                    >
+                      {salvando ? "Salvando..." : "💾 Salvar Análise de Vendas"}
+                    </button>
+                  </form>
+                )}
+              </div>
+            )}
+
+            {subAba === "dashboard" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  {metricasVendas.map((metrica) => {
+                    const ultimo = historicoVendas[0];
+                    const valorAtual = ultimo?.valores?.[metrica.nome];
+                    const temValor = valorAtual !== undefined;
+                    const dentroDaMeta = temValor ? (metrica.sentido === "maior_melhor" ? valorAtual >= metrica.meta : valorAtual <= metrica.meta) : true;
+
+                    return (
+                      <div key={metrica.id} className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl">
+                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{metrica.nome}</span>
+                        <div className="flex items-baseline justify-between mt-2">
+                          <span className={`text-2xl font-black ${!temValor ? "text-slate-600" : dentroDaMeta ? "text-emerald-400" : "text-rose-400"}`}>
+                            {temValor ? formatarValorVendas(valorAtual, metrica.tipo) : "--"}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">Meta: {formatarValorVendas(metrica.meta, metrica.tipo)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4">Histórico — {canalVendasSelecionado}</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs font-mono">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-[10px] font-bold uppercase text-slate-400 font-sans">
+                          <th className="p-3 w-28">Data</th>
+                          {metricasVendas.map((m) => (
+                            <th key={m.id} className="p-3 text-center">{m.nome}</th>
+                          ))}
+                          <th className="p-3 min-w-[280px]">Observações Comerciais</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {historicoVendas.map((reg) => (
+                          <tr key={reg.id} className="hover:bg-slate-800/30">
+                            <td className="p-3 text-slate-300 font-bold whitespace-nowrap">{reg.data.split("-").reverse().join("/")}</td>
+                            {metricasVendas.map((m) => {
+                              const val = reg.valores?.[m.nome];
+                              const ok = val !== undefined ? (m.sentido === "maior_melhor" ? val >= m.meta : val <= m.meta) : true;
+                              return (
+                                <td key={m.id} className="p-3 text-center">
+                                  {val !== undefined ? (
+                                    <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${ok ? "text-emerald-400 bg-emerald-950/40" : "text-rose-400 bg-rose-950/40"}`}>
+                                      {formatarValorVendas(val, m.tipo)}
+                                    </span>
+                                  ) : "-"}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-sans text-xs">{reg.observacoes || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {subAba === "config" && (
+              <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 max-w-4xl mx-auto space-y-6">
+                <div>
+                  <h3 className="text-base font-bold text-white mb-1">Cadastrar Indicador de Vendas</h3>
+                  <p className="text-xs text-slate-400">Defina os campos de desempenho comercial que deseja acompanhar</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800 items-end">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nome</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Conversão"
+                      value={novaMetricaVenda.nome || ""}
+                      onChange={(e) => setNovaMetricaVenda({ ...novaMetricaVenda, nome: e.target.value })}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Tipo</label>
+                    <select
+                      value={novaMetricaVenda.tipo}
+                      onChange={(e) => setNovaMetricaVenda({ ...novaMetricaVenda, tipo: e.target.value as any })}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer"
+                    >
+                      <option value="numero">Numérico (#)</option>
+                      <option value="percentual">Percentual (%)</option>
+                      <option value="moeda">Moeda (R$)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Meta</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={novaMetricaVenda.meta}
+                      onChange={(e) => setNovaMetricaVenda({ ...novaMetricaVenda, meta: parseFloat(e.target.value) })}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
+                    />
+                  </div>
+                  <div>
+                    <button onClick={adicionarCampoVendas} className="w-full bg-indigo-600 text-white font-bold py-2 rounded-lg text-xs uppercase cursor-pointer">Adicionar</button>
+                  </div>
+                </div>
+
+                <div className="divide-y divide-slate-800">
+                  {metricasVendas.map((m) => (
+                    <div key={m.id} className="py-2.5 flex items-center justify-between text-xs">
+                      <span>{m.nome} ({m.tipo}) — Meta: {formatarValorVendas(m.meta, m.tipo)}</span>
+                      <button onClick={() => removerCampoVendas(m.id)} className="text-rose-400 font-bold cursor-pointer">🗑️</button>
                     </div>
                   ))}
                 </div>
-
-                {/* CAMPO DE AÇÃO CORRETIVA DIÁRIA */}
-                <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800">
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-bold text-slate-300 uppercase flex items-center gap-1.5">
-                      <span>Plano de Ação Corretiva do Dia (Opcional)</span>
-                    </label>
-                    <span className="text-[10px] text-slate-500">Preencha caso tenha ocorrido desvios</span>
-                  </div>
-                  <textarea
-                    rows={3}
-                    value={acaoCorretiva}
-                    onChange={(e) => setAcaoCorretiva(e.target.value)}
-                    placeholder="Descreva as medidas tomadas hoje caso algum indicador tenha ficado fora da meta (ex: Aberto chamado no suporte sobre 3 envios contestados)..."
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs text-slate-200 outline-none focus:border-indigo-500 resize-none"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={salvando}
-                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg transition cursor-pointer"
-                >
-                  <span>💾</span>
-                  {salvando ? "Gravando no Supabase..." : "Salvar Medições do Dia"}
-                </button>
-              </form>
+              </div>
             )}
-          </div>
+          </>
         )}
 
-        {/* ABA 2: DASHBOARD ANALÍTICO */}
-        {abaAtiva === "dashboard" && (
-          <div className="space-y-6">
-            {/* CARDS COM ÚLTIMO REGISTRO DO CANAL */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {canalAtual?.metricas.map((metrica) => {
-                const ultimoRegistro = historicoCanal[0];
-                const valorAtual = ultimoRegistro?.valores?.[metrica.id];
-                const temValor = valorAtual !== undefined;
-
-                let dentroDaMeta = true;
-                if (temValor) {
-                  dentroDaMeta = metrica.sentido === "menor_melhor" 
-                    ? valorAtual <= metrica.meta 
-                    : valorAtual >= metrica.meta;
-                }
-
-                return (
-                  <div key={metrica.id} className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl relative overflow-hidden">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                      {metrica.nome}
-                    </span>
-                    <div className="flex items-baseline justify-between mt-2">
-                      <span className={`text-2xl font-black ${!temValor ? 'text-slate-600' : dentroDaMeta ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {temValor ? `${valorAtual}${metrica.tipo === "percentual" ? "%" : ""}` : "--"}
-                      </span>
-                      <span className="text-[10px] text-slate-500 font-mono">
-                        Meta: {metrica.meta}{metrica.tipo === "percentual" ? "%" : ""}
-                      </span>
-                    </div>
-
-                    <div className="mt-3 flex items-center gap-1.5 text-[11px]">
-                      {temValor && dentroDaMeta ? (
-                        <span className="text-emerald-400 flex items-center gap-1 font-bold">
-                          ✅ Na meta
-                        </span>
-                      ) : temValor && !dentroDaMeta ? (
-                        <span className="text-rose-400 flex items-center gap-1 font-bold">
-                          ⚠️ Fora da meta
-                        </span>
-                      ) : (
-                        <span className="text-slate-600">Sem dados recentes</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* TABELA DE HISTÓRICO COM LOG DE AÇÕES */}
-            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6">
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
-                <span>📅</span>
-                Histórico Diário & Tratativas — {canalAtual?.nome}
-              </h3>
-
-              {historicoCanal.length === 0 ? (
-                <p className="text-center py-8 text-slate-500 text-xs">Nenhum registro histórico neste canal.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-[10px] font-bold uppercase text-slate-400">
-                        <th className="p-3 w-28">Data</th>
-                        {canalAtual?.metricas.map(m => (
-                          <th key={m.id} className="p-3 text-center">{m.nome}</th>
-                        ))}
-                        <th className="p-3 min-w-[280px]">Plano de Ação Corretiva</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 font-mono">
-                      {historicoCanal.map((reg) => (
-                        <tr key={reg.id} className="hover:bg-slate-800/30">
-                          <td className="p-3 text-slate-300 font-bold whitespace-nowrap">
-                            {reg.data.split("-").reverse().join("/")}
-                          </td>
-                          {canalAtual?.metricas.map(m => {
-                            const val = reg.valores?.[m.id];
-                            const ok = val !== undefined ? (m.sentido === "menor_melhor" ? val <= m.meta : val >= m.meta) : true;
-                            return (
-                              <td key={m.id} className="p-3 text-center">
-                                {val !== undefined ? (
-                                  <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${ok ? "text-emerald-400 bg-emerald-950/40" : "text-rose-400 bg-rose-950/40"}`}>
-                                    {val}{m.tipo === "percentual" ? "%" : ""}
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-600">-</span>
-                                )}
-                              </td>
-                            );
-                          })}
-                          <td className="p-3 font-sans text-xs">
-                            {reg.acao_corretiva ? (
-                              <span className="text-amber-300/90 italic bg-amber-950/20 px-2.5 py-1 rounded border border-amber-900/30 inline-block">
-                                📌 {reg.acao_corretiva}
-                              </span>
-                            ) : (
-                              <span className="text-slate-600">-</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ABA 3: CONFIGURAÇÃO DE CAMPOS E CANAIS */}
-        {abaAtiva === "config" && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Bloco Criar Canal */}
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800">
-              <h3 className="text-sm font-bold text-white mb-4">Novo Canal</h3>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Ex: Shein, Amazon..."
-                  value={novoCanalNome}
-                  onChange={(e) => setNovoCanalNome(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500"
-                />
-                <button
-                  onClick={adicionarCanal}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white p-2.5 rounded-lg text-xs font-bold cursor-pointer"
-                >
-                  ➕
-                </button>
-              </div>
-            </div>
-
-            {/* Bloco Configurar Campos do Canal Selecionado */}
-            <div className="md:col-span-2 bg-slate-900/90 p-6 rounded-2xl border border-slate-800">
-              <h3 className="text-sm font-bold text-white mb-2">
-                Adicionar Campo ao Canal: <span className="text-indigo-400">{canalAtual?.nome}</span>
-              </h3>
-              <p className="text-xs text-slate-400 mb-4">Adicione campos como Atrasos, Mediações, etc., definindo a régua de corte.</p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end mb-6 bg-slate-950 p-4 rounded-xl border border-slate-800">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nome do Campo</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Cancelamentos"
-                    value={novaMetrica.nome || ""}
-                    onChange={(e) => setNovaMetrica({ ...novaMetrica, nome: e.target.value })}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Formato</label>
-                  <select
-                    value={novaMetrica.tipo}
-                    onChange={(e) => setNovaMetrica({ ...novaMetrica, tipo: e.target.value as any })}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer"
-                  >
-                    <option value="percentual">Percentual (%)</option>
-                    <option value="numero">Numérico (#)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Meta Limite</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={novaMetrica.meta}
-                    onChange={(e) => setNovaMetrica({ ...novaMetrica, meta: parseFloat(e.target.value) })}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Critério de Sucesso</label>
-                  <select
-                    value={novaMetrica.sentido}
-                    onChange={(e) => setNovaMetrica({ ...novaMetrica, sentido: e.target.value as any })}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer"
-                  >
-                    <option value="menor_melhor">Menor ou igual à meta</option>
-                    <option value="maior_melhor">Maior ou igual à meta</option>
-                  </select>
-                </div>
-                <div className="sm:col-span-4 flex justify-end mt-2">
-                  <button
-                    onClick={adicionarMetrica}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-6 rounded-lg text-xs uppercase tracking-wider cursor-pointer"
-                  >
-                    Salvar Campo
-                  </button>
-                </div>
-              </div>
-
-              {/* LISTAGEM DE CAMPOS CADASTRADOS */}
-              <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Campos Ativos no Canal</h4>
-              <div className="divide-y divide-slate-800">
-                {canalAtual?.metricas.map((m) => (
-                  <div key={m.id} className="py-2.5 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-bold text-white mr-3">{m.nome}</span>
-                      <span className="text-slate-500 font-mono text-[11px] mr-2">
-                        Tipo: {m.tipo === "percentual" ? "%" : "#"} | Meta: {m.meta} ({m.sentido === "menor_melhor" ? "Menor melhor" : "Maior melhor"})
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => removerMetrica(m.id)}
-                      className="text-rose-400 hover:text-rose-300 p-1 rounded cursor-pointer"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
