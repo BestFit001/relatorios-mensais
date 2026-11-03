@@ -1,11 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
-// Desativa a pré-geração estática no build para todas as rotas (evita Out Of Memory na Vercel)
-export const dynamic = 'force-dynamic';
-export const dynamicParams = true;
-export const revalidate = 0;
-
 export const metadata: Metadata = {
   title: "Hub Best Fit",
   description: "Sistema de Gestão e Dashboard Omnichannel",
