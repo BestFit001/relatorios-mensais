@@ -23,6 +23,21 @@ const MESES_MAP: Record<string, string> = {
   '09': 'setembro', '10': 'outubro', '11': 'novembro', '12': 'dezembro'
 };
 
+const OPCOES_MESES = [
+  { valor: '01', nome: 'Janeiro' },
+  { valor: '02', nome: 'Fevereiro' },
+  { valor: '03', nome: 'Março' },
+  { valor: '04', nome: 'Abril' },
+  { valor: '05', nome: 'Maio' },
+  { valor: '06', nome: 'Junho' },
+  { valor: '07', nome: 'Julho' },
+  { valor: '08', nome: 'Agosto' },
+  { valor: '09', nome: 'Setembro' },
+  { valor: '10', nome: 'Outubro' },
+  { valor: '11', nome: 'Novembro' },
+  { valor: '12', nome: 'Dezembro' }
+];
+
 export default function PainelExecutivoPage() {
   const [loading, setLoading] = useState(true);
   const [database, setDatabase] = useState<Record<string, any[]>>({});
@@ -30,14 +45,22 @@ export default function PainelExecutivoPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const tableRef = useRef<HTMLTableElement>(null);
 
-  const currentMonthDefault = new Date().toISOString().slice(0, 7);
-  const previousMonthDefault = useMemo(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 1);
-    return d.toISOString().slice(0, 7);
-  }, []);
-
+  // Inicia sempre com o ano e mês atuais dinâmicos
+  const now = new Date();
+  const currentMonthDefault = now.toISOString().slice(0, 7); // ex: "2026-11"
   const [currentRefMonth, setCurrentRefMonth] = useState(currentMonthDefault);
+
+  // Calcula dinamicamente o mês imediatamente anterior à competência selecionada
+  const previousRefMonth = useMemo(() => {
+    const [anoStr, mesStr] = currentRefMonth.split('-');
+    const ano = parseInt(anoStr, 10);
+    const mes = parseInt(mesStr, 10) - 1; // 0-indexed
+    const d = new Date(ano, mes, 1);
+    d.setMonth(d.getMonth() - 1);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${yyyy}-${mm}`;
+  }, [currentRefMonth]);
 
   useEffect(() => {
     async function carregarDados() {
@@ -165,14 +188,14 @@ export default function PainelExecutivoPage() {
   }, [currentRefMonth]);
 
   const mesAntFormatos = useMemo(() => {
-    const [ano, mes] = previousMonthDefault.split('-');
+    const [ano, mes] = previousRefMonth.split('-');
     const nomeExtenso = MESES_MAP[mes] || 'setembro';
     return {
-      iso: previousMonthDefault,
+      iso: previousRefMonth,
       barra: `${mes}/${ano}`,
       extenso: `${nomeExtenso} de ${ano}`
     };
-  }, [previousMonthDefault]);
+  }, [previousRefMonth]);
 
   const canaisOficiais = useMemo(() => {
     const mapa = new Map<string, string>();
@@ -412,10 +435,10 @@ export default function PainelExecutivoPage() {
     const [refAnoStr, refMesStr] = currentRefMonth.split('-');
     const refAno = parseInt(refAnoStr, 10);
     const refMes = parseInt(refMesStr, 10) - 1;
-    const now = new Date();
-    const isCurrentMonth = (now.getFullYear() === refAno && now.getMonth() === refMes);
+    const nowRef = new Date();
+    const isCurrentMonth = (nowRef.getFullYear() === refAno && nowRef.getMonth() === refMes);
     const totalDiasMes = new Date(refAno, refMes + 1, 0).getDate();
-    let diasPassados = isCurrentMonth ? Math.max(1, now.getDate()) : totalDiasMes;
+    let diasPassados = isCurrentMonth ? Math.max(1, nowRef.getDate()) : totalDiasMes;
 
     return canaisOficiais.map(channelName => {
       const chSales = enrichedSales.filter((s: any) => s.canal === channelName);
@@ -555,7 +578,7 @@ export default function PainelExecutivoPage() {
 
   const enrichTotals = (totals: any) => {
     const margemBrutaAtingida = totals.faturadoBrutoPuro > 0 ? (totals.repasseTotal / totals.faturadoBrutoPuro) * 100 : 0;
-    const margemLiqAtingida = totals.faturadoBrutoPuro > 0 ? (totals.lucroLiquidoFinal / totals.faturadoBruroPuro || totals.faturadoBrutoPuro) * 100 : 0;
+    const margemLiqAtingida = totals.faturadoBrutoPuro > 0 ? (totals.lucroLiquidoFinal / totals.faturadoBrutoPuro) * 100 : 0;
     const metaMargemBruta = totals.metaValor > 0 ? totals.metaBrutaPonderada / totals.metaValor : 0;
     const metaMargemLiq = totals.metaValor > 0 ? totals.metaLiqPonderada / totals.metaValor : 0;
 
@@ -647,7 +670,7 @@ export default function PainelExecutivoPage() {
         : "gisele@usebestfit.com.br";
         
       const dataHoje = new Date().toLocaleDateString('pt-BR');
-      const assunto = encodeURIComponent(`DASHBOARD EXECUTIVO DIARIO ${dataHoje}`);
+      const assunto = encodeURIComponent(`DASHBOARD EXECUTIVO DIARIO ${dataHoje} (${mesRefFormatos.extenso})`);
       
       const hebraicaObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('hebraica')) || { faturadoComRedutor: 0, projecaoVsMeta: 0 };
       const paineirasObj = channelAnalytics.find(c => c.canal.toLowerCase().includes('paineiras')) || { faturadoComRedutor: 0, projecaoVsMeta: 0 };
@@ -655,7 +678,7 @@ export default function PainelExecutivoPage() {
 
       const formatProjText = (val: number) => val >= 0 ? `+${val.toFixed(1)}%` : `${val.toFixed(1)}%`;
 
-      let corpoTexto = `Olá, tudo bem? Segue resumo executivo das vendas das lojas físicas e online do dia ${dataHoje}.\n\n`;
+      let corpoTexto = `Olá, tudo bem? Segue resumo executivo das vendas das lojas físicas e online do dia ${dataHoje} (${mesRefFormatos.extenso}).\n\n`;
       corpoTexto += `Hebraica: R$ ${hebraicaObj.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Projeção: ${formatProjText(hebraicaObj.projecaoVsMeta)})\n`;
       corpoTexto += `Paineiras: R$ ${paineirasObj.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Projeção: ${formatProjText(paineirasObj.projecaoVsMeta)})\n`;
       corpoTexto += `E-commerce: R$ ${totalEcom.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Projeção: ${formatProjText(ecomProjVsMeta)})\n\n`;
@@ -669,6 +692,16 @@ export default function PainelExecutivoPage() {
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const [anoFiltro, mesFiltro] = currentRefMonth.split('-');
+
+  const handleMudarMes = (novoMes: string) => {
+    setCurrentRefMonth(`${anoFiltro}-${novoMes}`);
+  };
+
+  const handleMudarAno = (novoAno: string) => {
+    setCurrentRefMonth(`${novoAno}-${mesFiltro}`);
   };
 
   if (loading) {
@@ -685,25 +718,54 @@ export default function PainelExecutivoPage() {
   return (
     <div className="min-h-screen bg-[#07090e] p-6 text-slate-100 font-sans space-y-4 text-[10px]">
       
-      {/* CABEÇALHO */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-900 px-4 py-3 rounded-xl border border-slate-800 gap-3">
+      {/* CABEÇALHO COM SELEÇÃO DINÂMICA DE MÊS */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900 px-4 py-3 rounded-xl border border-slate-800 gap-4 shadow-xl">
         <div className="flex items-center gap-3">
           <Navbar />
           <div>
             <h1 className="text-base font-black text-white tracking-tight">Painel Executivo Omnichannel</h1>
             <p className="text-[10px] text-slate-400">
-              Competência: <strong className="text-indigo-400">{mesRefFormatos.extenso}</strong> | Data: <span className="font-mono text-slate-300">{new Date().toLocaleDateString('pt-BR')}</span>
+              Competência ativa: <strong className="text-indigo-400 uppercase">{mesRefFormatos.extenso}</strong> | Data de referência: <span className="font-mono text-slate-300">{new Date().toLocaleDateString('pt-BR')}</span>
             </p>
           </div>
         </div>
         
-        <button 
-          onClick={handleEnviarEmailComPrint} 
-          disabled={isProcessing}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
-        >
-          <span>📸</span> {isProcessing ? 'Gerando Imagem...' : 'Copiar Print & Abrir E-mail'}
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* SELETOR DE MÊS E ANO */}
+          <div className="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-xl border border-slate-700">
+            <span className="text-xs pl-2">📅</span>
+            <select
+              value={mesFiltro}
+              onChange={(e) => handleMudarMes(e.target.value)}
+              className="bg-transparent text-indigo-300 font-bold text-xs focus:outline-none pr-1 cursor-pointer"
+            >
+              {OPCOES_MESES.map((m) => (
+                <option key={m.valor} value={m.valor} className="bg-slate-900 text-white">
+                  {m.nome}
+                </option>
+              ))}
+            </select>
+            <select
+              value={anoFiltro}
+              onChange={(e) => handleMudarAno(e.target.value)}
+              className="bg-transparent text-indigo-300 font-bold text-xs focus:outline-none pr-2 cursor-pointer border-l border-slate-800 pl-2"
+            >
+              {[2025, 2026, 2027].map((a) => (
+                <option key={a} value={String(a)} className="bg-slate-900 text-white">
+                  {a}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button 
+            onClick={handleEnviarEmailComPrint} 
+            disabled={isProcessing}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            <span>📸</span> {isProcessing ? 'Gerando Imagem...' : 'Copiar Print & Abrir E-mail'}
+          </button>
+        </div>
       </div>
 
       {/* TABELA PANORÂMICA */}
@@ -718,7 +780,7 @@ export default function PainelExecutivoPage() {
                 <th className="py-2.5 px-3 text-right whitespace-nowrap">Meta Mês</th>
                 <th className="py-2.5 px-3 text-right whitespace-nowrap">Projeção</th>
                 <th className="py-2.5 px-3 text-center border-r border-slate-800 whitespace-nowrap">Proj x Meta</th>
-                <th className="py-2.5 px-3 text-right whitespace-nowrap">Mês Ant.</th>
+                <th className="py-2.5 px-3 text-right whitespace-nowrap">Mês Ant. ({mesAntFormatos.barra})</th>
                 <th className="py-2.5 px-3 text-center border-r border-slate-800 whitespace-nowrap">Proj x Ant.</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Meta Margem Bruta</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Margem Bruta Ating</th>
