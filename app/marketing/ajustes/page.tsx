@@ -40,7 +40,9 @@ export default function AjustesSitePage() {
   const [loading, setLoading] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [itens, setItens] = useState<AjusteItem[]>([]);
-  const [custosMap, setCustosMap] = useState>(new Map());
+  
+  // Inicialização blindada contra erros de tipagem no JSX
+  const [custosMap, setCustosMap] = useState>(() => new Map());
 
   // Configuração da planilha
   const [colunaSku, setColunaSku] = useState("A");
@@ -144,7 +146,6 @@ export default function AjustesSitePage() {
           return;
         }
 
-        // Inserção em lotes de 500
         for (let i = 0; i < novosRegistros.length; i += 500) {
           const { error } = await supabase
             .from("ajustes_site")
@@ -163,7 +164,6 @@ export default function AjustesSitePage() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Alterna checkboxes de tópicos ou conclusão
   const toggleTopico = async (
     id: string,
     campo: "descricao" | "video" | "imagens" | "titulo_ajustado" | "concluido",
