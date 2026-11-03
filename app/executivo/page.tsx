@@ -109,6 +109,14 @@ export default function PainelExecutivoPage() {
   const normalizarPedido = (v: any) => 
     String(v ?? '').trim().replace(/\.0$/, '').replace(/\s+/g, '').toLowerCase();
 
+  // Verifica se o mes_referencia gravado no upload (ex: "outubro de 2026") pertence ao período filtrado
+  const mesRefCorresponde = (valor: any, formatos: { iso: string; barra: string; extenso: string }) => {
+    const v = String(valor || '').trim().toLowerCase();
+    if (!v) return false;
+    return v === formatos.iso || v === formatos.barra || v === formatos.extenso ||
+      v.includes(formatos.iso) || v.includes(formatos.barra) || v.includes(formatos.extenso);
+  };
+
   const isChannelFisico = (canalName: string) => {
     const nome = normalizarTexto(canalName);
     return nome.includes('clube') || nome.includes('loja') || nome.includes('paineiras') || nome.includes('hebraica');
@@ -342,6 +350,9 @@ export default function PainelExecutivoPage() {
           (fatData && fatData.startsWith(mesRefFormatos.iso));
 
         if (!matchMes) return false;
+      } else {
+        // Lojas físicas: só entram no mês em que o upload foi registrado
+        if (!mesRefCorresponde(s.mes_referencia, mesRefFormatos)) return false;
       }
       return true;
     }).map((s: any) => {
@@ -417,6 +428,8 @@ export default function PainelExecutivoPage() {
           (fatData && fatData.startsWith(mesAntFormatos.iso));
 
         if (!matchMes) return false;
+      } else {
+        if (!mesRefCorresponde(s.mes_referencia, mesAntFormatos)) return false;
       }
       return true;
     });
