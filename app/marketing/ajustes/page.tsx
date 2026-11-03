@@ -41,8 +41,8 @@ export default function AjustesSitePage() {
   const [salvando, setSalvando] = useState(false);
   const [itens, setItens] = useState<AjusteItem[]>([]);
   
-  // Inicialização blindada contra erros de tipagem no JSX
-  const [custosMap, setCustosMap] = useState>(() => new Map());
+  // Declaração sem sinais < > na chamada de useState para evitar conflito com JSX
+  const [custosMap, setCustosMap]: [Map<string, string>, React.Dispatch<React.SetStateAction>>] = useState(new Map());
 
   // Configuração da planilha
   const [colunaSku, setColunaSku] = useState("A");
