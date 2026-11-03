@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "@/app/components/Navbar";
-import * as XLSX from "xlsx";
 
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
@@ -40,16 +39,12 @@ export default function AjustesSitePage() {
   const [loading, setLoading] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [itens, setItens] = useState<AjusteItem[]>([]);
-  
-  // Dicionário simples de consulta: SKU normalizado -> Marca
   const [custosMap, setCustosMap] = useState<Record<string, string>>({});
 
-  // Configuração da planilha
   const [colunaSku, setColunaSku] = useState("A");
   const [colunaTitulo, setColunaTitulo] = useState("B");
   const [linhaInicial, setLinhaInicial] = useState("2");
 
-  // Filtros
   const [filtroAba, setFiltroAba] = useState<"pendentes" | "concluidos" | "todos">("pendentes");
   const [filtroMarca, setFiltroMarca] = useState("TODAS");
   const [busca, setBusca] = useState("");
@@ -60,8 +55,6 @@ export default function AjustesSitePage() {
 
   const carregarDados = async () => {
     setLoading(true);
-
-    // Consulta direta à tabela pública tabela_custos_skus
     let allCustos: any[] = [];
     let from = 0;
     const step = 1000;
@@ -81,13 +74,10 @@ export default function AjustesSitePage() {
     const mapa: Record<string, string> = {};
     allCustos.forEach((c: any) => {
       const k = normalizarSku(c.sku);
-      if (k) {
-        mapa[k] = c.marca || "Outros";
-      }
+      if (k) mapa[k] = c.marca || "Outros";
     });
     setCustosMap(mapa);
 
-    // Carrega registros da tabela de ajustes
     const { data: dadosAjustes } = await supabase
       .from("ajustes_site")
       .select("*")
@@ -97,7 +87,6 @@ export default function AjustesSitePage() {
     setLoading(false);
   };
 
-  // Upload e processamento da planilha
   const handleUploadPlanilha = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -106,6 +95,8 @@ export default function AjustesSitePage() {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
+        // Importação dinâmica sob demanda: não consome memória estática no build
+        const XLSX = await import("xlsx");
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -155,7 +146,7 @@ export default function AjustesSitePage() {
           if (error) throw error;
         }
 
-        alert(`✅ ${novosRegistros.length} produto(s) importado(s) com a marca consultada com sucesso!`);
+        alert(`✅ ${novosRegistros.length} produto(s) importado(s) com sucesso!`);
         carregarDados();
       } catch (err: any) {
         alert("Erro ao importar planilha: " + err.message);
@@ -172,11 +163,9 @@ export default function AjustesSitePage() {
     valorAtual: boolean
   ) => {
     const novoValor = !valorAtual;
-
     setItens((prev) =>
       prev.map((item) => (item.id === id ? { ...item, [campo]: novoValor } : item))
     );
-
     await supabase.from("ajustes_site").update({ [campo]: novoValor }).eq("id", id);
   };
 
@@ -222,7 +211,6 @@ export default function AjustesSitePage() {
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
         
-        {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1">
@@ -234,14 +222,13 @@ export default function AjustesSitePage() {
           <Navbar />
         </div>
 
-        {/* BLOCO DE UPLOAD DE PLANILHA */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider">
               📥 Importar Novos Produtos para Ajuste
             </h2>
             <span className="text-[11px] text-slate-400">
-              A marca é consultada automaticamente na tabela de custos através do SKU
+              A marca é consultada automaticamente na base de custos via SKU
             </span>
           </div>
 
@@ -286,12 +273,8 @@ export default function AjustesSitePage() {
           </div>
         </div>
 
-        {/* LISTAGEM & AUDITORIA */}
         <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-          
-          {/* ABAS E FILTROS */}
           <div className="p-5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-            
             <div className="flex gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
               <button
                 onClick={() => setFiltroAba("pendentes")}
@@ -382,7 +365,6 @@ export default function AjustesSitePage() {
                         </span>
                       </td>
 
-                      {/* CHECKBOXES DOS 4 TÓPICOS */}
                       <td className="p-3 text-center">
                         <input
                           type="checkbox"
@@ -416,35 +398,30 @@ export default function AjustesSitePage() {
                         />
                       </td>
 
-                      {/* OBSERVAÇÕES */}
                       <td className="p-3">
                         <input
                           type="text"
                           defaultValue={item.observacoes || ""}
-                          placeholder="Notas ou status do ajuste..."
+                          placeholder="Notas do ajuste..."
                           onBlur={(e) => atualizarObs(item.id, e.target.value.trim())}
                           className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-300 outline-none focus:border-indigo-500"
                         />
                       </td>
 
-                      {/* STATUS CONCLUÍDO */}
                       <td className="p-3 text-center">
                         <input
                           type="checkbox"
                           checked={item.concluido}
                           onChange={() => toggleTopico(item.id, "concluido", item.concluido)}
                           className="accent-emerald-500 w-5 h-5 cursor-pointer"
-                          title="Marcar como finalizado (move para a aba Concluídos)"
                         />
                       </td>
 
-                      {/* REMOVER */}
                       <td className="p-3 text-center">
                         <button
                           type="button"
                           onClick={() => excluirItem(item.id)}
                           className="text-rose-400 hover:text-rose-300 font-bold p-1 cursor-pointer"
-                          title="Excluir item"
                         >
                           ✕
                         </button>
