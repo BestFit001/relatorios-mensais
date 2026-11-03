@@ -41,8 +41,8 @@ export default function AjustesSitePage() {
   const [salvando, setSalvando] = useState(false);
   const [itens, setItens] = useState<AjusteItem[]>([]);
   
-  // Declaração sem sinais < > na chamada de useState para evitar conflito com JSX
-  const [custosMap, setCustosMap]: [Map<string, string>, React.Dispatch<React.SetStateAction>>] = useState(new Map());
+  // Dicionário simples de consulta: SKU normalizado -> Marca
+  const [custosMap, setCustosMap] = useState<Record<string, string>>({});
 
   // Configuração da planilha
   const [colunaSku, setColunaSku] = useState("A");
@@ -61,7 +61,7 @@ export default function AjustesSitePage() {
   const carregarDados = async () => {
     setLoading(true);
 
-    // 1. Carrega custos para mapear SKU -> Marca
+    // Consulta direta à tabela pública tabela_custos_skus
     let allCustos: any[] = [];
     let from = 0;
     const step = 1000;
@@ -78,14 +78,16 @@ export default function AjustesSitePage() {
       } else keep = false;
     }
 
-    const mapa = new Map<string, string>();
+    const mapa: Record<string, string> = {};
     allCustos.forEach((c: any) => {
       const k = normalizarSku(c.sku);
-      if (k) mapa.set(k, c.marca || "BEST FIT");
+      if (k) {
+        mapa[k] = c.marca || "Outros";
+      }
     });
     setCustosMap(mapa);
 
-    // 2. Carrega lista de ajustes
+    // Carrega registros da tabela de ajustes
     const { data: dadosAjustes } = await supabase
       .from("ajustes_site")
       .select("*")
@@ -125,7 +127,7 @@ export default function AjustesSitePage() {
 
           if (!skuNorm || !rawTitulo) continue;
 
-          const marcaEncontrada = custosMap.get(skuNorm) || "Outros";
+          const marcaEncontrada = custosMap[skuNorm] || "Outros";
 
           novosRegistros.push({
             sku: rawSku,
@@ -153,7 +155,7 @@ export default function AjustesSitePage() {
           if (error) throw error;
         }
 
-        alert(`✅ ${novosRegistros.length} produto(s) importado(s) com as marcas consultadas!`);
+        alert(`✅ ${novosRegistros.length} produto(s) importado(s) com a marca consultada com sucesso!`);
         carregarDados();
       } catch (err: any) {
         alert("Erro ao importar planilha: " + err.message);
@@ -239,7 +241,7 @@ export default function AjustesSitePage() {
               📥 Importar Novos Produtos para Ajuste
             </h2>
             <span className="text-[11px] text-slate-400">
-              A marca é consultada automaticamente na base de custos através do SKU
+              A marca é consultada automaticamente na tabela de custos através do SKU
             </span>
           </div>
 
