@@ -10,7 +10,7 @@ export default function Navbar() {
   const [paginasPermitidas, setPaginasPermitidas] = useState<string[]>([]);
   const [perfilUsuario, setPerfilUsuario] = useState("");
   const [emailUsuario, setEmailUsuario] = useState("");
-  const [menuExpandido, setMenuExpandido] = useState<string | null>("faturamento");
+  const [menuExpandido, setMenuExpandido] = useState<string | null>("dashboard");
   const [sidebarAberta, setSidebarAberta] = useState(false);
   const [modoEscuro, setModoEscuro] = useState(true);
   
@@ -39,10 +39,11 @@ export default function Navbar() {
         setEmailUsuario(user.email || "");
         setPerfilUsuario(user.perfil || "compras");
         if (user.perfil === "admin") {
-          // Lista de todas as páginas reais existentes no app
+          // Lista unificada de todas as páginas existentes no sistema
           setPaginasPermitidas([
             "/",
             "/dashboard",
+            "/executivo",
             "/reputacao",
             "/marketing",
             "/mapeamento",
@@ -194,18 +195,54 @@ export default function Navbar() {
 
         <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1.5 text-xs font-semibold">
           
-          {/* DASHBOARD DE VENDAS */}
-          {temPermissao("/dashboard") && (
-            <Link
-              href="/dashboard"
-              title="Dashboard de Faturamento"
-              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
-                pathname?.includes("/dashboard") ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-              }`}
-            >
-              <span className="text-sm flex-shrink-0">💰</span>
-              {sidebarAberta && <span className="truncate">Dashboard</span>}
-            </Link>
+          {/* DASHBOARD (SIMPLIFICADO & EXECUTIVO) */}
+          {(temPermissao("/dashboard") || temPermissao("/executivo")) && (
+            <div>
+              <button
+                onClick={() => sidebarAberta && toggleSecao("dashboard")}
+                title="Dashboard"
+                className="w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900/60 transition-all cursor-pointer"
+              >
+                <span className="flex items-center gap-3">
+                  <span className="text-sm flex-shrink-0">📊</span> 
+                  {sidebarAberta && <span className="truncate">Dashboard</span>}
+                </span>
+                {sidebarAberta && (
+                  <span className={`transform transition-transform text-[9px] ${menuExpandido === "dashboard" ? "rotate-180" : ""}`}>
+                    ▼
+                  </span>
+                )}
+              </button>
+
+              {sidebarAberta && menuExpandido === "dashboard" && (
+                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
+                  {temPermissao("/dashboard") && (
+                    <Link 
+                      href="/dashboard" 
+                      className={`block px-2.5 py-1.5 rounded-lg transition-all ${
+                        pathname === "/dashboard" 
+                          ? "text-indigo-400 font-bold bg-indigo-950/40" 
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      Simplificado
+                    </Link>
+                  )}
+                  {temPermissao("/executivo") && (
+                    <Link 
+                      href="/executivo" 
+                      className={`block px-2.5 py-1.5 rounded-lg transition-all ${
+                        pathname === "/executivo" 
+                          ? "text-indigo-400 font-bold bg-indigo-950/40" 
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      Executivo
+                    </Link>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           {/* REPUTAÇÃO DOS CANAIS */}

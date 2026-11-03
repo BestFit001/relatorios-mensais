@@ -6,7 +6,8 @@ import Navbar from "../components/Navbar";
 
 const rotasDisponiveis = [
   { id: "/", nome: "Curva ABC (Início)" },
-  { id: "/dashboard", nome: "Dashboard de Faturamento" },
+  { id: "/dashboard", nome: "Dashboard (Simplificado)" },
+  { id: "/executivo", nome: "Dashboard (Executivo)" },
   { id: "/reputacao", nome: "Reputação dos Canais" },
   { id: "/marketing", nome: "Marketing" },
   { id: "/mapeamento", nome: "Cadastros" },
