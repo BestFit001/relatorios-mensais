@@ -130,7 +130,6 @@ function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: 
 
     exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
 
-    // REGEX EXPANDIDA: Permite números, operadores matemáticos e operadores condicionais (><=?:!&|)
     if (/^[0-9+\-*/().\s><=?:!&|]+$/.test(exp)) {
       const res = Function(`"use strict"; return (${exp})`)();
       if (typeof res === 'number' && !isNaN(res)) {
@@ -160,6 +159,7 @@ export default function UpdatesPage() {
   const [dadosInvBruto, setDadosInvBruto] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
+  const [loadingDownloadCustos, setLoadingDownloadCustos] = useState(false);
 
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
   const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
@@ -395,6 +395,38 @@ export default function UpdatesPage() {
       alert("✅ Custos limpos com sucesso.");
     } catch (err: any) {
       alert("Erro ao limpar custos: " + err.message);
+    }
+  };
+
+  // EXPORTAÇÃO DOS CUSTOS SALVOS NO SUPABASE PARA EXCEL
+  const baixarCustosExcel = async () => {
+    try {
+      setLoadingDownloadCustos(true);
+      const custos = await fetchTodosRegistros('tabela_custos_skus', 'sku, produto, custo_unitario, marca');
+      
+      if (!custos || custos.length === 0) {
+        alert("⚠️ Nenhum custo encontrado no banco de dados para exportação.");
+        setLoadingDownloadCustos(false);
+        return;
+      }
+
+      const dadosFormatados = custos.map((c: any) => ({
+        "SKU": c.sku || "",
+        "PRODUTO": c.produto || "",
+        "CUSTO UNITÁRIO": Number(c.custo_unitario) || 0,
+        "MARCA": c.marca || ""
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(dadosFormatados);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Custos por SKU");
+
+      const dataHoje = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(workbook, `base_custos_skus_${dataHoje}.xlsx`);
+    } catch (err: any) {
+      alert("Erro ao baixar custos: " + err.message);
+    } finally {
+      setLoadingDownloadCustos(false);
     }
   };
 
@@ -1220,9 +1252,20 @@ export default function UpdatesPage() {
         {/* ABA: CUSTOS POR SKU */}
         {abaAtiva === "custos" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
               <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
-              <button onClick={limparTabelaCustos} className="bg-rose-950/60 text-rose-400 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer">🗑️ Limpar Custos</button>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={baixarCustosExcel} 
+                  disabled={loadingDownloadCustos}
+                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition shadow flex items-center gap-2"
+                >
+                  {loadingDownloadCustos ? "A descarregar..." : "📥 Baixar Custos Salvos (Excel)"}
+                </button>
+                <button onClick={limparTabelaCustos} className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition">
+                  🗑️ Limpar Custos
+                </button>
+              </div>
             </div>
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800 mb-6">
