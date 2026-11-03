@@ -218,8 +218,8 @@ export default function MonitoramentoPage() {
       { onConflict: "canal_id,data" }
     );
 
-    if (error) alert("Erro ao gravar: " + error.message);
-    else alert("✅ Métricas de reputação guardadas com sucesso!");
+    if (error) alert("Erro ao salvar: " + error.message);
+    else alert("✅ Métricas de reputação salvas com sucesso!");
     setSalvando(false);
   };
 
@@ -291,8 +291,8 @@ export default function MonitoramentoPage() {
       { onConflict: "canal,data" }
     );
 
-    if (error) alert("Erro ao gravar: " + error.message);
-    else alert("✅ Análise de vendas guardada com sucesso!");
+    if (error) alert("Erro ao salvar: " + error.message);
+    else alert("✅ Análise de vendas salva com sucesso!");
     setSalvando(false);
   };
 
@@ -340,7 +340,7 @@ export default function MonitoramentoPage() {
           <Navbar />
         </div>
 
-        {/* ABAS PRINCIPAIS */}
+        {/* NAVEGAÇÃO ENTRE MÓDULOS */}
         <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
           <button
             onClick={() => { setModuloAtivo("metricas_canal"); setSubAba("alimentacao"); }}
