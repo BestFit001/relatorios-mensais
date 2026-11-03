@@ -1,7 +1,5 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
@@ -41,12 +39,10 @@ function parseNumeroBruto(valor: any): number {
   return isNaN(num) ? 0 : num;
 }
 
-// Converte qualquer data (DD/MM/YYYY, YYYY-MM-DD ou Date) para timestamp limpo em milissegundos
 function parseDataParaTimestamp(dataStr: any): number | null {
   if (!dataStr) return null;
   const s = String(dataStr).trim().split(" ")[0];
 
-  // Caso 1: Formato DD/MM/YYYY
   if (s.includes("/")) {
     const partes = s.split("/");
     if (partes.length === 3) {
@@ -59,7 +55,6 @@ function parseDataParaTimestamp(dataStr: any): number | null {
     }
   }
 
-  // Caso 2: Formato ISO YYYY-MM-DD
   if (s.includes("-")) {
     const partes = s.split("-");
     if (partes.length === 3) {
@@ -93,6 +88,7 @@ const formatarMoeda = (valor: number) =>
 
 export default function RelatorioLivesPage() {
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [subAba, setSubAba] = useState<"dados" | "config">("dados");
   const [modoPainel, setModoPainel] = useState<"detalhado" | "compacto">("detalhado");
@@ -126,7 +122,8 @@ export default function RelatorioLivesPage() {
   const TABELA_DESTINO_LIVES = "vendas_lives_separadas";
 
   useEffect(() => {
-    const usuarioLogado = localStorage.getItem("usuario_logado");
+    setMounted(true);
+    const usuarioLogado = typeof window !== "undefined" ? localStorage.getItem("usuario_logado") : null;
     if (!usuarioLogado) {
       router.push("/login");
       return;
@@ -429,12 +426,10 @@ export default function RelatorioLivesPage() {
     const statusValido = statusPermitidos.some(st => statusLimpo.includes(st.toLowerCase()));
     if (!statusValido) return false;
 
-    // Filtro de Busca (SKU ou Nome)
     if (buscaSku && !item.skuNorm.includes(buscaSku.toLowerCase()) && !item.nomeProduto.toLowerCase().includes(buscaSku.toLowerCase())) {
       return false;
     }
 
-    // Filtro por Mês (YYYY-MM)
     if (filtroMes && item.timestamp) {
       const d = new Date(item.timestamp);
       const ano = d.getFullYear();
@@ -442,7 +437,6 @@ export default function RelatorioLivesPage() {
       if (`${ano}-${mes}` !== filtroMes) return false;
     }
 
-    // Filtro por Período de Datas via Timestamp (Elimina erro de string)
     const tsInicio = dataInicio ? parseDataParaTimestamp(dataInicio) : null;
     const tsFim = dataFim ? parseDataParaTimestamp(dataFim) : null;
 
@@ -504,6 +498,14 @@ export default function RelatorioLivesPage() {
   const indexUltimoItem = paginaAtual * itensPorPagina;
   const indexPrimeiroItem = indexUltimoItem - itensPorPagina;
   const itensPaginados = itensAtivos.slice(indexPrimeiroItem, indexUltimoItem);
+
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-[#07090e] p-6 md:p-8 text-slate-100 flex items-center justify-center font-sans">
+        <p className="text-slate-400 text-xs">Carregando painel de lives...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#07090e] p-6 md:p-8 text-slate-100 font-sans">
