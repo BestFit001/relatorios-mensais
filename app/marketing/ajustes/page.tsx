@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "@/app/components/Navbar";
@@ -95,7 +97,7 @@ export default function AjustesSitePage() {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        // Importação dinâmica sob demanda: não consome memória estática no build
+        // Carregamento dinâmico em tempo de execução
         const XLSX = await import("xlsx");
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
