@@ -6,8 +6,9 @@ import Navbar from "../components/Navbar";
 import { calcularResumoCanais, TABELAS_RESUMO, type ResumoCanal } from "../../lib/resumoCanais";
 import {
   agoraSP, concluiu, statusPorResponsavel, vencimento, estaAtrasada, ehCiclica, textoCiclo, deveAlertar, chaveAlerta,
-  textoAntecedencia, hhmm, diferencaDias, DIAS_SEMANA, inicioCiclo, type Conclusao,
+  textoAntecedencia, hhmm, diferencaDias, DIAS_SEMANA, inicioCiclo, ocorreNoDia, addDias, diaDaSemana, type Conclusao,
 } from "../../lib/tarefas";
+import { registrarPush, temAssinaturaAtiva, suportaPush } from "../../lib/push";
 
 // ---------------------------------------------------------------------------------------------
 // Tela inicial: canais de cada analista (números do Dashboard), notificações e tarefas do administrador
@@ -78,6 +79,12 @@ export default function InicioPage() {
   };
   const [novaTarefa, setNovaTarefa] = useState(tarefaVazia);
   const [arquivosNovos, setArquivosNovos] = useState<File[]>([]);
+  const [editandoId, setEditandoId] = useState<number | string | null>(null);
+  const [subAbaTarefas, setSubAbaTarefas] = useState<"lista" | "calendario">("lista");
+  const [mesCal, setMesCal] = useState(() => agoraSP().data.slice(0, 7));   // YYYY-MM exibido no calendário
+  const [diaSel, setDiaSel] = useState<string | null>(null);                  // dia aberto (lista completa)
+  const [temPush, setTemPush] = useState(false);                              // este navegador recebe alertas com o sistema fechado
+  const [msgPush, setMsgPush] = useState("");
   const [salvando, setSalvando] = useState(false);
   // "Agora" renovado a cada 30 s: faz a tarefa virar "atrasada" e dispara os alertas sem precisar recarregar
   const [agora, setAgora] = useState(() => new Date());
@@ -275,6 +282,32 @@ export default function InicioPage() {
     setArquivosNovos((prev) => [...prev, ...novos]);
   };
 
+  const iniciarEdicao = (t: any) => {
+    const m = Number(t.aviso_minutos) || 0;
+    const unidade: "1" | "60" | "1440" = m > 0 && m % 1440 === 0 ? "1440" : m > 0 && m % 60 === 0 ? "60" : "1";
+    setNovaTarefa({
+      titulo: t.titulo || "", descricao: t.descricao || "", prioridade: t.prioridade || "Média",
+      tipo: ehCiclica(t) ? "ciclica" : "prazo",
+      data_entrega: t.data_entrega ? String(t.data_entrega).slice(0, 10) : "", hora_entrega: hhmm(t.hora_entrega),
+      ciclo: t.ciclo === "semanal" ? "semanal" : "diaria", ciclo_dia_semana: Number.isInteger(t.ciclo_dia_semana) ? Number(t.ciclo_dia_semana) : 1,
+      responsaveis: [...(t.responsaveis || [])],
+      avisoValor: m > 0 ? String(m / Number(unidade)) : "", avisoUnidade: unidade,
+    });
+    setArquivosNovos([]);
+    setEditandoId(t.id);
+    setPainelAdmin(true);
+    if (typeof window !== "undefined") setTimeout(() => document.querySelector("[data-form-tarefa]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
+  const cancelarEdicao = () => { setEditandoId(null); setNovaTarefa(tarefaVazia); setArquivosNovos([]); };
+
+  const removerAnexo = async (a: any) => {
+    if (!confirm(`Remover o anexo "${a.nome}"?`)) return;
+    await supabase.storage.from("anexos").remove([a.caminho]);
+    const { error } = await supabase.from("home_tarefas_anexos").delete().eq("id", a.id);
+    if (error) return alert("Erro ao remover o anexo: " + error.message);
+    setAnexos((prev) => prev.filter((x: any) => x.id !== a.id));
+  };
+
   const criarTarefa = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin) return;
@@ -288,30 +321,39 @@ export default function InicioPage() {
     const aviso = temAviso ? Math.round(avisoNum * Number(n.avisoUnidade)) : null;
 
     setSalvando(true);
-    const linha = {
+    const linha: any = {
       titulo, descricao: n.descricao.trim(), prioridade: n.prioridade, tipo: n.tipo,
       ciclo: n.tipo === "ciclica" ? n.ciclo : null,
       ciclo_dia_semana: n.tipo === "ciclica" && n.ciclo === "semanal" ? n.ciclo_dia_semana : null,
       data_entrega: n.tipo === "prazo" ? n.data_entrega : null,
       hora_entrega: n.hora_entrega || null, aviso_minutos: aviso,
-      responsaveis: n.responsaveis, responsavel_email: n.responsaveis[0], criado_por: usuario?.email, concluida: false,
+      responsaveis: n.responsaveis, responsavel_email: n.responsaveis[0],
     };
-    const { data: criada, error } = await supabase.from("home_tarefas").insert(linha).select().single();
-    if (error || !criada) { setSalvando(false); return alert("Erro ao criar a tarefa (a migração 20261104170000 já foi executada?): " + (error?.message || "")); }
+    let tarefaId: number | string;
+    if (editandoId !== null) {
+      const { error } = await supabase.from("home_tarefas").update(linha).eq("id", editandoId);
+      if (error) { setSalvando(false); return alert("Erro ao salvar a tarefa: " + error.message); }
+      tarefaId = editandoId;
+    } else {
+      const { data: criada, error } = await supabase.from("home_tarefas").insert({ ...linha, criado_por: usuario?.email, concluida: false }).select().single();
+      if (error || !criada) { setSalvando(false); return alert("Erro ao criar a tarefa (a migração 20261104170000 já foi executada?): " + (error?.message || "")); }
+      tarefaId = criada.id;
+    }
 
     // anexos: sobe cada arquivo para o bucket "anexos" (pasta tarefas/<id>/) e registra na tabela
     const falhas: string[] = [];
     for (const f of arquivosNovos) {
       const seguro = f.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9._-]+/g, "_");
-      const caminho = `tarefas/${criada.id}/${Date.now()}_${seguro}`;
+      const caminho = `tarefas/${tarefaId}/${Date.now()}_${seguro}`;
       const up = await supabase.storage.from("anexos").upload(caminho, f, { upsert: false, contentType: f.type || undefined });
       if (up.error) { falhas.push(`${f.name}: ${up.error.message}`); continue; }
-      const { error: eAnexo } = await supabase.from("home_tarefas_anexos").insert({ tarefa_id: criada.id, nome: f.name, caminho, tamanho: f.size, mime: f.type || null, enviado_por: usuario?.email });
+      const { error: eAnexo } = await supabase.from("home_tarefas_anexos").insert({ tarefa_id: tarefaId, nome: f.name, caminho, tamanho: f.size, mime: f.type || null, enviado_por: usuario?.email });
       if (eAnexo) falhas.push(`${f.name}: ${eAnexo.message}`);
     }
     setSalvando(false);
-    if (falhas.length) alert("A tarefa foi criada, mas houve problema com o(s) anexo(s):\n" + falhas.join("\n"));
-    setNovaTarefa({ ...tarefaVazia, responsaveis: n.responsaveis, tipo: n.tipo });
+    if (falhas.length) alert("A tarefa foi salva, mas houve problema com o(s) anexo(s):\n" + falhas.join("\n"));
+    if (editandoId !== null) { setEditandoId(null); setNovaTarefa(tarefaVazia); }
+    else setNovaTarefa({ ...tarefaVazia, responsaveis: n.responsaveis, tipo: n.tipo });
     setArquivosNovos([]);
     await carregarHome();
     setAba("andamento"); setPagina(1);
@@ -320,19 +362,36 @@ export default function InicioPage() {
   const urlAnexo = (a: any) => supabase.storage.from("anexos").getPublicUrl(a.caminho, { download: a.nome }).data.publicUrl;
   const tamanhoLegivel = (b?: number | null) => (!b ? "" : b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
 
-  // ---- Alertas no Windows (Notification API do navegador): avisa X minutos antes do horário da tarefa
+  // ---- Alertas no Windows
+  // 1) Web Push: o servidor avisa mesmo com o sistema FECHADO (o navegador só precisa estar em execução).
+  // 2) Plano B (Notification API): se o push não estiver ativo neste navegador, avisa enquanto a aba estiver aberta.
   const ativarAlertas = async () => {
     if (!("Notification" in window)) return;
     const r = await Notification.requestPermission();
     setPermissaoNotif(r as any);
-    if (r === "granted") {
-      try { new Notification("Alertas ativados", { body: "Você será avisado antes do vencimento das suas tarefas enquanto o sistema estiver aberto no navegador." }); } catch { /* ignora */ }
-    }
+    if (r !== "granted" || !usuario) return;
+    const reg = await registrarPush(usuario.email);
+    setTemPush(reg.ok);
+    setMsgPush(reg.ok ? "Alertas ativos: você será avisado mesmo com o sistema fechado." : "Alertas ativos só com o sistema aberto. " + (reg.motivo || ""));
+    if (reg.ok) await enviarTeste(); else { try { new Notification("Alertas ativados", { body: "Você será avisado enquanto o sistema estiver aberto." }); } catch { /* ignora */ } }
   };
-  const testarAlerta = () => { try { new Notification("Teste de alerta", { body: "É assim que o aviso das tarefas vai aparecer." }); } catch { /* ignora */ } };
+  const enviarTeste = async () => {
+    if (!usuario) return;
+    try {
+      const r = await fetch("/api/tarefas/alertas", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ teste: usuario.email }) });
+      const j = await r.json().catch(() => ({}));
+      setMsgPush(r.ok && j.ok ? "Teste enviado: a notificação deve aparecer em instantes." : "Não consegui enviar o teste: " + (j.erro || r.status));
+    } catch (e: any) { setMsgPush("Não consegui enviar o teste: " + (e?.message || e)); }
+  };
+
+  // Navegador que já tem permissão: garante a assinatura (renova se mudou) e descobre se o push está ativo
+  useEffect(() => {
+    if (!usuario || permissaoNotif !== "granted" || !suportaPush()) return;
+    registrarPush(usuario.email).then(async (r) => setTemPush(r.ok || (await temAssinaturaAtiva())));
+  }, [usuario, permissaoNotif]);
 
   useEffect(() => {
-    if (!usuario || permissaoNotif !== "granted") return;
+    if (!usuario || permissaoNotif !== "granted" || temPush) return;
     tarefas.forEach((t: any) => {
       if (!(t.responsaveis || []).includes(usuario.email)) return;
       const feita = concluiu(t, usuario.email, conclusoes, hojeData);
@@ -349,7 +408,7 @@ export default function InicioPage() {
       } catch { /* navegador sem suporte */ }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agora, tarefas, conclusoes, usuario, permissaoNotif]);
+  }, [agora, tarefas, conclusoes, usuario, permissaoNotif, temPush]);
 
   const alternarCanalDoAnalista = async (email: string, canal: string, ativo: boolean) => {
     if (!isAdmin) return;
@@ -423,6 +482,126 @@ export default function InicioPage() {
   const iconeTipo = (tipo: string) => (tipo === "full" ? "📦" : tipo === "devolucao" ? "↩️" : "📝");
   const corPrioridade = (p: string) => (p === "Alta" ? "bg-rose-950/60 text-rose-300 border-rose-800/50" : p === "Baixa" ? "bg-slate-800 text-slate-300 border-slate-700" : "bg-amber-950/50 text-amber-300 border-amber-800/50");
 
+  // ---- Calendário do mês: resumo em cada dia; clicando no dia abre a lista completa
+  const tarefaFeitaEm = (t: any, dia: string) => {
+    if (emailRef) return concluiu(t, emailRef, conclusoes, dia);
+    const st = statusPorResponsavel(t, conclusoes, dia);
+    return st.length > 0 && st.every((x) => x.concluida);
+  };
+  const tarefasDoDia = (dia: string) =>
+    minhasTarefas
+      .map((t: any) => ({ t, o: ocorreNoDia(t, dia) }))
+      .filter((x) => x.o.ocorre)
+      .sort((a, b) => (hhmm(a.t.hora_entrega) || "99:99").localeCompare(hhmm(b.t.hora_entrega) || "99:99") || String(a.t.titulo).localeCompare(String(b.t.titulo)));
+  const NOMES_MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+  const mudarMes = (delta: number) => {
+    const [a, m] = mesCal.split("-").map(Number);
+    const d = new Date(Date.UTC(a, m - 1 + delta, 1));
+    setMesCal(d.toISOString().slice(0, 7)); setDiaSel(null);
+  };
+  const rotuloPapel = (papel: string | null) => (papel === "renova" ? "renova hoje" : papel === "vence" ? "vence hoje" : papel === "diaria" ? "diária" : "entrega");
+
+  const renderCalendario = () => {
+    const [ano, mes] = mesCal.split("-").map(Number);
+    const primeiro = `${mesCal}-01`;
+    const qtdDias = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+    const inicioGrade = addDias(primeiro, -diaDaSemana(primeiro));
+    const semanas = Math.ceil((diaDaSemana(primeiro) + qtdDias) / 7);
+    const dias = Array.from({ length: semanas * 7 }, (_, i) => addDias(inicioGrade, i));
+    const doDiaSel = diaSel ? tarefasDoDia(diaSel) : [];
+    return (
+      <div data-calendario>
+        <div className="flex items-center justify-between mb-3">
+          <button type="button" data-cal-anterior onClick={() => mudarMes(-1)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 bg-slate-950 text-slate-300 cursor-pointer">‹</button>
+          <div className="text-sm font-black text-white capitalize" data-cal-titulo>{NOMES_MESES[mes - 1]} de {ano}</div>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => { setMesCal(hojeData.slice(0, 7)); setDiaSel(hojeData); }} className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-slate-700 bg-slate-950 text-slate-300 cursor-pointer">Hoje</button>
+            <button type="button" data-cal-proximo onClick={() => mudarMes(1)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 bg-slate-950 text-slate-300 cursor-pointer">›</button>
+          </div>
+        </div>
+        <div className="grid grid-cols-7 gap-1 mb-1">
+          {["dom", "seg", "ter", "qua", "qui", "sex", "sáb"].map((d) => <div key={d} className="text-center text-[10px] font-bold uppercase text-slate-500">{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {dias.map((dia) => {
+            const lista = tarefasDoDia(dia);
+            const foraDoMes = dia.slice(0, 7) !== mesCal;
+            const ehHoje = dia === hojeData;
+            const sel = dia === diaSel;
+            const pendentes = lista.filter((x) => !tarefaFeitaEm(x.t, dia)).length;
+            return (
+              <button key={dia} type="button" data-dia={dia} onClick={() => setDiaSel(sel ? null : dia)}
+                className={`text-left min-h-[5.5rem] rounded-lg border p-1.5 cursor-pointer transition-all overflow-hidden ${sel ? "border-indigo-400 bg-indigo-950/40" : ehHoje ? "border-cyan-600 bg-cyan-950/20" : "border-slate-800 bg-slate-950/60 hover:border-slate-600"} ${foraDoMes ? "opacity-40" : ""}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-black ${ehHoje ? "text-cyan-300" : "text-slate-300"}`}>{Number(dia.slice(8))}</span>
+                  {lista.length > 0 && <span data-dia-total className={`text-[9px] font-bold px-1.5 rounded ${pendentes === 0 ? "bg-emerald-900/50 text-emerald-300" : dia < hojeData ? "bg-rose-900/50 text-rose-300" : "bg-amber-900/40 text-amber-300"}`}>{pendentes === 0 ? "✔" : pendentes}</span>}
+                </div>
+                <div className="mt-1 space-y-0.5">
+                  {lista.slice(0, 2).map(({ t }) => {
+                    const feita = tarefaFeitaEm(t, dia);
+                    return (
+                      <div key={t.id} data-dia-item className={`truncate text-[9px] leading-tight ${feita ? "text-emerald-400/80 line-through" : dia < hojeData ? "text-rose-300" : "text-slate-300"}`} title={t.titulo}>
+                        {hhmm(t.hora_entrega) ? hhmm(t.hora_entrega) + " " : ""}{t.titulo}
+                      </div>
+                    );
+                  })}
+                  {lista.length > 2 && <div className="text-[9px] text-slate-500 font-bold">+{lista.length - 2} mais</div>}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {diaSel ? (
+          <div data-dia-detalhe className="mt-4 border border-indigo-900/50 bg-slate-950/70 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-black text-indigo-300 uppercase tracking-wider">
+                {DIAS_SEMANA[diaDaSemana(diaSel)]}, {dataBR(diaSel)} — {doDiaSel.length} tarefa(s)
+              </h3>
+              <button type="button" onClick={() => setDiaSel(null)} className="text-[11px] font-bold text-slate-400 hover:text-white cursor-pointer">✕ Fechar</button>
+            </div>
+            {doDiaSel.length === 0 && <p className="text-xs text-slate-500">Nenhuma tarefa neste dia.</p>}
+            <div className="space-y-2">
+              {doDiaSel.map(({ t, o }) => {
+                const feita = tarefaFeitaEm(t, diaSel);
+                const resp = statusPorResponsavel(t, conclusoes, diaSel);
+                const anexosT = anexos.filter((a: any) => String(a.tarefa_id) === String(t.id));
+                return (
+                  <div key={t.id} data-dia-tarefa className={`rounded-lg border p-3 ${feita ? "border-emerald-900/40 bg-emerald-950/10" : "border-slate-800 bg-slate-900/60"}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className={`text-sm font-bold ${feita ? "text-slate-500 line-through" : "text-white"}`}>{ehCiclica(t) && "🔁 "}{t.titulo}</div>
+                      {isAdmin && <button data-editar-cal onClick={() => iniciarEdicao(t)} title="Editar tarefa" className="text-slate-500 hover:text-cyan-300 text-sm cursor-pointer">✏️</button>}
+                    </div>
+                    {t.descricao && <div className="text-[11px] text-slate-400 mt-0.5 whitespace-pre-line">{t.descricao}</div>}
+                    <div className="flex flex-wrap items-center gap-2 mt-2 text-[10px]">
+                      <span className={`px-2 py-0.5 rounded border font-bold ${corPrioridade(t.prioridade)}`}>{t.prioridade}</span>
+                      <span className="text-slate-400">{rotuloPapel(o.papel)}{hhmm(t.hora_entrega) ? ` · até ${hhmm(t.hora_entrega)}` : ""}{ehCiclica(t) ? ` · ${textoCiclo(t)}` : ""}</span>
+                      {resp.map((r) => (
+                        <span key={r.email} className={`px-2 py-0.5 rounded-lg font-bold border ${r.concluida ? "bg-emerald-950/50 text-emerald-300 border-emerald-800/60" : "bg-amber-950/40 text-amber-300 border-amber-800/50"}`}>
+                          {r.concluida ? "✔" : "⏳"} {nomeDoEmail(r.email).split(" ")[0]} {r.concluida ? "concluiu" : "pendente"}
+                        </span>
+                      ))}
+                    </div>
+                    {anexosT.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {anexosT.map((a: any) => (
+                          <a key={a.id} href={urlAnexo(a)} target="_blank" rel="noopener noreferrer" className="px-2.5 py-1 rounded-lg text-[10px] font-bold border border-cyan-900/60 bg-cyan-950/30 text-cyan-300 hover:text-white">⬇ {a.nome}</a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-3">Para marcar como concluída, use a aba “Lista”.</p>
+          </div>
+        ) : (
+          <p className="text-[10px] text-slate-500 mt-3">Clique em um dia para ver todas as tarefas dele por extenso.</p>
+        )}
+      </div>
+    );
+  };
+
   if (!usuario) return null;
 
   return (
@@ -475,7 +654,10 @@ export default function InicioPage() {
         {isAdmin && painelAdmin && (
           <div className="mb-8 grid grid-cols-1 xl:grid-cols-2 gap-6">
             <form onSubmit={criarTarefa} data-form-tarefa className="bg-slate-900/90 p-6 rounded-2xl border border-cyan-900/40 shadow-xl space-y-3">
-              <h2 className="text-sm font-black text-cyan-300 uppercase tracking-wider">➕ Nova tarefa</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-black text-cyan-300 uppercase tracking-wider">{editandoId !== null ? "✏️ Editando tarefa" : "➕ Nova tarefa"}</h2>
+                {editandoId !== null && <button type="button" data-cancelar-edicao onClick={cancelarEdicao} className="text-[11px] font-bold text-slate-400 hover:text-white cursor-pointer">✕ Cancelar edição</button>}
+              </div>
               <input value={novaTarefa.titulo} onChange={(e) => setNovaTarefa({ ...novaTarefa, titulo: e.target.value })} placeholder="Título da tarefa" required className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-cyan-500" />
               <textarea value={novaTarefa.descricao} onChange={(e) => setNovaTarefa({ ...novaTarefa, descricao: e.target.value })} placeholder="Descrição / instruções (opcional)" rows={3} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-cyan-500" />
 
@@ -573,6 +755,16 @@ export default function InicioPage() {
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">📎 Anexos (planilhas, txt, pdf… até {LIMITE_ANEXO_MB} MB cada)</label>
                 <input type="file" multiple data-anexo-input accept={TIPOS_ANEXO} onChange={(e) => { escolherArquivos(e.target.files); e.target.value = ""; }}
                   className="block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-cyan-700 file:text-white file:font-bold cursor-pointer" />
+                {editandoId !== null && anexos.filter((a: any) => String(a.tarefa_id) === String(editandoId)).length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {anexos.filter((a: any) => String(a.tarefa_id) === String(editandoId)).map((a: any) => (
+                      <li key={a.id} className="flex items-center justify-between bg-slate-950 border border-cyan-900/40 rounded-lg px-3 py-1.5 text-[11px] text-cyan-200">
+                        <span className="truncate">📎 {a.nome} <span className="text-slate-500">{tamanhoLegivel(a.tamanho)} · já anexado</span></span>
+                        <button type="button" data-remover-anexo onClick={() => removerAnexo(a)} className="text-slate-500 hover:text-rose-400 cursor-pointer ml-3" title="Remover anexo">🗑️</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 {arquivosNovos.length > 0 && (
                   <ul className="mt-2 space-y-1">
                     {arquivosNovos.map((f, i) => (
@@ -586,7 +778,7 @@ export default function InicioPage() {
               </div>
 
               <button type="submit" disabled={salvando || faltaMigration} className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-bold py-2.5 px-6 rounded-lg text-xs uppercase tracking-wider cursor-pointer shadow-lg">
-                {salvando ? "Salvando..." : "Adicionar tarefa"}
+                {salvando ? "Salvando..." : editandoId !== null ? "Salvar alterações" : "Adicionar tarefa"}
               </button>
               <p className="text-[10px] text-slate-500">A tarefa é uma só: cada responsável conclui a sua parte e o status de todos aparece no cartão.</p>
             </form>
@@ -717,7 +909,10 @@ export default function InicioPage() {
                 <button type="button" data-ativar-alertas onClick={ativarAlertas} className="px-3 py-2 rounded-lg text-[11px] font-bold border border-cyan-700 bg-cyan-950/40 text-cyan-300 hover:text-white cursor-pointer">🔔 Ativar alertas no Windows</button>
               )}
               {permissaoNotif === "granted" && (
-                <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-2">🔔 Alertas ativos <button type="button" onClick={testarAlerta} className="underline text-slate-400 hover:text-white cursor-pointer">testar</button></span>
+                <span data-status-alertas className={`text-[10px] font-bold flex items-center gap-2 ${temPush ? "text-emerald-400" : "text-amber-300"}`}>
+                  🔔 {temPush ? "Alertas ativos (funcionam com o sistema fechado)" : "Alertas só com o sistema aberto"}
+                  <button type="button" data-testar-alerta onClick={temPush ? enviarTeste : ativarAlertas} className="underline text-slate-400 hover:text-white cursor-pointer">{temPush ? "enviar teste" : "ativar com o sistema fechado"}</button>
+                </span>
               )}
               {permissaoNotif === "denied" && (
                 <span className="text-[10px] text-amber-300" title="Clique no cadeado ao lado do endereço do site e libere as Notificações">🔕 Alertas bloqueados no navegador</span>
@@ -730,6 +925,14 @@ export default function InicioPage() {
               )}
               </div>
             </div>
+            {msgPush && <p data-msg-push className="text-[10px] text-slate-400 mb-3">{msgPush}</p>}
+            <div className="flex gap-1 mb-4 border-b border-slate-800">
+              {([["lista", "📋 Lista"], ["calendario", "🗓️ Calendário"]] as const).map(([k, nome]) => (
+                <button key={k} data-subaba-tarefas={k} onClick={() => setSubAbaTarefas(k)} className={`px-4 py-2 text-xs font-bold uppercase tracking-wider cursor-pointer border-b-2 -mb-px ${subAbaTarefas === k ? "border-indigo-400 text-white" : "border-transparent text-slate-500 hover:text-slate-300"}`}>{nome}</button>
+              ))}
+            </div>
+            {subAbaTarefas === "calendario" && renderCalendario()}
+            {subAbaTarefas === "lista" && (<>
             <div className="flex flex-wrap gap-2 mb-4">
               {([["andamento", "Em andamento", qtdAndamento], ["concluidas", "Concluído", qtdConcluidas], ["todos", "Todos", minhasTarefas.length]] as const).map(([k, nome, n]) => (
                 <button key={k} onClick={() => { setAba(k); setPagina(1); }} className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border cursor-pointer transition-all ${aba === k ? (k === "concluidas" ? "bg-emerald-600 border-emerald-400 text-white" : "bg-indigo-600 border-indigo-400 text-white") : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>{nome} ({n})</button>
@@ -794,7 +997,12 @@ export default function InicioPage() {
                         </div>
                       )}
                     </div>
-                    {isAdmin && <button onClick={() => excluirTarefa(t)} title="Excluir tarefa" className="text-slate-500 hover:text-rose-400 text-sm cursor-pointer flex-shrink-0">🗑️</button>}
+                    {isAdmin && (
+                      <div className="flex flex-col items-center gap-2 flex-shrink-0">
+                        <button data-editar onClick={() => iniciarEdicao(t)} title="Editar tarefa" className="text-slate-500 hover:text-cyan-300 text-sm cursor-pointer">✏️</button>
+                        <button onClick={() => excluirTarefa(t)} title="Excluir tarefa" className="text-slate-500 hover:text-rose-400 text-sm cursor-pointer">🗑️</button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -812,6 +1020,7 @@ export default function InicioPage() {
                 </div>
               </div>
             )}
+            </>)}
           </div>
         </div>
       </div>

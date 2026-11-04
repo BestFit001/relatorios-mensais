@@ -99,6 +99,8 @@ export type ResultadoAlerta = { quando: "antes" | "vencida"; minutosRestantes: n
  * Esta tarefa já deve disparar o alerta? Só dispara se houver hora e aviso configurados e o
  * responsável ainda não tiver concluído a ocorrência vigente.
  */
+export const JANELA_VENCIDA_MIN = 180;   // depois de 3 h do horário limite não adianta mais avisar
+
 export function deveAlertar(t: TarefaBase, jaConcluiu: boolean, agora: Date = new Date()): ResultadoAlerta | null {
   if (jaConcluiu) return null;
   if (t.aviso_minutos === null || t.aviso_minutos === undefined) return null;
@@ -107,11 +109,30 @@ export function deveAlertar(t: TarefaBase, jaConcluiu: boolean, agora: Date = ne
   if (v.ms === null) return null;
   const restanteMs = v.ms - agora.getTime();
   if (restanteMs > Number(t.aviso_minutos) * 60000) return null;   // ainda cedo
+  if (restanteMs < -JANELA_VENCIDA_MIN * 60000) return null;       // venceu há muito tempo
   return { quando: restanteMs >= 0 ? "antes" : "vencida", minutosRestantes: Math.ceil(restanteMs / 60000) };
 }
 
-/** Chave que identifica "este alerta desta ocorrência para este usuário" (para não repetir). */
-export const chaveAlerta = (t: TarefaBase, email: string, hoje: string) => `alerta_tarefa_${t.id}_${inicioCiclo(t, hoje)}_${email.trim().toLowerCase()}`;
+/** Referência da ocorrência alertada: muda se a tarefa passar para outro ciclo, outro horário ou outro aviso (assim editar a tarefa libera um novo alerta). */
+export const refAlerta = (t: TarefaBase, hoje: string) => `${inicioCiclo(t, hoje)}|${hhmm(t.hora_entrega)}|${t.aviso_minutos ?? ""}|${vencimento(t, hoje).data ?? ""}`;
+
+/** Chave local (navegador) de "este alerta desta ocorrência para este usuário" (para não repetir). */
+export const chaveAlerta = (t: TarefaBase, email: string, hoje: string) => `alerta_tarefa_${t.id}_${refAlerta(t, hoje)}_${email.trim().toLowerCase()}`;
+
+/** A tarefa ocorre neste dia do calendário? (prazo: no dia da entrega; diária: todo dia a partir da criação; semanal: no dia em que renova e no dia em que vence) */
+export function ocorreNoDia(t: TarefaBase & { created_at?: string | null }, dia: string): { ocorre: boolean; papel: "entrega" | "diaria" | "renova" | "vence" | null } {
+  if (!ehCiclica(t)) {
+    const d = t.data_entrega ? String(t.data_entrega).slice(0, 10) : null;
+    return d === dia ? { ocorre: true, papel: "entrega" } : { ocorre: false, papel: null };
+  }
+  const criada = t.created_at ? String(t.created_at).slice(0, 10) : null;
+  if (criada && dia < criada) return { ocorre: false, papel: null };
+  if (t.ciclo === "diaria") return { ocorre: true, papel: "diaria" };
+  const ini = inicioCiclo(t, dia);
+  if (ini === dia) return { ocorre: true, papel: "renova" };
+  if (addDias(ini, 6) === dia) return { ocorre: true, papel: "vence" };
+  return { ocorre: false, papel: null };
+}
 
 export function textoAntecedencia(min: number): string {
   if (min % 1440 === 0) return `${min / 1440} dia(s)`;

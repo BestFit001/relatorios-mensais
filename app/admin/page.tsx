@@ -15,6 +15,7 @@ const rotasDisponiveis = [
   { id: "/devolucoes", nome: "Devoluções" },
   { id: "/full", nome: "Fulfillment (FULL / FBA)" },
   { id: "/lives", nome: "Lives" },
+  { id: "/analise-mercado", nome: "Análise de mercado" },
   { id: "/plp", nome: "PLPs (Expedição)" },
   { id: "/calculadora", nome: "Calculadora" },
   { id: "/produtos", nome: "Produtos & Vídeos" },
