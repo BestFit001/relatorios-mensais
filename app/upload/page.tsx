@@ -4,6 +4,8 @@ import * as XLSX from "xlsx";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
+import { lerArquivoComoMatriz } from "../../lib/lerArquivo";
+import { removerSufixoFba } from "../../lib/fulfillment";
 
 async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo?: string, eqValor?: any) {
   let todos: any[] = [];
@@ -182,6 +184,15 @@ export default function UpdatesPage() {
   const [pesquisaMl, setPesquisaMl] = useState("");
 
   const [vendasPendentes, setVendasPendentes] = useState<any[]>([]);
+
+  // Planilhas auxiliares de SKU (ID do pedido -> SKU): corrigem vendas importadas com o SKU oculto/em branco
+  const [auxLinha, setAuxLinha] = useState("2");
+  const [auxColPedido, setAuxColPedido] = useState("A");
+  const [auxColSku, setAuxColSku] = useState("B");
+  const [auxArquivos, setAuxArquivos] = useState<File[]>([]);
+  const [auxProcessando, setAuxProcessando] = useState(false);
+  const [auxResultado, setAuxResultado] = useState<any | null>(null);
+  const [auxCfgPronta, setAuxCfgPronta] = useState(false);
   const [edicoesPendentes, setEdicoesPendentes] = useState<{ [id: number]: string }>({});
   const [selecionadosPendentes, setSelecionadosPendentes] = useState<{ [id: number]: boolean }>({});
   const [skuEmLote, setSkuEmLote] = useState("");
@@ -219,7 +230,22 @@ export default function UpdatesPage() {
     }
     carregarDadosCadastros();
     carregarVendasPendentes();
+    try {
+      const cfg = JSON.parse(localStorage.getItem("upload_sku_aux_cfg") || "null");
+      if (cfg) {
+        if (cfg.linha) setAuxLinha(String(cfg.linha));
+        if (cfg.colPedido) setAuxColPedido(String(cfg.colPedido));
+        if (cfg.colSku) setAuxColSku(String(cfg.colSku));
+      }
+    } catch { /* configuração corrompida: usa o padrão */ }
+    setAuxCfgPronta(true);
   }, []);
+
+  // Linha e colunas da planilha auxiliar ficam salvas
+  useEffect(() => {
+    if (!auxCfgPronta) return;
+    try { localStorage.setItem("upload_sku_aux_cfg", JSON.stringify({ linha: auxLinha, colPedido: auxColPedido, colSku: auxColSku })); } catch { /* ignora */ }
+  }, [auxCfgPronta, auxLinha, auxColPedido, auxColSku]);
 
   useEffect(() => {
     pesquisarCustosNoBanco();
@@ -313,6 +339,109 @@ export default function UpdatesPage() {
       if (skuInput === undefined) alert("Erro ao atualizar SKU: " + err.message);
     }
     setLoading(false);
+  };
+
+  // Lê as planilhas auxiliares (2 colunas: ID do pedido e SKU) e grava o SKU nas vendas que estão SEM SKU.
+  // Vendas que já têm SKU não são alteradas; as demais colunas da planilha são descartadas.
+  const aplicarSkusAuxiliares = async () => {
+    if (auxArquivos.length === 0) return alert("Escolha ao menos uma planilha auxiliar.");
+    const colPed = auxColPedido.trim().toUpperCase();
+    const colSku = auxColSku.trim().toUpperCase();
+    if (!/^[A-Z]+$/.test(colPed) || !/^[A-Z]+$/.test(colSku)) return alert("Informe as letras das colunas do ID do pedido e do SKU.");
+    const inicio = Math.max(0, (parseInt(auxLinha, 10) || 1) - 1);
+
+    setAuxProcessando(true);
+    setAuxResultado(null);
+    try {
+      // 1) Lê todos os arquivos: ID do pedido -> SKUs (na ordem em que aparecem)
+      const porPedido = new Map<string, string[]>();
+      const porArquivo: { nome: string; lidas: number; ignoradas: number; erro?: string }[] = [];
+      for (const arq of auxArquivos) {
+        try {
+          const matriz = await lerArquivoComoMatriz(arq);
+          const doArquivo = new Map<string, string[]>();
+          let lidas = 0, ignoradas = 0;
+          for (let r = inicio; r < matriz.length; r++) {
+            const row = matriz[r];
+            if (!row) continue;
+            const pedido = normalizarIdPedido(row[colPed]);
+            const sku = normalizarSku(removerSufixoFba(String(row[colSku] ?? "")));   // "-F"/"-FBA" (e o que vier depois) não faz parte do SKU
+            if (!pedido && !sku) continue;                   // linha vazia
+            if (!pedido || !sku || sku === "sku" || sku === "semsku") { ignoradas++; continue; }
+            lidas++;
+            doArquivo.set(pedido, [...(doArquivo.get(pedido) || []), sku]);
+          }
+          // Mesma venda em mais de uma planilha: não duplica o item (SKU já visto em outro arquivo é ignorado)
+          doArquivo.forEach((skus, pedido) => {
+            const atual = porPedido.get(pedido) || [];
+            if (atual.length === 0) porPedido.set(pedido, skus);
+            else skus.forEach((sk) => { if (!atual.includes(sk)) atual.push(sk); });
+          });
+          porArquivo.push({ nome: arq.name, lidas, ignoradas });
+        } catch (e: any) {
+          porArquivo.push({ nome: arq.name, lidas: 0, ignoradas: 0, erro: e.message });
+        }
+      }
+
+      // 2) Vendas no banco e custos (para informar o nome do produto)
+      const vendas = await fetchTodosRegistros("vendas_canais", "id, id_pedido, sku");
+      const custos = await fetchTodosRegistros("tabela_custos_skus", "sku, produto");
+      const produtoPorSku = new Map<string, string>();
+      custos.forEach((c: any) => { const k = normalizarSku(c.sku); if (k && c.produto) produtoPorSku.set(k, c.produto); });
+
+      const existentes = new Set<string>();
+      const pendentesPorPedido = new Map<string, any[]>();
+      vendas.forEach((v: any) => {
+        const ped = normalizarIdPedido(v.id_pedido);
+        if (!ped) return;
+        existentes.add(ped);
+        const sk = normalizarSku(v.sku);
+        if (!sk || sk === "semsku") pendentesPorPedido.set(ped, [...(pendentesPorPedido.get(ped) || []), v]);
+      });
+
+      // 3) Casa pedido a pedido: 1 SKU -> todas as linhas em branco do pedido; vários SKUs -> um por linha, na ordem
+      const atualizar = new Map<string, number[]>();          // sku -> ids das vendas
+      let pedidosCorrigidos = 0, jaTinhamSku = 0, naoEncontrados = 0, linhasSemSku = 0, vendasCorrigidas = 0;
+      const exemplosNaoEncontrados: string[] = [];
+      porPedido.forEach((skus, pedido) => {
+        const linhas = (pendentesPorPedido.get(pedido) || []).slice().sort((a: any, b: any) => Number(a.id) - Number(b.id));
+        if (linhas.length === 0) {
+          if (existentes.has(pedido)) jaTinhamSku++;
+          else { naoEncontrados++; if (exemplosNaoEncontrados.length < 15) exemplosNaoEncontrados.push(pedido); }
+          return;
+        }
+        let algum = false;
+        linhas.forEach((linha: any, i: number) => {
+          const sku = skus.length === 1 ? skus[0] : skus[i];
+          if (!sku) { linhasSemSku++; return; }
+          atualizar.set(sku, [...(atualizar.get(sku) || []), linha.id]);
+          vendasCorrigidas++; algum = true;
+        });
+        if (algum) pedidosCorrigidos++;
+      });
+
+      // 4) Grava (em lotes por SKU)
+      const erros: string[] = [];
+      let skusForaDaBase = 0;
+      for (const [sku, ids] of atualizar) {
+        const produto = produtoPorSku.get(sku);
+        if (!produto) skusForaDaBase++;
+        const campos: any = produto ? { sku, produto } : { sku };
+        for (let i = 0; i < ids.length; i += 100) {
+          const { error } = await supabase.from("vendas_canais").update(campos).in("id", ids.slice(i, i + 100));
+          if (error) { erros.push(`${sku}: ${error.message}`); break; }
+        }
+      }
+
+      setAuxResultado({
+        arquivos: porArquivo, pedidosNaPlanilha: porPedido.size, pedidosCorrigidos, vendasCorrigidas, jaTinhamSku,
+        naoEncontrados, exemplosNaoEncontrados, linhasSemSku, skusForaDaBase, erros,
+      });
+      await carregarVendasPendentes();
+    } catch (err: any) {
+      alert("Erro ao aplicar as planilhas auxiliares: " + err.message);
+    }
+    setAuxProcessando(false);
   };
 
   const selecionarTodosPendentes = (e: ChangeEvent<HTMLInputElement>) => {
@@ -1394,6 +1523,66 @@ export default function UpdatesPage() {
                   Salvar Selecionados
                 </button>
               </div>
+            </div>
+
+            {/* PLANILHAS AUXILIARES DE SKU (ID do pedido -> SKU) */}
+            <div className="bg-slate-950/70 border border-violet-900/40 rounded-xl p-5 space-y-4">
+              <div>
+                <h3 className="text-sm font-black text-violet-300 uppercase tracking-wider">📎 Planilhas auxiliares de SKU (ID do pedido → SKU)</h3>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Quando o canal oculta o SKU, suba aqui a planilha com 2 colunas: o ID do pedido e o SKU dele. O SKU é gravado nas vendas que estão <strong>sem SKU</strong>;
+                  vendas que já têm SKU não são alteradas e as outras colunas da planilha são descartadas. Você pode selecionar várias planilhas de uma vez (qualquer formato: xlsx, xls, csv, txt…).
+                </p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha inicial</label>
+                  <input type="number" min={1} value={auxLinha} onChange={(e) => setAuxLinha(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-violet-300 uppercase mb-1">Coluna ID do pedido</label>
+                  <input type="text" value={auxColPedido} onChange={(e) => setAuxColPedido(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-violet-600/50 rounded-lg p-2 text-xs font-mono text-center text-violet-300 font-bold outline-none" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-emerald-300 uppercase mb-1">Coluna SKU</label>
+                  <input type="text" value={auxColSku} onChange={(e) => setAuxColSku(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-center text-emerald-300 font-bold outline-none" />
+                </div>
+                <div className="col-span-2 md:col-span-3">
+                  <input
+                    type="file"
+                    multiple
+                    onChange={(e) => { setAuxArquivos(Array.from(e.target.files || [])); setAuxResultado(null); }}
+                    className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-lg file:bg-violet-600 file:text-white file:border-0 cursor-pointer bg-slate-900 p-2 rounded-xl border border-slate-700"
+                  />
+                </div>
+              </div>
+              {auxArquivos.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {auxArquivos.map((a, i) => <span key={i} className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-300">{a.name}</span>)}
+                  <button type="button" onClick={aplicarSkusAuxiliares} disabled={auxProcessando}
+                    className="ml-auto bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-bold px-5 py-2 rounded-lg text-xs uppercase tracking-wider cursor-pointer shadow-lg">
+                    {auxProcessando ? "Aplicando..." : `Aplicar SKUs (${auxArquivos.length} planilha${auxArquivos.length > 1 ? "s" : ""})`}
+                  </button>
+                </div>
+              )}
+              {auxResultado && (
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs space-y-1.5" data-resultado-aux>
+                  <div className="text-sm font-black text-emerald-400">✅ {auxResultado.vendasCorrigidas} venda(s) corrigida(s) em {auxResultado.pedidosCorrigidos} pedido(s)</div>
+                  {auxResultado.arquivos.map((a: any, i: number) => (
+                    <div key={i} className={a.erro ? "text-rose-300" : "text-slate-400"}>
+                      📄 {a.nome}: {a.erro ? `não foi possível ler (${a.erro})` : `${a.lidas} linha(s) lida(s)${a.ignoradas ? `, ${a.ignoradas} ignorada(s) (sem ID ou sem SKU)` : ""}`}
+                    </div>
+                  ))}
+                  <div className="text-slate-300">Pedidos distintos nas planilhas: {auxResultado.pedidosNaPlanilha}</div>
+                  {auxResultado.jaTinhamSku > 0 && <div className="text-slate-400">↷ {auxResultado.jaTinhamSku} pedido(s) já tinham SKU e foram mantidos como estão.</div>}
+                  {auxResultado.naoEncontrados > 0 && (
+                    <div className="text-amber-300">⚠️ {auxResultado.naoEncontrados} pedido(s) não existem nas vendas importadas{auxResultado.exemplosNaoEncontrados.length ? ` (ex.: ${auxResultado.exemplosNaoEncontrados.slice(0, 5).join(", ")})` : ""}.</div>
+                  )}
+                  {auxResultado.linhasSemSku > 0 && <div className="text-amber-300">⚠️ {auxResultado.linhasSemSku} linha(s) de venda ficaram sem SKU: o pedido tem mais itens do que SKUs na planilha.</div>}
+                  {auxResultado.skusForaDaBase > 0 && <div className="text-amber-300">⚠️ {auxResultado.skusForaDaBase} SKU(s) aplicado(s) não estão na base de custos; as vendas continuam na lista até o cadastro.</div>}
+                  {auxResultado.erros.length > 0 && <div className="text-rose-300">❌ Erros ao gravar: {auxResultado.erros.slice(0, 3).join(" | ")}</div>}
+                </div>
+              )}
             </div>
 
             <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">

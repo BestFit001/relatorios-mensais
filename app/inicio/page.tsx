@@ -52,6 +52,10 @@ export default function InicioPage() {
   const [mesModo, setMesModo] = useState<"atual" | "anterior">("atual");
   const [analistaFiltro, setAnalistaFiltro] = useState("TODOS");
   const [painelAdmin, setPainelAdmin] = useState(false);
+  // Olhinho "Ocultar informações": esconde faturamento, metas, % líquido e os cards dos canais (sobram só notificações e tarefas)
+  const [ocultarInfo, setOcultarInfo] = useState(false);
+  useEffect(() => { try { setOcultarInfo(localStorage.getItem("inicio_ocultar_info") === "1"); } catch { /* sem armazenamento */ } }, []);
+  const alternarOcultar = () => setOcultarInfo((v) => { const n = !v; try { localStorage.setItem("inicio_ocultar_info", n ? "1" : "0"); } catch { /* ignora */ } return n; });
 
   // Tarefas
   const [aba, setAba] = useState<"andamento" | "concluidas" | "todos">("andamento");
@@ -322,6 +326,10 @@ export default function InicioPage() {
             ))}
           </div>
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Competência {mesBarra}</span>
+          <button onClick={alternarOcultar} title={ocultarInfo ? "Mostrar faturamento, metas e canais" : "Esconder faturamento, metas e canais"}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider cursor-pointer border transition-all flex items-center gap-2 ${ocultarInfo ? "bg-slate-700 border-slate-500 text-white" : "bg-slate-900 border-slate-700 text-slate-300 hover:text-white"}`}>
+            <span aria-hidden>{ocultarInfo ? "🙈" : "👁️"}</span>{ocultarInfo ? "Mostrar informações" : "Ocultar informações"}
+          </button>
           {isAdmin && (
             <>
               <select value={analistaFiltro} onChange={(e) => { setAnalistaFiltro(e.target.value); setFiltroNotif("todas"); }} className="bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
@@ -396,6 +404,8 @@ export default function InicioPage() {
           </div>
         )}
 
+        {!ocultarInfo && (
+        <>
         {/* RESUMO */}
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800">
@@ -455,6 +465,9 @@ export default function InicioPage() {
               );
             })}
           </div>
+        )}
+
+        </>
         )}
 
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">

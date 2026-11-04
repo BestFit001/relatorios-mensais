@@ -21,25 +21,11 @@ import {
   diasDoMesRef,
   REGRAS_RITMO_PADRAO,
   aplicarFiltroFull,
-  textoParaMatriz,
-  ehPlanilhaBinaria,
-  decodificarTexto,
   type Lote,
   type RegraRitmo,
 } from "../../lib/fulfillment";
 import { ehMercadoLivre } from "../../lib/tarifacao";
-
-// Lê QUALQUER arquivo de planilha/texto (xlsx, xls, ods, csv, txt, tsv...) e devolve linhas no formato { A: .., B: .. }
-async function lerArquivoComoMatriz(file: File): Promise<any[]> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  if (ehPlanilhaBinaria(bytes)) {
-    const wb = XLSX.read(bytes, { type: "array" });
-    return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" }) as any[];
-  }
-  const matriz = textoParaMatriz(decodificarTexto(bytes));
-  if (matriz.length === 0) throw new Error("o arquivo está vazio ou não é uma planilha/tabela de texto.");
-  return matriz;
-}
+import { lerArquivoComoMatriz } from "../../lib/lerArquivo";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
