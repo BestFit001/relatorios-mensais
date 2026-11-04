@@ -4,8 +4,31 @@
 alter table public.config_regras_canais add column if not exists dias_alerta_armazenagem   integer default 90;
 alter table public.config_regras_canais add column if not exists dias_cobranca_armazenagem integer default 120;
 
--- Ritmo de vendas também na Logística Própria (usada para medir o que serve para o Full)
+-- Tabela do relatório da Logística Própria (não existia no banco) + ritmo de vendas
+create table if not exists public.vendas_padrao_lancamentos (
+  id             bigserial primary key,
+  created_at     timestamptz default now(),
+  canal          text,
+  mes_referencia text,
+  sku            text,
+  produto        text,
+  qtd_vendida    numeric default 0,
+  receita_bruta  numeric default 0,
+  custo_produto  numeric default 0,
+  imposto        numeric default 0,
+  tarifa_frete   numeric default 0,
+  embalagem      numeric default 0,
+  lucro_liquido  numeric default 0,
+  margem_pct     numeric default 0,
+  taxa_devolucao numeric default 0,
+  qtd_devolucoes integer default 0,
+  diagnostico    text    default '',
+  ritmo_vendas   text    default ''
+);
+create index if not exists ix_vendas_padrao_canal_mes on public.vendas_padrao_lancamentos (canal, mes_referencia);
 alter table public.vendas_padrao_lancamentos add column if not exists ritmo_vendas text default '';
+grant select, insert, update, delete on public.vendas_padrao_lancamentos to anon, authenticated;
+grant usage, select on all sequences in schema public to anon, authenticated;
 
 -- Alerta e resumo por SKU passam a usar o prazo de cada canal (padrão 90/120 se não houver)
 drop view     if exists public.vw_fulfillment_saldo_sku;
