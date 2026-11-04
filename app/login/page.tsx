@@ -30,7 +30,7 @@ export default function LoginPage() {
     localStorage.setItem("usuario_logado", JSON.stringify(usuario));
 
     setLoading(false);
-    router.push("/");
+    router.push("/inicio");
   };
 
   return (

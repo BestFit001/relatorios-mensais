@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
@@ -20,10 +20,26 @@ import {
   classificarRitmo,
   diasDoMesRef,
   REGRAS_RITMO_PADRAO,
+  aplicarFiltroFull,
+  textoParaMatriz,
+  ehPlanilhaBinaria,
+  decodificarTexto,
   type Lote,
   type RegraRitmo,
 } from "../../lib/fulfillment";
 import { ehMercadoLivre } from "../../lib/tarifacao";
+
+// Lê QUALQUER arquivo de planilha/texto (xlsx, xls, ods, csv, txt, tsv...) e devolve linhas no formato { A: .., B: .. }
+async function lerArquivoComoMatriz(file: File): Promise<any[]> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (ehPlanilhaBinaria(bytes)) {
+    const wb = XLSX.read(bytes, { type: "array" });
+    return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" }) as any[];
+  }
+  const matriz = textoParaMatriz(decodificarTexto(bytes));
+  if (matriz.length === 0) throw new Error("o arquivo está vazio ou não é uma planilha/tabela de texto.");
+  return matriz;
+}
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -60,7 +76,7 @@ function normalizarSku(valor: any) {
   let s = String(valor).trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
   s = s.replace(/^["']|["']$/g, "").trim();
-  // Amazon FBA: o sufixo "-fba" é sempre desconsiderado ao validar o produto (custo, estoque Sede, vendas, devoluções)
+  // Full/FBA: o sufixo "-F" / "-FBA" (e tudo à direita do "-") é sempre desconsiderado ao validar o produto (custo, estoque Sede, vendas, devoluções)
   return removerSufixoFba(s.toLowerCase());
 }
 
@@ -158,6 +174,11 @@ export default function LogisticaPage() {
   const [cfgSalva, setCfgSalva] = useState(false);
   // Ritmo de vendas por canal: "N vendas em D dias = status" (a primeira regra atingida vale) e limites de devolução
   const [colDataVendas, setColDataVendas] = useState("B");
+  // (Opcional) Como saber o que é Full dentro da planilha de vendas: coluna + texto. Em branco = tudo é Full.
+  const [colIdFull, setColIdFull] = useState("");
+  const [textoIdFull, setTextoIdFull] = useState("");
+  const baselineCfg = useRef<string | null>(null);
+  const [cfgChave, setCfgChave] = useState("");   // "modo|canal" cuja configuração já foi carregada (libera o salvamento automático)
   const [regrasRitmo, setRegrasRitmo] = useState<RegraRitmo[]>(REGRAS_RITMO_PADRAO);
   const [pctDevAtencao, setPctDevAtencao] = useState("5");
   const [minVendasDev, setMinVendasDev] = useState("5");
@@ -320,13 +341,25 @@ export default function LogisticaPage() {
 
   const carregarConfiguracoes = (canal: string) => {
     const keyPrefix = modoLogistica === "full" ? "full_" : "padrao_";
-    const salvoRem = localStorage.getItem(`full_remessa_${canal.toLowerCase()}`);
-    if (salvoRem) {
-      const r = JSON.parse(salvoRem);
-      if (r.linha) setLinhaRemessa(r.linha);
-      if (r.colSku) setColSkuRemessa(r.colSku);
-      if (r.colQtd) setColQtdRemessa(r.colQtd);
-    }
+    // Linha/colunas dos uploads de estoque do CD e de remessa: lembradas por canal
+    setLinhaEstoque("13"); setColSkuEstoque("D"); setColQtdEstoque("X");
+    setLinhaRemessa("2"); setColSkuRemessa("A"); setColQtdRemessa("B");
+    try {
+      const salvoRem = localStorage.getItem(`full_remessa_${canal.toLowerCase()}`);
+      if (salvoRem) {
+        const r = JSON.parse(salvoRem);
+        if (r.linha) setLinhaRemessa(r.linha);
+        if (r.colSku) setColSkuRemessa(r.colSku);
+        if (r.colQtd) setColQtdRemessa(r.colQtd);
+      }
+      const salvoEst = localStorage.getItem(`full_estoque_${canal.toLowerCase()}`);
+      if (salvoEst) {
+        const e = JSON.parse(salvoEst);
+        if (e.linha) setLinhaEstoque(e.linha);
+        if (e.colSku) setColSkuEstoque(e.colSku);
+        if (e.colQtd) setColQtdEstoque(e.colQtd);
+      }
+    } catch { /* configuração corrompida: ignora e usa o padrão */ }
     let p: any = null;
     try { const salvoVen = localStorage.getItem(`${keyPrefix}vendas_${canal.toLowerCase()}`); if (salvoVen) p = JSON.parse(salvoVen); } catch { p = null; }
 
@@ -339,6 +372,7 @@ export default function LogisticaPage() {
     // Parte sempre do padrão do tipo (não herda valores do canal anterior) e depois aplica o que foi salvo
     setFormulaCanal(tipo);
     setRegrasRitmo(REGRAS_RITMO_PADRAO); setPctDevAtencao("5"); setTetoMaxDevolucao("10"); setMinVendasDev("5");
+    setColIdFull(""); setTextoIdFull("");
     if (tipo === "ml_recalculo") aplicarPadraoML();
     else aplicarRegrasDoCanal(canal);
 
@@ -356,6 +390,8 @@ export default function LogisticaPage() {
       if (p.textoEntrega !== undefined) setTextoEntrega(p.textoEntrega);
       if (p.taxaFlex !== undefined) setTaxaFlex(p.taxaFlex);
       if (p.colData !== undefined) setColDataVendas(p.colData);
+      if (p.colIdFull !== undefined) setColIdFull(p.colIdFull);
+      if (p.textoIdFull !== undefined) setTextoIdFull(p.textoIdFull);
       if (p.formulaVendas !== undefined && tipo === "formula_regras") setFormulaVendas(p.formulaVendas);
     }
     if (p) {
@@ -370,29 +406,56 @@ export default function LogisticaPage() {
       if (p.minVendasDev !== undefined) setMinVendasDev(p.minVendasDev);
       if (Array.isArray(p.regrasRitmo)) setRegrasRitmo(p.regrasRitmo);
     }
+    baselineCfg.current = null;
+    setCfgChave(`${modoLogistica}|${canal}`);
   };
+
+  // Tudo o que é digitado antes do upload (linhas, colunas, impostos, regras) fica gravado por canal e por modalidade
+  const montarConfig = () => ({
+    linha: linhaVendas, colPedido: colPedidoVendas, colCarrinho: colCarrinhoVendas,
+    colSku: colSkuVendas, colMlb: colMlbVendas, colQtd: colQtdVendas, colPdv: colPdvVendas,
+    colLiquido: colLiquidoVendas, colPacoteRec: colReceitaPacote, colEntrega: colEntregaVendas, textoEntrega: textoEntrega,
+    taxaFlex: taxaFlex, comissao: comissaoPadrao, imposto: aliquotaImposto, metaDias: metaDiasCobertura,
+    embalagem: custoEmbalagem, formula: formulaCanal, formulaVendas: formulaVendas, margemMin: margemMinimaPromissora,
+    vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao,
+    colData: colDataVendas, regrasRitmo: regrasRitmo, pctDevAtencao: pctDevAtencao, minVendasDev: minVendasDev,
+    colIdFull: colIdFull, textoIdFull: textoIdFull,
+  });
+  const montarConfigUploads = () => ({
+    estoque: { linha: linhaEstoque, colSku: colSkuEstoque, colQtd: colQtdEstoque },
+    remessa: { linha: linhaRemessa, colSku: colSkuRemessa, colQtd: colQtdRemessa },
+  });
 
   const salvarConfiguracoes = () => {
-    const keyPrefix = modoLogistica === "full" ? "full_" : "padrao_";
-    localStorage.setItem(`${keyPrefix}vendas_${canalSelecionado.toLowerCase()}`, JSON.stringify({
-      linha: linhaVendas, colPedido: colPedidoVendas, colCarrinho: colCarrinhoVendas, 
-      colSku: colSkuVendas, colMlb: colMlbVendas, colQtd: colQtdVendas, colPdv: colPdvVendas, 
-      colLiquido: colLiquidoVendas, colPacoteRec: colReceitaPacote, colEntrega: colEntregaVendas, textoEntrega: textoEntrega,
-      taxaFlex: taxaFlex, comissao: comissaoPadrao, imposto: aliquotaImposto, metaDias: metaDiasCobertura, 
-      embalagem: custoEmbalagem, formula: formulaCanal, formulaVendas: formulaVendas, margemMin: margemMinimaPromissora,
-      vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao,
-      colData: colDataVendas, regrasRitmo: regrasRitmo, pctDevAtencao: pctDevAtencao, minVendasDev: minVendasDev
-    }));
+    if (!canalSelecionado) return;
+    try {
+      const keyPrefix = modoLogistica === "full" ? "full_" : "padrao_";
+      const chave = canalSelecionado.toLowerCase();
+      localStorage.setItem(`${keyPrefix}vendas_${chave}`, JSON.stringify(montarConfig()));
+      const up = montarConfigUploads();
+      localStorage.setItem(`full_estoque_${chave}`, JSON.stringify(up.estoque));
+      localStorage.setItem(`full_remessa_${chave}`, JSON.stringify(up.remessa));
+    } catch { /* navegador sem armazenamento: segue sem salvar */ }
   };
 
-  const handleUploadVendas = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Salvamento automático: assim que alterar qualquer campo, fica salvo (sem precisar de botão).
+  // O estado recém-carregado é só a referência; defaults nunca são gravados sozinhos.
+  useEffect(() => {
+    if (!canalSelecionado || cfgChave !== `${modoLogistica}|${canalSelecionado}`) return;
+    const atual = JSON.stringify([montarConfig(), montarConfigUploads()]);
+    if (baselineCfg.current === null) { baselineCfg.current = atual; return; }
+    if (atual !== baselineCfg.current) { baselineCfg.current = atual; salvarConfiguracoes(); }
+  }, [cfgChave, canalSelecionado, modoLogistica, linhaVendas, colPedidoVendas, colCarrinhoVendas, colSkuVendas, colMlbVendas, colQtdVendas,
+      colPdvVendas, colLiquidoVendas, colReceitaPacote, colEntregaVendas, textoEntrega, taxaFlex, comissaoPadrao, aliquotaImposto, metaDiasCobertura,
+      custoEmbalagem, formulaCanal, formulaVendas, margemMinimaPromissora, vendasMinimasPromissoras, tetoMaxDevolucao, colDataVendas, regrasRitmo,
+      pctDevAtencao, minVendasDev, colIdFull, textoIdFull, linhaEstoque, colSkuEstoque, colQtdEstoque, linhaRemessa, colSkuRemessa, colQtdRemessa]);
+
+  const handleUploadVendas = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt: any) => {
+    {
       try {
-        const wb = XLSX.read(evt.target.result, { type: "binary" });
-        const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
+        const matrix = await lerArquivoComoMatriz(file);
         setMatrizVendas(matrix);
         setDadosProcessados([]);
 
@@ -415,29 +478,22 @@ export default function LogisticaPage() {
           } else setLayoutDetectado("");
         }
       } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
-    };
-    reader.readAsBinaryString(file);
+    }
   };
 
-  const handleUploadRemessa = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadRemessa = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setNomeArquivoRemessa(file.name);
-    const reader = new FileReader();
-    reader.onload = (evt: any) => {
-      try {
-        const wb = XLSX.read(evt.target.result, { type: "binary" });
-        const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
-        setMatrizRemessa(matrix);
-        setPreviewRemessa([]);
-      } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
-    };
-    reader.readAsBinaryString(file);
+    try {
+      const matrix = await lerArquivoComoMatriz(file);
+      setMatrizRemessa(matrix);
+      setPreviewRemessa([]);
+    } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
   };
 
   const processarPreviewRemessa = () => {
     if (matrizRemessa.length === 0) return alert("Suba a planilha da remessa enviada ao Full primeiro.");
-    localStorage.setItem(`full_remessa_${canalSelecionado.toLowerCase()}`, JSON.stringify({ linha: linhaRemessa, colSku: colSkuRemessa, colQtd: colQtdRemessa }));
 
     const colSku = colSkuRemessa.trim().toUpperCase();
     const colQtd = colQtdRemessa.trim().toUpperCase();
@@ -487,24 +543,18 @@ export default function LogisticaPage() {
     await recalcularFifo();
   };
 
-  const handleUploadEstoque = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadEstoque = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt: any) => {
-      try {
-        const wb = XLSX.read(evt.target.result, { type: "binary" });
-        const matrix = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: "A", defval: "" });
-        setMatrizEstoque(matrix);
-        setPreviewEstoque([]);
-      } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
-    };
-    reader.readAsBinaryString(file);
+    try {
+      const matrix = await lerArquivoComoMatriz(file);
+      setMatrizEstoque(matrix);
+      setPreviewEstoque([]);
+    } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
   };
 
   const processarPreviewEstoque = () => {
     if (matrizEstoque.length === 0) return alert("Suba a planilha de Estoque primeiro.");
-    localStorage.setItem(`full_estoque_${canalSelecionado.toLowerCase()}`, JSON.stringify({ linha: linhaEstoque, colSku: colSkuEstoque, colQtd: colQtdEstoque }));
 
     const colSku = colSkuEstoque.trim().toUpperCase();
     const colQtd = colQtdEstoque.trim().toUpperCase();
@@ -534,7 +584,7 @@ export default function LogisticaPage() {
     if (error) alert("Erro ao salvar estoque no banco: " + error.message);
     else {
       // Linhas antigas gravadas com o sufixo -fba (agora o SKU é salvo sem ele) seriam contadas em duplicidade
-      await supabase.from('estoque_cd_mensal').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado).ilike('sku', '%-fba');
+      await supabase.from('estoque_cd_mensal').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado).or('sku.ilike.%-fba,sku.ilike.%-f');
       alert(`✅ Estoque do CD atualizado com sucesso!`);
       setPreviewEstoque([]); setMatrizEstoque([]); setSubAba("vendas"); 
     }
@@ -595,11 +645,26 @@ export default function LogisticaPage() {
 
     const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
 
+    // (Opcional) Identificação do Full: coluna + texto definidos na Configuração do Canal.
+    // Em branco = tudo o que foi enviado é Full. Preenchido: Full usa só as linhas que casam; Logística Própria descarta as que casam.
+    const filtroFull = aplicarFiltroFull(matrizVendas, startRow, colPacote, colIdFull, textoIdFull, modoLogistica === "full" ? "incluir" : "excluir");
+    const matrizUsada = filtroFull.matriz;
+    const filtroFullAtivo = colIdFull.trim() !== "" && textoIdFull.trim() !== "";
+    if (filtroFullAtivo && filtroFull.mantidas === 0) {
+      setLoading(false);
+      return alert(modoLogistica === "full"
+        ? `Nenhuma linha da planilha tem "${textoIdFull}" na coluna ${colIdFull.toUpperCase()}. Confira a "Identificação do Full" em Configuração do Canal (ou deixe em branco para considerar tudo como Full).`
+        : `Todas as linhas da planilha foram identificadas como Full ("${textoIdFull}" na coluna ${colIdFull.toUpperCase()}), então não sobrou nada para a Logística Própria.`);
+    }
+    if (filtroFullAtivo) {
+      setLayoutDetectado(`Identificação do Full ativa (coluna ${colIdFull.toUpperCase()} contém "${textoIdFull}"): ${filtroFull.mantidas} linhas consideradas, ${filtroFull.ignoradas} ignoradas (${modoLogistica === "full" ? "não são Full" : "são Full"}).`);
+    }
+
     // 1. Mapeia ordens de alteração (para capturar valor financeiro em caso de troca)
     const pedidosAlteracaoMap = new Map<string, { receita: number; liquido: number; isFlex: boolean }>();
 
-    for (let r = startRow; r < matrizVendas.length; r++) {
-      const row = matrizVendas[r];
+    for (let r = startRow; r < matrizUsada.length; r++) {
+      const row = matrizUsada[r];
       if (!row) continue;
       const idPed = String(row[colPedido] || "").trim();
       const status = String(row[colPacote] || "").toLowerCase();
@@ -664,8 +729,8 @@ export default function LogisticaPage() {
     };
 
     let r = startRow;
-    while (r < matrizVendas.length) {
-      const row = matrizVendas[r];
+    while (r < matrizUsada.length) {
+      const row = matrizUsada[r];
       if (!row) { r++; continue; }
 
       const idPedido = String(row[colPedido] || "").trim();
@@ -743,8 +808,8 @@ export default function LogisticaPage() {
         const qtdItensPacote = parseInt(matchPacote[1], 10);
 
         for (let k = 1; k <= qtdItensPacote; k++) {
-          if (r + k < matrizVendas.length) {
-            const chRow = matrizVendas[r + k];
+          if (r + k < matrizUsada.length) {
+            const chRow = matrizUsada[r + k];
             // Cada item do carrinho tem o seu próprio status: item cancelado sai (sem PDV e sem custo)
             if (!chRow || statusCancelado(temColunaPacote ? chRow[colPacote] : "")) continue;
             const chSkuOrig = String(chRow[colSku] || "").trim();
@@ -1047,14 +1112,26 @@ export default function LogisticaPage() {
   };
 
   const limparCanalInteiro = async () => {
-    if (!confirm(`ATENÇÃO: Deseja apagar todo o Relatório Analítico salvo de ${canalSelecionado} no mês de ${mesSelecionado}?`)) return;
+    const aviso = modoLogistica === "full"
+      ? `ATENÇÃO: apagar tudo de ${canalSelecionado} em ${mesSelecionado}?\n\n• Relatório analítico salvo\n• Estoque do CD do mês (SKUs sem venda que aparecem zerados)\n• Vendas do mês usadas na baixa FIFO\n\nAs remessas enviadas ao Full (lotes) NÃO são apagadas.`
+      : `ATENÇÃO: Deseja apagar todo o Relatório Analítico salvo de ${canalSelecionado} no mês de ${mesSelecionado}?`;
+    if (!confirm(aviso)) return;
+    setSalvando(true);
     const tabela = modoLogistica === "full" ? "full_lancamentos" : "vendas_padrao_lancamentos";
-    await supabase.from(tabela).delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
+    const erros: string[] = [];
+    const apagar = async (nome: string, q: any) => { const { error } = await q; if (error) erros.push(`${nome}: ${error.message}`); };
+
+    await apagar(tabela, supabase.from(tabela).delete().eq("canal", canalSelecionado).eq("mes_referencia", mesSelecionado));
     if (modoLogistica === "full") {
-      await supabase.from("fulfillment_vendas_mes").delete().eq("canal", canalSelecionado).eq("mes_referencia", mesSelecionado);
+      await apagar("estoque_cd_mensal", supabase.from("estoque_cd_mensal").delete().eq("canal", canalSelecionado).eq("mes_referencia", mesSelecionado));
+      await apagar("fulfillment_vendas_mes", supabase.from("fulfillment_vendas_mes").delete().eq("canal", canalSelecionado).eq("mes_referencia", mesSelecionado));
       await recalcularFifo();
     }
-    carregarHistoricoGravado();
+    setDadosProcessados([]); setMatrizVendas([]); setPreviewEstoque([]); setMatrizEstoque([]);
+    await carregarHistoricoGravado();
+    setSalvando(false);
+    if (erros.length) alert("Alguns itens não foram apagados:\n" + erros.join("\n"));
+    else alert(`🗑️ ${canalSelecionado} — ${mesSelecionado} apagado${modoLogistica === "full" ? " (relatório, estoque do CD e vendas do FIFO)" : ""}.`);
   };
 
   const baseRows = dadosProcessados.length > 0 ? dadosProcessados : lancamentosGravados;
@@ -1224,7 +1301,7 @@ export default function LogisticaPage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div className="md:col-span-3">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Ficheiro de Estoque (Excel/CSV):</label>
-                  <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUploadEstoque} className="w-full bg-slate-950 border border-slate-700 file:border-0 file:bg-amber-600 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer" />
+                  <input type="file" onChange={handleUploadEstoque} className="w-full bg-slate-950 border border-slate-700 file:border-0 file:bg-amber-600 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer" />
                 </div>
                 <div><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label><input type="number" value={linhaEstoque} onChange={e => setLinhaEstoque(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" /></div>
                 <div><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Coluna SKU</label><input type="text" value={colSkuEstoque} onChange={e => setColSkuEstoque(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" /></div>
@@ -1259,7 +1336,7 @@ export default function LogisticaPage() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                   <div className="md:col-span-3">
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Planilha da Remessa (Excel/CSV):</label>
-                    <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUploadRemessa} className="w-full bg-slate-950 border border-slate-700 file:border-0 file:bg-purple-600 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer" />
+                    <input type="file" onChange={handleUploadRemessa} className="w-full bg-slate-950 border border-slate-700 file:border-0 file:bg-purple-600 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer" />
                   </div>
                   <div><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label><input type="number" value={linhaRemessa} onChange={e => setLinhaRemessa(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" /></div>
                   <div><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Coluna SKU</label><input type="text" value={colSkuRemessa} onChange={e => setColSkuRemessa(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" /></div>
@@ -1446,6 +1523,31 @@ export default function LogisticaPage() {
                   )}
                 </div>
 
+                {/* IDENTIFICAÇÃO DO FULL (opcional) */}
+                <div className="mt-5 pt-4 border-t border-slate-800/80">
+                  <h4 className="text-[10px] font-black text-violet-300 uppercase tracking-wider mb-1">Identificação do Full (opcional)</h4>
+                  <p className="text-[10px] text-slate-500 mb-3">
+                    {modoLogistica === "full"
+                      ? "Se a planilha de vendas mistura Full e envio normal, informe a coluna e o texto que marcam o Full (ex.: coluna AS contém \"fulfillment\"). Só essas linhas serão consideradas. Em branco, tudo o que for enviado é tratado como Full."
+                      : "Se a planilha mistura Full e envio normal, informe a coluna e o texto que marcam o Full. Na Logística Própria essas linhas serão IGNORADAS (ficam só as vendas fora do Full). Em branco, nada é descartado."}
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-violet-300 uppercase mb-1">Coluna</label>
+                      <input type="text" value={colIdFull} onChange={e => { setColIdFull(e.target.value.toUpperCase()); setCfgSalva(false); }} placeholder="—" className="w-full bg-slate-900 border border-violet-600/50 rounded-lg p-2 text-xs font-mono text-center text-violet-300 font-bold outline-none" />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[9px] font-bold text-violet-300 uppercase mb-1">O texto da coluna contém</label>
+                      <input type="text" value={textoIdFull} onChange={e => { setTextoIdFull(e.target.value); setCfgSalva(false); }} placeholder="ex.: fulfillment" className="w-full bg-slate-900 border border-violet-600/50 rounded-lg p-2 text-xs font-mono text-violet-300 font-bold outline-none" />
+                    </div>
+                    <div className="md:col-span-3 flex items-end text-[10px] text-slate-500">
+                      {colIdFull.trim() && textoIdFull.trim()
+                        ? <span className="text-violet-300 font-bold">Ativo: {modoLogistica === "full" ? "só entram linhas" : "saem as linhas"} com “{textoIdFull}” na coluna {colIdFull.toUpperCase()}.</span>
+                        : <span>Desativado: nenhuma linha é filtrada.</span>}
+                    </div>
+                  </div>
+                </div>
+
                 {/* ENVIO COM TAXA (Flex) — só Logística Própria; cada canal descreve a entrega de um jeito */}
                 {modoLogistica === "padrao" && (
                 <div className="mt-5 pt-4 border-t border-slate-800/80">
@@ -1550,7 +1652,7 @@ export default function LogisticaPage() {
               <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-4">
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Ficheiro de Vendas Brutas (Excel/CSV):</label>
-                  <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUploadVendas} className={`w-full bg-slate-950 border border-slate-700 file:border-0 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer ${modoLogistica === "full" ? "file:bg-purple-600" : "file:bg-indigo-600"}`} />
+                  <input type="file" onChange={handleUploadVendas} className={`w-full bg-slate-950 border border-slate-700 file:border-0 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer ${modoLogistica === "full" ? "file:bg-purple-600" : "file:bg-indigo-600"}`} />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Imposto (%):</label>
@@ -1806,7 +1908,7 @@ export default function LogisticaPage() {
                                 })()}
                               </td>
                               <td className="p-3 text-center">
-                                {String(item.status_envio).includes("Devolução") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Parcial") ? <span className="bg-amber-900/30 text-amber-400 border border-amber-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Falta") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Não") ? <span className="text-slate-500 text-[10px] uppercase font-bold">{item.status_envio}</span> : <span className="bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span>}
+                                {String(item.status_envio ?? "").includes("Devolução") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : String(item.status_envio ?? "").includes("Parcial") ? <span className="bg-amber-900/30 text-amber-400 border border-amber-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : String(item.status_envio ?? "").includes("Falta") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : String(item.status_envio ?? "").includes("Não") ? <span className="text-slate-500 text-[10px] uppercase font-bold">{item.status_envio}</span> : <span className="bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span>}
                               </td>
                               <td className="p-3 text-center font-mono font-black text-lg text-purple-400">
                                 {item.sugestao_envio > 0 ? `+${item.sugestao_envio}` : '-'}

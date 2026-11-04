@@ -17,10 +17,14 @@ export function normTexto(v: any): string {
     .trim();
 }
 
-/** Amazon FBA identifica o SKU com o sufixo "-fba" (ex.: 18181042001-fba). Para validar o produto ele é sempre ignorado. */
+/**
+ * Sufixo de Full/FBA no SKU: "-F", "-FBA" (maiúsculo ou minúsculo, ex.: 18181042001-fba).
+ * Quando existe, remove o "-" e TUDO o que estiver à direita. "-FULL"/"-FINO" (palavras) não são sufixo e ficam.
+ */
 export function removerSufixoFba(sku: string): string {
-  const limpo = String(sku ?? "").trim().replace(/-fba$/i, "").trim();
-  return limpo || String(sku ?? "").trim();
+  const bruto = String(sku ?? "").trim();
+  const limpo = bruto.replace(/\s*-f(?:ba)?(?![a-z]).*$/i, "").trim();
+  return limpo || bruto;
 }
 
 export function normalizarSkuFull(valor: any): string {
@@ -386,4 +390,107 @@ export function diasDoMesRef(mesRef: string): number {
   const [mm, aaaa] = mesRef.split("/").map(Number);
   if (!mm || !aaaa) return 30;
   return new Date(aaaa, mm, 0).getDate();
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Identificação opcional do Full dentro da planilha de vendas
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Planilhas de vendas podem misturar Full e envio normal. Se o canal definiu uma coluna e um texto
+ * (ex.: coluna AS contém "fulfillment"), só essas linhas são Full.
+ *  - modo "incluir" (aba Full): mantém apenas as linhas que contêm o texto;
+ *  - modo "excluir" (aba Logística Própria): descarta as linhas que contêm o texto.
+ * Sem coluna ou sem texto => nada é filtrado (tudo vale). Pacotes do ML ("Pacote de N produtos")
+ * são decididos pela linha-mãe e levam os N itens junto. Linhas descartadas viram objeto vazio (posições preservadas).
+ */
+export function aplicarFiltroFull(
+  matriz: any[], linhaInicial: number, colStatus: string, colId: string, texto: string, modo: "incluir" | "excluir"
+): { matriz: any[]; ignoradas: number; mantidas: number } {
+  const col = String(colId || "").trim().toUpperCase();
+  const alvo = normTexto(texto);
+  if (!col || !alvo) return { matriz, ignoradas: 0, mantidas: 0 };
+
+  const cs = String(colStatus || "").trim().toUpperCase();
+  const casa = (row: any) => normTexto(row?.[col]).includes(alvo);
+  const manter = (row: any) => (modo === "incluir" ? casa(row) : !casa(row));
+  const saida = matriz.slice();
+  let ignoradas = 0, mantidas = 0;
+
+  let r = Math.max(0, linhaInicial);
+  while (r < saida.length) {
+    const row = saida[r];
+    if (!row) { r++; continue; }
+    const pacote = cs ? String(row[cs] || "").trim().match(/^pacote\s*(?:de)?\s*(\d+)/i) : null;
+    if (pacote) {
+      const n = parseInt(pacote[1], 10);
+      const ok = manter(row);
+      for (let k = 0; k <= n && r + k < saida.length; k++) {
+        if (!ok) { saida[r + k] = {}; ignoradas += k > 0 ? 1 : 0; } else if (k > 0) mantidas++;
+      }
+      r += n + 1;
+      continue;
+    }
+    if (manter(row)) mantidas++; else { saida[r] = {}; ignoradas++; }
+    r++;
+  }
+  return { matriz: saida, ignoradas, mantidas };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Leitura de arquivos em qualquer formato (xlsx, xls, ods, csv, txt, tsv...)
+// ---------------------------------------------------------------------------------------------
+
+export function indiceParaLetras(i: number): string {
+  let n = i + 1, s = "";
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
+/** Texto delimitado (csv/txt/tsv, vírgula, ponto e vírgula, tab ou barra |) para linhas no formato { A: .., B: .. }. */
+export function textoParaMatriz(texto: string): any[] {
+  const limpo = texto.replace(/^﻿/, "");
+  const amostra = limpo.split(/\r?\n/).filter((l) => l.trim() !== "").slice(0, 12);
+  const candidatos = ["\t", ";", "|", ","];
+  let delim = ",", melhor = 0;
+  for (const d of candidatos) {
+    const media = amostra.length ? amostra.reduce((a, l) => a + (l.split(d).length - 1), 0) / amostra.length : 0;
+    if (media > melhor) { melhor = media; delim = d; }
+  }
+
+  const linhas: string[][] = [];
+  let campo = "", linha: string[] = [], aspas = false;
+  for (let i = 0; i < limpo.length; i++) {
+    const ch = limpo[i];
+    if (aspas) {
+      if (ch === '"') { if (limpo[i + 1] === '"') { campo += '"'; i++; } else aspas = false; }
+      else campo += ch;
+    } else if (ch === '"') aspas = true;
+    else if (ch === delim) { linha.push(campo); campo = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && limpo[i + 1] === "\n") i++;
+      linha.push(campo); campo = "";
+      linhas.push(linha); linha = [];
+    } else campo += ch;
+  }
+  if (campo !== "" || linha.length) { linha.push(campo); linhas.push(linha); }
+
+  return linhas.map((cols) => {
+    const o: any = {};
+    cols.forEach((v, i) => { o[indiceParaLetras(i)] = v.trim(); });
+    return o;
+  });
+}
+
+/** Decide se o conteúdo é uma planilha binária (xlsx/zip, xls antigo) ou texto delimitado. */
+export function ehPlanilhaBinaria(bytes: Uint8Array): boolean {
+  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b) return true;                                   // PK (xlsx, xlsm, ods)
+  if (bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) return true; // xls (OLE)
+  return false;
+}
+
+export function decodificarTexto(bytes: Uint8Array): string {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { return new TextDecoder("windows-1252").decode(bytes); }
 }
