@@ -1159,14 +1159,29 @@ export default function LogisticaPage() {
 
         {/* PARÂMETROS GLOBAIS COMUNS */}
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
+          <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
+            <div className="flex-1 min-w-0">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Canal Logístico:</label>
-              <select value={canalSelecionado} onChange={e => setCanalSelecionado(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer">
-                {canais.map((c, i) => <option key={i} value={c}>{c}</option>)}
-              </select>
+              <div className="flex flex-wrap gap-2" role="tablist" aria-label="Canal logístico">
+                {canais.map((c, i) => {
+                  const ativo = normTexto(c) === normTexto(canalSelecionado);
+                  const corAtiva = modoLogistica === "full" ? "bg-purple-600 border-purple-400 text-white shadow-lg shadow-purple-900/40" : "bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-900/40";
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      role="tab"
+                      aria-selected={ativo}
+                      onClick={() => { if (!ativo) setCanalSelecionado(c); }}
+                      className={`px-5 py-2.5 rounded-xl border font-black text-xs tracking-wide cursor-pointer transition-all ${ativo ? corAtiva : "bg-slate-950 border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div>
+            <div className="w-full lg:w-64 shrink-0">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Competência (Mês de Análise):</label>
               <select value={mesSelecionado} onChange={e => setMesSelecionado(e.target.value)} className={`w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold outline-none cursor-pointer ${modoLogistica === "full" ? "text-purple-400" : "text-indigo-400"}`}>
                 {meses.map((m, i) => <option key={i} value={m}>{m}</option>)}
