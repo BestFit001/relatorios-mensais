@@ -15,13 +15,14 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
 
-  // Desativa a coleta pesada de arquivos em memória
+  // Desativa a coleta pesada de arquivos em memória.
+  // ATENÇÃO: não excluir @supabase nem @google/genai aqui. As rotas de API (/api/exportar-tiny, /api/descricao-ia,
+  // /api/tarefas/alertas) usam esses pacotes em tempo de execução: sem eles dentro da função publicada na Vercel a rota
+  // falha ao carregar e responde 500 com corpo vazio. O xlsx só roda no navegador, então pode continuar excluído.
   outputFileTracingIncludes: {},
   outputFileTracingExcludes: {
     "*": [
       "node_modules/xlsx/**/*",
-      "node_modules/@google/genai/**/*",
-      "node_modules/@supabase/**/*",
     ],
   },
 
