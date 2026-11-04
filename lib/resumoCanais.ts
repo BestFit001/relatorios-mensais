@@ -2,6 +2,7 @@
 // para que faturamento, meta e % líquido da tela inicial sejam os mesmos números do Dashboard.
 // Se a regra do Dashboard mudar, ajuste aqui também.
 
+import { avaliarFormulaPorUnidade as avaliarFormulaRepasse } from "./formulaRepasse";
 import { DESCONTAR_FRETE_ADS_NO_LUCRO, mesDoEnvio } from "./regrasLucro";
 
 export type BancoDash = Record<string, any[]>;
@@ -83,25 +84,6 @@ export const parseCurrency = (val: any): number => {
   return isNaN(num) ? 0 : num;
 };
 
-const escapeRegex = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const avaliarFormulaRepasse = (formula: string, pdv: number, qtd: number, colPdv?: string, colQtd?: string): number | null => {
-  if (!formula || !formula.trim()) return null;
-  try {
-    let exp = formula.trim();
-    exp = exp.replace(/\bPDV\b/gi, String(pdv));
-    exp = exp.replace(/\bQTD\b/gi, String(qtd));
-    exp = exp.replace(/\bQUANTIDADE\b/gi, String(qtd));
-    if (colPdv && colPdv.trim()) exp = exp.replace(new RegExp(`\\b${escapeRegex(colPdv.trim())}\\b`, "gi"), String(pdv));
-    if (colQtd && colQtd.trim()) exp = exp.replace(new RegExp(`\\b${escapeRegex(colQtd.trim())}\\b`, "gi"), String(qtd));
-    exp = exp.replace(/(\d+(\.\d+)?)%/g, "($1 / 100)");
-    if (/^[0-9+\-*/().\s><=?:!&|]+$/.test(exp)) {
-      const calc = Function(`"use strict"; return (${exp})`)();
-      if (typeof calc === "number" && !isNaN(calc) && calc >= 0) return calc;
-    }
-  } catch { /* fórmula inválida: cai no padrão */ }
-  return null;
-};
 
 /** "2026-10" -> formatos usados pelas tabelas: 2026-10, 10/2026, "outubro de 2026" */
 export function formatosDoMes(mesIso: string) {

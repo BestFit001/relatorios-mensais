@@ -208,6 +208,25 @@ function avaliarExpressaoOuColuna(expr: string, row: any[], variaveis?: { PDV?: 
   return 0;
 }
 
+// Repasse da linha: faixas de preço, tarifa fixa e frete valem para o preço de UMA unidade.
+// Ex. Amazon "Q - (Q * 14%) - 4 - (Q >= 79 ? 21.95 : 0)": 10 itens de R$ 20 (linha de R$ 200) NÃO pagam frete
+// (unidade abaixo de R$ 79), só a tarifa fixa de cada item. Só vale para fórmulas que dependem apenas do PDV
+// (e constantes); fórmulas que usam QTD ou outras colunas da planilha são avaliadas como estão.
+function repasseDaFormula(formula: string, row: any[], pdvLinha: number, qtd: number, colPdvDef: string, colQtdDef: string): number {
+  const tokens = formula.match(/\b[A-Za-z]{1,3}\d*\b/g) || [];
+  const pdvLetra = /^[A-Za-z]{1,3}$/.test((colPdvDef || "").trim()) ? colPdvDef.trim().toUpperCase() : "";
+  const qtdLetra = (colQtdDef || "").trim().toUpperCase();
+  const usaQtd = tokens.some((t) => /^(QTD|QUANTIDADE)$/i.test(t) || t.toUpperCase() === qtdLetra);
+  const soPdv = tokens.length > 0 && tokens.every((t) => /^PDV$/i.test(t) || (!!pdvLetra && t.toUpperCase() === pdvLetra));
+  if (qtd > 1 && pdvLetra && soPdv && !usaQtd) {
+    const unit = pdvLinha / qtd;
+    const linhaUnit = row.slice();
+    linhaUnit[letraParaIndice(pdvLetra)] = unit;
+    return qtd * avaliarExpressaoOuColuna(formula, linhaUnit, { PDV: unit, QTD: 1 });
+  }
+  return avaliarExpressaoOuColuna(formula, row, { PDV: pdvLinha, QTD: qtd });
+}
+
 const MESES_NOMES: Record<string, string> = {
   "01": "janeiro", "02": "fevereiro", "03": "março", "04": "abril",
   "05": "maio", "06": "junho", "07": "julho", "08": "agosto",
@@ -1045,7 +1064,7 @@ export default function UpdatesPage() {
 
           let repasseLiquido = 0;
           if (formulaExcel && formulaExcel.trim()) {
-            repasseLiquido = avaliarExpressaoOuColuna(formulaExcel, row, { PDV: precoVenda, QTD: quantidade });
+            repasseLiquido = repasseDaFormula(formulaExcel, row, precoVenda, quantidade, colPdvDef, colQtdDef);
           } else if (colRepasseDef && colRepasseDef.trim()) {
             repasseLiquido = avaliarExpressaoOuColuna(colRepasseDef, row, { PDV: precoVenda, QTD: quantidade });
           }

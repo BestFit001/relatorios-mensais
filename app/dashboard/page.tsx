@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import Navbar from '@/app/components/Navbar';
+import { avaliarFormulaPorUnidade as avaliarFormulaRepasse } from '@/lib/formulaRepasse';
 import { DESCONTAR_FRETE_ADS_NO_LUCRO, mesDoEnvio } from '@/lib/regrasLucro';
 
 const TABELAS_SUPABASE = [
@@ -170,42 +171,6 @@ export default function DashboardPage() {
     return isNaN(num) ? 0 : num;
   };
 
-  // Avaliador de expressões matemáticas e condicionais (ex: ternários como Q >= 79 ? 21.95 : 0)
-  const avaliarFormulaRepasse = (formula: string, pdv: number, qtd: number, colPdv?: string, colQtd?: string): number | null => {
-    if (!formula || !formula.trim()) return null;
-    try {
-      let exp = formula.trim();
-
-      // Substituição de variáveis nomeadas
-      exp = exp.replace(/\bPDV\b/gi, String(pdv));
-      exp = exp.replace(/\bQTD\b/gi, String(qtd));
-      exp = exp.replace(/\bQUANTIDADE\b/gi, String(qtd));
-
-      // Substituição caso a letra da coluna tenha sido usada na fórmula (ex: coluna Q ou P para PDV, O para QTD)
-      if (colPdv && colPdv.trim()) {
-        const regexPdv = new RegExp(`\\b${colPdv.trim()}\\b`, 'gi');
-        exp = exp.replace(regexPdv, String(pdv));
-      }
-      if (colQtd && colQtd.trim()) {
-        const regexQtd = new RegExp(`\\b${colQtd.trim()}\\b`, 'gi');
-        exp = exp.replace(regexQtd, String(qtd));
-      }
-
-      // Converte percentagens (ex: 14% -> (14 / 100))
-      exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
-
-      // Validação expandida com suporte a operadores lógicos e ternários (><=?:!&|)
-      if (/^[0-9+\-*/().\s><=?:!&|]+$/.test(exp)) {
-        const calc = Function(`"use strict"; return (${exp})`)();
-        if (typeof calc === 'number' && !isNaN(calc) && calc >= 0) {
-          return calc;
-        }
-      }
-    } catch (e) {
-      console.error("Erro ao avaliar fórmula:", e);
-    }
-    return null;
-  };
 
   // Harmonização universal de formatos de mês (ex: 2026-10 <-> 10/2026 <-> outubro de 2026)
   const currentRefMonth = useMemo(() => {

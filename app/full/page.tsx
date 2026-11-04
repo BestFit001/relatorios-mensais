@@ -26,6 +26,7 @@ import {
 } from "../../lib/fulfillment";
 import { ehMercadoLivre } from "../../lib/tarifacao";
 import { lerArquivoComoMatriz } from "../../lib/lerArquivo";
+import { formulaUsaQuantidade } from "../../lib/formulaRepasse";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -170,6 +171,8 @@ export default function LogisticaPage() {
   const [minVendasDev, setMinVendasDev] = useState("5");
   // Fórmula de vendas dos canais fora do ML (mesmo formato da aba Regras: ex. "PDV - (PDV * 12%)")
   const [formulaVendas, setFormulaVendas] = useState("");
+  // A coluna PDV da planilha traz o valor TOTAL da linha (ex.: Amazon "item-price") ou o preço UNITÁRIO?
+  const [pdvTotalLinha, setPdvTotalLinha] = useState(false);
 
   // Deduções e Taxas
   const [aliquotaImposto, setAliquotaImposto] = useState("9");
@@ -357,6 +360,7 @@ export default function LogisticaPage() {
 
     // Parte sempre do padrão do tipo (não herda valores do canal anterior) e depois aplica o que foi salvo
     setFormulaCanal(tipo);
+    setPdvTotalLinha(normTexto(canal).includes("amazon"));   // Amazon: a coluna PDV é o valor da linha; demais canais: preço unitário
     setRegrasRitmo(REGRAS_RITMO_PADRAO); setPctDevAtencao("5"); setTetoMaxDevolucao("10"); setMinVendasDev("5");
     setColIdFull(""); setTextoIdFull("");
     if (tipo === "ml_recalculo") aplicarPadraoML();
@@ -379,6 +383,7 @@ export default function LogisticaPage() {
       if (p.colIdFull !== undefined) setColIdFull(p.colIdFull);
       if (p.textoIdFull !== undefined) setTextoIdFull(p.textoIdFull);
       if (p.formulaVendas !== undefined && tipo === "formula_regras") setFormulaVendas(p.formulaVendas);
+      if (p.pdvTotalLinha !== undefined) setPdvTotalLinha(!!p.pdvTotalLinha);
     }
     if (p) {
       if (p.comissao) setComissaoPadrao(p.comissao);
@@ -405,7 +410,7 @@ export default function LogisticaPage() {
     embalagem: custoEmbalagem, formula: formulaCanal, formulaVendas: formulaVendas, margemMin: margemMinimaPromissora,
     vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao,
     colData: colDataVendas, regrasRitmo: regrasRitmo, pctDevAtencao: pctDevAtencao, minVendasDev: minVendasDev,
-    colIdFull: colIdFull, textoIdFull: textoIdFull,
+    colIdFull: colIdFull, textoIdFull: textoIdFull, pdvTotalLinha: pdvTotalLinha,
   });
   const montarConfigUploads = () => ({
     estoque: { linha: linhaEstoque, colSku: colSkuEstoque, colQtd: colQtdEstoque },
@@ -434,7 +439,7 @@ export default function LogisticaPage() {
   }, [cfgChave, canalSelecionado, modoLogistica, linhaVendas, colPedidoVendas, colCarrinhoVendas, colSkuVendas, colMlbVendas, colQtdVendas,
       colPdvVendas, colLiquidoVendas, colReceitaPacote, colEntregaVendas, textoEntrega, taxaFlex, comissaoPadrao, aliquotaImposto, metaDiasCobertura,
       custoEmbalagem, formulaCanal, formulaVendas, margemMinimaPromissora, vendasMinimasPromissoras, tetoMaxDevolucao, colDataVendas, regrasRitmo,
-      pctDevAtencao, minVendasDev, colIdFull, textoIdFull, linhaEstoque, colSkuEstoque, colQtdEstoque, linhaRemessa, colSkuRemessa, colQtdRemessa]);
+      pctDevAtencao, minVendasDev, colIdFull, textoIdFull, pdvTotalLinha, linhaEstoque, colSkuEstoque, colQtdEstoque, linhaRemessa, colSkuRemessa, colQtdRemessa]);
 
   const handleUploadVendas = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -870,7 +875,9 @@ export default function LogisticaPage() {
         }
 
         const qtdLinha = Math.max(1, parseNumero(row[colQtd]) || 1);
-        let pdvUnit = parseNumero(row[colPdv]);
+        const pdvCelula = parseNumero(row[colPdv]);
+        // Coluna PDV com o valor total da linha: o preço da unidade é a linha ÷ quantidade
+        let pdvUnit = modoFormulaRegras && pdvTotalLinha ? pdvCelula / qtdLinha : pdvCelula;
         let receitaBrutaLinha = pdvUnit * qtdLinha;
 
         if (receitaBrutaLinha === 0 && colRecPacote && !modoFormulaRegras) {
@@ -881,7 +888,11 @@ export default function LogisticaPage() {
 
         if (modoFormulaRegras) {
           // CANAIS FORA DO ML: PDV, SKU e Qtd nas colunas informadas + fórmula de vendas (igual à aba Regras)
-          const calc = avaliarFormulaCanal(formulaVendas, pdvUnit, qtdLinha, colPdv, colQtd);
+          // Faixas de preço, tarifa fixa e frete valem para UMA unidade (ex.: Amazon só cobra frete se a unidade passa de R$ 79).
+          // Fórmula sem QTD: calcula o líquido de 1 unidade e multiplica pela quantidade; com QTD, ela já devolve o total da linha.
+          const calc = formulaUsaQuantidade(formulaVendas, colQtd)
+            ? avaliarFormulaCanal(formulaVendas, pdvUnit, qtdLinha, colPdv, colQtd)
+            : (() => { const u = avaliarFormulaCanal(formulaVendas, pdvUnit, 1, colPdv, colQtd); return u === null ? null : u * qtdLinha; })();
           // resultado inválido numa linha (ex.: negativo): mesmo critério do dashboard, PDV − 16%
           liquidoLinha = calc !== null ? calc : Math.max(0, receitaBrutaLinha * 0.84);
           if (isFlex) liquidoLinha -= taxaFlexUnit;   // envio com taxa definido na Configuração do Canal (opcional)
@@ -1450,6 +1461,15 @@ export default function LogisticaPage() {
                     <button type="button" onClick={() => { if (!aplicarRegrasDoCanal(canalSelecionado)) alert("Este canal não tem fórmula cadastrada na aba Regras."); setCfgSalva(false); }} className="bg-slate-800 hover:bg-slate-700 text-white font-bold px-3 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer whitespace-nowrap">↻ Carregar da aba Regras</button>
                   </div>
                   <p className="text-[10px] text-slate-500">Exemplos: <code className="text-amber-300">PDV - (PDV * 12%)</code> · <code className="text-amber-300">(PDV * QTD) - ((PDV * QTD) * 14%) - 5</code>. Ao usar QTD, a fórmula já devolve o valor total da linha.</p>
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <label className="text-[10px] font-bold text-cyan-400 uppercase">A coluna PDV da planilha traz:</label>
+                    <select value={pdvTotalLinha ? "total" : "unitario"} onChange={e => { setPdvTotalLinha(e.target.value === "total"); setCfgSalva(false); }} data-pdv-total
+                      className="bg-slate-950 border border-cyan-600/50 rounded-lg p-1.5 text-[11px] font-bold text-cyan-300 outline-none cursor-pointer">
+                      <option value="unitario">Preço unitário do item</option>
+                      <option value="total">Valor total da linha (preço × quantidade)</option>
+                    </select>
+                    <span className="text-[10px] text-slate-500">O frete/faixa de preço da fórmula é sempre decidido pelo preço de 1 unidade (ex.: 10 itens de R$ 20 não pagam o frete de R$ 79+).</span>
+                  </div>
                   {formulaVendas.trim() && avaliarFormulaCanal(formulaVendas, 100, 1, colPdvVendas, colQtdVendas) === null && <p className="text-[11px] text-rose-400 font-bold">⚠ Fórmula inválida ou com resultado negativo para PDV = 100.</p>}
                   {formulaVendas.trim() && avaliarFormulaCanal(formulaVendas, 100, 1, colPdvVendas, colQtdVendas) !== null && <p className="text-[11px] text-slate-400">Teste: PDV 100, QTD 1 → líquido R$ {(avaliarFormulaCanal(formulaVendas, 100, 1, colPdvVendas, colQtdVendas) as number).toFixed(2)}</p>}
                 </div>

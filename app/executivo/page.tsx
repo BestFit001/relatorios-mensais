@@ -2,6 +2,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import Navbar from '@/app/components/Navbar';
+import { avaliarFormulaPorUnidade as avaliarFormulaRepasse } from '@/lib/formulaRepasse';
 import { DESCONTAR_FRETE_ADS_NO_LUCRO, mesDoEnvio } from '@/lib/regrasLucro';
 
 const TABELAS_SUPABASE = [
@@ -156,36 +157,6 @@ export default function PainelExecutivoPage() {
     return isNaN(num) ? 0 : num;
   };
 
-  const avaliarFormulaRepasse = (formula: string, pdv: number, qtd: number, colPdv?: string, colQtd?: string): number | null => {
-    if (!formula || !formula.trim()) return null;
-    try {
-      let exp = formula.trim();
-      exp = exp.replace(/\bPDV\b/gi, String(pdv));
-      exp = exp.replace(/\bQTD\b/gi, String(qtd));
-      exp = exp.replace(/\bQUANTIDADE\b/gi, String(qtd));
-
-      if (colPdv && colPdv.trim()) {
-        const regexPdv = new RegExp(`\\b${colPdv.trim()}\\b`, 'gi');
-        exp = exp.replace(regexPdv, String(pdv));
-      }
-      if (colQtd && colQtd.trim()) {
-        const regexQtd = new RegExp(`\\b${colQtd.trim()}\\b`, 'gi');
-        exp = exp.replace(regexQtd, String(qtd));
-      }
-
-      exp = exp.replace(/(\d+(\.\d+)?)%/g, '($1 / 100)');
-
-      if (/^[0-9+\-*/().\s><=?:!&|]+$/.test(exp)) {
-        const calc = Function(`"use strict"; return (${exp})`)();
-        if (typeof calc === 'number' && !isNaN(calc) && calc >= 0) {
-          return calc;
-        }
-      }
-    } catch (e) {
-      console.error("Erro ao avaliar fórmula no Executivo:", e);
-    }
-    return null;
-  };
 
   const mesRefFormatos = useMemo(() => {
     const [ano, mes] = currentRefMonth.split('-');

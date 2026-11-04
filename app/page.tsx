@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "./components/Navbar";
+import { avaliarFormulaPorUnidade } from "../lib/formulaRepasse";
 
 // Função para equiparar SKUs com formatos diferentes entre canais, custos e devoluções
 function normalizarSku(valor: any): string {
@@ -113,6 +114,7 @@ export default function CurvaABCPage() {
   const [cancelados, setCancelados] = useState<any[]>([]);
   const [plp, setPlp] = useState<any[]>([]);
   const [tarifasSite, setTarifasSite] = useState<any[]>([]);
+  const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
 
   // Filtros
   const [dateFilter, setDateFilter] = useState("MES");
@@ -149,7 +151,7 @@ export default function CurvaABCPage() {
     setLoading(true);
     const e: string[] = [];
     try {
-      const [v, f, c, d, k, p, t] = await Promise.all([
+      const [v, f, c, d, k, p, t, rc] = await Promise.all([
         fetchTodos("vendas_canais", "id, id_pedido, sku, canal, produto, preco_venda, repasse_liquido, quantidade", e),
         fetchTodos("faturados", "id, id_pedido, data_faturamento", e),
         fetchTodos("tabela_custos_skus", "id, sku, marca, produto, custo_unitario", e),
@@ -157,8 +159,9 @@ export default function CurvaABCPage() {
         fetchTodos("cancelados", "id, canal, id_pedido, sku, quantidade, valor", e),
         fetchTodos("plp_pedidos", "id, numero_pedido, valor_frete", e),
         fetchTodos("tarifas_site", "id, id_pedido, valor_tarifa", e),
+        fetchTodos("config_regras_canais", "id, canal, col_pdv, col_quantidade, formula_excel", e),
       ]);
-      setVendas(v); setFaturados(f); setCustosLista(c); setDevolucoes(d); setCancelados(k); setPlp(p); setTarifasSite(t);
+      setVendas(v); setFaturados(f); setCustosLista(c); setDevolucoes(d); setCancelados(k); setPlp(p); setTarifasSite(t); setRegrasCanais(rc);
     } catch (err: any) {
       e.push(String(err?.message || err));
     } finally {
@@ -219,6 +222,12 @@ export default function CurvaABCPage() {
       return norm;
     };
 
+    const regraDoCanal = (canal: any) => {
+      const n = normalizarTexto(canal);
+      return regrasCanais.find((r) => normalizarTexto(r.canal) === n)
+        || (n.includes("magalu") || n.includes("magazine") ? regrasCanais.find((r) => normalizarTexto(r.canal).includes("magalu")) : undefined);
+    };
+
     const linhas: any[] = [];
     const chaves = new Set<string>();
     let sem = 0;
@@ -230,9 +239,21 @@ export default function CurvaABCPage() {
       const data = dataPorPedido.get(pedN);
       if (!data) { sem++; return; }
       const skuNorm = resolverSku(s.canal, normalizarSku(s.sku));
+      const qtdLinha = num(s.quantidade) || 1;
+      const precoLinha = num(s.preco_venda);
+      // Mesmo repasse do Dashboard: fórmula do canal (aba Regras) calculada por unidade; senão o repasse gravado no upload
+      let repasseLinha = num(s.repasse_liquido);
+      const regra = regraDoCanal(s.canal);
+      if (regra?.formula_excel && String(regra.formula_excel).trim()) {
+        const calc = avaliarFormulaPorUnidade(String(regra.formula_excel), precoLinha, qtdLinha, regra.col_pdv || "P", regra.col_quantidade || "O");
+        if (calc !== null) repasseLinha = calc;
+      }
+      if (isNaN(repasseLinha) || repasseLinha <= 0 || (precoLinha > 0 && repasseLinha > precoLinha * qtdLinha * 1.5)) {
+        repasseLinha = Math.max(0, precoLinha - precoLinha * 0.16);
+      }
       linhas.push({
         ped: s.id_pedido, pedN, chave, canal: s.canal, sku: custosMap[skuNorm]?.skuOriginal || s.sku, skuNorm,
-        qtd: num(s.quantidade) || 1, preco: num(s.preco_venda), repasse: num(s.repasse_liquido),
+        qtd: qtdLinha, preco: precoLinha, repasse: repasseLinha,
         data, t: new Date(data + "T00:00:00").getTime(), cancelado: canc.has(chave), extra: 0,
       });
     });
@@ -248,7 +269,7 @@ export default function CurvaABCPage() {
       itens.forEach((i) => { i.extra = total * (soma > 0 ? i.preco / soma : 1 / itens.length); });
     });
     return { linhasBase: linhas, semFaturamento: sem, chavesVendas: chaves };
-  }, [vendas, faturados, plp, tarifasSite, cancelados, custosMap]);
+  }, [vendas, faturados, plp, tarifasSite, cancelados, custosMap, regrasCanais]);
 
   // ----- Análise principal (respeita canal, período, marca e pesquisa) -----
   const analise = useMemo(() => {
