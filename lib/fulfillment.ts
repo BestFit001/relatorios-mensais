@@ -17,12 +17,18 @@ export function normTexto(v: any): string {
     .trim();
 }
 
+/** Amazon FBA identifica o SKU com o sufixo "-fba" (ex.: 18181042001-fba). Para validar o produto ele é sempre ignorado. */
+export function removerSufixoFba(sku: string): string {
+  const limpo = String(sku ?? "").trim().replace(/-fba$/i, "").trim();
+  return limpo || String(sku ?? "").trim();
+}
+
 export function normalizarSkuFull(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
   s = s.replace(/^["']|["']$/g, "").trim();
-  return s.toLowerCase();
+  return removerSufixoFba(s.toLowerCase());
 }
 
 export function hojeSaoPaulo(): string {

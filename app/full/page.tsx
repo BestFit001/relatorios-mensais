@@ -7,6 +7,7 @@ import * as XLSX from "xlsx";
 import {
   normTexto,
   statusCancelado,
+  removerSufixoFba,
   detectarColunasML,
   avaliarFormulaCanal,
   hojeSaoPaulo,
@@ -59,7 +60,8 @@ function normalizarSku(valor: any) {
   let s = String(valor).trim();
   if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
   s = s.replace(/^["']|["']$/g, "").trim();
-  return s.toLowerCase();
+  // Amazon FBA: o sufixo "-fba" é sempre desconsiderado ao validar o produto (custo, estoque Sede, vendas, devoluções)
+  return removerSufixoFba(s.toLowerCase());
 }
 
 function parseNumero(valor: any): number {
@@ -531,6 +533,8 @@ export default function LogisticaPage() {
     const { error } = await supabase.from('estoque_cd_mensal').upsert(payload, { onConflict: 'canal, mes_referencia, sku' });
     if (error) alert("Erro ao salvar estoque no banco: " + error.message);
     else {
+      // Linhas antigas gravadas com o sufixo -fba (agora o SKU é salvo sem ele) seriam contadas em duplicidade
+      await supabase.from('estoque_cd_mensal').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado).ilike('sku', '%-fba');
       alert(`✅ Estoque do CD atualizado com sucesso!`);
       setPreviewEstoque([]); setMatrizEstoque([]); setSubAba("vendas"); 
     }
@@ -641,7 +645,7 @@ export default function LogisticaPage() {
 
     const { data: estData } = await supabase.from('estoque_cd_mensal').select('sku, estoque').eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
     const mapaEstoqueCD = new Map();
-    if (estData) estData.forEach((e: any) => mapaEstoqueCD.set(e.sku, Number(e.estoque)));
+    if (estData) estData.forEach((e: any) => { const k = normalizarSku(e.sku); mapaEstoqueCD.set(k, (mapaEstoqueCD.get(k) || 0) + Number(e.estoque || 0)); });
 
     const mapaAgrupado = new Map<string, any>();
     const trocasJaProcessadas = new Set<string>();
@@ -935,7 +939,7 @@ export default function LogisticaPage() {
       }
 
       return {
-        canal: canalSelecionado, mes_referencia: mesSelecionado, sku: item.sku, produto: produtoNome,
+        canal: canalSelecionado, mes_referencia: mesSelecionado, sku: removerSufixoFba(item.sku), produto: produtoNome,
         qtd_vendida: item.qtdVendida, receita_bruta: item.receitaBruta, estoque_cd: estoqueCD, armazenagem: 0,
         estoque_central: estoqueCentral, custo_produto: custoUnitario * item.qtdVendida, imposto: item.receitaBruta * (impostoPct / 100),
         tarifa_frete: tarifaFreteSoma, embalagem: modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0, 
@@ -1054,8 +1058,12 @@ export default function LogisticaPage() {
   const dataSource = (() => {
     if (modoLogistica !== "full" || estoqueCDLista.length === 0) return baseRows;
     const jaTem = new Set(baseRows.map((i: any) => normalizarSku(i.sku)));
-    const semVenda = estoqueCDLista
-      .filter((e: any) => Number(e.estoque) > 0 && !jaTem.has(normalizarSku(e.sku)))
+    // soma por SKU já sem o sufixo -fba (linhas antigas gravadas como "xxx-fba" e "xxx" viram um item só)
+    const estoquePorSku = new Map<string, number>();
+    estoqueCDLista.forEach((e: any) => { const k = normalizarSku(e.sku); if (k) estoquePorSku.set(k, (estoquePorSku.get(k) || 0) + Number(e.estoque || 0)); });
+    const semVenda = Array.from(estoquePorSku.entries())
+      .map(([sku, estoque]) => ({ sku, estoque }))
+      .filter((e: any) => Number(e.estoque) > 0 && !jaTem.has(e.sku))
       .map((e: any) => {
         const skuKey = normalizarSku(e.sku);
         return {
