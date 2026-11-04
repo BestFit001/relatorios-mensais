@@ -5,11 +5,10 @@ import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import { calcularResumoCanais, TABELAS_RESUMO, type ResumoCanal } from "../../lib/resumoCanais";
 import {
-  agoraSP, concluiu, statusPorResponsavel, vencimento, estaAtrasada, ehCiclica, textoCiclo, deveAlertar, chaveAlerta,
+  agoraSP, concluiu, statusPorResponsavel, vencimento, estaAtrasada, ehCiclica, textoCiclo,
   textoAntecedencia, hhmm, diferencaDias, DIAS_SEMANA, inicioCiclo, ocorreNoDia, addDias, diaDaSemana, type Conclusao,
 } from "../../lib/tarefas";
 import { registrarPush, temAssinaturaAtiva, suportaPush } from "../../lib/push";
-import { prepararSom, tocarAlerta } from "../../lib/som";
 
 // ---------------------------------------------------------------------------------------------
 // Tela inicial: canais de cada analista (números do Dashboard), notificações e tarefas do administrador
@@ -391,65 +390,8 @@ export default function InicioPage() {
     registrarPush(usuario.email).then(async (r) => setTemPush(r.ok || (await temAssinaturaAtiva())));
   }, [usuario, permissaoNotif]);
 
-  useEffect(() => {
-    if (!usuario || permissaoNotif !== "granted" || temPush) return;
-    tarefas.forEach((t: any) => {
-      if (!(t.responsaveis || []).includes(usuario.email)) return;
-      const feita = concluiu(t, usuario.email, conclusoes, hojeData);
-      const alerta = deveAlertar(t, feita, agora);
-      if (!alerta) return;
-      const chave = chaveAlerta(t, usuario.email, hojeData);
-      try { if (localStorage.getItem(chave)) return; localStorage.setItem(chave, String(Date.now())); } catch { /* sem armazenamento: avisa mesmo assim */ }
-      const corpo = alerta.quando === "antes"
-        ? `Vence em ${alerta.minutosRestantes <= 1 ? "1 minuto" : alerta.minutosRestantes + " minutos"} (${hhmm(t.hora_entrega)}).`
-        : `Venceu às ${hhmm(t.hora_entrega)} e ainda não foi concluída.`;
-      try {
-        const n = new Notification(`📝 ${t.titulo}`, { body: corpo, tag: chave, requireInteraction: true });
-        n.onclick = () => { window.focus(); n.close(); };
-      } catch { /* navegador sem suporte */ }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agora, tarefas, conclusoes, usuario, permissaoNotif, temPush]);
-
-  // ---- Pop-up dentro do sistema + som (com a página aberta; não depende de permissão do navegador nem do Windows)
-  const [alertasTela, setAlertasTela] = useState<{ id: string; titulo: string; corpo: string }[]>([]);
-  const alertasTelaRef = React.useRef(alertasTela);
-  alertasTelaRef.current = alertasTela;
-  const somEmRef = React.useRef(0);
-  const tocarComTrava = (vezes: number) => { somEmRef.current = Date.now(); tocarAlerta(vezes); };
-  useEffect(() => {
-    const liberar = () => prepararSom();
-    window.addEventListener("pointerdown", liberar);
-    window.addEventListener("keydown", liberar);
-    return () => { window.removeEventListener("pointerdown", liberar); window.removeEventListener("keydown", liberar); };
-  }, []);
-  useEffect(() => {
-    if (!usuario) return;
-    const eu = String(usuario.email).trim().toLowerCase();
-    const novos: { id: string; titulo: string; corpo: string }[] = [];
-    tarefas.forEach((t: any) => {
-      if (t.legado || !(t.responsaveis || []).some((r: string) => String(r).trim().toLowerCase() === eu)) return;
-      const alerta = deveAlertar(t, concluiu(t, usuario.email, conclusoes, hojeData), agora);
-      if (!alerta) return;
-      const chave = chaveAlerta(t, usuario.email, hojeData) + "_tela";
-      try { if (localStorage.getItem(chave)) return; localStorage.setItem(chave, String(Date.now())); } catch { /* sem armazenamento: avisa mesmo assim */ }
-      const corpo = alerta.quando === "antes"
-        ? `Vence em ${alerta.minutosRestantes <= 1 ? "1 minuto" : alerta.minutosRestantes + " minutos"} (${hhmm(t.hora_entrega)}).`
-        : `Venceu às ${hhmm(t.hora_entrega)} e ainda não foi concluída.`;
-      novos.push({ id: chave, titulo: t.titulo, corpo });
-    });
-    if (novos.length) { setAlertasTela((a) => [...a, ...novos.filter((n) => !a.some((x) => x.id === n.id))]); tocarComTrava(3); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agora, tarefas, conclusoes, usuario]);
-  // enquanto o pop-up continuar aberto, repete o som a cada ~30 s (só no relógio, não quando os dados recarregam)
-  useEffect(() => {
-    if (alertasTelaRef.current.length && Date.now() - somEmRef.current > 10000) tocarComTrava(2);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agora]);
-  const testarPopup = () => {
-    setAlertasTela((a) => [...a.filter((x) => x.id !== "teste"), { id: "teste", titulo: "Teste de alerta", corpo: "Se você viu este pop-up e ouviu o som, os avisos de tarefa vão funcionar assim." }]);
-    tocarComTrava(3);
-  };
+  // Pop-up + som + notificação do Windows ao chegar no horário de aviso: ver app/components/AlertaTarefasGlobal.tsx (vale em todas as páginas e abas)
+  const testarPopup = () => window.dispatchEvent(new Event("bestfit-testar-alerta"));
 
   const alternarCanalDoAnalista = async (email: string, canal: string, ativo: boolean) => {
     if (!isAdmin) return;
@@ -647,23 +589,6 @@ export default function InicioPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
-      {alertasTela.length > 0 && (
-        <div data-popup-alerta className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-md rounded-2xl border-2 border-amber-400 bg-slate-900 p-6 shadow-2xl">
-            <div className="text-center text-5xl mb-2 animate-bounce">🔔</div>
-            <h3 className="text-center text-lg font-black text-amber-300 mb-4 uppercase tracking-wider">Tarefa chegando no prazo</h3>
-            <div className="space-y-2 max-h-64 overflow-auto mb-5">
-              {alertasTela.map((a) => (
-                <div key={a.id} data-popup-item className="rounded-xl border border-amber-700/60 bg-amber-950/30 p-3">
-                  <div className="text-sm font-bold text-white">📝 {a.titulo}</div>
-                  <div className="text-xs text-amber-200 mt-0.5">{a.corpo}</div>
-                </div>
-              ))}
-            </div>
-            <button type="button" data-popup-fechar onClick={() => setAlertasTela([])} className="w-full rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-3 text-sm uppercase tracking-wider cursor-pointer">Entendi</button>
-          </div>
-        </div>
-      )}
       <div className="max-w-[98%] mx-auto">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
