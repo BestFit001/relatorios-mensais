@@ -12,6 +12,7 @@ const TABELAS_SUPABASE = [
   'config_regras_tiny',
   'tb_metas',
   'devolucoes',
+  'cancelados',
   'ads_faturamento_canal',
   'plp_pedidos',
   'usuarios_permissoes'

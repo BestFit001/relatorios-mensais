@@ -1,10 +1,10 @@
 "use client";
-import { useState, ChangeEvent, useEffect } from "react";
+import { useState, ChangeEvent, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
-import { lerArquivoComoMatriz } from "../../lib/lerArquivo";
+import { lerArquivoComoMatriz, lerArquivoComoLinhas } from "../../lib/lerArquivo";
 import { removerSufixoFba } from "../../lib/fulfillment";
 
 async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo?: string, eqValor?: any) {
@@ -55,6 +55,40 @@ function normalizarIdPedido(val: any): string {
     .replace(/['"]$/, "")
     .replace(/\s+/g, "")
     .toUpperCase();
+}
+
+// Data em qualquer formato comum (dd/mm/aaaa [hh:mm], aaaa-mm-dd, número serial do Excel) -> "aaaa-mm-dd" ("" se não reconhecer)
+function paraDataIso(v: any): string {
+  if (v === null || v === undefined || v === "") return "";
+  if (typeof v === "number" && v > 20000 && v < 80000) {
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+  }
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return "";
+}
+
+// Célula "com valor": ignora vazio, "-", "0", "0,00", "R$ 0,00"
+function celulaTemValor(v: any): boolean {
+  const s = String(v ?? "").trim();
+  if (!s) return false;
+  return !/^[\s0.,\-R$]+$/i.test(s);
+}
+
+function textoSemAcento(v: any): string {
+  return String(v ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+}
+
+// Regras de leitura por canal que não ficam na tela de Regras: status (cancelado), nota fiscal e data do pedido.
+type CfgImportCanal = { colStatus: string; textoCancelado: string; colNF: string; colData: string };
+function cfgImportPadrao(canal: string): CfgImportCanal {
+  // O Site (Wake) tem layout fixo: Situação = AL, Nota Fiscal = AU, Data = C
+  if (normalizarCanal(canal).includes("site")) return { colStatus: "AL", textoCancelado: "cancel", colNF: "AU", colData: "C" };
+  return { colStatus: "", textoCancelado: "cancel", colNF: "", colData: "" };
 }
 
 function normalizarCanal(canal: any): string {
@@ -245,6 +279,18 @@ export default function UpdatesPage() {
   const [colunaIdSite, setColunaIdSite] = useState("A");
   const [colunaTarifaSite, setColunaTarifaSite] = useState("E");
 
+  // Status (cancelado), Nota Fiscal e Data do pedido por canal: ficam salvos junto com as demais colunas
+  const [cfgImportPorCanal, setCfgImportPorCanal] = useState<Record<string, CfgImportCanal>>({});
+  const cfgImportAtual: CfgImportCanal = { ...cfgImportPadrao(canalAlvoDash), ...(cfgImportPorCanal[canalAlvoDash] || {}) };
+  const setCfgImportCampo = (campo: keyof CfgImportCanal, valor: string) =>
+    setCfgImportPorCanal((prev) => ({ ...prev, [canalAlvoDash]: { ...cfgImportPadrao(canalAlvoDash), ...(prev[canalAlvoDash] || {}), [campo]: valor } }));
+
+  // Colunas/linhas definidas nesta tela ficam salvas (neste navegador) e voltam sozinhas no próximo acesso
+  const [uploadCfgPronta, setUploadCfgPronta] = useState(false);
+  const cfgSalvaRef = useRef<any>(null);
+  const baselineUploadCfg = useRef<string>("");
+  const jaSalvouUploadCfg = useRef(false);
+
   const mesReferencia = mes && ano ? `${mes}/${ano}` : "";
   const meses = [
     { valor: "01", nome: "Janeiro" }, { valor: "02", nome: "Fevereiro" },
@@ -263,7 +309,31 @@ export default function UpdatesPage() {
       router.push("/login");
       return;
     }
-    carregarDadosCadastros();
+    // Restaura as colunas salvas (as que dependem do banco são reaplicadas depois que ele responde)
+    try {
+      const salva = JSON.parse(localStorage.getItem("upload_cfg_v2") || "null");
+      if (salva && typeof salva === "object") {
+        cfgSalvaRef.current = salva;
+        if (salva.mes) setMes(String(salva.mes));
+        if (salva.ano) setAno(String(salva.ano));
+        if (salva.mesUpload) setMesUpload(String(salva.mesUpload));
+        if (salva.anoUpload) setAnoUpload(String(salva.anoUpload));
+        if (salva.canalAlvoDash) setCanalAlvoDash(String(salva.canalAlvoDash));
+        if (salva.colunaIdFaturados) setColunaIdFaturados(String(salva.colunaIdFaturados));
+        if (salva.colunaDataFaturados) setColunaDataFaturados(String(salva.colunaDataFaturados));
+        if (salva.colunaIdSite) setColunaIdSite(String(salva.colunaIdSite));
+        if (salva.colunaTarifaSite) setColunaTarifaSite(String(salva.colunaTarifaSite));
+        if (salva.contaMlSelecionada) setContaMlSelecionada(salva.contaMlSelecionada);
+        if (salva.colunasPorConta) setColunasPorConta((prev) => ({ ...prev, ...salva.colunasPorConta }));
+        if (salva.cfgImportPorCanal) setCfgImportPorCanal(salva.cfgImportPorCanal);
+      }
+    } catch { /* configuração corrompida: usa o padrão */ }
+    carregarDadosCadastros().finally(() => {
+      const salva = cfgSalvaRef.current;
+      if (salva?.regrasTiny) setRegrasTiny((prev) => ({ ...prev, ...salva.regrasTiny }));
+      if (salva?.regrasColsCusto) setRegrasColsCusto((prev) => ({ ...prev, ...salva.regrasColsCusto }));
+      setUploadCfgPronta(true);
+    });
     carregarVendasPendentes();
     try {
       const cfg = JSON.parse(localStorage.getItem("upload_sku_aux_cfg") || "null");
@@ -281,6 +351,19 @@ export default function UpdatesPage() {
     if (!auxCfgPronta) return;
     try { localStorage.setItem("upload_sku_aux_cfg", JSON.stringify({ linha: auxLinha, colPedido: auxColPedido, colSku: auxColSku })); } catch { /* ignora */ }
   }, [auxCfgPronta, auxLinha, auxColPedido, auxColSku]);
+
+  // Salva sozinho toda coluna/linha/mês que o usuário alterar (não grava os valores padrão antes de qualquer edição)
+  useEffect(() => {
+    if (!uploadCfgPronta) return;
+    const atual = JSON.stringify({
+      mes, ano, mesUpload, anoUpload, canalAlvoDash, colunaIdFaturados, colunaDataFaturados, colunaIdSite, colunaTarifaSite,
+      contaMlSelecionada, colunasPorConta, regrasColsCusto, regrasTiny, cfgImportPorCanal,
+    });
+    if (baselineUploadCfg.current === "") { baselineUploadCfg.current = atual; return; }
+    if (atual === baselineUploadCfg.current && !jaSalvouUploadCfg.current) return;
+    jaSalvouUploadCfg.current = true;
+    try { localStorage.setItem("upload_cfg_v2", atual); } catch { /* ignora */ }
+  }, [uploadCfgPronta, mes, ano, mesUpload, anoUpload, canalAlvoDash, colunaIdFaturados, colunaDataFaturados, colunaIdSite, colunaTarifaSite, contaMlSelecionada, colunasPorConta, regrasColsCusto, regrasTiny, cfgImportPorCanal]);
 
   useEffect(() => {
     pesquisarCustosNoBanco();
@@ -684,10 +767,7 @@ export default function UpdatesPage() {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+        const json = await lerArquivoComoLinhas(file);   // qualquer formato: xlsx, xls, csv, txt...
 
         const idxId = letraParaIndice(colunaIdFaturados);
         const idxData = letraParaIndice(colunaDataFaturados);
@@ -712,7 +792,7 @@ export default function UpdatesPage() {
           else if (matchNum) pedidoId = matchNum[0].trim();
           else if (matchGen) pedidoId = matchGen[0].trim();
 
-          const dataFaturamento = String(row[idxData] || "").trim();
+          const dataFaturamento = paraDataIso(row[idxData]);
 
           if (pedidoId) {
             registros.push({
@@ -735,6 +815,8 @@ export default function UpdatesPage() {
       } catch (err: any) {
         alert("Erro ao importar Faturados: " + err.message);
         setLoading(false);
+      } finally {
+        try { (e.target as HTMLInputElement).value = ""; } catch { /* ignora */ }
       }
     };
     reader.readAsArrayBuffer(file);
@@ -748,15 +830,24 @@ export default function UpdatesPage() {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+        const json = await lerArquivoComoLinhas(file);   // qualquer formato: xlsx, xls, csv, txt...
 
         const canalNorm = canalAlvoDash.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const isFisico = canalNorm.includes("clube") || canalNorm.includes("hebraica") || canalNorm.includes("paineiras");
+        const isFisico = ehCanalClube(canalAlvoDash);
         const isML = canalNorm.includes("mercado livre");
         const isAmazon = canalNorm.includes("amazon");
+        const isSite = canalNorm.includes("site");
+
+        // Status (cancelado), Nota Fiscal e Data do pedido configurados para este canal
+        const cfgI = cfgImportAtual;
+        const idxStatus = letraParaIndice(cfgI.colStatus);
+        const idxNF = letraParaIndice(cfgI.colNF);
+        const idxDataPed = letraParaIndice(cfgI.colData);
+        const textoCancel = textoSemAcento(cfgI.textoCancelado || "cancel");
+        const novosFaturados = new Map<string, any>();      // pedidos faturados pela Nota Fiscal da própria planilha (Site)
+        const exemplosDescartados: string[] = [];
+        let foraDoMesData = 0;
+        const hojeIso = new Date().toISOString().slice(0, 10);
 
         const faturadosBanco = await fetchTodosRegistros('faturados', 'id_pedido', 'mes_referencia', mesAlvoDash);
         
@@ -771,8 +862,8 @@ export default function UpdatesPage() {
           }
         });
         
-        if (!isFisico && idsFaturadosSet.size === 0) {
-          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado na tabela 'faturados' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro.`);
+        if (!isFisico && idsFaturadosSet.size === 0 && idxNF < 0) {
+          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado na tabela 'faturados' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro (ou informe a coluna da Nota Fiscal nesta planilha).`);
           setLoading(false);
           return;
         }
@@ -804,11 +895,28 @@ export default function UpdatesPage() {
 
         const idxId = letraParaIndice(colIdDef);
         const idxSku = letraParaIndice(colSkuDef);
-        const idxDescricao = letraParaIndice(regraData?.col_descricao || (isAmazon ? 'K' : 'D')); 
+        const idxDescricao = letraParaIndice(regraData?.col_descricao || (isAmazon ? 'K' : (isSite ? 'BE' : 'D'))); 
 
         const novasVendas = [];
         let totalImportados = 0;
         let ignoradosForaDoMes = 0;
+
+        let ignoradosTotalClube = 0;
+        let totalCancelados = 0;
+
+        // Clubes: a ÚLTIMA linha com valores é o total (soma) da planilha e nunca entra nas vendas
+        let ultimaLinhaComValor = -1;
+        const colsRelevantes: number[] = [];
+        if (isFisico) {
+          [colIdDef, colSkuDef, colPdvDef, colQtdDef, colRepasseDef, formulaExcel].forEach((c) => {
+            if (/^[A-Za-z]{1,3}$/.test(String(c || "").trim())) colsRelevantes.push(letraParaIndice(String(c).trim()));
+          });
+          if (idxDescricao >= 0) colsRelevantes.push(idxDescricao);
+          for (let r = json.length - 1; r >= 1; r--) {
+            const rw = json[r];
+            if (rw && colsRelevantes.some((c) => c >= 0 && celulaTemValor(rw[c]))) { ultimaLinhaComValor = r; break; }
+          }
+        }
 
         let i = isML ? 6 : 1;
 
@@ -817,6 +925,11 @@ export default function UpdatesPage() {
           if (!row || row.length === 0) {
             i++;
             continue;
+          }
+
+          if (isFisico) {
+            if (i === ultimaLinhaComValor) { ignoradosTotalClube++; i++; continue; }
+            if (!colsRelevantes.some((c) => c >= 0 && celulaTemValor(row[c]))) { i++; continue; }   // linha sem nenhum valor
           }
 
           let rawId = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
@@ -834,13 +947,25 @@ export default function UpdatesPage() {
           const idSemTracos = idFormatado.replace(/[^A-Z0-9]/g, '');
 
           if (!isFisico) {
-            const faturado = idsFaturadosSet.has(idFormatado) || idsFaturadosSemTracos.has(idSemTracos);
-            if (!faturado) {
+            const noBanco = idsFaturadosSet.has(idFormatado) || idsFaturadosSemTracos.has(idSemTracos);
+            const comNF = idxNF >= 0 && celulaTemValor(row[idxNF]);
+            if (!noBanco && !comNF) {
               ignoradosForaDoMes++;
+              if (exemplosDescartados.length < 6 && !exemplosDescartados.includes(idFormatado)) exemplosDescartados.push(idFormatado);
               i++;
               continue;
             }
+            if (!noBanco && comNF) {
+              // Faturado pela Nota Fiscal da própria planilha: só entra se a data do pedido estiver no mês escolhido
+              const dataIso = idxDataPed >= 0 ? paraDataIso(row[idxDataPed]) : "";
+              if (dataIso && dataIso.slice(0, 7) !== `${anoUpload}-${mesUpload}`) { foraDoMesData++; i++; continue; }
+              if (!novosFaturados.has(idFormatado)) novosFaturados.set(idFormatado, { id_pedido: idFormatado, data_faturamento: dataIso || hojeIso, mes_referencia: mesAlvoDash });
+            }
           }
+
+          const statusTxt = idxStatus >= 0 ? textoSemAcento(row[idxStatus]) : "";
+          const cancelado = idxStatus >= 0 && !!textoCancel && statusTxt.includes(textoCancel);
+          if (cancelado) totalCancelados++;
 
           const descRaw = idxDescricao >= 0 && row[idxDescricao] !== undefined ? String(row[idxDescricao]).trim() : '';
 
@@ -894,7 +1019,8 @@ export default function UpdatesPage() {
                   produto: item.nome,
                   quantidade: item.qtdSub,
                   preco_venda: item.pdvSub,
-                  repasse_liquido: repasseRateado
+                  repasse_liquido: repasseRateado,
+                  __cancelado: cancelado
                 });
                 totalImportados++;
               }
@@ -910,6 +1036,8 @@ export default function UpdatesPage() {
 
           const quantidade = Math.max(1, avaliarExpressaoOuColuna(colQtdDef, row) || 1);
           const precoVenda = avaliarExpressaoOuColuna(colPdvDef, row, { QTD: quantidade });
+
+          if (isFisico && precoVenda <= 0 && !skuNorm) { i++; continue; }   // linha de clube sem valor nenhum
 
           const existeNaBase = skuNorm && skusBaseSet.has(skuNorm);
           const skuFinal = existeNaBase ? skuNorm : (skuNorm || 'sem-sku');
@@ -937,27 +1065,86 @@ export default function UpdatesPage() {
             produto: nomeProduto,
             quantidade: quantidade,
             preco_venda: precoVenda,
-            repasse_liquido: repasseLiquido
+            repasse_liquido: repasseLiquido,
+            __cancelado: cancelado
           });
           totalImportados++;
 
           i++;
         }
 
+        // Site (Wake): "Valor do Pedido" e "Quantidade de Produtos" se repetem em cada item do pedido.
+        // Quando todos os itens do mesmo pedido trazem o mesmo valor, ele é dividido entre os itens (não soma em dobro).
+        if (isSite) {
+          const grupos = new Map<string, any[]>();
+          novasVendas.forEach((v: any) => grupos.set(v.id_pedido, [...(grupos.get(v.id_pedido) || []), v]));
+          grupos.forEach((linhas) => {
+            const n = linhas.length;
+            if (n < 2) return;
+            const todosIguais = (campo: string) => linhas.every((l) => Math.abs(Number(l[campo]) - Number(linhas[0][campo])) < 0.005);
+            // O último item fica com o centavo que sobra, para a soma bater exatamente com o valor do pedido
+            const ratear = (campo: string) => {
+              const total = Number(linhas[0][campo]);
+              const parte = Number((total / n).toFixed(2));
+              linhas.forEach((l, idx) => { l[campo] = idx === n - 1 ? Number((total - parte * (n - 1)).toFixed(2)) : parte; });
+            };
+            if (todosIguais("preco_venda") && linhas[0].preco_venda > 0) ratear("preco_venda");
+            if (todosIguais("repasse_liquido") && linhas[0].repasse_liquido > 0) ratear("repasse_liquido");
+            if (todosIguais("quantidade") && linhas[0].quantidade >= n && linhas[0].quantidade % n === 0) linhas.forEach((l) => { l.quantidade = l.quantidade / n; });
+          });
+        }
+
+        let canceladosGravados = 0;
         if (novasVendas.length > 0) {
+          const vendasGravar = novasVendas.map(({ __cancelado, ...v }: any) => v);
           await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
-          for (let k = 0; k < novasVendas.length; k += 500) {
-            const { error } = await supabase.from('vendas_canais').insert(novasVendas.slice(k, k + 500));
+          for (let k = 0; k < vendasGravar.length; k += 500) {
+            const { error } = await supabase.from('vendas_canais').insert(vendasGravar.slice(k, k + 500));
+            if (error) throw error;
+          }
+
+          // Cancelados do canal/mês: refeitos a cada upload. O dashboard abate receita, repasse, CMV e frete deles.
+          const { error: erroLimpaCanc } = await supabase.from('cancelados').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
+          if (erroLimpaCanc) throw new Error("tabela 'cancelados': " + erroLimpaCanc.message);
+          const listaCancelados = novasVendas.filter((v: any) => v.__cancelado).map((v: any) => ({
+            canal: canalAlvoDash, mes_referencia: mesAlvoDash, id_pedido: v.id_pedido, sku: v.sku, quantidade: v.quantidade, valor: v.preco_venda,
+          }));
+          for (let k = 0; k < listaCancelados.length; k += 500) {
+            const { error } = await supabase.from('cancelados').insert(listaCancelados.slice(k, k + 500));
+            if (error) throw new Error("tabela 'cancelados': " + error.message);
+          }
+          canceladosGravados = listaCancelados.length;
+
+          // Pedidos faturados pela Nota Fiscal da planilha (Site) passam a constar em 'faturados' para o dashboard enxergá-los
+          const idsNovos = Array.from(novosFaturados.keys());
+          for (let k = 0; k < idsNovos.length; k += 100) {
+            await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash).in('id_pedido', idsNovos.slice(k, k + 100));
+          }
+          const regsFat = Array.from(novosFaturados.values());
+          for (let k = 0; k < regsFat.length; k += 500) {
+            const { error } = await supabase.from('faturados').insert(regsFat.slice(k, k + 500));
             if (error) throw error;
           }
         }
 
-        alert(`✅ Vendas salvas em 'vendas_canais' (${mesAlvoDash})!\n• Canal: ${canalAlvoDash} ${isFisico ? '(Loja Física)' : ''}\n• Importados com sucesso: ${totalImportados} itens\n• Descartados (não faturados): ${ignoradosForaDoMes}`);
+        const linhasMsg = [
+          `✅ Vendas salvas em 'vendas_canais' (${mesAlvoDash})!`,
+          `• Canal: ${canalAlvoDash} ${isFisico ? '(Loja Física)' : ''}`,
+          `• Importados com sucesso: ${totalImportados} itens`,
+        ];
+        if (idxStatus >= 0) linhasMsg.push(`• Cancelados (abatidos no dashboard): ${canceladosGravados}`);
+        linhasMsg.push(`• Descartados (${idxNF >= 0 ? 'sem faturamento nem Nota Fiscal' : 'não faturados'}): ${ignoradosForaDoMes}${exemplosDescartados.length ? ` (ex.: ${exemplosDescartados.join(', ')})` : ''}`);
+        if (novosFaturados.size > 0) linhasMsg.push(`• Faturados registrados pela Nota Fiscal da planilha: ${novosFaturados.size}`);
+        if (foraDoMesData > 0) linhasMsg.push(`• Fora do mês escolhido (pela data do pedido): ${foraDoMesData}`);
+        if (isFisico) linhasMsg.push(`• Linha de total da planilha ignorada: ${ignoradosTotalClube > 0 ? 'sim' : 'não encontrada'}`);
+        if (totalImportados === 0) linhasMsg.push(`⚠️ Nada foi importado: confira a coluna do ID do pedido (${colIdDef}) e se os faturados do mês foram subidos antes.`);
+        alert(linhasMsg.join("\n"));
         carregarVendasPendentes();
       } catch (err: any) {
         alert("Erro ao cruzar e importar vendas: " + err.message);
       } finally {
         setLoading(false);
+        try { (e.target as HTMLInputElement).value = ""; } catch { /* ignora */ }
       }
     };
     reader.readAsArrayBuffer(file);
@@ -971,20 +1158,20 @@ export default function UpdatesPage() {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
+        const json = await lerArquivoComoLinhas(file);   // qualquer formato: xlsx, xls, csv, txt...
 
         const idxId = letraParaIndice(colunaIdSite);
         const idxTarifa = letraParaIndice(colunaTarifaSite);
 
         const registros = [];
+        let tarifasCanceladas = 0;
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row) continue;
-          const idPedido = String(row[idxId] || "").trim();
+          const idPedido = normalizarIdPedido(row[idxId]);
           const valorTarifa = parseSmartFloat(row[idxTarifa]);
+          // Transação cancelada no gateway (ex.: Vindi "Cancelada") não gera tarifa
+          if (row.some((c: any) => /^cancelad[ao]$/i.test(String(c ?? "").trim()))) { tarifasCanceladas++; continue; }
 
           if (idPedido) {
             registros.push({ id_pedido: idPedido, valor_tarifa: valorTarifa });
@@ -998,10 +1185,13 @@ export default function UpdatesPage() {
           }
         }
 
-        alert(`✅ Tarifas do Site salvas em 'tarifas_site'! Total: ${registros.length} registos.`);
+        alert(`✅ Tarifas do Site salvas em 'tarifas_site'! Total: ${registros.length} registos.${tarifasCanceladas ? `\n• Transações canceladas ignoradas: ${tarifasCanceladas}` : ""}`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Tarifas do Site: " + err.message);
+        setLoading(false);
+      } finally {
+        try { (e.target as HTMLInputElement).value = ""; } catch { /* ignora */ }
       }
     };
     reader.readAsArrayBuffer(file);
@@ -1900,7 +2090,7 @@ export default function UpdatesPage() {
                   </div>
                   <label className="block w-full text-center bg-emerald-600 hover:bg-emerald-500 transition text-white font-extrabold text-xs py-3 rounded-xl shadow-lg cursor-pointer">
                     <span>Subir Faturados (Excel/CSV)</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirFaturados} className="hidden" />
+                    <input type="file" onChange={handleSubirFaturados} className="hidden" />
                   </label>
                 </div>
               </div>
@@ -1939,9 +2129,31 @@ export default function UpdatesPage() {
                       {canaisDashList.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
+                  <div className="rounded-lg border border-slate-800 p-3 space-y-2" data-cfg-import>
+                    <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Opcional · cancelados e nota fiscal ({canalAlvoDash})</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1" title="Coluna com a situação do pedido. Linhas cujo texto contenha a palavra ao lado são canceladas e abatidas no dashboard.">Col. Status</label>
+                        <input type="text" value={cfgImportAtual.colStatus} onChange={e => setCfgImportCampo("colStatus", e.target.value.toUpperCase())} placeholder="ex.: AL" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Cancelado se contiver</label>
+                        <input type="text" value={cfgImportAtual.textoCancelado} onChange={e => setCfgImportCampo("textoCancelado", e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono text-white outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1" title="Se preenchida, o pedido com Nota Fiscal nesta coluna conta como faturado mesmo sem estar na tabela de faturados (Site/Wake).">Col. Nota Fiscal</label>
+                        <input type="text" value={cfgImportAtual.colNF} onChange={e => setCfgImportCampo("colNF", e.target.value.toUpperCase())} placeholder="ex.: AU" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1" title="Data do pedido, usada com a Nota Fiscal para conferir o mês e registrar o faturamento.">Col. Data do pedido</label>
+                        <input type="text" value={cfgImportAtual.colData} onChange={e => setCfgImportCampo("colData", e.target.value.toUpperCase())} placeholder="ex.: C" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-center font-mono font-bold text-white uppercase outline-none" />
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-slate-500">Em branco = não usa. Vale para qualquer formato de arquivo (xlsx, xls, csv, txt). Nos clubes, a última linha com valores (total) é sempre ignorada.</p>
+                  </div>
                   <label className="block w-full text-center bg-purple-600 hover:bg-purple-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
                     <span>Importar e Cruzar Vendas</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirVendasCanal} className="hidden" />
+                    <input type="file" onChange={handleSubirVendasCanal} className="hidden" />
                   </label>
                 </div>
               </div>
@@ -1962,7 +2174,7 @@ export default function UpdatesPage() {
                   </div>
                   <label className="block w-full text-center bg-indigo-600 hover:bg-indigo-500 transition text-white font-bold text-xs py-2.5 rounded-lg shadow cursor-pointer">
                     <span>Subir Tarifas do Site</span>
-                    <input type="file" accept=".xlsx, .xls, .csv" onChange={handleSubirTarifasSite} className="hidden" />
+                    <input type="file" onChange={handleSubirTarifasSite} className="hidden" />
                   </label>
                 </div>
               </div>

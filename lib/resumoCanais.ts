@@ -23,7 +23,7 @@ export interface ResumoCanal {
 
 export const TABELAS_RESUMO = [
   "vendas_canais", "faturados", "tarifas_site", "tabela_custos_skus", "config_regras_canais",
-  "config_regras_tiny", "tb_metas", "devolucoes", "ads_faturamento_canal", "plp_pedidos",
+  "config_regras_tiny", "tb_metas", "devolucoes", "cancelados", "ads_faturamento_canal", "plp_pedidos",
 ] as const;
 
 const MESES_MAP: Record<string, string> = {
