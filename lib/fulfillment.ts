@@ -74,10 +74,11 @@ export interface MapaColunasML {
   mlb: string;
   pdv: string;
   formaEntrega: string;
+  data: string;
   layout: string;
 }
 
-type ChaveCol = "pedido" | "status" | "unidades" | "receita" | "total" | "sku" | "mlb" | "pdv" | "formaEntrega";
+type ChaveCol = "pedido" | "status" | "unidades" | "receita" | "total" | "sku" | "mlb" | "pdv" | "formaEntrega" | "data";
 
 const CABECALHOS_ML: Array<[ChaveCol, (h: string) => boolean]> = [
   ["pedido", (h) => h.startsWith("n.") && h.includes("de venda")],
@@ -89,6 +90,7 @@ const CABECALHOS_ML: Array<[ChaveCol, (h: string) => boolean]> = [
   ["mlb", (h) => h.startsWith("# de anuncio")],
   ["pdv", (h) => h.startsWith("preco unitario de venda")],
   ["formaEntrega", (h) => h === "forma de entrega"],
+  ["data", (h) => h === "data de venda" || h === "data da venda"],
 ];
 
 /**
@@ -123,6 +125,7 @@ export function detectarColunasML(matriz: Array<Record<string, any>>): MapaColun
       mlb: achados.mlb || "Y",
       pdv: achados.pdv,
       formaEntrega: achados.formaEntrega || "AS",
+      data: achados.data || "B",
       layout: temTroca ? "67 colunas" : "66 colunas",
     };
   }
@@ -280,4 +283,101 @@ export function simularFIFOMensal(lotesEntrada: Lote[], vendas: VendaMensal[]): 
     if (faltam > 0) semLote[v.sku] = (semLote[v.sku] || 0) + faltam;
   }
   return { lotes, semLote };
+}
+
+/* ------------------------------------------------------------------ */
+/* Ritmo de vendas: "N vendas em D dias = status" (configurável por canal) */
+/* ------------------------------------------------------------------ */
+
+export interface RegraRitmo {
+  id: string;
+  vendas: number; // quantidade de vendas
+  dias: number;   // intervalo (dias corridos) em que elas ocorrem
+  status: string; // ex.: "Ótimo", "Bom"
+}
+
+export const REGRAS_RITMO_PADRAO: RegraRitmo[] = [
+  { id: "r1", vendas: 10, dias: 5, status: "Ótimo" },
+  { id: "r2", vendas: 5, dias: 15, status: "Bom" },
+];
+
+const MESES_PT: Record<string, number> = {
+  janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6,
+  julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12,
+};
+
+/** Número do dia (dias desde 1970) a partir da data da venda. Aceita:
+ *  "3 de novembro de 2026 12:30 hs." (ML), "03/11/2026", "2026-11-03", serial do Excel e Date. null se não reconhecer. */
+export function parseDiaVenda(valor: any): number | null {
+  if (valor === null || valor === undefined || valor === "") return null;
+  const dia = (a: number, m: number, d: number) => {
+    if (a < 2000 || a > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    return Math.floor(Date.UTC(a, m - 1, d) / 86400000);
+  };
+  if (valor instanceof Date && !isNaN(valor.getTime())) return dia(valor.getUTCFullYear(), valor.getUTCMonth() + 1, valor.getUTCDate());
+  if (typeof valor === "number") {
+    if (valor > 30000 && valor < 80000) return Math.floor(valor) - 25569; // serial do Excel
+    return null;
+  }
+  const t = normTexto(valor);
+  let m = t.match(/(\d{1,2}) de ([a-z]+) de (\d{4})/);
+  if (m && MESES_PT[m[2]]) return dia(+m[3], MESES_PT[m[2]], +m[1]);
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return dia(+m[3], +m[2], +m[1]);
+  m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return dia(+m[1], +m[2], +m[3]);
+  return null;
+}
+
+/** Maior número de vendas em qualquer janela de `dias` dias corridos seguidos. */
+export function maxVendasEmJanela(vendasPorDia: Map<number, number>, dias: number): number {
+  const d = Math.max(1, Math.floor(dias));
+  const lista = Array.from(vendasPorDia.entries()).sort((a, b) => a[0] - b[0]);
+  let melhor = 0, soma = 0, ini = 0;
+  for (let fim = 0; fim < lista.length; fim++) {
+    soma += lista[fim][1];
+    while (lista[fim][0] - lista[ini][0] >= d) { soma -= lista[ini][1]; ini++; }
+    if (soma > melhor) melhor = soma;
+  }
+  return melhor;
+}
+
+export interface ResultadoRitmo {
+  status: string;
+  /** índice da regra atingida (0 = a primeira da lista); -1 = nenhuma; -2 = sem vendas */
+  nivel: number;
+  /** true quando usou as datas das vendas; false quando comparou proporcionalmente ao mês */
+  porData: boolean;
+  /** maior nº de vendas na janela da regra atingida (ou projeção proporcional) */
+  vendasNaJanela: number;
+}
+
+/**
+ * Classifica o SKU pela PRIMEIRA regra da lista que ele atingir (a ordem é a prioridade).
+ * Com datas: precisa ter ocorrido `vendas` em algum intervalo de `dias` dias.
+ * Sem datas: compara o ritmo médio do mês (vendas do mês ÷ dias do mês) com o da regra.
+ */
+export function classificarRitmo(
+  regras: RegraRitmo[],
+  qtdTotal: number,
+  vendasPorDia: Map<number, number> | null,
+  diasDoMes: number,
+  rotuloAbaixo = "Abaixo da meta",
+  rotuloSemVendas = "Sem vendas"
+): ResultadoRitmo {
+  const porData = !!vendasPorDia && vendasPorDia.size > 0;
+  if (qtdTotal <= 0) return { status: rotuloSemVendas, nivel: -2, porData, vendasNaJanela: 0 };
+  const validas = regras.filter((r) => r.vendas > 0 && r.dias > 0 && String(r.status || "").trim() !== "");
+  for (let i = 0; i < validas.length; i++) {
+    const r = validas[i];
+    const naJanela = porData ? maxVendasEmJanela(vendasPorDia as Map<number, number>, r.dias) : (qtdTotal / Math.max(1, diasDoMes)) * r.dias;
+    if (naJanela >= r.vendas) return { status: r.status.trim(), nivel: i, porData, vendasNaJanela: Math.round(naJanela * 10) / 10 };
+  }
+  return { status: rotuloAbaixo, nivel: -1, porData, vendasNaJanela: 0 };
+}
+
+export function diasDoMesRef(mesRef: string): number {
+  const [mm, aaaa] = mesRef.split("/").map(Number);
+  if (!mm || !aaaa) return 30;
+  return new Date(aaaa, mm, 0).getDate();
 }

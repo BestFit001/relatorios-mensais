@@ -15,7 +15,12 @@ import {
   statusArmazenagem,
   DIAS_ALERTA_PADRAO,
   DIAS_COBRANCA_PADRAO,
+  parseDiaVenda,
+  classificarRitmo,
+  diasDoMesRef,
+  REGRAS_RITMO_PADRAO,
   type Lote,
+  type RegraRitmo,
 } from "../../lib/fulfillment";
 import { ehMercadoLivre } from "../../lib/tarifacao";
 
@@ -149,6 +154,11 @@ export default function LogisticaPage() {
   // Texto que identifica, na coluna de entrega, o envio que gera taxa (ML: "Flex"; outros canais: definido por canal)
   const [textoEntrega, setTextoEntrega] = useState("flex");
   const [cfgSalva, setCfgSalva] = useState(false);
+  // Ritmo de vendas por canal: "N vendas em D dias = status" (a primeira regra atingida vale) e limites de devolução
+  const [colDataVendas, setColDataVendas] = useState("B");
+  const [regrasRitmo, setRegrasRitmo] = useState<RegraRitmo[]>(REGRAS_RITMO_PADRAO);
+  const [pctDevAtencao, setPctDevAtencao] = useState("5");
+  const [minVendasDev, setMinVendasDev] = useState("5");
   // Fórmula de vendas dos canais fora do ML (mesmo formato da aba Regras: ex. "PDV - (PDV * 12%)")
   const [formulaVendas, setFormulaVendas] = useState("");
 
@@ -294,6 +304,7 @@ export default function LogisticaPage() {
     setColEntregaVendas("");
     setTextoEntrega("");
     setTaxaFlex("0");
+    setColDataVendas("");   // opcional: sem data, o ritmo é comparado proporcionalmente ao mês
     return !!regra;
   };
 
@@ -302,6 +313,7 @@ export default function LogisticaPage() {
     setLinhaVendas("7"); setColPedidoVendas("A"); setColCarrinhoVendas("D"); setColSkuVendas("X");
     setColMlbVendas("Y"); setColQtdVendas("H"); setColPdvVendas("AC"); setColLiquidoVendas("T");
     setColReceitaPacote("I"); setColEntregaVendas("AS"); setTextoEntrega("flex"); setTaxaFlex("12.99");
+    setColDataVendas("B");
   };
 
   const carregarConfiguracoes = (canal: string) => {
@@ -324,6 +336,7 @@ export default function LogisticaPage() {
 
     // Parte sempre do padrão do tipo (não herda valores do canal anterior) e depois aplica o que foi salvo
     setFormulaCanal(tipo);
+    setRegrasRitmo(REGRAS_RITMO_PADRAO); setPctDevAtencao("5"); setTetoMaxDevolucao("10"); setMinVendasDev("5");
     if (tipo === "ml_recalculo") aplicarPadraoML();
     else aplicarRegrasDoCanal(canal);
 
@@ -340,6 +353,7 @@ export default function LogisticaPage() {
       if (p.colEntrega !== undefined) setColEntregaVendas(p.colEntrega);
       if (p.textoEntrega !== undefined) setTextoEntrega(p.textoEntrega);
       if (p.taxaFlex !== undefined) setTaxaFlex(p.taxaFlex);
+      if (p.colData !== undefined) setColDataVendas(p.colData);
       if (p.formulaVendas !== undefined && tipo === "formula_regras") setFormulaVendas(p.formulaVendas);
     }
     if (p) {
@@ -350,6 +364,9 @@ export default function LogisticaPage() {
       if (p.margemMin) setMargemMinimaPromissora(p.margemMin);
       if (p.vendasMin) setVendasMinimasPromissoras(p.vendasMin);
       if (p.tetoDev) setTetoMaxDevolucao(p.tetoDev);
+      if (p.pctDevAtencao !== undefined) setPctDevAtencao(p.pctDevAtencao);
+      if (p.minVendasDev !== undefined) setMinVendasDev(p.minVendasDev);
+      if (Array.isArray(p.regrasRitmo)) setRegrasRitmo(p.regrasRitmo);
     }
   };
 
@@ -361,7 +378,8 @@ export default function LogisticaPage() {
       colLiquido: colLiquidoVendas, colPacoteRec: colReceitaPacote, colEntrega: colEntregaVendas, textoEntrega: textoEntrega,
       taxaFlex: taxaFlex, comissao: comissaoPadrao, imposto: aliquotaImposto, metaDias: metaDiasCobertura, 
       embalagem: custoEmbalagem, formula: formulaCanal, formulaVendas: formulaVendas, margemMin: margemMinimaPromissora,
-      vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao
+      vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao,
+      colData: colDataVendas, regrasRitmo: regrasRitmo, pctDevAtencao: pctDevAtencao, minVendasDev: minVendasDev
     }));
   };
 
@@ -390,6 +408,7 @@ export default function LogisticaPage() {
             setColLiquidoVendas(det.total);
             setColReceitaPacote(det.receita);
             setColEntregaVendas(det.formaEntrega);
+            setColDataVendas(det.data);
             setLayoutDetectado(`Colunas conferidas pelo cabeçalho (${det.layout}): SKU ${det.sku} · PDV ${det.pdv} · Qtd ${det.unidades} · Status ${det.status}`);
           } else setLayoutDetectado("");
         }
@@ -566,7 +585,9 @@ export default function LogisticaPage() {
 
     const metaMargemPromissora = Number(margemMinimaPromissora.replace(",", ".")) || 12;
     const metaVendasMin = Number(vendasMinimasPromissoras) || 3;
-    const limiteDevolucao = Number(tetoMaxDevolucao.replace(",", ".")) || 10;
+    const limiteDevolucao = Number(String(tetoMaxDevolucao).replace(",", ".")) || 10;
+    const limiteAtencaoDev = Number(String(pctDevAtencao).replace(",", ".")) || 5;
+    const amostraMinDev = Number(minVendasDev) || 0;
 
     const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
 
@@ -594,13 +615,17 @@ export default function LogisticaPage() {
     }
 
     // 2. Base de Devoluções e Curva ABC
-    const { data: dadosDevolucaoRaw } = await supabase.from("devolucoes").select("sku, data_retorno, canal");
+    // Aba Devoluções: unidades devolvidas do SKU, neste canal, no mês de competência
+    let devQuery = await supabase.from("devolucoes").select("sku, data_retorno, canal, quantidade");
+    if (devQuery.error) devQuery = await supabase.from("devolucoes").select("sku, data_retorno, canal") as any;  // base sem a coluna quantidade
+    const dadosDevolucaoRaw: any[] | null = devQuery.data as any;
     const mapaDevContagem = new Map<string, number>();
     if (dadosDevolucaoRaw) {
       dadosDevolucaoRaw.forEach((d: any) => {
-        if (verificarDataNoPeriodo(d.data_retorno, mesSelecionado) && d.canal === canalSelecionado) {
+        if (verificarDataNoPeriodo(d.data_retorno, mesSelecionado) && normTexto(d.canal) === normTexto(canalSelecionado)) {
           const skuKey = normalizarSku(d.sku);
-          if (skuKey) mapaDevContagem.set(skuKey, (mapaDevContagem.get(skuKey) || 0) + 1);
+          const unid = Math.max(1, Number(d.quantidade) || 1);
+          if (skuKey) mapaDevContagem.set(skuKey, (mapaDevContagem.get(skuKey) || 0) + unid);
         }
       });
     }
@@ -620,6 +645,19 @@ export default function LogisticaPage() {
 
     const mapaAgrupado = new Map<string, any>();
     const trocasJaProcessadas = new Set<string>();
+
+    // Datas das vendas válidas por SKU (para o ritmo "N vendas em D dias")
+    const colData = colDataVendas.trim().toUpperCase();
+    const mapaDias = new Map<string, Map<number, number>>();
+    const registrarDia = (skuKey: string, qtd: number, linha: any, linhaPai?: any) => {
+      if (!colData) return;
+      let dia = parseDiaVenda(linha?.[colData]);
+      if (dia === null && linhaPai) dia = parseDiaVenda(linhaPai?.[colData]);
+      if (dia === null) return;
+      const m = mapaDias.get(skuKey) || new Map<number, number>();
+      m.set(dia, (m.get(dia) || 0) + qtd);
+      mapaDias.set(skuKey, m);
+    };
 
     let r = startRow;
     while (r < matrizVendas.length) {
@@ -674,6 +712,7 @@ export default function LogisticaPage() {
                 liquidoTroca -= taxaFlexUnit;
               }
 
+              registrarDia(skuKey, 1, row);
               if (mapaAgrupado.has(skuKey)) {
                 const exist = mapaAgrupado.get(skuKey);
                 exist.receitaBruta += receitaTroca;
@@ -745,6 +784,7 @@ export default function LogisticaPage() {
                 liquidoCalculadoItem -= taxaFlexUnit;
               }
 
+              registrarDia(chSkuKey, chQtd, chRow, row);
               if (mapaAgrupado.has(chSkuKey)) {
                 const exist = mapaAgrupado.get(chSkuKey);
                 exist.receitaBruta += chReceitaTotalItem;
@@ -798,6 +838,7 @@ export default function LogisticaPage() {
           }
         }
 
+        registrarDia(skuKey, qtdLinha, row);
         if (mapaAgrupado.has(skuKey)) {
           const exist = mapaAgrupado.get(skuKey);
           exist.receitaBruta += receitaBrutaLinha;
@@ -857,9 +898,17 @@ export default function LogisticaPage() {
       else if (vmd === 0 && estoqueCD > 0) statusEstoque = "Estoque Parado";
       else statusEstoque = "Saudável";
 
+      // Devolução alta (limite definido na Configuração do Canal): não recomenda o envio.
+      // Só vale com amostra mínima de vendas, para 1 devolução em 1 venda não bloquear o item.
+      const devAlta = devolucoesTotais > 0 && vendasTotais >= amostraMinDev && taxaDevolucao >= limiteDevolucao;
+      const ritmo = classificarRitmo(regrasRitmo, item.qtdVendida, mapaDias.get(skuKey) || null, diasDoMesRef(mesSelecionado));
+
       let statusEnvio = "";
       let qtdEnviar = sugestaoEnvioBruta;
-      if (sugestaoEnvioBruta > 0) {
+      if (sugestaoEnvioBruta > 0 && devAlta) {
+        statusEnvio = `🚫 Não Enviar (Devolução ${taxaDevolucao.toFixed(1)}%)`;
+        qtdEnviar = 0;
+      } else if (sugestaoEnvioBruta > 0) {
         if (estoqueCentral >= sugestaoEnvioBruta) statusEnvio = "✅ Enviar Agora";
         else if (estoqueCentral > 0 && estoqueCentral < sugestaoEnvioBruta) {
           statusEnvio = "⚠️ Enviar Parcial";
@@ -893,7 +942,8 @@ export default function LogisticaPage() {
         lucro_liquido: lucroRs, margem_pct: margemPct,
         vmd: Number(vmd.toFixed(2)), cobertura_dias: Number(coberturaAtual.toFixed(1)), sugestao_envio: qtdEnviar,
         status_estoque: statusEstoque, status_envio: statusEnvio, taxa_devolucao: taxaDevolucao,
-        qtd_devolucoes: devolucoesTotais, diagnostico: diagnostico
+        qtd_devolucoes: devolucoesTotais, diagnostico: diagnostico,
+        ritmo_vendas: ritmo.status, ritmo_nivel: ritmo.nivel, ritmo_por_data: ritmo.porData, dev_atencao: taxaDevolucao >= limiteAtencaoDev && devolucoesTotais > 0
       };
     });
 
@@ -948,11 +998,20 @@ export default function LogisticaPage() {
         cobertura_dias: item.cobertura_dias || 0,
         sugestao_envio: item.sugestao_envio || 0,
         status_estoque: item.status_estoque || "",
-        status_envio: item.status_envio || ""
+        status_envio: item.status_envio || "",
+        taxa_devolucao: item.taxa_devolucao || 0,
+        qtd_devolucoes: item.qtd_devolucoes || 0,
+        ritmo_vendas: item.ritmo_vendas || ""
       }));
     }
 
     let res = await supabase.from(tabela).insert(payloadFormatado);
+    if (res.error && modoLogistica === "full" && /taxa_devolucao|qtd_devolucoes|ritmo_vendas/i.test(res.error.message)) {
+      // Migration das colunas de devolução/ritmo ainda não executada: grava o restante e avisa
+      const semNovas = payloadFormatado.map(({ taxa_devolucao, qtd_devolucoes, ritmo_vendas, ...resto }: any) => resto);
+      res = await supabase.from(tabela).insert(semNovas);
+      if (!res.error) alert("Análise gravada, mas SEM os campos de devolução e ritmo: execute a migration 20261104090000_full_lancamentos_devolucao_ritmo.sql no Supabase.");
+    }
     
     if (res.error) {
       alert("Erro ao gravar resultados no banco: " + res.error.message);
@@ -1005,7 +1064,7 @@ export default function LogisticaPage() {
           qtd_vendida: 0, receita_bruta: 0, estoque_cd: Number(e.estoque), armazenagem: 0,
           estoque_central: tinyMap.get(skuKey) || 0, custo_produto: 0, imposto: 0, tarifa_frete: 0,
           lucro_liquido: 0, margem_pct: 0, vmd: 0, cobertura_dias: 0, sugestao_envio: 0,
-          status_estoque: "Estoque Parado", status_envio: "⏸️ Não Enviar", taxa_devolucao: 0, qtd_devolucoes: 0, diagnostico: "",
+          status_estoque: "Estoque Parado", status_envio: "⏸️ Não Enviar", taxa_devolucao: 0, qtd_devolucoes: 0, diagnostico: "", ritmo_vendas: "Sem vendas",
         };
       })
       .sort((a: any, b: any) => b.estoque_cd - a.estoque_cd);
@@ -1037,6 +1096,8 @@ export default function LogisticaPage() {
       (modoLogistica === "full"
         ? (filtroStatus === "Armazenagem"
             ? (!!armz && armz.nivel !== "OK")
+            : filtroStatus.startsWith("ritmo:")
+            ? String(item.ritmo_vendas || "") === filtroStatus.slice(6)
             : (item.status_estoque === filtroStatus || (item.status_envio && item.status_envio.includes(filtroStatus))))
         : (item.diagnostico && item.diagnostico.includes(filtroStatus)));
     return mText && mStatus;
@@ -1318,6 +1379,13 @@ export default function LogisticaPage() {
                     <input type="text" value={colCarrinhoVendas} onChange={e => { setColCarrinhoVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} placeholder={formulaCanal === "ml_recalculo" ? "D" : "—"} className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
                   </div>
 
+                  {modoLogistica === "full" && (
+                    <div>
+                      <label className="block text-[9px] font-bold text-sky-400 uppercase mb-1" title="Coluna com a data da venda. Usada para contar as vendas dentro de cada intervalo de dias (ritmo de vendas).">Col. Data da Venda</label>
+                      <input type="text" value={colDataVendas} onChange={e => { setColDataVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} placeholder="—" className="w-full bg-slate-900 border border-sky-600/50 rounded-lg p-2 text-xs font-mono text-center text-sky-300 font-bold outline-none" />
+                    </div>
+                  )}
+
                   {formulaCanal === "ml_recalculo" && (
                     <>
                       <div>
@@ -1356,6 +1424,65 @@ export default function LogisticaPage() {
                   </div>
                 </div>
                 {layoutDetectado && <p className="text-[10px] text-emerald-400 mt-3">✔ {layoutDetectado}</p>}
+              </div>
+
+              {/* RITMO DE VENDAS (Full) */}
+              {modoLogistica === "full" && (
+                <div className="bg-sky-950/10 p-5 rounded-xl border border-sky-900/30 space-y-3">
+                  <div>
+                    <h3 className="text-[11px] font-black text-sky-300 uppercase tracking-wider">📈 Ritmo de vendas — status do SKU em {canalSelecionado}</h3>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                      Defina quantas vendas, em quantos dias, dão cada status. Vale a <strong className="text-slate-300">primeira regra da lista</strong> que o SKU atingir, então deixe a mais exigente em cima (ex.: 10 vendas em 5 dias = Ótimo; 5 vendas em 15 dias = Bom).
+                      {colDataVendas.trim()
+                        ? <> Conta as vendas válidas (sem canceladas) em qualquer intervalo de dias seguidos, usando a coluna de data <strong className="text-sky-300">{colDataVendas}</strong>.</>
+                        : <> Sem coluna de data, compara o ritmo médio do mês: vendas do mês ÷ dias do mês.</>}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    {regrasRitmo.map((r, idx) => (
+                      <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                        <span className="w-5 text-center font-mono text-slate-500">{idx + 1}</span>
+                        <input type="number" min={1} value={r.vendas} onChange={e => { setRegrasRitmo(rs => rs.map(x => x.id === r.id ? { ...x, vendas: Number(e.target.value) || 0 } : x)); setCfgSalva(false); }} className="w-20 bg-slate-900 border border-sky-600/50 rounded-lg p-2 text-xs font-mono text-center text-sky-300 font-bold outline-none" />
+                        <span>vendas em</span>
+                        <input type="number" min={1} value={r.dias} onChange={e => { setRegrasRitmo(rs => rs.map(x => x.id === r.id ? { ...x, dias: Number(e.target.value) || 0 } : x)); setCfgSalva(false); }} className="w-20 bg-slate-900 border border-sky-600/50 rounded-lg p-2 text-xs font-mono text-center text-sky-300 font-bold outline-none" />
+                        <span>dias =</span>
+                        <input type="text" value={r.status} onChange={e => { setRegrasRitmo(rs => rs.map(x => x.id === r.id ? { ...x, status: e.target.value } : x)); setCfgSalva(false); }} placeholder="Status (ex.: Bom)" className="w-44 bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-bold text-emerald-300 outline-none" />
+                        <button type="button" disabled={idx === 0} onClick={() => { setRegrasRitmo(rs => { const c = [...rs]; [c[idx - 1], c[idx]] = [c[idx], c[idx - 1]]; return c; }); setCfgSalva(false); }} className="px-2 py-1 rounded bg-slate-800 text-slate-300 disabled:opacity-30 cursor-pointer text-xs" title="Subir (mais exigente)">↑</button>
+                        <button type="button" disabled={idx === regrasRitmo.length - 1} onClick={() => { setRegrasRitmo(rs => { const c = [...rs]; [c[idx + 1], c[idx]] = [c[idx], c[idx + 1]]; return c; }); setCfgSalva(false); }} className="px-2 py-1 rounded bg-slate-800 text-slate-300 disabled:opacity-30 cursor-pointer text-xs" title="Descer">↓</button>
+                        <button type="button" onClick={() => { setRegrasRitmo(rs => rs.filter(x => x.id !== r.id)); setCfgSalva(false); }} className="px-2 py-1 rounded bg-rose-950/60 text-rose-400 cursor-pointer text-xs" title="Remover">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <button type="button" onClick={() => { setRegrasRitmo(rs => [...rs, { id: "r" + Date.now(), vendas: 3, dias: 30, status: "" }]); setCfgSalva(false); }} className="bg-slate-800 hover:bg-slate-700 text-white font-bold px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer">＋ Adicionar regra</button>
+                    <span className="text-[10px] text-slate-500">Sem atingir nenhuma regra: “Abaixo da meta” · sem vendas no mês: “Sem vendas”.</span>
+                  </div>
+                </div>
+              )}
+
+              {/* DEVOLUÇÕES */}
+              <div className="bg-rose-950/10 p-5 rounded-xl border border-rose-900/30 space-y-3">
+                <div>
+                  <h3 className="text-[11px] font-black text-rose-300 uppercase tracking-wider">↩️ Devoluções — quanto o item é devolvido em {canalSelecionado}</h3>
+                  <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                    A % vem da aba Devoluções: unidades devolvidas do SKU neste canal, no mês de competência, ÷ vendas do SKU no mês (o maior valor entre a Curva ABC e as vendas da planilha).
+                    {modoLogistica === "full" ? " Acima do limite, o motor não recomenda o envio ao Full." : " Acima do limite, o veredicto vira “Alta Devolução”."}
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[9px] font-bold text-amber-400 uppercase mb-1">Atenção a partir de (%)</label>
+                    <input type="number" step="0.1" value={pctDevAtencao} onChange={e => { setPctDevAtencao(e.target.value); setCfgSalva(false); }} className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-rose-400 uppercase mb-1">{modoLogistica === "full" ? "Não recomendar envio a partir de (%)" : "Alta devolução a partir de (%)"}</label>
+                    <input type="number" step="0.1" value={tetoMaxDevolucao} onChange={e => { setTetoMaxDevolucao(e.target.value); setCfgSalva(false); }} className="w-full bg-slate-900 border border-rose-600/50 rounded-lg p-2 text-xs font-mono text-center text-rose-300 font-bold outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1" title="Abaixo dessa quantidade de vendas no mês a % é mostrada, mas não bloqueia o envio (evita 1 devolução em 1 venda = 100%).">Mín. de vendas para avaliar</label>
+                    <input type="number" value={minVendasDev} onChange={e => { setMinVendasDev(e.target.value); setCfgSalva(false); }} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                  </div>
+                </div>
               </div>
 
               <div className="flex justify-end">
@@ -1522,6 +1649,9 @@ export default function LogisticaPage() {
                       <option value="Risco de Aging">Risco de Aging</option>
                       <option value="Falta no Central">Sem Saldo na Sede</option>
                       <option value="Estoque Parado">Estoque Parado (sem venda)</option>
+                      <option value="Devolução">Envio bloqueado por Devolução</option>
+                      {regrasRitmo.filter(r => r.status.trim()).map(r => <option key={r.id} value={`ritmo:${r.status.trim()}`}>Ritmo: {r.status.trim()}</option>)}
+                      <option value="ritmo:Abaixo da meta">Ritmo: Abaixo da meta</option>
                       <option value="Armazenagem">Armazenagem em alerta ({DIAS_ALERTA_PADRAO}+ dias)</option>
                     </select>
                   ) : (
@@ -1554,6 +1684,8 @@ export default function LogisticaPage() {
                         <th className="p-3 text-right text-indigo-300">Sede</th>
                         <th className="p-3 text-center">Cobertura</th>
                         <th className="p-3 text-right">Margem LÍQ.</th>
+                        <th className="p-3 text-center text-sky-300">Ritmo</th>
+                        <th className="p-3 text-center text-rose-300">Devolução</th>
                         <th className="p-3 text-center border-l border-slate-800">Status CD</th>
                         <th className="p-3 text-center text-amber-300">Armazenagem</th>
                         <th className="p-3 text-center">Ação Reposição</th>
@@ -1602,6 +1734,26 @@ export default function LogisticaPage() {
                               <td className={`p-3 text-right font-mono font-bold ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
                                 {Number(item.margem_pct).toFixed(1)}%
                               </td>
+                              <td className="p-3 text-center text-[10px] font-bold">
+                                {(() => {
+                                  const lbl = String(item.ritmo_vendas || "");
+                                  if (!lbl) return <span className="text-slate-600">—</span>;
+                                  const pos = regrasRitmo.findIndex(r => r.status.trim() === lbl);
+                                  const cls = lbl === "Sem vendas" ? "text-slate-500" : pos === 0 ? "bg-emerald-900/30 text-emerald-300 border border-emerald-800/50" : pos > 0 ? "bg-sky-900/30 text-sky-300 border border-sky-800/50" : "bg-amber-950/40 text-amber-400 border border-amber-900/40";
+                                  return <span className={`px-2 py-0.5 rounded uppercase ${cls}`}>{lbl}</span>;
+                                })()}
+                              </td>
+                              <td className="p-3 text-center text-[11px] font-mono font-bold">
+                                {(() => {
+                                  if (item.taxa_devolucao === undefined || item.taxa_devolucao === null) return <span className="text-slate-600">—</span>;
+                                  const taxa = Number(item.taxa_devolucao) || 0;
+                                  const und = Number(item.qtd_devolucoes) || 0;
+                                  const lim = Number(String(tetoMaxDevolucao).replace(",", ".")) || 10;
+                                  const aten = Number(String(pctDevAtencao).replace(",", ".")) || 5;
+                                  const cls = und === 0 ? "text-slate-500" : taxa >= lim ? "text-rose-400" : taxa >= aten ? "text-amber-400" : "text-emerald-400";
+                                  return <span className={cls} title={`${und} un. devolvidas de ${Math.max(Number(item.qtd_vendida) || 0, 0)} vendidas`}>{taxa.toFixed(1)}%{und > 0 ? ` (${und} un.)` : ""}</span>;
+                                })()}
+                              </td>
                               <td className="p-3 text-center border-l border-slate-800/50">
                                 {item.status_estoque === "Ruptura Iminente" ? <span className="text-rose-400 font-bold text-[10px]">🔥 Ruptura</span> : item.status_estoque === "Risco de Aging" ? <span className="text-amber-400 font-bold text-[10px]">⚠️ Aging Alto</span> : item.status_estoque === "Estoque Parado" ? <span className="text-amber-400 font-bold text-[10px]">⏳ Parado</span> : <span className="text-emerald-400 text-[10px]">✔️ Saudável</span>}
                               </td>
@@ -1615,7 +1767,7 @@ export default function LogisticaPage() {
                                 })()}
                               </td>
                               <td className="p-3 text-center">
-                                {item.status_envio.includes("Parcial") ? <span className="bg-amber-900/30 text-amber-400 border border-amber-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Falta") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Não") ? <span className="text-slate-500 text-[10px] uppercase font-bold">{item.status_envio}</span> : <span className="bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span>}
+                                {String(item.status_envio).includes("Devolução") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Parcial") ? <span className="bg-amber-900/30 text-amber-400 border border-amber-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Falta") ? <span className="bg-rose-900/30 text-rose-400 border border-rose-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span> : item.status_envio.includes("Não") ? <span className="text-slate-500 text-[10px] uppercase font-bold">{item.status_envio}</span> : <span className="bg-emerald-900/30 text-emerald-400 border border-emerald-800/50 px-2 py-1 rounded text-[10px] font-bold uppercase">{item.status_envio}</span>}
                               </td>
                               <td className="p-3 text-center font-mono font-black text-lg text-purple-400">
                                 {item.sugestao_envio > 0 ? `+${item.sugestao_envio}` : '-'}
