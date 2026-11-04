@@ -21,6 +21,16 @@ const lerUsuario = (): { email: string } | null => {
   } catch { return null; }
 };
 
+/** Notificação do Windows (canto da tela / central de notificações, como a de e-mail recebido). */
+function toastWindows(titulo: string, corpo: string, tag: string) {
+  try {
+    if (!("Notification" in window) || Notification.permission !== "granted") return false;
+    const n = new Notification(titulo, { body: corpo, tag, requireInteraction: true, silent: false, icon: "/favicon.ico" });
+    n.onclick = () => { window.focus(); n.close(); };
+    return true;
+  } catch { return false; }
+}
+
 export default function AlertaTarefasGlobal() {
   const router = useRouter();
   const pathname = usePathname();
@@ -28,6 +38,7 @@ export default function AlertaTarefasGlobal() {
   const [permissao, setPermissao] = useState<"indisponivel" | "default" | "granted" | "denied">("indisponivel");
   const [logado, setLogado] = useState(false);
   const [bannerFechado, setBannerFechado] = useState(false);
+  const [mudo, setMudo] = useState(false);
   const alertasRef = useRef<Alerta[]>([]);
   alertasRef.current = alertas;
   const somEmRef = useRef(0);
@@ -46,7 +57,20 @@ export default function AlertaTarefasGlobal() {
   // canal entre abas + liberar o som no primeiro clique + botão "testar" da tela Início
   useEffect(() => {
     if ("Notification" in window) setPermissao(Notification.permission as any);
-    const liberar = () => prepararSom();
+    const liberar = () => {
+      prepararSom();
+      // primeiro clique da sessão: pede a permissão das notificações do Windows (o navegador só deixa pedir com um clique)
+      try {
+        if ("Notification" in window && Notification.permission === "default" && !sessionStorage.getItem("alerta_pediu_permissao")) {
+          sessionStorage.setItem("alerta_pediu_permissao", "1");
+          Notification.requestPermission().then((r) => {
+            setPermissao(r as any);
+            const u = lerUsuario();
+            if (r === "granted" && u) registrarPush(u.email).then((reg) => { temPushRef.current = reg.ok; });
+          });
+        }
+      } catch { /* ignora */ }
+    };
     window.addEventListener("pointerdown", liberar);
     window.addEventListener("keydown", liberar);
 
@@ -60,8 +84,25 @@ export default function AlertaTarefasGlobal() {
     } catch { /* navegador sem BroadcastChannel: cada aba avisa por conta própria */ }
     canalRef.current = canal;
 
-    const testar = () => {
-      const t: Alerta = { id: "teste-" + Date.now(), titulo: "Teste de alerta", corpo: "Se você viu este pop-up e ouviu o som, os avisos de tarefa vão funcionar assim em todas as abas." };
+    const testar = async () => {
+      let corpo = "Se você viu este pop-up e ouviu o som, os avisos de tarefa vão funcionar assim em todas as abas.";
+      if (!("Notification" in window)) {
+        corpo += " ATENÇÃO: este navegador não suporta notificações do Windows.";
+      } else {
+        if (Notification.permission === "default") {
+          const r = await Notification.requestPermission();   // chamado direto do clique no botão
+          setPermissao(r as any);
+          const u = lerUsuario();
+          if (r === "granted" && u) registrarPush(u.email).then((reg) => { temPushRef.current = reg.ok; });
+        }
+        if (Notification.permission === "granted") {
+          toastWindows("📝 Teste de alerta", "Esta é a notificação lateral do Windows. Se ela não apareceu: Windows > Configurações > Sistema > Notificações (ligue o Chrome/Edge e desative o Foco/Não perturbar).", "teste-alerta");
+          corpo += " A notificação lateral do Windows também foi enviada agora.";
+        } else {
+          corpo += " ATENÇÃO: as notificações do Windows estão BLOQUEADAS neste navegador. Clique no cadeado ao lado do endereço do site, abra Notificações e escolha Permitir.";
+        }
+      }
+      const t: Alerta = { id: "teste-" + Date.now(), titulo: "Teste de alerta", corpo };
       try { canalRef.current?.postMessage({ tipo: "mostrar", alertas: [t] }); } catch { /* ignora */ }
       mostrar([t]);
     };
@@ -84,8 +125,6 @@ export default function AlertaTarefasGlobal() {
       setLogado(!!usuario);
       if (!usuario) return;
 
-      // pop-up ainda aberto: repete o som a cada ~30 s
-      if (alertasRef.current.length && Date.now() - somEmRef.current > 10000) tocar(2);
       if (ocupado) return;
       ocupado = true;
       try {
@@ -107,12 +146,7 @@ export default function AlertaTarefasGlobal() {
             : `Venceu às ${hhmm(t.hora_entrega)} e ainda não foi concluída.`;
           novos.push({ id: chave, titulo: t.titulo, corpo });
           // notificação do Windows feita aqui (uma só, pela aba que "pegou" o alerta) quando o servidor ainda não está avisando por push
-          if ("Notification" in window && Notification.permission === "granted" && !temPushRef.current) {
-            try {
-              const n = new Notification(`📝 ${t.titulo}`, { body: corpo, tag: chave, requireInteraction: true, silent: false });
-              n.onclick = () => { window.focus(); n.close(); };
-            } catch { /* navegador sem suporte */ }
-          }
+          if (!temPushRef.current) toastWindows(`📝 ${t.titulo}`, corpo, chave);
         });
         if (novos.length) {
           try { canalRef.current?.postMessage({ tipo: "mostrar", alertas: novos }); } catch { /* ignora */ }
@@ -135,6 +169,15 @@ export default function AlertaTarefasGlobal() {
     if (!u || permissao !== "granted" || !suportaPush()) return;
     registrarPush(u.email).then(async (r) => { temPushRef.current = r.ok || (await temAssinaturaAtiva()); });
   }, [permissao, logado]);
+
+  // som intermitente: bi-bip a cada 3 s enquanto o pop-up estiver aberto (até clicar em "Entendi" ou "Silenciar")
+  useEffect(() => {
+    if (!alertas.length) { setMudo(false); return; }
+    if (mudo) return;
+    const i = setInterval(() => tocar(1), 3000);
+    return () => clearInterval(i);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alertas.length, mudo]);
 
   // título da aba piscando enquanto o pop-up está aberto
   useEffect(() => {
@@ -173,6 +216,7 @@ export default function AlertaTarefasGlobal() {
                 </div>
               ))}
             </div>
+            <button type="button" data-popup-mudo onClick={() => setMudo((m) => !m)} className="w-full mb-3 rounded-lg border border-slate-700 text-slate-300 hover:text-white text-[11px] font-bold py-2 cursor-pointer">{mudo ? "🔊 Voltar o som" : "🔇 Silenciar o som (mantém o aviso na tela)"}</button>
             <div className="flex gap-2">
               <button type="button" data-popup-ver onClick={() => { fechar(); router.push("/inicio"); }} className="flex-1 rounded-xl border border-amber-500 text-amber-300 hover:text-white font-bold py-3 text-xs uppercase tracking-wider cursor-pointer">Ver tarefas</button>
               <button type="button" data-popup-fechar onClick={fechar} className="flex-1 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-3 text-sm uppercase tracking-wider cursor-pointer">Entendi</button>
