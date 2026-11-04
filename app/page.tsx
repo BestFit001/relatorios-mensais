@@ -14,22 +14,121 @@ function normalizarSku(valor: any): string {
   return s.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 }
 
+// Mesma regra do dashboard para casar o ID do pedido entre vendas, faturados, Flex e cancelados
+function normalizarPedido(v: any): string {
+  return String(v ?? "").trim().replace(/\.0$/, "").replace(/\s+/g, "").toLowerCase();
+}
+
+function normalizarTexto(v: any): string {
+  return String(v ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+}
+
+function num(v: any): number {
+  if (typeof v === "number") return isNaN(v) ? 0 : v;
+  const s = String(v ?? "").replace(/[^\d.,-]/g, "");
+  if (!s) return 0;
+  const n = s.includes(",") ? parseFloat(s.replace(/\./g, "").replace(",", ".")) : parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function paraIso(v: any): string {
+  const s = String(v ?? "").trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return "";
+}
+
+const brl = (n: number) => (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const DIA_MS = 24 * 60 * 60 * 1000;
+const DIAS_SEMANA = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
+// Lojas físicas (clubes) não têm SKU de marketplace: ficam fora da Curva ABC
+function ehFisico(canal: any): boolean {
+  const nome = normalizarTexto(canal);
+  return nome.includes("clube") || nome.includes("loja") || nome.includes("paineiras") || nome.includes("hebraica");
+}
+
+// Marcas escritas de formas diferentes ("Best Fit", "BESTFIT", "FARM", "Farm") viram uma só
+function chaveMarca(m: any): string {
+  return normalizarTexto(m).replace(/[^a-z0-9]/g, "");
+}
+
+async function fetchTodos(tabela: string, select: string, erros: string[]): Promise<any[]> {
+  let todos: any[] = [];
+  let from = 0;
+  const step = 1000;
+  while (true) {
+    const { data, error } = await supabase.from(tabela).select(select).order("id").range(from, from + step - 1);
+    if (error) { erros.push(`${tabela}: ${error.message}`); break; }
+    if (!data || data.length === 0) break;
+    todos = todos.concat(data);
+    from += step;
+    if (data.length < step) break;
+  }
+  return todos;
+}
+
+type Intervalo = [number, number];
+function calcularPeriodo(dateFilter: string, ini: string, fim: string, mesRef: string): { curr: Intervalo | null; prev: Intervalo | null } {
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const fimDoDia = hoje.getTime() + DIA_MS - 1;
+  const janela = (dias: number) => {
+    const s = hoje.getTime() - (dias - 1) * DIA_MS;
+    return { curr: [s, fimDoDia] as Intervalo, prev: [s - dias * DIA_MS, s - 1] as Intervalo };
+  };
+  if (dateFilter === "HOJE") return janela(1);
+  if (dateFilter === "SEMANA") return janela(7);
+  if (dateFilter === "QUINZENA") return janela(15);
+  if (dateFilter === "MES") return janela(30);
+  if (dateFilter === "MES_REF" && /^\d{4}-\d{2}$/.test(mesRef)) {
+    const [a, m] = mesRef.split("-").map(Number);
+    const s = new Date(a, m - 1, 1).getTime();
+    const e = new Date(a, m, 1).getTime() - 1;
+    const ps = new Date(a, m - 2, 1).getTime();
+    return { curr: [s, e], prev: [ps, s - 1] };
+  }
+  if (dateFilter === "PERSONALIZADO" && ini && fim) {
+    const s = new Date(ini + "T00:00:00").getTime();
+    const e = new Date(fim + "T23:59:59").getTime();
+    const dur = e - s + 1;
+    return { curr: [s, e], prev: [s - dur, s - 1] };
+  }
+  return { curr: null, prev: null };   // TUDO (ou personalizado incompleto)
+}
+
+const noIntervalo = (t: number, iv: Intervalo | null) => !iv || (t >= iv[0] && t <= iv[1]);
+
 export default function CurvaABCPage() {
   const [loading, setLoading] = useState(true);
+  const [erros, setErros] = useState<string[]>([]);
 
-  // Estados de dados do Supabase
+  // Dados brutos do Supabase
   const [vendas, setVendas] = useState<any[]>([]);
-  const [custosMap, setCustosMap] = useState<Record<string, { custo: number; marca: string; titulo: string }>>({});
-  const [devolucoesMap, setDevolucoesMap] = useState<Record<string, { qtd: number; valor: number }>>({});
-  const [canaisDisponiveis, setCanaisDisponiveis] = useState<string[]>([]);
+  const [faturados, setFaturados] = useState<any[]>([]);
+  const [custosLista, setCustosLista] = useState<any[]>([]);
+  const [devolucoes, setDevolucoes] = useState<any[]>([]);
+  const [cancelados, setCancelados] = useState<any[]>([]);
+  const [plp, setPlp] = useState<any[]>([]);
+  const [tarifasSite, setTarifasSite] = useState<any[]>([]);
 
   // Filtros
   const [dateFilter, setDateFilter] = useState("MES");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
+  const [mesRef, setMesRef] = useState("");
   const [searchSku, setSearchSku] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("TODAS");
   const [selectedChannel, setSelectedChannel] = useState("TODOS");
+
+  // Visões novas
+  const [visao, setVisao] = useState<"SKU" | "MARCA">("SKU");
+  const [ordenarPor, setOrdenarPor] = useState<"FAT" | "QTD" | "TICKET" | "LUCRO">("FAT");
+  const [topVisao, setTopVisao] = useState<"PRODUTOS" | "MARCAS">("PRODUTOS");
+  const [topMetrica, setTopMetrica] = useState<"QTD" | "FAT">("QTD");
+  const [granularidade, setGranularidade] = useState<"DIA" | "SEMANA" | "MES">("DIA");
 
   // Filtros da tabela de pedidos
   const [searchOrderId, setSearchOrderId] = useState("");
@@ -44,362 +143,373 @@ export default function CurvaABCPage() {
 
   useEffect(() => {
     setCurrentPageOrders(1);
-  }, [searchOrderId, sortOrder, filtroDevolucao, dateFilter, customStartDate, customEndDate, selectedChannel, selectedBrand, searchSku]);
+  }, [searchOrderId, sortOrder, filtroDevolucao, dateFilter, customStartDate, customEndDate, mesRef, selectedChannel, selectedBrand, searchSku]);
 
-  // 1. Carrega dados de apoio (Custos, Devoluções e Vendas)
   const carregarDadosBase = async () => {
     setLoading(true);
+    const e: string[] = [];
     try {
-      // 1.1 Tabela de Custos e Cadastro
-      let allCustos: any[] = [];
-      let from = 0;
-      const step = 1000;
-      let keep = true;
-      while (keep) {
-        const { data } = await supabase
-          .from("tabela_custos_skus")
-          .select("sku, marca, produto, custo_unitario")
-          .range(from, from + step - 1);
-        if (data && data.length > 0) {
-          allCustos = [...allCustos, ...data];
-          from += step;
-          if (data.length < step) keep = false;
-        } else keep = false;
-      }
-
-      const cMap: Record<string, { custo: number; marca: string; titulo: string }> = {};
-      allCustos.forEach((c) => {
-        const k = normalizarSku(c.sku);
-        if (k) {
-          cMap[k] = {
-            custo: Number(c.custo_unitario) || 0,
-            marca: (c.marca || "SEM MARCA").trim().toUpperCase(),
-            titulo: c.produto || "Produto não identificado"
-          };
-        }
-      });
-      setCustosMap(cMap);
-
-      // 1.2 Tabela de Devoluções (Agrupada por SKU e por ID Pedido)
-      const { data: dadosDevolucoes } = await supabase
-        .from("devolucoes")
-        .select("sku, id_pedido, valor_reembolso, quantidade, motivo");
-
-      const devMap: Record<string, { qtd: number; valor: number }> = {};
-      (dadosDevolucoes || []).forEach((d: any) => {
-        const k = normalizarSku(d.sku);
-        if (k) {
-          if (!devMap[k]) devMap[k] = { qtd: 0, valor: 0 };
-          devMap[k].qtd += Number(d.quantidade) || 1;
-          devMap[k].valor += Number(d.valor_reembolso) || 0;
-        }
-      });
-      setDevolucoesMap(devMap);
-
-      // 1.3 Vendas dos Canais
-      let allVendas: any[] = [];
-      from = 0;
-      keep = true;
-      while (keep) {
-        const { data } = await supabase
-          .from("vendas_canais")
-          .select("id_pedido, sku, canal, data_faturamento, preco_venda, repasse_liquido, quantidade, frete_flex, status")
-          .range(from, from + step - 1);
-        if (data && data.length > 0) {
-          allVendas = [...allVendas, ...data];
-          from += step;
-          if (data.length < step) keep = false;
-        } else keep = false;
-      }
-
-      setVendas(allVendas);
-
-      // Extrai canais dinâmicos excluindo lojas físicas
-      const canaisUnicos = Array.from(new Set(allVendas.map((v) => v.canal).filter(Boolean)))
-        .filter((c: any) => {
-          const nome = String(c || "").toLowerCase();
-          return !(nome.includes("clube") || nome.includes("loja") || nome.includes("paineiras") || nome.includes("hebraica"));
-        });
-      setCanaisDisponiveis(canaisUnicos);
-
-    } catch (err) {
-      console.error("Erro ao carregar base da Curva ABC:", err);
+      const [v, f, c, d, k, p, t] = await Promise.all([
+        fetchTodos("vendas_canais", "id, id_pedido, sku, canal, produto, preco_venda, repasse_liquido, quantidade", e),
+        fetchTodos("faturados", "id, id_pedido, data_faturamento", e),
+        fetchTodos("tabela_custos_skus", "id, sku, marca, produto, custo_unitario", e),
+        fetchTodos("devolucoes", "id, pedido, canal, sku, pdv, quantidade, data_retorno", e),
+        fetchTodos("cancelados", "id, canal, id_pedido, sku, quantidade, valor", e),
+        fetchTodos("plp_pedidos", "id, numero_pedido, valor_frete", e),
+        fetchTodos("tarifas_site", "id, id_pedido, valor_tarifa", e),
+      ]);
+      setVendas(v); setFaturados(f); setCustosLista(c); setDevolucoes(d); setCancelados(k); setPlp(p); setTarifasSite(t);
+    } catch (err: any) {
+      e.push(String(err?.message || err));
     } finally {
+      setErros(e);
       setLoading(false);
     }
   };
 
-  // Lista de marcas disponíveis
+  // SKU -> custo, marca e título; marcas equivalentes são unificadas
+  const custosMap = useMemo(() => {
+    const rotuloPorChave: Record<string, string> = {};
+    const bruto = custosLista.map((c) => {
+      const marca = String(c.marca || "SEM MARCA").trim().toUpperCase().replace(/\s+/g, " ");
+      const ch = chaveMarca(marca);
+      // entre "BESTFIT" e "BEST FIT" fica o escrito com espaço
+      if (!rotuloPorChave[ch] || (marca.includes(" ") && !rotuloPorChave[ch].includes(" "))) rotuloPorChave[ch] = marca;
+      return { c, ch };
+    });
+    const map: Record<string, { custo: number; marca: string; titulo: string; skuOriginal: string }> = {};
+    bruto.forEach(({ c, ch }) => {
+      const k = normalizarSku(c.sku);
+      if (k) map[k] = { custo: num(c.custo_unitario), marca: rotuloPorChave[ch], titulo: c.produto || "Produto não identificado", skuOriginal: String(c.sku ?? "").trim() };
+    });
+    return map;
+  }, [custosLista]);
+
   const availableBrands = useMemo(() => {
     const brands = new Set<string>();
-    Object.values(custosMap).forEach((item) => {
-      if (item.marca) brands.add(item.marca);
-    });
+    Object.values(custosMap).forEach((item) => { if (item.marca) brands.add(item.marca); });
     return ["TODAS", ...Array.from(brands).sort((a, b) => a.localeCompare(b))];
   }, [custosMap]);
 
-  // Motor Temporal e Cálculo da Curva ABC com Impacto de Devoluções
-  const { currentSales, abcCurve, kpis } = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(today);
-    endOfDay.setHours(23, 59, 59, 999);
+  const canaisDisponiveis = useMemo(
+    () => Array.from(new Set(vendas.map((v) => v.canal).filter(Boolean))).filter((c: any) => !ehFisico(c)).sort() as string[],
+    [vendas]
+  );
 
-    let currStartMs = 0, currEndMs = endOfDay.getTime();
-    let prevStartMs = 0, prevEndMs = 0;
-    const DAY_MS = 24 * 60 * 60 * 1000;
+  // Linhas de venda prontas: data vem dos faturados, Flex/tarifa do Site rateados por pedido, cancelados marcados
+  const { linhasBase, semFaturamento, chavesVendas } = useMemo(() => {
+    const dataPorPedido = new Map<string, string>();
+    faturados.forEach((f) => {
+      const k = normalizarPedido(f.id_pedido);
+      const d = paraIso(f.data_faturamento);
+      if (k && d && !dataPorPedido.has(k)) dataPorPedido.set(k, d);
+    });
+    const flex = new Map<string, number>();
+    plp.forEach((p) => { const k = normalizarPedido(p.numero_pedido); const val = num(p.valor_frete); if (k && val > 0) flex.set(k, val); });
+    const tarifa = new Map<string, number>();
+    tarifasSite.forEach((t) => { const k = normalizarPedido(t.id_pedido); if (k) tarifa.set(k, num(t.valor_tarifa)); });
+    const canc = new Set<string>();
+    cancelados.forEach((c) => { const k = normalizarPedido(c.id_pedido); if (k) canc.add(`${normalizarTexto(c.canal)}|${k}`); });
 
-    if (dateFilter === "HOJE") {
-      currStartMs = today.getTime();
-      prevStartMs = currStartMs - DAY_MS;
-      prevEndMs = currEndMs - DAY_MS;
-    } else if (dateFilter === "SEMANA") {
-      currStartMs = today.getTime() - 6 * DAY_MS;
-      prevEndMs = currStartMs - 1;
-      prevStartMs = prevEndMs - 6 * DAY_MS;
-    } else if (dateFilter === "QUINZENA") {
-      currStartMs = today.getTime() - 14 * DAY_MS;
-      prevEndMs = currStartMs - 1;
-      prevStartMs = prevEndMs - 14 * DAY_MS;
-    } else if (dateFilter === "MES") {
-      currStartMs = today.getTime() - 29 * DAY_MS;
-      prevEndMs = currStartMs - 1;
-      prevStartMs = prevEndMs - 29 * DAY_MS;
-    } else if (dateFilter === "PERSONALIZADO" && customStartDate && customEndDate) {
-      const start = new Date(customStartDate + "T00:00:00").getTime();
-      const end = new Date(customEndDate + "T23:59:59").getTime();
-      currStartMs = start;
-      currEndMs = end;
-      const duration = currEndMs - currStartMs + 1;
-      prevEndMs = currStartMs - 1;
-      prevStartMs = currStartMs - duration;
-    }
+    // Amazon: vendas antigas ainda com sufixo F / -F / -FBA casam com o SKU da base (mesma regra do upload)
+    const resolverSku = (canal: any, norm: string): string => {
+      if (!norm || custosMap[norm] || !normalizarTexto(canal).includes("amazon")) return norm;
+      if (norm.endsWith("fba") && custosMap[norm.slice(0, -3)]) return norm.slice(0, -3);
+      if (norm.endsWith("f") && custosMap[norm.slice(0, -1)]) return norm.slice(0, -1);
+      return norm;
+    };
 
-    const currSales: any[] = [];
-    const prevSales: any[] = [];
-
-    (vendas || []).forEach((s) => {
-      const nomeCanal = String(s.canal || "").toLowerCase();
-      const isFisico = nomeCanal.includes("clube") || nomeCanal.includes("loja") || nomeCanal.includes("paineiras") || nomeCanal.includes("hebraica");
-      if (isFisico) return;
-      if (selectedChannel !== "TODOS" && s.canal !== selectedChannel) return;
-
-      if (s.data_faturamento) {
-        const t = new Date(s.data_faturamento + "T00:00:00").getTime();
-        if (dateFilter !== "TUDO") {
-          if (t >= currStartMs && t <= currEndMs) currSales.push(s);
-          else if (t >= prevStartMs && t <= prevEndMs) prevSales.push(s);
-        } else {
-          currSales.push(s);
-        }
-      }
+    const linhas: any[] = [];
+    const chaves = new Set<string>();
+    let sem = 0;
+    vendas.forEach((s) => {
+      if (ehFisico(s.canal)) return;
+      const pedN = normalizarPedido(s.id_pedido);
+      const chave = `${normalizarTexto(s.canal)}|${pedN}`;
+      chaves.add(chave);
+      const data = dataPorPedido.get(pedN);
+      if (!data) { sem++; return; }
+      const skuNorm = resolverSku(s.canal, normalizarSku(s.sku));
+      linhas.push({
+        ped: s.id_pedido, pedN, chave, canal: s.canal, sku: custosMap[skuNorm]?.skuOriginal || s.sku, skuNorm,
+        qtd: num(s.quantidade) || 1, preco: num(s.preco_venda), repasse: num(s.repasse_liquido),
+        data, t: new Date(data + "T00:00:00").getTime(), cancelado: canc.has(chave), extra: 0,
+      });
     });
 
-    // 1. Agregação Período Atual
-    const skuStats: Record<string, any> = {};
-    currSales.forEach((s) => {
-      const k = normalizarSku(s.sku);
-      if (!skuStats[k]) {
-        skuStats[k] = {
-          rawSku: s.sku,
-          skuNorm: k,
-          qtd: 0,
-          revenue: 0,
-          repasse: 0,
-          freteFlex: 0
-        };
-      }
-      skuStats[k].qtd += Number(s.quantidade) || 1;
-      skuStats[k].revenue += Number(s.preco_venda) || 0;
-      skuStats[k].repasse += Number(s.repasse_liquido) || 0;
-      skuStats[k].freteFlex += Number(s.frete_flex) || 0;
+    // Frete Flex (e tarifa Vindi no Site) é do pedido: divide entre os itens na proporção do valor
+    const porPedido = new Map<string, any[]>();
+    linhas.forEach((l) => porPedido.set(l.chave, [...(porPedido.get(l.chave) || []), l]));
+    porPedido.forEach((itens) => {
+      const pedN = itens[0].pedN;
+      const total = (flex.get(pedN) || 0) + (normalizarTexto(itens[0].canal).includes("site") ? tarifa.get(pedN) || 0 : 0);
+      if (total <= 0) return;
+      const soma = itens.reduce((a, i) => a + i.preco, 0);
+      itens.forEach((i) => { i.extra = total * (soma > 0 ? i.preco / soma : 1 / itens.length); });
+    });
+    return { linhasBase: linhas, semFaturamento: sem, chavesVendas: chaves };
+  }, [vendas, faturados, plp, tarifasSite, cancelados, custosMap]);
+
+  // ----- Análise principal (respeita canal, período, marca e pesquisa) -----
+  const analise = useMemo(() => {
+    const per = calcularPeriodo(dateFilter, customStartDate, customEndDate, mesRef);
+    const canalOk = (l: any) => selectedChannel === "TODOS" || l.canal === selectedChannel;
+
+    const atual: any[] = [], anterior: any[] = [], canceladas: any[] = [];
+    linhasBase.forEach((l) => {
+      if (!canalOk(l)) return;
+      if (noIntervalo(l.t, per.curr)) (l.cancelado ? canceladas : atual).push(l);
+      else if (per.prev && noIntervalo(l.t, per.prev) && !l.cancelado) anterior.push(l);
     });
 
-    let faturamentoTotalPeriodo = 0;
-    let devolucoesTotalPeriodo = 0;
+    // Devoluções do mesmo canal e período (data do retorno)
+    const devolucoesDe = (iv: Intervalo | null) => {
+      const porSku: Record<string, { qtd: number; valor: number }> = {};
+      devolucoes.forEach((d) => {
+        if (selectedChannel !== "TODOS" && normalizarTexto(d.canal) !== normalizarTexto(selectedChannel)) return;
+        const dt = paraIso(d.data_retorno);
+        if (iv && dt && !noIntervalo(new Date(dt + "T00:00:00").getTime(), iv)) return;
+        const k = normalizarSku(d.sku);
+        if (!k) return;
+        if (!porSku[k]) porSku[k] = { qtd: 0, valor: 0 };
+        porSku[k].qtd += num(d.quantidade) || 1;
+        porSku[k].valor += num(d.pdv);
+      });
+      return porSku;
+    };
+    const devAtual = devolucoesDe(per.curr);
+    const devAnterior = per.prev ? devolucoesDe(per.prev) : {};
 
-    let allSkus = Object.values(skuStats).map((s) => {
-      const infoCusto = custosMap[s.skuNorm] || { custo: 0, marca: "SEM MARCA", titulo: "Produto não cadastrado" };
-      const infoDevolucao = devolucoesMap[s.skuNorm] || { qtd: 0, valor: 0 };
+    const agrupar = (linhas: any[]) => {
+      const m: Record<string, any> = {};
+      linhas.forEach((l) => {
+        if (!m[l.skuNorm]) m[l.skuNorm] = { skuNorm: l.skuNorm, rawSku: l.sku, qtd: 0, revenue: 0, repasse: 0, extra: 0, pedidos: new Set<string>() };
+        const s = m[l.skuNorm];
+        s.qtd += l.qtd; s.revenue += l.preco; s.repasse += l.repasse; s.extra += l.extra; s.pedidos.add(l.chave);
+      });
+      return m;
+    };
 
-      const cmvTotal = infoCusto.custo * s.qtd;
-      // Lucro Real = Repasse Líquido - CMV - Frete Flex - Valor Perdido em Devoluções
-      const lucroTotal = s.repasse - cmvTotal - s.freteFlex - infoDevolucao.valor;
-      
-      const taxaDevolucao = s.qtd > 0 ? (infoDevolucao.qtd / s.qtd) * 100 : 0;
-
-      faturamentoTotalPeriodo += s.revenue;
-      devolucoesTotalPeriodo += infoDevolucao.valor;
-
+    // Curva ABC calculada sobre todo o período/canal (a letra não muda com marca ou pesquisa)
+    const skuStats = agrupar(atual);
+    const totalPeriodo = Object.values(skuStats).reduce((a: number, s: any) => a + s.revenue, 0);
+    const todos = Object.values(skuStats).map((s: any) => {
+      const info = custosMap[s.skuNorm] || { custo: 0, marca: "SEM MARCA", titulo: "Produto não cadastrado" };
+      const dev = devAtual[s.skuNorm] || { qtd: 0, valor: 0 };
+      const cmvTotal = info.custo * s.qtd;
+      const pedidos = s.pedidos.size;
       return {
-        ...s,
-        sku: s.rawSku,
-        titulo: infoCusto.titulo,
-        marca: infoCusto.marca,
-        custoUnitario: infoCusto.custo,
-        cmvTotal,
-        lucroTotal,
-        qtdDevolvida: infoDevolucao.qtd,
-        valorDevolvido: infoDevolucao.valor,
-        taxaDevolucao
-      };
+        ...s, sku: s.rawSku, titulo: info.titulo, marca: info.marca, custoUnitario: info.custo, cmvTotal,
+        pedidosQtd: pedidos,
+        ticketUn: s.qtd > 0 ? s.revenue / s.qtd : 0,
+        ticketPedido: pedidos > 0 ? s.revenue / pedidos : 0,
+        lucroTotal: s.repasse - cmvTotal - s.extra - dev.valor,
+        qtdDevolvida: dev.qtd, valorDevolvido: dev.valor,
+        taxaDevolucao: s.qtd > 0 ? (dev.qtd / s.qtd) * 100 : 0,
+        pctRepresentatividade: totalPeriodo > 0 ? (s.revenue / totalPeriodo) * 100 : 0,
+        semCusto: !custosMap[s.skuNorm] || custosMap[s.skuNorm].custo <= 0,
+      } as any;
+    });
+    todos.sort((a: any, b: any) => b.revenue - a.revenue);
+    let acumulado = 0;
+    todos.forEach((s: any) => {
+      const antes = totalPeriodo > 0 ? (acumulado / totalPeriodo) * 100 : 0;   // o item que cruza 80% ainda é A
+      acumulado += s.revenue;
+      s.curva = antes < 80 ? "A" : antes < 95 ? "B" : "C";
     });
 
-    allSkus.sort((a, b) => b.revenue - a.revenue);
+    const termo = searchSku.trim().toLowerCase();
+    const passa = (skuNorm: string, sku: any, titulo: string, marca: string) => {
+      if (termo && !(String(sku).toLowerCase().includes(termo) || skuNorm.includes(termo) || titulo.toLowerCase().includes(termo))) return false;
+      if (selectedBrand !== "TODAS" && marca !== selectedBrand) return false;
+      return true;
+    };
+    const skus = todos.filter((s: any) => passa(s.skuNorm, s.sku, s.titulo, s.marca));
+    const skuVisivel = new Set(skus.map((s: any) => s.skuNorm));
+    const linhasFiltradas = atual.filter((l) => skuVisivel.has(l.skuNorm));
 
-    let cumulative = 0;
-    allSkus.forEach((s) => {
-      cumulative += s.revenue;
-      const pct = (cumulative / (faturamentoTotalPeriodo || 1)) * 100;
-      s.pctRepresentatividade = (s.revenue / (faturamentoTotalPeriodo || 1)) * 100;
+    // KPIs
+    let fat = 0, luc = 0, dev = 0, qtd = 0;
+    skus.forEach((s: any) => { fat += s.revenue; luc += s.lucroTotal; dev += s.valorDevolvido; qtd += s.qtd; });
+    const pedidosSet = new Set(linhasFiltradas.map((l) => l.chave));
 
-      if (pct <= 80) s.curva = "A";
-      else if (pct <= 95) s.curva = "B";
-      else s.curva = "C";
+    // Período anterior para comparativo
+    const prevStats = agrupar(anterior);
+    let prevFat = 0, prevLuc = 0;
+    Object.values(prevStats).forEach((s: any) => {
+      const info = custosMap[s.skuNorm] || { custo: 0, marca: "SEM MARCA", titulo: "" };
+      if (!passa(s.skuNorm, s.rawSku, info.titulo, info.marca)) return;
+      prevFat += s.revenue;
+      prevLuc += s.repasse - info.custo * s.qtd - s.extra - (devAnterior[s.skuNorm]?.valor || 0);
     });
 
-    // Filtros de Pesquisa (SKU e Marca)
-    let displaySkus = allSkus;
-    if (searchSku.trim()) {
-      displaySkus = displaySkus.filter((s) => s.sku.toLowerCase().includes(searchSku.toLowerCase()));
-    }
-    if (selectedBrand !== "TODAS") {
-      displaySkus = displaySkus.filter((s) => s.marca === selectedBrand);
-    }
-
-    let fatFiltrado = 0, lucFiltrado = 0, devFiltrada = 0;
-    let cA = 0, cB = 0, cC = 0;
-
-    displaySkus.forEach((s) => {
-      fatFiltrado += s.revenue;
-      lucFiltrado += s.lucroTotal;
-      devFiltrada += s.valorDevolvido;
-      if (s.curva === "A") cA++;
-      if (s.curva === "B") cB++;
-      if (s.curva === "C") cC++;
+    // Marcas (a partir dos SKUs filtrados)
+    const marcas: Record<string, any> = {};
+    skus.forEach((s: any) => {
+      if (!marcas[s.marca]) marcas[s.marca] = { marca: s.marca, revenue: 0, lucro: 0, qtd: 0, devolucoes: 0, skus: 0, pedidos: new Set<string>() };
+      const b = marcas[s.marca];
+      b.revenue += s.revenue; b.lucro += s.lucroTotal; b.qtd += s.qtd; b.devolucoes += s.valorDevolvido; b.skus += 1;
     });
-
-    // 2. Agregação Período Anterior para Comparativo
-    const prevSkuMap: Record<string, any> = {};
-    prevSales.forEach((s) => {
-      const k = normalizarSku(s.sku);
-      if (!prevSkuMap[k]) prevSkuMap[k] = { qtd: 0, revenue: 0, repasse: 0, freteFlex: 0 };
-      prevSkuMap[k].qtd += Number(s.quantidade) || 1;
-      prevSkuMap[k].revenue += Number(s.preco_venda) || 0;
-      prevSkuMap[k].repasse += Number(s.repasse_liquido) || 0;
-      prevSkuMap[k].freteFlex += Number(s.frete_flex) || 0;
+    linhasFiltradas.forEach((l) => {
+      const b = marcas[(custosMap[l.skuNorm] || { marca: "SEM MARCA" }).marca];
+      if (b) b.pedidos.add(l.chave);
     });
+    const brandStats = Object.values(marcas).map((b: any) => ({
+      ...b, pedidosQtd: b.pedidos.size,
+      ticketUn: b.qtd > 0 ? b.revenue / b.qtd : 0,
+      ticketPedido: b.pedidos.size > 0 ? b.revenue / b.pedidos.size : 0,
+      pct: fat > 0 ? (b.revenue / fat) * 100 : 0,
+    })).sort((a: any, b: any) => b.revenue - a.revenue);
+    let acB = 0;
+    brandStats.forEach((b: any) => { const antes = fat > 0 ? (acB / fat) * 100 : 0; acB += b.revenue; b.curva = antes < 80 ? "A" : antes < 95 ? "B" : "C"; });
 
-    let prevFatFiltrado = 0, prevLucFiltrado = 0;
-    Object.entries(prevSkuMap).forEach(([k, s]) => {
-      const infoCusto = custosMap[k] || { custo: 0, marca: "SEM MARCA" };
-      if (searchSku.trim() && !k.includes(searchSku.toLowerCase())) return;
-      if (selectedBrand !== "TODAS" && infoCusto.marca !== selectedBrand) return;
+    // Cancelados abatidos (somente os que casam com vendas do período/canal)
+    const pedidosCanc = new Set(canceladas.map((l) => l.chave));
+    const canceladosResumo = {
+      pedidos: pedidosCanc.size,
+      valor: canceladas.reduce((a, l) => a + l.preco, 0),
+      qtd: canceladas.reduce((a, l) => a + l.qtd, 0),
+    };
+    const canceladosSemVenda = cancelados.filter((c) => {
+      if (selectedChannel !== "TODOS" && normalizarTexto(c.canal) !== normalizarTexto(selectedChannel)) return false;
+      return !chavesVendas.has(`${normalizarTexto(c.canal)}|${normalizarPedido(c.id_pedido)}`);
+    }).length;
 
-      const infoDevolucao = devolucoesMap[k] || { valor: 0 };
-      const cmvTotal = infoCusto.custo * s.qtd;
-      const lucroTotal = s.repasse - cmvTotal - s.freteFlex - infoDevolucao.valor;
-
-      prevFatFiltrado += s.revenue;
-      prevLucFiltrado += lucroTotal;
-    });
-
-    const diffFat = prevFatFiltrado > 0 ? ((fatFiltrado - prevFatFiltrado) / prevFatFiltrado) * 100 : 0;
-    const diffLuc = prevLucFiltrado !== 0 ? ((lucFiltrado - prevLucFiltrado) / Math.abs(prevLucFiltrado)) * 100 : 0;
+    // Devolução por pedido (para a tabela de pedidos)
+    const devPorPedido: Record<string, number> = {};
+    devolucoes.forEach((d) => { const k = normalizarPedido(d.pedido); if (k) devPorPedido[k] = (devPorPedido[k] || 0) + num(d.pdv); });
 
     return {
-      currentSales: currSales,
-      abcCurve: displaySkus,
+      atual, canceladas, linhasFiltradas, skus, brandStats, devPorPedido,
       kpis: {
-        faturamentoTotal: fatFiltrado,
-        lucroTotal: lucFiltrado,
-        hasPrev: dateFilter !== "TUDO" && prevSales.length > 0,
-        diffFat,
-        diffLuc,
-        countA: cA,
-        countB: cB,
-        countC: cC,
-        devolucoesTotal: devFiltrada,
-        taxaDevolucaoGeral: fatFiltrado > 0 ? (devFiltrada / fatFiltrado) * 100 : 0
-      }
+        faturamentoTotal: fat, lucroTotal: luc, devolucoesTotal: dev, unidades: qtd, pedidos: pedidosSet.size,
+        ticketPedido: pedidosSet.size > 0 ? fat / pedidosSet.size : 0,
+        ticketUn: qtd > 0 ? fat / qtd : 0,
+        hasPrev: !!per.prev && anterior.length > 0,
+        diffFat: prevFat > 0 ? ((fat - prevFat) / prevFat) * 100 : 0,
+        diffLuc: prevLuc !== 0 ? ((luc - prevLuc) / Math.abs(prevLuc)) * 100 : 0,
+        countA: skus.filter((s: any) => s.curva === "A").length,
+        countB: skus.filter((s: any) => s.curva === "B").length,
+        countC: skus.filter((s: any) => s.curva === "C").length,
+        taxaDevolucaoGeral: fat > 0 ? (dev / fat) * 100 : 0,
+        cancelados: canceladosResumo, canceladosSemVenda,
+      },
     };
-  }, [vendas, custosMap, devolucoesMap, dateFilter, customStartDate, customEndDate, searchSku, selectedBrand, selectedChannel]);
+  }, [linhasBase, chavesVendas, custosMap, devolucoes, cancelados, dateFilter, customStartDate, customEndDate, mesRef, searchSku, selectedBrand, selectedChannel]);
 
-  // Desempenho por Marca
-  const brandStats = useMemo(() => {
-    const brands: Record<string, any> = {};
-    abcCurve.forEach((s) => {
-      const b = s.marca;
-      if (!brands[b]) brands[b] = { marca: b, revenue: 0, lucro: 0, qtd: 0, devolucoes: 0 };
-      brands[b].revenue += s.revenue;
-      brands[b].lucro += s.lucroTotal;
-      brands[b].qtd += s.qtd;
-      brands[b].devolucoes += s.valorDevolvido;
+  const { skus, brandStats, kpis, linhasFiltradas } = analise;
+
+  // ----- Tabela principal: ordenação por Faturamento / Quantidade / Ticket / Lucro -----
+  const skusOrdenados = useMemo(() => {
+    const campo = ordenarPor === "FAT" ? "revenue" : ordenarPor === "QTD" ? "qtd" : ordenarPor === "TICKET" ? "ticketUn" : "lucroTotal";
+    return [...skus].sort((a: any, b: any) => b[campo] - a[campo]);
+  }, [skus, ordenarPor]);
+  const marcasOrdenadas = useMemo(() => {
+    const campo = ordenarPor === "FAT" ? "revenue" : ordenarPor === "QTD" ? "qtd" : ordenarPor === "TICKET" ? "ticketUn" : "lucro";
+    return [...brandStats].sort((a: any, b: any) => b[campo] - a[campo]);
+  }, [brandStats, ordenarPor]);
+
+  // ----- Mais vendidos (produtos e marcas) -----
+  const topLista = useMemo(() => {
+    const fonte: any[] = topVisao === "PRODUTOS"
+      ? skus.map((s: any) => ({ nome: s.sku, sub: s.titulo, marca: s.marca, qtd: s.qtd, fat: s.revenue }))
+      : brandStats.map((b: any) => ({ nome: b.marca, sub: `${b.skus} SKU(s)`, marca: "", qtd: b.qtd, fat: b.revenue }));
+    const campo = topMetrica === "QTD" ? "qtd" : "fat";
+    const ordenado = [...fonte].sort((a, b) => b[campo] - a[campo]).slice(0, 10);
+    const max = ordenado[0]?.[campo] || 1;
+    return ordenado.map((x) => ({ ...x, valor: x[campo], pct: (x[campo] / max) * 100 }));
+  }, [skus, brandStats, topVisao, topMetrica]);
+
+  // ----- Quando mais vendeu: dia / semana / mês e dia da semana -----
+  const serieTempo = useMemo(() => {
+    const m: Record<string, { chave: string; rotulo: string; revenue: number; qtd: number; pedidos: Set<string> }> = {};
+    linhasFiltradas.forEach((l: any) => {
+      const d = new Date(l.data + "T00:00:00");
+      let chave = l.data, rotulo = `${l.data.slice(8, 10)}/${l.data.slice(5, 7)}`;
+      if (granularidade === "SEMANA") {
+        const seg = new Date(d); seg.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+        const iso = `${seg.getFullYear()}-${String(seg.getMonth() + 1).padStart(2, "0")}-${String(seg.getDate()).padStart(2, "0")}`;
+        chave = iso; rotulo = `sem. ${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+      } else if (granularidade === "MES") {
+        chave = l.data.slice(0, 7); rotulo = `${l.data.slice(5, 7)}/${l.data.slice(0, 4)}`;
+      }
+      if (!m[chave]) m[chave] = { chave, rotulo, revenue: 0, qtd: 0, pedidos: new Set<string>() };
+      m[chave].revenue += l.preco; m[chave].qtd += l.qtd; m[chave].pedidos.add(l.chave);
     });
-    return Object.values(brands).sort((a: any, b: any) => b.revenue - a.revenue);
-  }, [abcCurve]);
+    const lista = Object.values(m).sort((a, b) => a.chave.localeCompare(b.chave));
+    const max = Math.max(1, ...lista.map((x) => x.revenue));
+    let melhor = lista[0];
+    lista.forEach((x) => { if (x.revenue > (melhor?.revenue ?? -1)) melhor = x; });
+    let melhorQtd = lista[0];
+    lista.forEach((x) => { if (x.qtd > (melhorQtd?.qtd ?? -1)) melhorQtd = x; });
 
-  // Fragmentação por Pedido com verificação de devolução
+    // dia da semana: média de faturamento por data com venda
+    const sem: Record<number, { rev: number; datas: Set<string> }> = {};
+    linhasFiltradas.forEach((l: any) => {
+      const dow = new Date(l.data + "T00:00:00").getDay();
+      if (!sem[dow]) sem[dow] = { rev: 0, datas: new Set<string>() };
+      sem[dow].rev += l.preco; sem[dow].datas.add(l.data);
+    });
+    const dias = DIAS_SEMANA.map((nome, i) => ({ nome, media: sem[i] ? sem[i].rev / sem[i].datas.size : 0, total: sem[i]?.rev || 0 }));
+    const melhorDia = dias.reduce((a, b) => (b.media > a.media ? b : a), dias[0]);
+    return { lista, max, melhor, melhorQtd, dias, melhorDia };
+  }, [linhasFiltradas, granularidade]);
+
+  // ----- Valor que mais vendeu: faixas de preço unitário -----
+  const faixas = useMemo(() => {
+    const defs = [
+      { nome: "Até R$ 50", min: 0, max: 50 }, { nome: "R$ 50 a 100", min: 50, max: 100 }, { nome: "R$ 100 a 150", min: 100, max: 150 },
+      { nome: "R$ 150 a 200", min: 150, max: 200 }, { nome: "R$ 200 a 300", min: 200, max: 300 }, { nome: "R$ 300 a 500", min: 300, max: 500 },
+      { nome: "Acima de R$ 500", min: 500, max: Infinity },
+    ].map((f) => ({ ...f, qtd: 0, revenue: 0 }));
+    const exato: Record<number, { preco: number; qtd: number; revenue: number }> = {};
+    linhasFiltradas.forEach((l: any) => {
+      const un = l.preco / (l.qtd || 1);
+      const f = defs.find((x) => un >= x.min && un < x.max);
+      if (f) { f.qtd += l.qtd; f.revenue += l.preco; }
+      const arred = Math.round(un);
+      if (!exato[arred]) exato[arred] = { preco: arred, qtd: 0, revenue: 0 };
+      exato[arred].qtd += l.qtd; exato[arred].revenue += l.preco;
+    });
+    const maxQtd = Math.max(1, ...defs.map((f) => f.qtd));
+    const melhorQtd = defs.reduce((a, b) => (b.qtd > a.qtd ? b : a), defs[0]);
+    const melhorFat = defs.reduce((a, b) => (b.revenue > a.revenue ? b : a), defs[0]);
+    const comuns = Object.values(exato).sort((a, b) => b.qtd - a.qtd).slice(0, 5);
+    return { defs, maxQtd, melhorQtd, melhorFat, comuns };
+  }, [linhasFiltradas]);
+
+  // ----- Pedidos (auditoria) -----
   const enrichedOrders = useMemo(() => {
     const orderMap: Record<string, any> = {};
-
-    currentSales.forEach((s) => {
-      const k = normalizarSku(s.sku);
-      const infoCusto = custosMap[k] || { custo: 0 };
-      const infoDevolucao = devolucoesMap[k] || { qtd: 0, valor: 0 };
-
-      const custoCMV = infoCusto.custo * (Number(s.quantidade) || 1);
-      const custoFlex = Number(s.frete_flex) || 0;
-
-      if (!orderMap[s.id_pedido]) {
-        orderMap[s.id_pedido] = {
-          ...s,
-          custoCMV: 0,
-          repasse_liquido: 0,
-          preco_venda: 0,
-          custoFlex: 0,
-          valorDevolucao: 0,
-          skus_concat: []
-        };
+    [...analise.atual, ...analise.canceladas].forEach((l: any) => {
+      const info = custosMap[l.skuNorm] || { custo: 0 };
+      if (!orderMap[l.chave]) {
+        orderMap[l.chave] = { id_pedido: l.ped, canal: l.canal, data_faturamento: l.data, cancelado: l.cancelado, custoCMV: 0, repasse_liquido: 0, preco_venda: 0, custoFlex: 0, valorDevolucao: analise.devPorPedido[l.pedN] || 0, skus_concat: [] as string[] };
       }
-
-      orderMap[s.id_pedido].custoCMV += custoCMV;
-      orderMap[s.id_pedido].preco_venda += Number(s.preco_venda) || 0;
-      orderMap[s.id_pedido].repasse_liquido += Number(s.repasse_liquido) || 0;
-      orderMap[s.id_pedido].custoFlex += custoFlex;
-      orderMap[s.id_pedido].valorDevolucao += infoDevolucao.valor;
-      orderMap[s.id_pedido].skus_concat.push(`${s.sku} (x${s.quantidade || 1})`);
+      const o = orderMap[l.chave];
+      o.custoCMV += info.custo * l.qtd;
+      o.preco_venda += l.preco;
+      o.repasse_liquido += l.repasse;
+      o.custoFlex += l.extra;
+      o.skus_concat.push(`${l.sku} (x${l.qtd})`);
     });
-
-    return Object.values(orderMap).map((o: any) => {
-      const ganhoLiquido = o.repasse_liquido - o.custoCMV - o.custoFlex - o.valorDevolucao;
-      return {
-        ...o,
-        sku_display: o.skus_concat.join(" + "),
-        ganhoLiquido,
-        teveDevolucao: o.valorDevolucao > 0
-      };
-    });
-  }, [currentSales, custosMap, devolucoesMap]);
+    return Object.values(orderMap).map((o: any) => ({
+      ...o,
+      sku_display: o.skus_concat.join(" + "),
+      ganhoLiquido: o.cancelado ? 0 : o.repasse_liquido - o.custoCMV - o.custoFlex - o.valorDevolucao,
+      teveDevolucao: o.valorDevolucao > 0,
+    }));
+  }, [analise, custosMap]);
 
   const displayOrders = useMemo(() => {
     let result = enrichedOrders;
-
-    if (filtroDevolucao === "COM_DEVOLUCAO") {
-      result = result.filter((o) => o.teveDevolucao);
-    } else if (filtroDevolucao === "SEM_CMV") {
-      result = result.filter((o) => !o.custoCMV || o.custoCMV === 0);
-    }
-
-    if (searchOrderId.trim()) {
-      result = result.filter((s) => s.id_pedido && String(s.id_pedido).includes(searchOrderId.trim()));
-    }
-
-    if (sortOrder === "MAIOR_LIQUIDEZ") {
-      result = [...result].sort((a, b) => b.ganhoLiquido - a.ganhoLiquido);
-    } else if (sortOrder === "MENOR_LIQUIDEZ") {
-      result = [...result].sort((a, b) => a.ganhoLiquido - b.ganhoLiquido);
-    }
+    if (filtroDevolucao === "CANCELADOS") result = result.filter((o) => o.cancelado);
+    else result = result.filter((o) => !o.cancelado);
+    if (filtroDevolucao === "COM_DEVOLUCAO") result = result.filter((o) => o.teveDevolucao);
+    else if (filtroDevolucao === "SEM_CMV") result = result.filter((o) => !o.custoCMV || o.custoCMV === 0);
+    if (searchOrderId.trim()) result = result.filter((s) => s.id_pedido && String(s.id_pedido).includes(searchOrderId.trim()));
+    if (sortOrder === "MAIOR_LIQUIDEZ") result = [...result].sort((a, b) => b.ganhoLiquido - a.ganhoLiquido);
+    else if (sortOrder === "MENOR_LIQUIDEZ") result = [...result].sort((a, b) => a.ganhoLiquido - b.ganhoLiquido);
     return result;
   }, [enrichedOrders, searchOrderId, sortOrder, filtroDevolucao]);
 
@@ -408,6 +518,11 @@ export default function CurvaABCPage() {
     const start = (currentPageOrders - 1) * itemsPerPageOrders;
     return displayOrders.slice(start, start + itemsPerPageOrders);
   }, [displayOrders, currentPageOrders]);
+
+  const corCurva = (c: string) =>
+    c === "A" ? "bg-indigo-950 text-indigo-400 border border-indigo-700/50" :
+    c === "B" ? "bg-emerald-950 text-emerald-400 border border-emerald-700/50" :
+    "bg-slate-800 text-slate-400 border border-slate-700";
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -420,10 +535,17 @@ export default function CurvaABCPage() {
               <span>Relatórios</span> <span>/</span> <span className="text-indigo-400">Curva ABC</span>
             </div>
             <h1 className="text-2xl font-black text-white tracking-tight">Inteligência de Produtos (Curva ABC)</h1>
-            <p className="text-xs text-slate-400">Classificação de SKUs por faturamento, margem real líquida e impacto de devoluções</p>
+            <p className="text-xs text-slate-400">Classificação de SKUs e marcas por faturamento, ticket médio, margem real líquida, cancelados e devoluções</p>
           </div>
           <Navbar />
         </div>
+
+        {erros.length > 0 && (
+          <div className="bg-rose-950/40 border border-rose-800/60 text-rose-200 rounded-xl p-4 text-xs space-y-1" data-erros-carga>
+            <p className="font-black">⚠️ Parte dos dados não pôde ser lida do banco — os números abaixo podem estar incompletos:</p>
+            {erros.map((e, i) => <p key={i} className="font-mono">• {e}</p>)}
+          </div>
+        )}
 
         {/* BARRA DE FILTROS */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900/90 p-5 rounded-2xl border border-slate-800 gap-4 shadow-xl">
@@ -445,6 +567,7 @@ export default function CurvaABCPage() {
                 value={selectedChannel}
                 onChange={(e) => setSelectedChannel(e.target.value)}
                 className="bg-transparent text-sky-300 font-bold text-xs outline-none cursor-pointer"
+                data-filtro-canal
               >
                 <option value="TODOS" className="bg-slate-900 text-white">Todos os Canais</option>
                 {canaisDisponiveis.map((c) => (
@@ -472,15 +595,29 @@ export default function CurvaABCPage() {
                 value={dateFilter}
                 onChange={(e) => setDateFilter(e.target.value)}
                 className="bg-transparent text-indigo-300 font-bold text-xs outline-none cursor-pointer"
+                data-filtro-periodo
               >
                 <option value="TUDO" className="bg-slate-900 text-white">Todo o Histórico</option>
                 <option value="HOJE" className="bg-slate-900 text-white">Hoje</option>
                 <option value="SEMANA" className="bg-slate-900 text-white">Últimos 7 dias</option>
                 <option value="QUINZENA" className="bg-slate-900 text-white">Últimos 15 dias</option>
                 <option value="MES" className="bg-slate-900 text-white">Últimos 30 dias</option>
+                <option value="MES_REF" className="bg-slate-900 text-white">Mês fechado…</option>
                 <option value="PERSONALIZADO" className="bg-slate-900 text-white">Personalizado</option>
               </select>
             </div>
+
+            {dateFilter === "MES_REF" && (
+              <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
+                <input
+                  type="month"
+                  value={mesRef}
+                  onChange={(e) => setMesRef(e.target.value)}
+                  className="bg-transparent text-slate-300 font-bold text-xs outline-none cursor-pointer"
+                  data-mes-ref
+                />
+              </div>
+            )}
 
             {dateFilter === "PERSONALIZADO" && (
               <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
@@ -513,13 +650,9 @@ export default function CurvaABCPage() {
                 </span>
               )}
             </div>
-            <h3 className="text-2xl font-black text-white">
-              R$ {kpis.faturamentoTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </h3>
+            <h3 className="text-2xl font-black text-white" data-kpi-faturamento>R$ {brl(kpis.faturamentoTotal)}</h3>
             <div className="flex justify-between items-center mt-2 pt-2 border-t border-slate-800">
-              <p className="text-[11px] text-emerald-400 font-bold">
-                Lucro Real: R$ {kpis.lucroTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
+              <p className="text-[11px] text-emerald-400 font-bold">Lucro Real: R$ {brl(kpis.lucroTotal)}</p>
               {kpis.hasPrev && (
                 <span className={`text-[10px] font-black ${kpis.diffLuc >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                   {kpis.diffLuc >= 0 ? "▲" : "▼"} {Math.abs(kpis.diffLuc).toFixed(1)}%
@@ -547,10 +680,35 @@ export default function CurvaABCPage() {
                 {kpis.taxaDevolucaoGeral.toFixed(1)}% taxa
               </span>
             </div>
-            <h3 className="text-2xl font-black text-rose-400 mt-1">
-              - R$ {kpis.devolucoesTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </h3>
+            <h3 className="text-2xl font-black text-rose-400 mt-1">- R$ {brl(kpis.devolucoesTotal)}</h3>
             <p className="text-[10px] text-slate-500 mt-1">Dedução direta no lucro operacional dos produtos</p>
+          </div>
+        </div>
+
+        {/* TICKET MÉDIO, PEDIDOS E CANCELADOS ABATIDOS */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 shadow-xl">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Pedidos / Unidades</span>
+            <h3 className="text-xl font-black text-white mt-1" data-kpi-pedidos>{kpis.pedidos} <span className="text-slate-500 text-sm">pedidos</span></h3>
+            <p className="text-[10px] text-slate-500 mt-1">{kpis.unidades} unidades vendidas</p>
+          </div>
+          <div className="bg-slate-900/90 p-4 rounded-2xl border border-sky-500/30 shadow-xl">
+            <span className="text-[10px] font-bold text-sky-400 uppercase">Ticket médio por pedido</span>
+            <h3 className="text-xl font-black text-sky-300 mt-1" data-kpi-ticket-pedido>R$ {brl(kpis.ticketPedido)}</h3>
+            <p className="text-[10px] text-slate-500 mt-1">Faturamento ÷ pedidos</p>
+          </div>
+          <div className="bg-slate-900/90 p-4 rounded-2xl border border-sky-500/30 shadow-xl">
+            <span className="text-[10px] font-bold text-sky-400 uppercase">Ticket médio por unidade</span>
+            <h3 className="text-xl font-black text-sky-300 mt-1" data-kpi-ticket-un>R$ {brl(kpis.ticketUn)}</h3>
+            <p className="text-[10px] text-slate-500 mt-1">Faturamento ÷ unidades</p>
+          </div>
+          <div className="bg-slate-900/90 p-4 rounded-2xl border border-amber-500/30 shadow-xl" data-kpi-cancelados>
+            <span className="text-[10px] font-bold text-amber-400 uppercase">Cancelados abatidos</span>
+            <h3 className="text-xl font-black text-amber-300 mt-1">- R$ {brl(kpis.cancelados.valor)}</h3>
+            <p className="text-[10px] text-slate-500 mt-1">
+              {kpis.cancelados.pedidos} pedido(s) · {kpis.cancelados.qtd} un. fora da curva
+              {kpis.canceladosSemVenda > 0 && <span className="text-slate-600"> · {kpis.canceladosSemVenda} cancelado(s) sem venda correspondente</span>}
+            </p>
           </div>
         </div>
 
@@ -559,17 +717,14 @@ export default function CurvaABCPage() {
           <div className="lg:col-span-1 bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl">
             <h3 className="font-bold text-white text-sm mb-4">🏆 Faturamento por Marca</h3>
             <div className="space-y-4 max-h-[520px] overflow-y-auto pr-2">
-              {brandStats.map((brand, i) => (
+              {brandStats.map((brand: any, i: number) => (
                 <div key={i} className="space-y-1.5">
                   <div className="flex justify-between items-end">
                     <span className="text-xs font-bold text-slate-300 truncate max-w-[50%]">{brand.marca}</span>
                     <div className="text-right">
-                      <span className="block text-xs font-black text-white">
-                        R$ {brand.revenue.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                      <span className="block text-[10px] text-emerald-400 font-bold">
-                        Lucro: R$ {brand.lucro.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
+                      <span className="block text-xs font-black text-white">R$ {brl(brand.revenue)}</span>
+                      <span className="block text-[10px] text-emerald-400 font-bold">Lucro: R$ {brl(brand.lucro)}</span>
+                      <span className="block text-[10px] text-sky-400 font-bold">Ticket: R$ {brl(brand.ticketUn)}/un · R$ {brl(brand.ticketPedido)}/pedido</span>
                     </div>
                   </div>
                   <div className="w-full bg-slate-950 rounded-full h-1.5 border border-slate-800">
@@ -587,82 +742,260 @@ export default function CurvaABCPage() {
           </div>
 
           <div className="lg:col-span-2 bg-slate-900/90 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
-            <div className="p-5 border-b border-slate-800 flex justify-between items-center">
-              <h3 className="font-bold text-white text-sm">Classificação Detalhada de SKUs</h3>
-              <span className="text-[11px] text-slate-400 font-mono">{abcCurve.length} itens listados</span>
+            <div className="p-5 border-b border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+              <div className="flex items-center gap-3">
+                <h3 className="font-bold text-white text-sm">Classificação Detalhada</h3>
+                <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-0.5">
+                  <button type="button" onClick={() => setVisao("SKU")} data-visao-sku
+                    className={`px-3 py-1 rounded-md text-[11px] font-bold cursor-pointer ${visao === "SKU" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Produtos (SKU)</button>
+                  <button type="button" onClick={() => setVisao("MARCA")} data-visao-marca
+                    className={`px-3 py-1 rounded-md text-[11px] font-bold cursor-pointer ${visao === "MARCA" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Marcas</button>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <select value={ordenarPor} onChange={(e) => setOrdenarPor(e.target.value as any)} data-ordenar
+                  className="p-1.5 bg-slate-950 border border-slate-700 text-slate-200 rounded-lg text-[11px] font-bold outline-none cursor-pointer">
+                  <option value="FAT">Ordenar: Faturamento</option>
+                  <option value="QTD">Ordenar: Mais vendidos (qtd)</option>
+                  <option value="TICKET">Ordenar: Ticket médio</option>
+                  <option value="LUCRO">Ordenar: Lucro</option>
+                </select>
+                <span className="text-[11px] text-slate-400 font-mono">{visao === "SKU" ? skus.length : brandStats.length} itens</span>
+              </div>
             </div>
             <div className="overflow-x-auto max-h-[520px]">
-              <table className="w-full text-left text-xs whitespace-nowrap">
-                <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 uppercase text-[9px] font-bold z-10">
-                  <tr>
-                    <th className="py-3 px-4 text-center">Curva</th>
-                    <th className="py-3 px-4">SKU / Marca</th>
-                    <th className="py-3 px-4 min-w-[200px]">Título do Produto</th>
-                    <th className="py-3 px-4 text-center">Qtd Vend.</th>
-                    <th className="py-3 px-4 text-center text-rose-400">Devoluções</th>
-                    <th className="py-3 px-4 text-right">Fat. Bruto</th>
-                    <th className="py-3 px-4 text-right text-emerald-400">Lucro Líquido</th>
-                    <th className="py-3 px-4 text-right">Part. (%)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 font-medium">
-                  {loading ? (
-                    <tr><td colSpan={8} className="p-8 text-center text-slate-400">Carregando dados da Curva ABC...</td></tr>
-                  ) : abcCurve.length === 0 ? (
-                    <tr><td colSpan={8} className="p-8 text-center text-slate-500">Nenhum SKU encontrado com os filtros selecionados.</td></tr>
-                  ) : (
-                    abcCurve.map((sku: any, i: number) => (
+              {visao === "SKU" ? (
+                <table className="w-full text-left text-xs whitespace-nowrap" data-tabela-sku>
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 uppercase text-[9px] font-bold z-10">
+                    <tr>
+                      <th className="py-3 px-4 text-center">Curva</th>
+                      <th className="py-3 px-4">SKU / Marca</th>
+                      <th className="py-3 px-4 min-w-[200px]">Título do Produto</th>
+                      <th className="py-3 px-4 text-center">Qtd Vend.</th>
+                      <th className="py-3 px-4 text-center">Pedidos</th>
+                      <th className="py-3 px-4 text-right text-sky-400">Ticket/un</th>
+                      <th className="py-3 px-4 text-right text-sky-400">Ticket/pedido</th>
+                      <th className="py-3 px-4 text-center text-rose-400">Devoluções</th>
+                      <th className="py-3 px-4 text-right">Fat. Bruto</th>
+                      <th className="py-3 px-4 text-right text-emerald-400">Lucro Líquido</th>
+                      <th className="py-3 px-4 text-right">Part. (%)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-medium">
+                    {loading ? (
+                      <tr><td colSpan={11} className="p-8 text-center text-slate-400">Carregando dados da Curva ABC...</td></tr>
+                    ) : skusOrdenados.length === 0 ? (
+                      <tr><td colSpan={11} className="p-8 text-center text-slate-500">Nenhum SKU encontrado com os filtros selecionados.</td></tr>
+                    ) : (
+                      skusOrdenados.map((sku: any, i: number) => (
+                        <tr key={i} className="hover:bg-slate-800/30 transition-colors">
+                          <td className="py-3 px-4 text-center">
+                            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-lg font-black text-xs ${corCurva(sku.curva)}`}>{sku.curva}</span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="block font-mono font-bold text-white">{sku.sku}</span>
+                            <span className="block text-[9px] uppercase text-indigo-400 font-bold mt-0.5">{sku.marca}</span>
+                          </td>
+                          <td className="py-3 px-4 text-slate-300 max-w-[220px] truncate" title={sku.titulo}>
+                            {sku.titulo}
+                            {sku.semCusto && <span className="ml-2 text-[9px] font-black text-yellow-300 bg-yellow-400/10 border border-yellow-500/30 rounded px-1">sem custo</span>}
+                          </td>
+                          <td className="py-3 px-4 text-center font-bold text-slate-200">{sku.qtd}</td>
+                          <td className="py-3 px-4 text-center text-slate-300">{sku.pedidosQtd}</td>
+                          <td className="py-3 px-4 text-right font-mono text-sky-300">R$ {brl(sku.ticketUn)}</td>
+                          <td className="py-3 px-4 text-right font-mono text-sky-300">R$ {brl(sku.ticketPedido)}</td>
+                          <td className="py-3 px-4 text-center">
+                            {sku.qtdDevolvida > 0 ? (
+                              <span className="bg-rose-950/60 text-rose-300 border border-rose-900/40 px-2 py-0.5 rounded text-[10px] font-bold">
+                                {sku.qtdDevolvida} un ({sku.taxaDevolucao.toFixed(0)}%)
+                              </span>
+                            ) : (
+                              <span className="text-slate-600 font-mono">0</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-black text-amber-400 font-mono">R$ {brl(sku.revenue)}</td>
+                          <td className={`py-3 px-4 text-right font-black font-mono ${sku.lucroTotal < 0 ? "text-rose-400" : "text-emerald-400"}`}>R$ {brl(sku.lucroTotal)}</td>
+                          <td className="py-3 px-4 text-right text-slate-300 font-mono font-bold">{sku.pctRepresentatividade.toFixed(2)}%</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="w-full text-left text-xs whitespace-nowrap" data-tabela-marca>
+                  <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 uppercase text-[9px] font-bold z-10">
+                    <tr>
+                      <th className="py-3 px-4 text-center">Curva</th>
+                      <th className="py-3 px-4">Marca</th>
+                      <th className="py-3 px-4 text-center">SKUs</th>
+                      <th className="py-3 px-4 text-center">Qtd Vend.</th>
+                      <th className="py-3 px-4 text-center">Pedidos</th>
+                      <th className="py-3 px-4 text-right text-sky-400">Ticket/un</th>
+                      <th className="py-3 px-4 text-right text-sky-400">Ticket/pedido</th>
+                      <th className="py-3 px-4 text-right">Fat. Bruto</th>
+                      <th className="py-3 px-4 text-right text-emerald-400">Lucro Líquido</th>
+                      <th className="py-3 px-4 text-right">Part. (%)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-medium">
+                    {marcasOrdenadas.length === 0 ? (
+                      <tr><td colSpan={10} className="p-8 text-center text-slate-500">Nenhuma marca encontrada com os filtros selecionados.</td></tr>
+                    ) : marcasOrdenadas.map((b: any, i: number) => (
                       <tr key={i} className="hover:bg-slate-800/30 transition-colors">
-                        <td className="py-3 px-4 text-center">
-                          <span className={`inline-flex items-center justify-center w-6 h-6 rounded-lg font-black text-xs ${
-                            sku.curva === "A" ? "bg-indigo-950 text-indigo-400 border border-indigo-700/50" :
-                            sku.curva === "B" ? "bg-emerald-950 text-emerald-400 border border-emerald-700/50" :
-                            "bg-slate-800 text-slate-400 border border-slate-700"
-                          }`}>
-                            {sku.curva}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className="block font-mono font-bold text-white">{sku.sku}</span>
-                          <span className="block text-[9px] uppercase text-indigo-400 font-bold mt-0.5">{sku.marca}</span>
-                        </td>
-                        <td className="py-3 px-4 text-slate-300 max-w-[220px] truncate" title={sku.titulo}>
-                          {sku.titulo}
-                        </td>
-                        <td className="py-3 px-4 text-center font-bold text-slate-200">{sku.qtd}</td>
-                        <td className="py-3 px-4 text-center">
-                          {sku.qtdDevolvida > 0 ? (
-                            <span className="bg-rose-950/60 text-rose-300 border border-rose-900/40 px-2 py-0.5 rounded text-[10px] font-bold">
-                              {sku.qtdDevolvida} un ({sku.taxaDevolucao.toFixed(0)}%)
-                            </span>
-                          ) : (
-                            <span className="text-slate-600 font-mono">0</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-right font-black text-amber-400 font-mono">
-                          R$ {sku.revenue.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className={`py-3 px-4 text-right font-black font-mono ${sku.lucroTotal < 0 ? "text-rose-400" : "text-emerald-400"}`}>
-                          R$ {sku.lucroTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-3 px-4 text-right text-slate-300 font-mono font-bold">
-                          {sku.pctRepresentatividade.toFixed(2)}%
-                        </td>
+                        <td className="py-3 px-4 text-center"><span className={`inline-flex items-center justify-center w-6 h-6 rounded-lg font-black text-xs ${corCurva(b.curva)}`}>{b.curva}</span></td>
+                        <td className="py-3 px-4 font-bold text-white">{b.marca}</td>
+                        <td className="py-3 px-4 text-center text-slate-300">{b.skus}</td>
+                        <td className="py-3 px-4 text-center font-bold text-slate-200">{b.qtd}</td>
+                        <td className="py-3 px-4 text-center text-slate-300">{b.pedidosQtd}</td>
+                        <td className="py-3 px-4 text-right font-mono text-sky-300">R$ {brl(b.ticketUn)}</td>
+                        <td className="py-3 px-4 text-right font-mono text-sky-300">R$ {brl(b.ticketPedido)}</td>
+                        <td className="py-3 px-4 text-right font-black text-amber-400 font-mono">R$ {brl(b.revenue)}</td>
+                        <td className={`py-3 px-4 text-right font-black font-mono ${b.lucro < 0 ? "text-rose-400" : "text-emerald-400"}`}>R$ {brl(b.lucro)}</td>
+                        <td className="py-3 px-4 text-right text-slate-300 font-mono font-bold">{b.pct.toFixed(2)}%</td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </div>
 
-        {/* FRAGMENTAÇÃO POR PEDIDO COM IDENTIFICAÇÃO DE DEVOLUÇÕES */}
+        {/* MAIS VENDIDOS + QUANDO MAIS VENDEU + FAIXAS DE PREÇO */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-card-top>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-bold text-white text-sm">🔥 Mais vendidos</h3>
+              <div className="flex gap-2">
+                <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-0.5">
+                  <button type="button" onClick={() => setTopVisao("PRODUTOS")} className={`px-2.5 py-1 rounded-md text-[10px] font-bold cursor-pointer ${topVisao === "PRODUTOS" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Produtos</button>
+                  <button type="button" onClick={() => setTopVisao("MARCAS")} className={`px-2.5 py-1 rounded-md text-[10px] font-bold cursor-pointer ${topVisao === "MARCAS" ? "bg-indigo-600 text-white" : "text-slate-400"}`}>Marcas</button>
+                </div>
+                <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-0.5">
+                  <button type="button" onClick={() => setTopMetrica("QTD")} className={`px-2.5 py-1 rounded-md text-[10px] font-bold cursor-pointer ${topMetrica === "QTD" ? "bg-emerald-600 text-white" : "text-slate-400"}`}>Unidades</button>
+                  <button type="button" onClick={() => setTopMetrica("FAT")} className={`px-2.5 py-1 rounded-md text-[10px] font-bold cursor-pointer ${topMetrica === "FAT" ? "bg-emerald-600 text-white" : "text-slate-400"}`}>R$</button>
+                </div>
+              </div>
+            </div>
+            <ol className="space-y-3">
+              {topLista.map((x: any, i: number) => (
+                <li key={i} className="space-y-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className="text-[11px] font-black text-slate-500 mr-1.5">{i + 1}º</span>
+                      <span className="text-xs font-bold text-white font-mono">{x.nome}</span>
+                      <span className="block text-[10px] text-slate-500 truncate max-w-[230px]" title={x.sub}>{x.sub}{x.marca ? ` · ${x.marca}` : ""}</span>
+                    </div>
+                    <span className="text-xs font-black text-emerald-300 whitespace-nowrap">
+                      {topMetrica === "QTD" ? `${x.valor} un.` : `R$ ${brl(x.valor)}`}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-950 rounded-full h-1.5 border border-slate-800">
+                    <div className="bg-gradient-to-r from-emerald-500 to-teal-400 h-1.5 rounded-full" style={{ width: `${x.pct}%` }} />
+                  </div>
+                </li>
+              ))}
+              {topLista.length === 0 && <p className="text-xs text-slate-500 text-center py-6">Sem vendas para os filtros selecionados.</p>}
+            </ol>
+          </div>
+
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-card-periodo>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-bold text-white text-sm">📅 Quando mais vendeu</h3>
+              <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-0.5">
+                {(["DIA", "SEMANA", "MES"] as const).map((g) => (
+                  <button key={g} type="button" onClick={() => setGranularidade(g)} data-gran={g}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-bold cursor-pointer ${granularidade === g ? "bg-indigo-600 text-white" : "text-slate-400"}`}>
+                    {g === "DIA" ? "Dia" : g === "SEMANA" ? "Semana" : "Mês"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {serieTempo.lista.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-6">Sem vendas para os filtros selecionados.</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="bg-slate-950 border border-amber-500/30 rounded-xl p-2.5" data-melhor-periodo>
+                    <span className="block text-[9px] font-bold text-amber-400 uppercase">Maior faturamento</span>
+                    <span className="block font-black text-white">{serieTempo.melhor.rotulo}</span>
+                    <span className="block text-amber-300 font-bold">R$ {brl(serieTempo.melhor.revenue)} · {serieTempo.melhor.qtd} un.</span>
+                  </div>
+                  <div className="bg-slate-950 border border-emerald-500/30 rounded-xl p-2.5">
+                    <span className="block text-[9px] font-bold text-emerald-400 uppercase">Mais unidades</span>
+                    <span className="block font-black text-white">{serieTempo.melhorQtd.rotulo}</span>
+                    <span className="block text-emerald-300 font-bold">{serieTempo.melhorQtd.qtd} un. · R$ {brl(serieTempo.melhorQtd.revenue)}</span>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <div className="flex items-end gap-1 h-40 min-w-full" style={{ width: Math.max(serieTempo.lista.length * 26, 280) }}>
+                    {serieTempo.lista.map((p) => (
+                      <div key={p.chave} className="flex-1 min-w-[20px] flex flex-col items-center justify-end h-full" title={`${p.rotulo}: R$ ${brl(p.revenue)} · ${p.qtd} un. · ${p.pedidos.size} pedidos`}>
+                        <div className={`w-full rounded-t ${p.chave === serieTempo.melhor.chave ? "bg-amber-400" : "bg-indigo-500/80"}`} style={{ height: `${Math.max((p.revenue / serieTempo.max) * 100, 2)}%` }} />
+                        <span className="text-[8px] text-slate-500 mt-1 whitespace-nowrap -rotate-45 origin-top-left translate-x-1">{p.rotulo}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400 pt-3 border-t border-slate-800" data-melhor-dia-semana>
+                  Dia da semana que mais vende (média por dia com venda): <strong className="text-white">{serieTempo.melhorDia.nome}</strong> · R$ {brl(serieTempo.melhorDia.media)}
+                </p>
+              </>
+            )}
+          </div>
+
+          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-card-faixas>
+            <h3 className="font-bold text-white text-sm">💰 Valor que mais vendeu (preço unitário)</h3>
+            {kpis.unidades === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-6">Sem vendas para os filtros selecionados.</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="bg-slate-950 border border-emerald-500/30 rounded-xl p-2.5" data-faixa-qtd>
+                    <span className="block text-[9px] font-bold text-emerald-400 uppercase">Faixa com mais unidades</span>
+                    <span className="block font-black text-white">{faixas.melhorQtd.nome}</span>
+                    <span className="block text-emerald-300 font-bold">{faixas.melhorQtd.qtd} un.</span>
+                  </div>
+                  <div className="bg-slate-950 border border-amber-500/30 rounded-xl p-2.5">
+                    <span className="block text-[9px] font-bold text-amber-400 uppercase">Faixa com mais faturamento</span>
+                    <span className="block font-black text-white">{faixas.melhorFat.nome}</span>
+                    <span className="block text-amber-300 font-bold">R$ {brl(faixas.melhorFat.revenue)}</span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {faixas.defs.map((f) => (
+                    <div key={f.nome} className="space-y-0.5">
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-slate-300 font-bold">{f.nome}</span>
+                        <span className="text-slate-400">{f.qtd} un. · R$ {brl(f.revenue)}</span>
+                      </div>
+                      <div className="w-full bg-slate-950 rounded-full h-1.5 border border-slate-800">
+                        <div className={`h-1.5 rounded-full ${f.nome === faixas.melhorQtd.nome ? "bg-emerald-400" : "bg-sky-500/70"}`} style={{ width: `${(f.qtd / faixas.maxQtd) * 100}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="pt-3 border-t border-slate-800">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Preços mais frequentes (arredondado ao real)</p>
+                  <div className="flex flex-wrap gap-1.5" data-precos-comuns>
+                    {faixas.comuns.map((c) => (
+                      <span key={c.preco} className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-slate-200">
+                        <strong className="text-white">R$ {c.preco}</strong> · {c.qtd} un.
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* FRAGMENTAÇÃO POR PEDIDO COM IDENTIFICAÇÃO DE DEVOLUÇÕES E CANCELADOS */}
         <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
             <div>
               <h3 className="font-bold text-white text-sm">Fragmentação por Pedido (Auditoria de Margem Real)</h3>
-              <p className="text-[11px] text-slate-400">Verificação de repasse, CMV, taxas flex e retenção de devolução por pedido</p>
+              <p className="text-[11px] text-slate-400">Verificação de repasse, CMV, taxas flex e retenção de devolução por pedido. Cancelados ficam fora da curva e aparecem no filtro próprio.</p>
             </div>
 
             <div className="flex flex-wrap gap-3 w-full sm:w-auto">
@@ -670,10 +1003,12 @@ export default function CurvaABCPage() {
                 value={filtroDevolucao}
                 onChange={(e) => setFiltroDevolucao(e.target.value)}
                 className="p-2 bg-slate-950 border border-slate-700 text-slate-200 rounded-xl text-xs font-bold outline-none cursor-pointer"
+                data-filtro-pedidos
               >
                 <option value="TODOS">Todos os Pedidos</option>
                 <option value="COM_DEVOLUCAO">Somente com Devolução</option>
                 <option value="SEM_CMV">Alerta: Sem CMV (Custo 0)</option>
+                <option value="CANCELADOS">Somente Cancelados (abatidos)</option>
               </select>
 
               <input
@@ -714,32 +1049,20 @@ export default function CurvaABCPage() {
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono font-medium">
                 {paginatedOrders.map((s: any, i: number) => (
-                  <tr key={i} className={`hover:bg-slate-800/30 transition-colors ${s.teveDevolucao ? "bg-rose-950/10" : ""}`}>
+                  <tr key={i} className={`hover:bg-slate-800/30 transition-colors ${s.cancelado ? "bg-amber-950/10" : s.teveDevolucao ? "bg-rose-950/10" : ""}`}>
                     <td className="py-2.5 px-3 text-slate-400 font-sans">
                       {s.data_faturamento ? s.data_faturamento.split("-").reverse().join("/") : "-"}
                     </td>
                     <td className="py-2.5 px-3 font-bold text-indigo-400">{s.id_pedido}</td>
                     <td className="py-2.5 px-3 font-sans text-slate-300">{s.canal}</td>
-                    <td className="py-2.5 px-3 text-[11px] text-slate-300 truncate max-w-[220px]" title={s.sku_display}>
-                      {s.sku_display}
-                    </td>
-                    <td className="py-2.5 px-3 text-right text-slate-200">
-                      R$ {(s.preco_venda || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-2.5 px-3 text-right text-indigo-300 font-bold">
-                      R$ {(s.repasse_liquido || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className={`py-2.5 px-3 text-right ${!s.custoCMV || s.custoCMV === 0 ? "text-rose-400 font-bold bg-rose-950/20" : "text-amber-400"}`}>
-                      - R$ {(s.custoCMV || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-2.5 px-3 text-right text-rose-400">
-                      - R$ {(s.custoFlex || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-2.5 px-3 text-right text-rose-300 font-bold">
-                      {s.valorDevolucao > 0 ? `- R$ ${s.valorDevolucao.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "-"}
-                    </td>
-                    <td className={`py-2.5 px-3 text-right font-black ${s.ganhoLiquido < 0 ? "text-rose-500" : "text-emerald-400"}`}>
-                      R$ {(s.ganhoLiquido || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <td className="py-2.5 px-3 text-[11px] text-slate-300 truncate max-w-[220px]" title={s.sku_display}>{s.sku_display}</td>
+                    <td className="py-2.5 px-3 text-right text-slate-200">R$ {brl(s.preco_venda)}</td>
+                    <td className="py-2.5 px-3 text-right text-indigo-300 font-bold">R$ {brl(s.repasse_liquido)}</td>
+                    <td className={`py-2.5 px-3 text-right ${!s.custoCMV || s.custoCMV === 0 ? "text-rose-400 font-bold bg-rose-950/20" : "text-amber-400"}`}>- R$ {brl(s.custoCMV)}</td>
+                    <td className="py-2.5 px-3 text-right text-rose-400">- R$ {brl(s.custoFlex)}</td>
+                    <td className="py-2.5 px-3 text-right text-rose-300 font-bold">{s.valorDevolucao > 0 ? `- R$ ${brl(s.valorDevolucao)}` : "-"}</td>
+                    <td className={`py-2.5 px-3 text-right font-black ${s.cancelado ? "text-amber-400" : s.ganhoLiquido < 0 ? "text-rose-500" : "text-emerald-400"}`}>
+                      {s.cancelado ? "CANCELADO" : `R$ ${brl(s.ganhoLiquido)}`}
                     </td>
                   </tr>
                 ))}
@@ -775,6 +1098,11 @@ export default function CurvaABCPage() {
           )}
         </div>
 
+        {semFaturamento > 0 && (
+          <p className="text-[10px] text-slate-600 text-center">
+            {semFaturamento} linha(s) de venda sem data de faturamento (pedido ainda não consta nos faturados) ficaram de fora, como no dashboard.
+          </p>
+        )}
       </div>
     </div>
   );
