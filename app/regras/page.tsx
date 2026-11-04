@@ -47,6 +47,9 @@ export default function RegrasPage() {
   const [responsavelCanal, setResponsavelCanal] = useState('Equipe Best Fit');
   const [logoUrl, setLogoUrl] = useState('');
   const [formulaApuracao, setFormulaApuracao] = useState('PDV - (PDV * 12%)');
+  // Armazenagem no Full: o prazo varia de canal para canal
+  const [diasAlertaArm, setDiasAlertaArm] = useState('90');
+  const [diasCobrancaArm, setDiasCobrancaArm] = useState('120');
   const [colunasFoco, setColunasFoco] = useState({
     idPedido: 'A',
     sku: 'B',
@@ -135,6 +138,8 @@ export default function RegrasPage() {
       setFormulaApuracao(regraDb.formula_excel || 'PDV - (PDV * 12%)');
       setResponsavelCanal(regraDb.responsavel || 'Equipe Best Fit');
       setLogoUrl(regraDb.logo_url || '');
+      setDiasAlertaArm(String(regraDb.dias_alerta_armazenagem ?? 90));
+      setDiasCobrancaArm(String(regraDb.dias_cobranca_armazenagem ?? 120));
       setColunasFoco({
         idPedido: regraDb.col_id_pedido || 'A',
         sku: regraDb.col_sku || 'B',
@@ -146,6 +151,8 @@ export default function RegrasPage() {
       setFormulaApuracao('PDV - (PDV * 12%)');
       setResponsavelCanal('Equipe Best Fit');
       setLogoUrl('');
+      setDiasAlertaArm('90');
+      setDiasCobrancaArm('120');
       setColunasFoco({ idPedido: 'A', sku: 'B', precoVenda: 'P', quantidade: 'O', repasseDireto: '' });
     }
 
@@ -177,7 +184,11 @@ export default function RegrasPage() {
     try {
       const repasseCol = colunasFoco.repasseDireto ? colunasFoco.repasseDireto.toUpperCase().trim() : '';
 
-      const { error: erroRegra } = await supabase.from('config_regras_canais').upsert([{
+      const alertaArm = Math.max(1, parseInt(diasAlertaArm, 10) || 90);
+      const cobrancaArm = Math.max(1, parseInt(diasCobrancaArm, 10) || 120);
+      if (alertaArm >= cobrancaArm) throw new Error("Armazenagem: o aviso (dias) precisa ser menor que o início da cobrança.");
+
+      const registroRegra: any = {
         canal: canalSelecionado,
         formula_excel: formulaApuracao,
         responsavel: responsavelCanal,
@@ -187,10 +198,22 @@ export default function RegrasPage() {
         col_repasse: repasseCol,
         col_estado: repasseCol,
         col_pdv: colunasFoco.precoVenda.toUpperCase(),
-        col_quantidade: colunasFoco.quantidade.toUpperCase()
-      }], { onConflict: 'canal' });
+        col_quantidade: colunasFoco.quantidade.toUpperCase(),
+        dias_alerta_armazenagem: alertaArm,
+        dias_cobranca_armazenagem: cobrancaArm
+      };
+      let { error: erroRegra } = await supabase.from('config_regras_canais').upsert([registroRegra], { onConflict: 'canal' });
+
+      // Migration dos prazos de armazenagem ainda não executada: salva o restante e avisa
+      let faltouMigration = false;
+      if (erroRegra && /dias_alerta_armazenagem|dias_cobranca_armazenagem/i.test(erroRegra.message)) {
+        faltouMigration = true;
+        const { dias_alerta_armazenagem, dias_cobranca_armazenagem, ...semPrazos } = registroRegra;
+        ({ error: erroRegra } = await supabase.from('config_regras_canais').upsert([semPrazos], { onConflict: 'canal' }));
+      }
 
       if (erroRegra) throw new Error("Erro ao salvar regras: " + erroRegra.message);
+      if (faltouMigration) alert("Regras salvas, mas os prazos de armazenagem NÃO foram gravados: execute a migration 20261104120000_prazos_armazenagem_por_canal.sql no Supabase.");
 
       const { error: erroMeta } = await supabase.from('tb_metas').upsert([{
         canal: canalSelecionado,
@@ -522,6 +545,24 @@ export default function RegrasPage() {
                     <span className="block text-[10px] font-bold text-slate-400 mb-1">Repasse Direto (Opc.)</span>
                     <input type="text" value={colunasFoco.repasseDireto} onChange={e => setColunasFoco({...colunasFoco, repasseDireto: e.target.value.toUpperCase()})} placeholder="Ex: T (ML)" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-300 font-mono font-bold text-center uppercase outline-none" />
                   </div>
+                </div>
+              </div>
+
+              {/* PRAZO DE ARMAZENAGEM NO FULL (varia por canal) */}
+              <div className="space-y-3 pt-2">
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Armazenagem no Full — prazo deste canal:</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                  <div>
+                    <span className="block text-[10px] font-bold text-amber-400 mb-1">Avisar a partir de (dias em estoque)</span>
+                    <input type="number" min={1} value={diasAlertaArm} onChange={e => setDiasAlertaArm(e.target.value)} className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2.5 text-xs text-amber-400 font-mono font-bold text-center outline-none" />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-rose-400 mb-1">Começa a cobrar armazenagem com (dias)</span>
+                    <input type="number" min={1} value={diasCobrancaArm} onChange={e => setDiasCobrancaArm(e.target.value)} className="w-full bg-slate-900 border border-rose-600/50 rounded-lg p-2.5 text-xs text-rose-400 font-mono font-bold text-center outline-none" />
+                  </div>
+                  <p className="sm:col-span-2 text-[11px] text-slate-400">
+                    Na aba Fulfillment, o lote enviado ao Full gera o aviso “faltam X dias” a partir do primeiro prazo e passa a “em cobrança” no segundo. Cada canal pode ter um prazo diferente (padrão: 90 e 120).
+                  </p>
                 </div>
               </div>
 

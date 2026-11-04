@@ -474,7 +474,7 @@ export default function LogisticaPage() {
       if (error) { alert("Erro ao registrar remessa (a migration do Fulfillment já foi executada?): " + error.message); setSalvando(false); return; }
     }
     await recalcularFifo();
-    alert(`✅ Remessa registrada com a data de hoje (${hoje.split("-").reverse().join("/")}): ${payload.length} SKUs, ${payload.reduce((a: number, b: any) => a + b.qtd_enviada, 0)} un. O aviso começa ao completar ${DIAS_ALERTA_PADRAO} dias.`);
+    alert(`✅ Remessa registrada com a data de hoje (${hoje.split("-").reverse().join("/")}): ${payload.length} SKUs, ${payload.reduce((a: number, b: any) => a + b.qtd_enviada, 0)} un. O aviso começa ao completar ${diasAlertaArm} dias.`);
     setPreviewRemessa([]); setMatrizRemessa([]); setNomeArquivoRemessa("");
     setSalvando(false);
   };
@@ -569,7 +569,7 @@ export default function LogisticaPage() {
     const colEntrega = colEntregaVendas.trim().toUpperCase();
     const modoFormulaRegras = formulaCanal === "formula_regras";
     const palavraEntrega = normTexto(textoEntrega);
-    const temColunaEntrega = colEntrega !== "" && colEntrega !== "ZZZ" && palavraEntrega !== "";
+    const temColunaEntrega = modoLogistica === "padrao" && colEntrega !== "" && colEntrega !== "ZZZ" && palavraEntrega !== "";   // Flex só existe na Logística Própria
     // Envio que gera taxa (no ML: "Flex"; nos outros canais: o texto que você definir na Configuração do Canal)
     const ehEnvioComTaxa = (valor: any) => temColunaEntrega && normTexto(valor).includes(palavraEntrega);
 
@@ -980,7 +980,8 @@ export default function LogisticaPage() {
         margem_pct: item.margem_pct,
         taxa_devolucao: item.taxa_devolucao || 0,
         qtd_devolucoes: item.qtd_devolucoes || 0,
-        diagnostico: item.diagnostico || ""
+        diagnostico: item.diagnostico || "",
+        ritmo_vendas: item.ritmo_vendas || ""
       }));
     } else {
       payloadFormatado = dadosProcessados.map((item: any) => ({
@@ -1010,11 +1011,16 @@ export default function LogisticaPage() {
     }
 
     let res = await supabase.from(tabela).insert(payloadFormatado);
-    if (res.error && modoLogistica === "full" && /taxa_devolucao|qtd_devolucoes|ritmo_vendas/i.test(res.error.message)) {
-      // Migration das colunas de devolução/ritmo ainda não executada: grava o restante e avisa
-      const semNovas = payloadFormatado.map(({ taxa_devolucao, qtd_devolucoes, ritmo_vendas, ...resto }: any) => resto);
+    if (res.error && /taxa_devolucao|qtd_devolucoes|ritmo_vendas/i.test(res.error.message)) {
+      // Migrations das colunas de devolução/ritmo ainda não executadas: grava o restante e avisa
+      const semNovas = payloadFormatado.map((linha: any) => {
+        const copia = { ...linha };
+        delete copia.ritmo_vendas;
+        if (modoLogistica === "full") { delete copia.taxa_devolucao; delete copia.qtd_devolucoes; }
+        return copia;
+      });
       res = await supabase.from(tabela).insert(semNovas);
-      if (!res.error) alert("Análise gravada, mas SEM os campos de devolução e ritmo: execute a migration 20261104090000_full_lancamentos_devolucao_ritmo.sql no Supabase.");
+      if (!res.error) alert("Análise gravada, mas SEM o campo de ritmo" + (modoLogistica === "full" ? " e de devolução" : "") + ": execute no Supabase as migrations 20261104090000_full_lancamentos_devolucao_ritmo.sql e 20261104120000_prazos_armazenagem_por_canal.sql.");
     }
     
     if (res.error) {
@@ -1079,10 +1085,15 @@ export default function LogisticaPage() {
     return [...baseRows, ...semVenda];
   })();
 
-  // Armazenagem: lotes enviados ao Full, aviso a partir de 90 dias (cobrança em 120)
+  // Armazenagem: lotes enviados ao Full. Os prazos (aviso e início da cobrança) vêm da aba Regras, por canal; sem cadastro: 90 e 120 dias.
+  const regraCanalAtual = regrasCanais.find((r: any) => normTexto(r.canal) === normTexto(canalSelecionado));
+  const prazoAviso = Number(regraCanalAtual?.dias_alerta_armazenagem) || DIAS_ALERTA_PADRAO;
+  const prazoCobranca = Number(regraCanalAtual?.dias_cobranca_armazenagem) || DIAS_COBRANCA_PADRAO;
+  const diasAlertaArm = prazoAviso < prazoCobranca ? prazoAviso : DIAS_ALERTA_PADRAO;
+  const diasCobrancaArm = prazoAviso < prazoCobranca ? prazoCobranca : DIAS_COBRANCA_PADRAO;
   const hojeISO = hojeSaoPaulo();
   const lotesCalc: Lote[] = lotes.map((l: any) => ({ id: l.id, sku: l.sku, dataEntrada: String(l.data_entrada).slice(0, 10), qtdEnviada: Number(l.qtd_enviada), qtdRemanescente: Number(l.qtd_remanescente) }));
-  const resumoArmazenagem = resumirArmazenagemPorSku(lotesCalc, hojeISO);
+  const resumoArmazenagem = resumirArmazenagemPorSku(lotesCalc, hojeISO, diasAlertaArm, diasCobrancaArm);
   const skusEmAlerta = Array.from(resumoArmazenagem.values()).filter((r) => r.nivel !== "OK").sort((a, b) => a.diasParaCobranca - b.diasParaCobranca);
 
   const remessasAgrupadas = (() => {
@@ -1097,15 +1108,23 @@ export default function LogisticaPage() {
     return Array.from(mapa.values()).sort((a, b) => (a.data < b.data ? 1 : -1));
   })();
 
+  const celulaRitmo = (item: any) => {
+    const lbl = String(item.ritmo_vendas || "");
+    if (!lbl) return <span className="text-slate-600">—</span>;
+    const pos = regrasRitmo.findIndex(r => r.status.trim() === lbl);
+    const cls = lbl === "Sem vendas" ? "text-slate-500" : pos === 0 ? "bg-emerald-900/30 text-emerald-300 border border-emerald-800/50" : pos > 0 ? "bg-sky-900/30 text-sky-300 border border-sky-800/50" : "bg-amber-950/40 text-amber-400 border border-amber-900/40";
+    return <span className={`px-2 py-0.5 rounded uppercase ${cls}`}>{lbl}</span>;
+  };
+
   const filtrados = dataSource.filter((item: any) => {
     const mText = !pesquisaBusca || String(item.sku).toLowerCase().includes(pesquisaBusca.toLowerCase()) || String(item.produto).toLowerCase().includes(pesquisaBusca.toLowerCase());
     const armz = resumoArmazenagem.get(normalizarSku(item.sku));
     const mStatus = filtroStatus === "TODOS" ||
-      (modoLogistica === "full"
+      (filtroStatus.startsWith("ritmo:")
+        ? String(item.ritmo_vendas || "") === filtroStatus.slice(6)
+        : modoLogistica === "full"
         ? (filtroStatus === "Armazenagem"
             ? (!!armz && armz.nivel !== "OK")
-            : filtroStatus.startsWith("ritmo:")
-            ? String(item.ritmo_vendas || "") === filtroStatus.slice(6)
             : (item.status_estoque === filtroStatus || (item.status_envio && item.status_envio.includes(filtroStatus))))
         : (item.diagnostico && item.diagnostico.includes(filtroStatus)));
     return mText && mStatus;
@@ -1218,7 +1237,7 @@ export default function LogisticaPage() {
                 <h2 className="text-lg font-bold text-purple-400 flex items-center gap-2"><span>🚚 Registrar Estoque Enviado ao Full</span></h2>
                 <p className="text-xs text-slate-400 mt-1">
                   Suba a planilha do que foi enviado. A data de entrada é registrada automaticamente com o dia do upload
-                  (<strong className="text-slate-200">{hojeISO.split("-").reverse().join("/")}</strong>). Ao completar {DIAS_ALERTA_PADRAO} dias o sistema avisa quantos dias faltam para {DIAS_COBRANCA_PADRAO}, quando a armazenagem passa a ser cobrada.
+                  (<strong className="text-slate-200">{hojeISO.split("-").reverse().join("/")}</strong>). Ao completar {diasAlertaArm} dias o sistema avisa quantos dias faltam para {diasCobrancaArm}, quando a armazenagem passa a ser cobrada. <span className="text-slate-500">(Prazo do canal {canalSelecionado}, definido na aba Regras.)</span>
                 </p>
               </div>
               <div className="bg-purple-950/20 p-5 rounded-xl border border-purple-900/30">
@@ -1252,7 +1271,7 @@ export default function LogisticaPage() {
                 <div className="bg-amber-950/30 border border-amber-800/50 rounded-xl p-4 text-xs text-amber-200 space-y-1">
                   <div className="font-black uppercase tracking-wider text-amber-400 text-[11px] mb-1">⚠️ Armazenagem — {skusEmAlerta.length} SKU(s) em atenção</div>
                   {skusEmAlerta.slice(0, 15).map((r) => (
-                    <div key={r.sku}><span className="font-mono font-bold text-white">{r.sku}</span> — {r.nivel === "COBRANDO" ? r.qtdCobrando : r.qtdEmAlerta} un. · {textoAlertaArmazenagem(r.nivel, r.diasParaCobranca)}</div>
+                    <div key={r.sku}><span className="font-mono font-bold text-white">{r.sku}</span> — {r.nivel === "COBRANDO" ? r.qtdCobrando : r.qtdEmAlerta} un. · {textoAlertaArmazenagem(r.nivel, r.diasParaCobranca, diasCobrancaArm)}</div>
                   ))}
                   {skusEmAlerta.length > 15 && <div className="text-amber-400/70">… e mais {skusEmAlerta.length - 15} SKUs (veja no Relatório)</div>}
                 </div>
@@ -1266,7 +1285,7 @@ export default function LogisticaPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                       {remessasAgrupadas.map((g: any, idx: number) => {
-                        const st = statusArmazenagem(g.data, g.saldo, hojeISO);
+                        const st = statusArmazenagem(g.data, g.saldo, hojeISO, diasAlertaArm, diasCobrancaArm);
                         return (
                           <tr key={idx}>
                             <td className="p-3 font-mono text-white">{g.dataBR}</td>
@@ -1277,9 +1296,9 @@ export default function LogisticaPage() {
                             <td className="p-3 text-center font-mono text-slate-300">{st.dias}</td>
                             <td className="p-3 text-[11px] font-bold">
                               {g.saldo <= 0 ? <span className="text-slate-500">Vendido por completo</span>
-                                : st.nivel === "COBRANDO" ? <span className="text-rose-400">💸 {textoAlertaArmazenagem(st.nivel, st.diasParaCobranca)}</span>
-                                : st.nivel === "ALERTA" ? <span className="text-amber-400">⏳ {textoAlertaArmazenagem(st.nivel, st.diasParaCobranca)}</span>
-                                : <span className="text-emerald-400">✔️ Faltam {Math.max(0, DIAS_ALERTA_PADRAO - st.dias)} dias para o aviso</span>}
+                                : st.nivel === "COBRANDO" ? <span className="text-rose-400">💸 {textoAlertaArmazenagem(st.nivel, st.diasParaCobranca, diasCobrancaArm)}</span>
+                                : st.nivel === "ALERTA" ? <span className="text-amber-400">⏳ {textoAlertaArmazenagem(st.nivel, st.diasParaCobranca, diasCobrancaArm)}</span>
+                                : <span className="text-emerald-400">✔️ Faltam {Math.max(0, diasAlertaArm - st.dias)} dias para o aviso</span>}
                             </td>
                             <td className="p-3 text-right"><button onClick={() => excluirRemessa(g)} className="text-rose-400 hover:text-rose-300 text-[10px] font-bold uppercase cursor-pointer">Excluir</button></td>
                           </tr>
@@ -1387,7 +1406,7 @@ export default function LogisticaPage() {
                     <input type="text" value={colCarrinhoVendas} onChange={e => { setColCarrinhoVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} placeholder={formulaCanal === "ml_recalculo" ? "D" : "—"} className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
                   </div>
 
-                  {modoLogistica === "full" && (
+                  {(
                     <div>
                       <label className="block text-[9px] font-bold text-sky-400 uppercase mb-1" title="Coluna com a data da venda. Usada para contar as vendas dentro de cada intervalo de dias (ritmo de vendas).">Col. Data da Venda</label>
                       <input type="text" value={colDataVendas} onChange={e => { setColDataVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} placeholder="—" className="w-full bg-slate-900 border border-sky-600/50 rounded-lg p-2 text-xs font-mono text-center text-sky-300 font-bold outline-none" />
@@ -1412,7 +1431,8 @@ export default function LogisticaPage() {
                   )}
                 </div>
 
-                {/* ENTREGA — cada canal descreve de um jeito */}
+                {/* ENVIO COM TAXA (Flex) — só Logística Própria; cada canal descreve a entrega de um jeito */}
+                {modoLogistica === "padrao" && (
                 <div className="mt-5 pt-4 border-t border-slate-800/80">
                   <h4 className="text-[10px] font-black text-amber-300 uppercase tracking-wider mb-1">Envio com taxa (opcional)</h4>
                   <p className="text-[10px] text-slate-500 mb-3">Cada canal escreve a forma de entrega de um jeito. Informe a coluna, o trecho de texto que identifica o envio que gera taxa e o valor descontado por pedido. Deixe a coluna vazia para não descontar nada.</p>
@@ -1431,16 +1451,17 @@ export default function LogisticaPage() {
                     </div>
                   </div>
                 </div>
+                )}
                 {layoutDetectado && <p className="text-[10px] text-emerald-400 mt-3">✔ {layoutDetectado}</p>}
               </div>
 
-              {/* RITMO DE VENDAS (Full) */}
-              {modoLogistica === "full" && (
+              {/* RITMO DE VENDAS (Full e Logística Própria) */}
+              {(
                 <div className="bg-sky-950/10 p-5 rounded-xl border border-sky-900/30 space-y-3">
                   <div>
                     <h3 className="text-[11px] font-black text-sky-300 uppercase tracking-wider">📈 Ritmo de vendas — status do SKU em {canalSelecionado}</h3>
                     <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
-                      Defina quantas vendas, em quantos dias, dão cada status. Vale a <strong className="text-slate-300">primeira regra da lista</strong> que o SKU atingir, então deixe a mais exigente em cima (ex.: 10 vendas em 5 dias = Ótimo; 5 vendas em 15 dias = Bom).
+                      Defina quantas vendas, em quantos dias, dão cada status (vale para {modoLogistica === "full" ? "a Logística Full" : "a Logística Própria, que mede o que serve para o Full"}). Vale a <strong className="text-slate-300">primeira regra da lista</strong> que o SKU atingir, então deixe a mais exigente em cima (ex.: 10 vendas em 5 dias = Ótimo; 5 vendas em 15 dias = Bom).
                       {colDataVendas.trim()
                         ? <> Conta as vendas válidas (sem canceladas) em qualquer intervalo de dias seguidos, usando a coluna de data <strong className="text-sky-300">{colDataVendas}</strong>.</>
                         : <> Sem coluna de data, compara o ritmo médio do mês: vendas do mês ÷ dias do mês.</>}
@@ -1544,7 +1565,7 @@ export default function LogisticaPage() {
                     Linha {linhaVendas} · SKU {colSkuVendas} · Qtd {colQtdVendas} · PDV {colPdvVendas}
                     {formulaCanal === "ml_recalculo" ? ` · MLB ${colMlbVendas}` : ""}
                     {colCarrinhoVendas ? ` · Status ${colCarrinhoVendas}` : ""}
-                    {colEntregaVendas && textoEntrega ? ` · Entrega ${colEntregaVendas} (“${textoEntrega}” = −R$ ${taxaFlex})` : ""}
+                    {modoLogistica === "padrao" && colEntregaVendas && textoEntrega ? ` · Entrega ${colEntregaVendas} (“${textoEntrega}” = −R$ ${taxaFlex})` : ""}
                   </div>
                   {layoutDetectado && <div className="text-[10px] text-emerald-400">✔ {layoutDetectado}</div>}
                   <div className="text-[10px] text-slate-500">
@@ -1592,7 +1613,7 @@ export default function LogisticaPage() {
                <div className="bg-amber-950/30 border border-amber-800/50 rounded-2xl p-5 text-xs text-amber-200 space-y-1">
                  <div className="font-black uppercase tracking-wider text-amber-400 text-[11px] mb-1">⚠️ Armazenagem do Full — {skusEmAlerta.length} SKU(s) em atenção</div>
                  {skusEmAlerta.slice(0, 10).map((r) => (
-                   <div key={r.sku}><span className="font-mono font-bold text-white">{r.sku}</span> — {r.nivel === "COBRANDO" ? r.qtdCobrando : r.qtdEmAlerta} un. · {textoAlertaArmazenagem(r.nivel, r.diasParaCobranca)}</div>
+                   <div key={r.sku}><span className="font-mono font-bold text-white">{r.sku}</span> — {r.nivel === "COBRANDO" ? r.qtdCobrando : r.qtdEmAlerta} un. · {textoAlertaArmazenagem(r.nivel, r.diasParaCobranca, diasCobrancaArm)}</div>
                  ))}
                  {skusEmAlerta.length > 10 && <div className="text-amber-400/70">… e mais {skusEmAlerta.length - 10} (use o filtro “Armazenagem em alerta”)</div>}
                </div>
@@ -1660,7 +1681,7 @@ export default function LogisticaPage() {
                       <option value="Devolução">Envio bloqueado por Devolução</option>
                       {regrasRitmo.filter(r => r.status.trim()).map(r => <option key={r.id} value={`ritmo:${r.status.trim()}`}>Ritmo: {r.status.trim()}</option>)}
                       <option value="ritmo:Abaixo da meta">Ritmo: Abaixo da meta</option>
-                      <option value="Armazenagem">Armazenagem em alerta ({DIAS_ALERTA_PADRAO}+ dias)</option>
+                      <option value="Armazenagem">Armazenagem em alerta ({diasAlertaArm}+ dias)</option>
                     </select>
                   ) : (
                     <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
@@ -1669,6 +1690,8 @@ export default function LogisticaPage() {
                       <option value="Sem Futuro">⛔ Sem Futuro (Prejuízo/Alta Dev.)</option>
                       <option value="Atenção">⚠️ Em Atenção (Margem Baixa)</option>
                       <option value="Regular">✅ Regulares</option>
+                      {regrasRitmo.filter(r => r.status.trim()).map(r => <option key={r.id} value={`ritmo:${r.status.trim()}`}>Ritmo: {r.status.trim()}</option>)}
+                      <option value="ritmo:Abaixo da meta">Ritmo: Abaixo da meta</option>
                     </select>
                   )}
                   
@@ -1708,6 +1731,7 @@ export default function LogisticaPage() {
                         <th className="p-3 text-right">Receita (R$)</th>
                         <th className="p-3 text-right text-rose-300" title="Custo com caixa, fita, etc.">Custo Embalagem</th>
                         <th className="p-3 text-right font-black text-emerald-400">Margem LÍQ.</th>
+                        <th className="p-3 text-center text-sky-300">Ritmo</th>
                         <th className="p-3 text-center text-amber-300">Qtd Devolvida</th>
                         <th className="p-3 text-center">Taxa Devolução</th>
                         <th className="p-3 text-center border-l border-slate-800 bg-slate-900">Veredicto (Diagnóstico)</th>
@@ -1742,15 +1766,7 @@ export default function LogisticaPage() {
                               <td className={`p-3 text-right font-mono font-bold ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
                                 {Number(item.margem_pct).toFixed(1)}%
                               </td>
-                              <td className="p-3 text-center text-[10px] font-bold">
-                                {(() => {
-                                  const lbl = String(item.ritmo_vendas || "");
-                                  if (!lbl) return <span className="text-slate-600">—</span>;
-                                  const pos = regrasRitmo.findIndex(r => r.status.trim() === lbl);
-                                  const cls = lbl === "Sem vendas" ? "text-slate-500" : pos === 0 ? "bg-emerald-900/30 text-emerald-300 border border-emerald-800/50" : pos > 0 ? "bg-sky-900/30 text-sky-300 border border-sky-800/50" : "bg-amber-950/40 text-amber-400 border border-amber-900/40";
-                                  return <span className={`px-2 py-0.5 rounded uppercase ${cls}`}>{lbl}</span>;
-                                })()}
-                              </td>
+                              <td className="p-3 text-center text-[10px] font-bold">{celulaRitmo(item)}</td>
                               <td className="p-3 text-center text-[11px] font-mono font-bold">
                                 {(() => {
                                   if (item.taxa_devolucao === undefined || item.taxa_devolucao === null) return <span className="text-slate-600">—</span>;
@@ -1771,7 +1787,7 @@ export default function LogisticaPage() {
                                   if (!a || a.nivel === "OK") return <span className="text-slate-600">—</span>;
                                   return a.nivel === "COBRANDO"
                                     ? <span className="text-rose-400" title={`${a.qtdCobrando} un. com ${a.loteMaisAntigoDias} dias`}>💸 Cobrando ({a.qtdCobrando} un.)</span>
-                                    : <span className="text-amber-400" title={`${a.qtdEmAlerta} un. · lote mais antigo com ${a.loteMaisAntigoDias} dias`}>⏳ {textoAlertaArmazenagem(a.nivel, a.diasParaCobranca).replace("Começará cobrar estoque — ", "")}</span>;
+                                    : <span className="text-amber-400" title={`${a.qtdEmAlerta} un. · lote mais antigo com ${a.loteMaisAntigoDias} dias`}>⏳ {textoAlertaArmazenagem(a.nivel, a.diasParaCobranca, diasCobrancaArm).replace("Começará cobrar estoque — ", "")}</span>;
                                 })()}
                               </td>
                               <td className="p-3 text-center">
@@ -1787,6 +1803,7 @@ export default function LogisticaPage() {
                               <td className={`p-3 text-right font-mono font-black ${item.margem_pct >= 10 ? 'text-emerald-400' : 'text-rose-500'}`} title={`Lucro R$: ${formatarMoeda(item.lucro_liquido)}`}>
                                 {Number(item.margem_pct).toFixed(1)}%
                               </td>
+                              <td className="p-3 text-center text-[10px] font-bold">{celulaRitmo(item)}</td>
                               <td className="p-3 text-center font-bold text-amber-300">{item.qtd_devolucoes}</td>
                               <td className="p-3 text-center">
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.taxa_devolucao >= 10 ? 'bg-rose-950/60 text-rose-400 border border-rose-900/40' : item.taxa_devolucao > 5 ? 'bg-amber-950/60 text-amber-400 border border-amber-900/40' : 'text-emerald-400'}`}>
