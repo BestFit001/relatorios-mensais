@@ -6,6 +6,7 @@ import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
 import { lerArquivoComoMatriz, lerArquivoComoLinhas } from "../../lib/lerArquivo";
 import { removerSufixoFba } from "../../lib/fulfillment";
+import { registrarSkusNaBaseCadastrada, linhaAvisoCadastro } from "../../lib/cadastros";
 
 async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo?: string, eqValor?: any) {
   let todos: any[] = [];
@@ -1114,7 +1115,12 @@ export default function UpdatesPage() {
         }
 
         let canceladosGravados = 0;
+        let avisoCadastro = "";
         if (novasVendas.length > 0) {
+          // SKUs vendidos que ainda não constam na base de cadastrados entram lá (estoque 0, sem mexer nos que já existem)
+          const regCad = await registrarSkusNaBaseCadastrada(novasVendas.map((v: any) => v.sku));
+          avisoCadastro = linhaAvisoCadastro(regCad);
+
           const vendasGravar = novasVendas.map(({ __cancelado, ...v }: any) => v);
           await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
           for (let k = 0; k < vendasGravar.length; k += 500) {
@@ -1156,6 +1162,7 @@ export default function UpdatesPage() {
         if (novosFaturados.size > 0) linhasMsg.push(`• Faturados registrados pela Nota Fiscal da planilha: ${novosFaturados.size}`);
         if (foraDoMesData > 0) linhasMsg.push(`• Fora do mês escolhido (pela data do pedido): ${foraDoMesData}`);
         if (isFisico) linhasMsg.push(`• Linha de total da planilha ignorada: ${ignoradosTotalClube > 0 ? 'sim' : 'não encontrada'}`);
+        if (avisoCadastro) linhasMsg.push(avisoCadastro);
         if (totalImportados === 0) linhasMsg.push(`⚠️ Nada foi importado: confira a coluna do ID do pedido (${colIdDef}) e se os faturados do mês foram subidos antes.`);
         alert(linhasMsg.join("\n"));
         carregarVendasPendentes();
@@ -1502,7 +1509,9 @@ export default function UpdatesPage() {
         for (let i = 0; i < registros.length; i += 500) {
           await supabase.from('ml_anuncios_regras').upsert(registros.slice(i, i + 500), { onConflict: 'mlb' });
         }
-        alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).`);
+        // SKUs dos anúncios que não constam na base de cadastrados entram lá (estoque 0)
+        const regCad = await registrarSkusNaBaseCadastrada(registros.map((r: any) => r.sku));
+        alert(`🚀 Regras de ${contaMlSelecionada} processadas (${registros.length} anúncios).\n${linhaAvisoCadastro(regCad)}`);
         setLoading(false);
       } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
     };
