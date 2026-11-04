@@ -3,6 +3,8 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
+import * as XLSX from "xlsx";
+import { lerArquivoComoLinhas } from "../../lib/lerArquivo";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -87,6 +89,14 @@ export default function CalculadoraPage() {
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
   const [canaisSelecionados, setCanaisSelecionados] = useState<string[]>([]);
 
+  // Precificação em lote (planilha de SKUs)
+  const [custosTodos, setCustosTodos] = useState<Map<string, any>>(new Map());
+  const [canalLote, setCanalLote] = useState("Mercado Livre 1 Clássico");
+  const [margemLote, setMargemLote] = useState("30");
+  const [processandoLote, setProcessandoLote] = useState(false);
+  const [resultadoLote, setResultadoLote] = useState<{ nomeArquivo: string; canal: string; margem: number; linhas: any[][]; total: number; calculados: number; semCusto: number; inviaveis: number } | null>(null);
+  const [erroLote, setErroLote] = useState("");
+
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
     if (!usuarioLogado) {
@@ -152,6 +162,13 @@ export default function CalculadoraPage() {
       if (k && k.length >= 10) mapaCustos.set(k, c);
     });
     setCustosMap(mapaCustos);
+
+    const mapaTodos = new Map();
+    allCustos.forEach((c: any) => {
+      const k = normalizarSku(c.sku);
+      if (k) mapaTodos.set(k, c);
+    });
+    setCustosTodos(mapaTodos);
 
     let allMlRegras: any[] = [];
     from = 0;
@@ -272,6 +289,145 @@ export default function CalculadoraPage() {
     return regrasDoCanal[0];
   };
 
+  // Cálculo do PDV ideal de UM canal para UM SKU (mesma regra usada nos cards e na planilha em lote)
+  const calcularPdvIdealCanal = (canalNome: string, skuKey: string, custoProduto: number, margemPct: number, valRebate: number) => {
+    const impostoPercent = 0.09;
+    const cLower = canalNome.toLowerCase();
+    const anunciosSku = (cLower.includes("mercado livre 2") ? mapeamentoMl2 : mapeamentoMl1).get(skuKey) || [];
+    let comissaoPct = 0.14;
+    let temMlbEncontrado = false;
+    let refAnuncio: any = null;
+
+    if (cLower.includes("mercado livre")) {
+      if (cLower.includes("clássico")) {
+        const matchClassico = anunciosSku.find((a: any) => a.comissao > 0 && a.comissao <= 14);
+        if (matchClassico) { comissaoPct = matchClassico.comissao / 100; refAnuncio = matchClassico; temMlbEncontrado = true; }
+        else { comissaoPct = 0.14; refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null; }
+      } else if (cLower.includes("premium")) {
+        const matchPremium = anunciosSku.find((a: any) => a.comissao > 14);
+        if (matchPremium) { comissaoPct = matchPremium.comissao / 100; refAnuncio = matchPremium; temMlbEncontrado = true; }
+        else { comissaoPct = 0.19; refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null; }
+      }
+    } else {
+      refAnuncio = anunciosSku.length > 0 ? anunciosSku[0] : null;
+    }
+
+    const pesoReal = refAnuncio && Number(refAnuncio.peso_real) > 0 ? Number(refAnuncio.peso_real) : 2.0;
+    const altura = refAnuncio && Number(refAnuncio.altura) > 0 ? Number(refAnuncio.altura) : 10;
+    const largura = refAnuncio && Number(refAnuncio.largura) > 0 ? Number(refAnuncio.largura) : 10;
+    const comprimento = refAnuncio && Number(refAnuncio.comprimento) > 0 ? Number(refAnuncio.comprimento) : 10;
+
+    const margemAlvoDec = margemPct / 100;
+    let pdvCalculado = custoProduto * 2;
+    let inviavel = false;
+
+    for (let iter = 0; iter < 5; iter++) {
+      let tarifaFixa = 0;
+      let freteVariavel = 0;
+      if (cLower.includes("mercado livre")) {
+        tarifaFixa = pdvCalculado < 79.00 ? 6.50 : 0.00;
+        freteVariavel = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
+      } else {
+        const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
+        comissaoPct = Number(regraTabela.comissao || 14) / 100;
+        tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
+        freteVariavel = Number(regraTabela.frete || 0);
+      }
+      const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
+      inviavel = !(denominador > 0);
+      // O rebate reduz o custo efetivo, facilitando o cálculo do PDV ideal
+      const custoEfetivo = Math.max(0, custoProduto - valRebate);
+      pdvCalculado = denominador > 0 ? (custoEfetivo + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
+    }
+
+    let tarifaFixaFinal = 0;
+    let freteFinal = 0;
+    if (cLower.includes("mercado livre")) {
+      tarifaFixaFinal = pdvCalculado < 79.00 ? 6.50 : 0.00;
+      freteFinal = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
+    } else {
+      const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
+      tarifaFixaFinal = Number(regraTabela.tarifa_fixa || 0);
+      freteFinal = Number(regraTabela.frete || 0);
+    }
+
+    const valorComissao = pdvCalculado * comissaoPct;
+    const valorImposto = pdvCalculado * impostoPercent;
+    const lucroLiquidoBase = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
+    const lucroLiquido = lucroLiquidoBase + valRebate;
+    const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
+
+    return {
+      pdv: pdvCalculado, comissaoPct, valorComissao, tarifaFixa: tarifaFixaFinal, frete: freteFinal, valorImposto,
+      lucroLiquido, margemFinal, inviavel,
+      temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true,
+    };
+  };
+
+  // Planilha de SKUs (coluna A) -> mesma regra da calculadora no canal escolhido -> planilha SKU | PDV para baixar
+  const handleUploadLote = async (file: File) => {
+    setErroLote("");
+    setResultadoLote(null);
+    const margem = parseNumero(margemLote);
+    if (margemLote.trim() === "" || !(margem >= 0) || margem >= 100) { setErroLote("Informe uma margem válida (entre 0 e 99,9%) antes de subir a planilha."); return; }
+    if (!canalLote) { setErroLote("Selecione o canal."); return; }
+    setProcessandoLote(true);
+    try {
+      const linhasArquivo = await lerArquivoComoLinhas(file);
+      const valRebate = parseNumero(rebatesCanais[canalLote] || "0");
+      const saida: any[][] = [["SKU", "PDV"]];
+      let total = 0, calculados = 0, semCusto = 0, inviaveis = 0;
+
+      linhasArquivo.forEach((linha, idx) => {
+        const bruto = linha[0];
+        const texto = String(bruto ?? "").trim();
+        if (!texto) return;
+        if (idx === 0 && !/\d/.test(texto)) return;   // cabeçalho ("SKU", "Código"...)
+        total++;
+        const info = custosTodos.get(normalizarSku(texto));
+        const custo = info ? Number(info.custo_unitario) : 0;
+        if (!info || !(custo > 0)) {
+          semCusto++;
+          saida.push([texto, "sem custo na base"]);
+          return;
+        }
+        const r = calcularPdvIdealCanal(canalLote, normalizarSku(texto), custo, margem, valRebate);
+        if (r.inviavel || !(r.pdv > 0)) {
+          inviaveis++;
+          saida.push([texto, "margem inviável para o canal"]);
+          return;
+        }
+        calculados++;
+        saida.push([texto, Math.round(r.pdv * 100) / 100]);
+      });
+
+      if (total === 0) { setErroLote("Não encontrei SKUs na coluna A da planilha."); return; }
+      const base = file.name.replace(/\.[^.]+$/, "");
+      setResultadoLote({ nomeArquivo: base, canal: canalLote, margem, linhas: saida, total, calculados, semCusto, inviaveis });
+    } catch (e: any) {
+      setErroLote("Não consegui ler a planilha: " + (e?.message || e));
+    } finally {
+      setProcessandoLote(false);
+    }
+  };
+
+  const baixarResultadoLote = () => {
+    if (!resultadoLote) return;
+    const ws = XLSX.utils.aoa_to_sheet(resultadoLote.linhas);
+    // SKU como texto e PDV com duas casas
+    for (let r = 1; r < resultadoLote.linhas.length; r++) {
+      const a = ws[XLSX.utils.encode_cell({ r, c: 0 })];
+      if (a) { a.t = "s"; a.v = String(a.v); }
+      const b = ws[XLSX.utils.encode_cell({ r, c: 1 })];
+      if (b && b.t === "n") b.z = "0.00";
+    }
+    ws["!cols"] = [{ wch: 20 }, { wch: 28 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "PDV");
+    const canalArq = resultadoLote.canal.replace(/[^a-zA-Z0-9]+/g, "_");
+    XLSX.writeFile(wb, `${resultadoLote.nomeArquivo}_PDV_${canalArq}_margem${String(resultadoLote.margem).replace(".", ",")}.xlsx`);
+  };
+
   const calcularResultadosCanais = () => {
     if (!produtoEncontrado) return [];
 
@@ -327,63 +483,21 @@ export default function CalculadoraPage() {
 
         if (modoCalculo === "pdv_ideal") {
           const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
-          const margemAlvoDec = parseFloat(margemAlvo) / 100;
-          let pdvCalculado = custoProduto * 2;
-
-          for (let iter = 0; iter < 5; iter++) {
-            let tarifaFixa = 0;
-            let freteVariavel = 0;
-
-            if (cLower.includes("mercado livre")) {
-              tarifaFixa = pdvCalculado < 79.00 ? 6.50 : 0.00;
-              freteVariavel = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
-            } else {
-              const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
-              comissaoPct = Number(regraTabela.comissao || 14) / 100;
-              tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
-              freteVariavel = Number(regraTabela.frete || 0);
-            }
-
-            const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
-            // O rebate reduz o custo efetivo ou soma-se à receita, facilitando o cálculo do PDV ideal
-            const custoEfetivo = Math.max(0, custoProduto - valRebate);
-            pdvCalculado = denominador > 0 ? (custoEfetivo + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
-          }
-
-          let tarifaFixaFinal = 0;
-          let freteFinal = 0;
-
-          if (cLower.includes("mercado livre")) {
-            tarifaFixaFinal = pdvCalculado < 79.00 ? 6.50 : 0.00;
-            freteFinal = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
-          } else {
-            const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
-            tarifaFixaFinal = Number(regraTabela.tarifa_fixa || 0);
-            freteFinal = Number(regraTabela.frete || 0);
-          }
-
-          const valorComissao = pdvCalculado * comissaoPct;
-          const valorImposto = pdvCalculado * impostoPercent;
-          
-          // Lucro base + Rebate somado ao líquido/lucro
-          const lucroLiquidoBase = pdvCalculado - (custoProduto + valorComissao + tarifaFixaFinal + freteFinal + valorImposto);
-          const lucroLiquido = lucroLiquidoBase + valRebate;
-          const margemFinal = pdvCalculado > 0 ? (lucroLiquido / pdvCalculado) * 100 : 0;
-
+          const r = calcularPdvIdealCanal(canalNome, skuKey, custoProduto, parseFloat(margemAlvo), valRebate);
           return {
             canal: canalNome,
-            pdv: pdvCalculado,
+            pdv: r.pdv,
             custoProduto,
-            comissaoPct: comissaoPct * 100,
-            valorComissao,
-            tarifaFixa: tarifaFixaFinal,
-            frete: freteFinal,
-            valorImposto,
-            lucroLiquido,
-            margemFinal,
+            comissaoPct: r.comissaoPct * 100,
+            valorComissao: r.valorComissao,
+            tarifaFixa: r.tarifaFixa,
+            frete: r.frete,
+            valorImposto: r.valorImposto,
+            lucroLiquido: r.lucroLiquido,
+            margemFinal: r.margemFinal,
             rebate: valRebate,
             custoIdealCalculado: null,
-            temMlb: cLower.includes("mercado livre") ? (temMlbEncontrado || anunciosSku.length > 0) : true
+            temMlb: r.temMlb
           };
         } else if (modoCalculo === "reversa") {
           const custoProduto = Number(produtoEncontrado.custo_unitario || 25.88);
@@ -643,6 +757,71 @@ export default function CalculadoraPage() {
               })}
             </div>
           </div>
+        </div>
+
+        <div className="bg-slate-900/90 p-6 rounded-2xl border border-indigo-500/30 shadow-xl space-y-4" data-lote>
+          <div>
+            <h2 className="text-sm font-black text-white">📑 Precificação em lote (planilha de SKUs)</h2>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Suba uma planilha com os SKUs na <strong>coluna A</strong>, escolha o canal e a margem. A calculadora aplica a regra do canal (comissão, tarifa, frete e imposto de 9%)
+              e devolve uma planilha com o SKU na coluna A e o <strong>PDV</strong> na coluna B. SKU sem custo na aba de custos recebe &quot;sem custo na base&quot;.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+            <div>
+              <label className="block text-[10px] font-bold text-sky-400 uppercase mb-1">Canal:</label>
+              <select
+                value={canalLote}
+                onChange={(e) => { setCanalLote(e.target.value); setResultadoLote(null); }}
+                data-lote-canal
+                className="w-full bg-slate-950 border border-sky-600/50 rounded-xl p-2.5 text-xs font-bold text-sky-300 outline-none cursor-pointer"
+              >
+                {canaisConfig.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem desejada (%):</label>
+              <input
+                type="number"
+                value={margemLote}
+                onChange={(e) => { setMargemLote(e.target.value); setResultadoLote(null); }}
+                data-lote-margem
+                className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de SKUs (xlsx, xls, csv...):</label>
+              <input
+                type="file"
+                data-lote-arquivo
+                disabled={processandoLote || loading}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadLote(f); e.target.value = ""; }}
+                className="w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-indigo-600 file:text-white file:font-bold file:cursor-pointer cursor-pointer"
+              />
+            </div>
+          </div>
+          {parseNumero(rebatesCanais[canalLote] || "0") > 0 && (
+            <p className="text-[11px] text-purple-300">Rebate de R$ {parseNumero(rebatesCanais[canalLote]).toFixed(2)} informado em {canalLote} será considerado no cálculo.</p>
+          )}
+          {processandoLote && <p className="text-xs text-slate-400">Calculando...</p>}
+          {erroLote && <p className="text-xs font-bold text-rose-400" data-lote-erro>{erroLote}</p>}
+          {resultadoLote && (
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl p-4" data-lote-resultado>
+              <div className="text-xs text-slate-300 space-y-0.5">
+                <p><strong className="text-white">{resultadoLote.total}</strong> SKU(s) lidos · <strong className="text-emerald-400">{resultadoLote.calculados}</strong> com PDV calculado ({resultadoLote.canal}, margem {resultadoLote.margem}%)</p>
+                {resultadoLote.semCusto > 0 && <p className="text-amber-400"><strong>{resultadoLote.semCusto}</strong> sem custo na base</p>}
+                {resultadoLote.inviaveis > 0 && <p className="text-rose-400"><strong>{resultadoLote.inviaveis}</strong> com margem inviável para o canal (comissão + imposto + margem ≥ 100%)</p>}
+              </div>
+              <button
+                type="button"
+                onClick={baixarResultadoLote}
+                data-lote-baixar
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow"
+              >
+                ⬇️ Baixar planilha (SKU + PDV)
+              </button>
+            </div>
+          )}
         </div>
 
         {produtoEncontrado && (

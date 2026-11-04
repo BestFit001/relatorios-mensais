@@ -2,6 +2,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import Navbar from '@/app/components/Navbar';
+import { DESCONTAR_FRETE_ADS_NO_LUCRO, mesDoEnvio } from '@/lib/regrasLucro';
 
 const TABELAS_SUPABASE = [
   'vendas_canais',
@@ -271,16 +272,16 @@ export default function PainelExecutivoPage() {
     return map;
   }, [database.faturados]);
 
-  const flexMap = useMemo(() => {
-    const map = new Map();
+  // Frete Flex (PLP): pertence ao mês de ENVIO (data_envio), não ao mês do faturamento.
+  const flexRows = useMemo(() => {
+    const porPedido = new Map<string, { ped: string; valor: number; mes: string; canal: string }>();
     (database.plp_pedidos || []).forEach((p: any) => {
       const idPed = normalizarPedido(p.numero_pedido ?? p.id_pedido);
       const vFrete = parseCurrency(p.valor_frete);
-      if (idPed && vFrete > 0) {
-        map.set(idPed, vFrete);
-      }
+      if (!idPed || !(vFrete > 0)) return;
+      porPedido.set(`${normalizarTexto(p.canal)}|${idPed}`, { ped: idPed, valor: vFrete, mes: mesDoEnvio(p.data_envio), canal: canonizarCanal(p.canal) });
     });
-    return map;
+    return Array.from(porPedido.values());
   }, [database.plp_pedidos]);
 
   const adsMap = useMemo(() => {
@@ -344,11 +345,10 @@ export default function PainelExecutivoPage() {
         const fatMesRef = fatInfo.mes_referencia.toLowerCase();
         const fatData = fatInfo.data_faturamento;
 
-        const matchMes = 
+        const matchMes = fatData ? fatData.startsWith(mesRefFormatos.iso) : (
           fatMesRef.includes(mesRefFormatos.iso) ||
           fatMesRef.includes(mesRefFormatos.barra) ||
-          fatMesRef.includes(mesRefFormatos.extenso) ||
-          (fatData && fatData.startsWith(mesRefFormatos.iso));
+          fatMesRef.includes(mesRefFormatos.extenso));
 
         if (!matchMes) return false;
       } else {
@@ -370,8 +370,6 @@ export default function PainelExecutivoPage() {
       }
 
       const ped = normalizarPedido(s.id_pedido);
-      const custoFlex = flexMap.get(ped) || 0;
-      
       const ruleObj = channelRules.find((r: any) => normalizarTexto(canonizarCanal(r.canal)) === normalizarTexto(s.canal)) || {};
       let repasseLiquido = parseCurrency(s.repasse_liquido);
 
@@ -400,12 +398,11 @@ export default function PainelExecutivoPage() {
         ...s, 
         preco_venda: precoVenda,
         custoCMV, 
-        custoFlex, 
         repasse_liquido: repasseLiquido,
         data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
       };
     });
-  }, [sales, mesRefFormatos, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules]);
+  }, [sales, mesRefFormatos, produtosCustoMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules]);
 
   const previousMonthSales = useMemo(() => {
     return (sales || []).map((s: any) => ({
@@ -485,11 +482,13 @@ export default function PainelExecutivoPage() {
       // ESTORNO INTEGRAL DOS CANCELADOS: além da receita (já abatida acima), saem junto o repasse
       // (taxas/comissões/frete), o CMV e o frete Flex da venda cancelada. Casa pelo id_pedido;
       // sem id_pedido, usa sku x quantidade da planilha de cancelamentos para estornar o custo.
-      let estRepasseCanc = 0, estCmvCanc = 0, estFlexCanc = 0;
+      let estRepasseCanc = 0, estCmvCanc = 0;
+      const pedidosCancelados = new Set<string>();
       const pedidosEstornados = new Set<string>();
       activeCancelados.forEach((c: any) => {
         if (canonizarCanal(c.canal) !== channelName) return;
         const ped = normalizarPedido(c.id_pedido);
+        if (ped) pedidosCancelados.add(ped);
         const vendasDoPedido = ped ? chSales.filter((s: any) => normalizarPedido(s.id_pedido) === ped) : [];
         if (vendasDoPedido.length > 0) {
           if (pedidosEstornados.has(ped)) return;
@@ -497,7 +496,6 @@ export default function PainelExecutivoPage() {
           vendasDoPedido.forEach((s: any) => {
             estRepasseCanc += s.repasse_liquido || 0;
             estCmvCanc += s.custoCMV || 0;
-            estFlexCanc += s.custoFlex || 0;
           });
         } else if (c.sku) {
           const custoP = produtosCustoMap.get(normalizarSku(c.sku)) || { custo_unitario: 0, custo_embalagem: 0 };
@@ -548,10 +546,12 @@ export default function PainelExecutivoPage() {
       const canalAds = adsMap.get(normalizarTexto(channelName)) || 0;
       const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0) - estCmvCanc;
       const cmvCanal = Math.max(0, cmvVendasCanal - devCmvTotal);
-      const flexCanal = Math.max(0, chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0) - estFlexCanc);
+      const flexCanal = flexRows
+        .filter((f) => f.mes === mesRefFormatos.iso && f.canal === channelName && !pedidosCancelados.has(f.ped))
+        .reduce((sum, f) => sum + f.valor, 0);
       const impostoCanal = (faturadoComRedutor * aliquotaImpostoGlobal) / 100;
 
-      const lucroLiquidoFinal = repasseTotal - cmvCanal - impostoCanal - flexCanal - canalAds - devFreteLiquido;
+      const lucroLiquidoFinal = repasseTotal - cmvCanal - impostoCanal - (DESCONTAR_FRETE_ADS_NO_LUCRO ? flexCanal + canalAds + devFreteLiquido : 0);
       const metaBase = parseCurrency(goalObj.meta_valor);
       
       const projecaoFaturamento = isCurrentMonth ? (faturadoComRedutor / diasPassados) * totalDiasMes : faturadoComRedutor;

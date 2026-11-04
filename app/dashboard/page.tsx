@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import Navbar from '@/app/components/Navbar';
+import { DESCONTAR_FRETE_ADS_NO_LUCRO, mesDoEnvio } from '@/lib/regrasLucro';
 
 const TABELAS_SUPABASE = [
   'vendas_canais',
@@ -278,17 +279,19 @@ export default function DashboardPage() {
     return map;
   }, [database.faturados]);
 
-  const flexMap = useMemo(() => {
-    const map = new Map();
+  // Frete Flex (PLP): pertence ao mês em que o pedido foi ENVIADO (data_envio), não ao mês do faturamento.
+  // Um pedido faturado em 31/10 e despachado em 01/11 tem o frete descontado em novembro.
+  const flexRows = useMemo(() => {
+    const porPedido = new Map<string, { ped: string; valor: number; mes: string; canal: string }>();
     (database.plp_pedidos || []).forEach((p: any) => {
       const idPed = normalizarPedido(p.numero_pedido ?? p.id_pedido);
       const vFrete = parseCurrency(p.valor_frete);
-      if (idPed && vFrete > 0) {
-        map.set(idPed, vFrete);
-      }
+      if (!idPed || !(vFrete > 0)) return;
+      const mes = mesDoEnvio(p.data_envio);
+      porPedido.set(`${normalizarTexto(p.canal)}|${idPed}`, { ped: idPed, valor: vFrete, mes, canal: canonizarCanal(p.canal, canaisOficiais) });
     });
-    return map;
-  }, [database.plp_pedidos]);
+    return Array.from(porPedido.values());
+  }, [database.plp_pedidos, canaisOficiais]);
 
   // Busca do gasto de Ads por canal respeitando as variações de formato de mês
   const adsMap = useMemo(() => {
@@ -381,11 +384,13 @@ export default function DashboardPage() {
           const fatMesRef = fatInfo.mes_referencia.toLowerCase();
           const fatData = fatInfo.data_faturamento;
 
-          const matchMes = 
-            fatMesRef.includes(mesRefFormatos.iso) ||
-            fatMesRef.includes(mesRefFormatos.barra) ||
-            fatMesRef.includes(mesRefFormatos.extenso) ||
-            (fatData && fatData.startsWith(mesRefFormatos.iso));
+          // A data do faturamento é a referência: pedido faturado em 01/11 nunca entra em outubro,
+          // mesmo que a planilha tenha sido carregada com o mês de referência de outubro.
+          const matchMes = fatData
+            ? fatData.startsWith(mesRefFormatos.iso)
+            : (fatMesRef.includes(mesRefFormatos.iso) ||
+               fatMesRef.includes(mesRefFormatos.barra) ||
+               fatMesRef.includes(mesRefFormatos.extenso));
 
           if (!matchMes) return false;
         } else {
@@ -409,8 +414,6 @@ export default function DashboardPage() {
         }
 
         const ped = normalizarPedido(s.id_pedido);
-        const custoFlex = flexMap.get(ped) || 0;
-        
         const ruleObj = channelRules.find((r: any) => normalizarTexto(canonizarCanal(r.canal, canaisOficiais)) === normalizarTexto(s.canal)) || {};
         let repasseLiquido = parseCurrency(s.repasse_liquido);
 
@@ -441,12 +444,11 @@ export default function DashboardPage() {
           ...s, 
           preco_venda: precoVenda,
           custoCMV, 
-          custoFlex, 
           repasse_liquido: repasseLiquido,
           data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
         };
       });
-  }, [sales, appliedChannelFilter, appliedModalidadeFilter, mesRefFormatos, produtosCustoMap, flexMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules]);
+  }, [sales, appliedChannelFilter, appliedModalidadeFilter, mesRefFormatos, produtosCustoMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules]);
 
   const { targetDateStr, labelVendasDia } = useMemo(() => {
     const d = new Date();
@@ -531,11 +533,13 @@ export default function DashboardPage() {
       // ESTORNO INTEGRAL DOS CANCELADOS: além da receita (já abatida acima), saem junto o repasse
       // (taxas/comissões/frete), o CMV e o frete Flex da venda cancelada. Casa pelo id_pedido;
       // sem id_pedido, usa sku x quantidade da planilha de cancelamentos para estornar o custo.
-      let estRepasseCanc = 0, estCmvCanc = 0, estFlexCanc = 0;
+      let estRepasseCanc = 0, estCmvCanc = 0;
+      const pedidosCancelados = new Set<string>();
       const pedidosEstornados = new Set<string>();
       activeCancelados.forEach((c: any) => {
         if (canonizarCanal(c.canal, canaisOficiais) !== channelName) return;
         const ped = normalizarPedido(c.id_pedido);
+        if (ped) pedidosCancelados.add(ped);
         const vendasDoPedido = ped ? chSales.filter((s: any) => normalizarPedido(s.id_pedido) === ped) : [];
         if (vendasDoPedido.length > 0) {
           if (pedidosEstornados.has(ped)) return;
@@ -543,7 +547,6 @@ export default function DashboardPage() {
           vendasDoPedido.forEach((s: any) => {
             estRepasseCanc += s.repasse_liquido || 0;
             estCmvCanc += s.custoCMV || 0;
-            estFlexCanc += s.custoFlex || 0;
           });
         } else if (c.sku) {
           const custoP = produtosCustoMap.get(normalizarSku(c.sku)) || { custo_unitario: 0, custo_embalagem: 0 };
@@ -599,13 +602,19 @@ export default function DashboardPage() {
       const canalAds = adsMap.get(normalizarTexto(channelName)) || 0;
       const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0) - estCmvCanc;
       const cmvCanalTotal = Math.max(0, cmvVendasCanal - devCmvTotal);
-      const flexCanal = Math.max(0, chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0) - estFlexCanc);
+      // Frete Flex do canal = fretes despachados NO MÊS (data_envio), exceto pedidos cancelados
+      const flexCanal = flexRows
+        .filter((f) => f.mes === mesRefFormatos.iso && f.canal === channelName && !pedidosCancelados.has(f.ped))
+        .reduce((sum, f) => sum + f.valor, 0);
 
       // Imposto proporcional sobre o faturamento efetivo (com redutor)
       const impostoCanal = (faturadoComRedutor * aliquotaImpostoGlobal) / 100;
 
-      // Lucro Líquido Real = Repasse Líq - CMV - Imposto Global - Fretes Flex - ADS - Frete Reverso Devoluções
-      const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - impostoCanal - flexCanal - canalAds - devFreteLiquido;
+      // Lucro Líquido Real = Repasse Líq - CMV - Imposto (regra do painel).
+      // Frete Flex, Ads e frete reverso continuam sendo apurados e exibidos por canal; só entram no lucro
+      // se DESCONTAR_FRETE_ADS_NO_LUCRO for true.
+      const custosExtras = flexCanal + canalAds + devFreteLiquido;
+      const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - impostoCanal - (DESCONTAR_FRETE_ADS_NO_LUCRO ? custosExtras : 0);
       
       const metaBase = parseCurrency(goalObj.meta_valor);
       const progressoMetaPct = metaBase > 0 ? (faturadoComRedutor / metaBase) * 100 : 0;
@@ -641,6 +650,7 @@ export default function DashboardPage() {
         devolucoesFrete: devFreteLiquido,
         adsCanal: canalAds,
         flexCanal,
+        custosExtras,
         cmvCanal: cmvCanalTotal,
         impostoCanal,
         repasseLiquidoTotal,
@@ -649,7 +659,7 @@ export default function DashboardPage() {
         isFisico: isChannelFisico(channelName)
       };
     });
-  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, mesRefFormatos, canaisOficiais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap, aliquotaImpostoGlobal]);
+  }, [enrichedSales, goals, adsMap, appliedChannelFilter, appliedModalidadeFilter, channelRules, channelLogos, currentRefMonth, mesRefFormatos, canaisOficiais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap, aliquotaImpostoGlobal, flexRows]);
 
   // Totalizadores Globais (KPIs do Topo) com sincronia completa dos canais
   const kpis = useMemo(() => {
@@ -664,6 +674,9 @@ export default function DashboardPage() {
 
     const repasseFisico = channelAnalytics.filter(c => c.isFisico).reduce((acc, c) => acc + c.repasseLiquidoTotal, 0);
     const repasseDigital = channelAnalytics.filter(c => !c.isFisico).reduce((acc, c) => acc + c.repasseLiquidoTotal, 0);
+
+    const lucroFisico = channelAnalytics.filter(c => c.isFisico).reduce((acc, c) => acc + c.lucroLiquidoReal, 0);
+    const lucroDigital = channelAnalytics.filter(c => !c.isFisico).reduce((acc, c) => acc + c.lucroLiquidoReal, 0);
 
     const cmvFisico = channelAnalytics.filter(c => c.isFisico).reduce((acc, c) => acc + c.cmvCanal, 0);
     const cmvDigital = channelAnalytics.filter(c => !c.isFisico).reduce((acc, c) => acc + c.cmvCanal, 0);
@@ -699,6 +712,8 @@ export default function DashboardPage() {
       cmvDigital,
       totalImpostoGlobal,
       lucroLiquidoReal,
+      lucroFisico,
+      lucroDigital,
       totalPedidos: enrichedSales.length,
       lojasFisicasDetalhes,
       lojasFisicasRepasse,
@@ -962,17 +977,17 @@ export default function DashboardPage() {
               R$ {kpis.lucroLiquidoReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </h3>
             <span className="text-[9px] text-slate-400 font-mono block mt-0.5">
-              Imposto Total ({aliquotaImpostoGlobal}%): - R$ {kpis.totalImpostoGlobal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              Repasse − CMV − Imposto ({aliquotaImpostoGlobal}%: R$ {kpis.totalImpostoGlobal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
             </span>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-3">
             <div>
               <span className="block text-[9px] text-emerald-400 font-bold uppercase mb-1">Lojas Físicas</span>
-              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.repasseFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.lucroFisico.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
             <div className="pt-2 border-t border-slate-800/50">
               <span className="block text-[9px] text-blue-400 font-bold uppercase mb-0.5">E-commerce</span>
-              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.repasseDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span className="text-xs font-bold text-slate-200 block">R$ {kpis.lucroDigital.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
           </div>
         </div>
@@ -1042,22 +1057,22 @@ export default function DashboardPage() {
                    </div>
                    
                    <div className="flex justify-between items-center text-[10px]">
-                     <span className="text-slate-400 font-bold uppercase">Frete Reverso Devoluções:</span>
+                     <span className="text-slate-400 font-bold uppercase">Frete Reverso Devoluções{DESCONTAR_FRETE_ADS_NO_LUCRO ? '' : ' (fora do lucro)'}:</span>
                      <span className="text-rose-400 font-bold">- R$ {item.devolucoesFrete.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                    </div>
                    
                    <div className="flex justify-between items-center text-[10px]">
-                     <span className="text-slate-400 font-bold uppercase">Adsense (Ads):</span>
+                     <span className="text-slate-400 font-bold uppercase">Adsense (Ads){DESCONTAR_FRETE_ADS_NO_LUCRO ? '' : ' (fora do lucro)'}:</span>
                      <span className="text-rose-400 font-bold">- R$ {item.adsCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                    </div>
                    
                    <div className="flex justify-between items-center text-[10px]">
-                     <span className="text-slate-400 font-bold uppercase">Frete Flex (PLP):</span>
+                     <span className="text-slate-400 font-bold uppercase">Frete Flex (PLP, por data de envio){DESCONTAR_FRETE_ADS_NO_LUCRO ? '' : ' (fora do lucro)'}:</span>
                      <span className="text-rose-400 font-bold">- R$ {item.flexCanal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                    </div>
                    
                    <div className="flex justify-between items-center pt-2 border-t border-slate-900 font-bold text-white">
-                     <span>Lucro Líquido Real:</span>
+                     <span>Lucro Líquido Real (Repasse − CMV − Imposto):</span>
                      <span className={item.lucroLiquidoReal >= 0 ? 'text-emerald-400 font-black' : 'text-rose-400 font-black'}>
                        R$ {item.lucroLiquidoReal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                      </span>

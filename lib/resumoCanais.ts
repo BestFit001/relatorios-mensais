@@ -2,6 +2,8 @@
 // para que faturamento, meta e % líquido da tela inicial sejam os mesmos números do Dashboard.
 // Se a regra do Dashboard mudar, ajuste aqui também.
 
+import { DESCONTAR_FRETE_ADS_NO_LUCRO, mesDoEnvio } from "./regrasLucro";
+
 export type BancoDash = Record<string, any[]>;
 
 export interface ResumoCanal {
@@ -160,12 +162,14 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
     }
   });
 
-  const flexMap = new Map<string, number>();
+  // Frete Flex pertence ao mês de ENVIO (data_envio), não ao mês do faturamento
+  const flexPorPedido = new Map<string, { ped: string; valor: number; mes: string; canal: string }>();
   (db.plp_pedidos || []).forEach((p: any) => {
     const idPed = normalizarPedido(p.numero_pedido ?? p.id_pedido);
     const vFrete = parseCurrency(p.valor_frete);
-    if (idPed && vFrete > 0) flexMap.set(idPed, vFrete);
+    if (idPed && vFrete > 0) flexPorPedido.set(`${normalizarTexto(p.canal)}|${idPed}`, { ped: idPed, valor: vFrete, mes: mesDoEnvio(p.data_envio), canal: canonizarCanal(p.canal, canaisOficiais) });
   });
+  const flexRows = Array.from(flexPorPedido.values());
 
   const adsMap = new Map<string, number>();
   (db.ads_faturamento_canal || []).forEach((a: any) => {
@@ -219,8 +223,8 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
         if (!fatInfo) return false;
         const fatMesRef = fatInfo.mes_referencia.toLowerCase();
         const fatData = fatInfo.data_faturamento;
-        const matchMes = fatMesRef.includes(mesRefFormatos.iso) || fatMesRef.includes(mesRefFormatos.barra) ||
-          fatMesRef.includes(mesRefFormatos.extenso) || (fatData && fatData.startsWith(mesRefFormatos.iso));
+        const matchMes = fatData ? fatData.startsWith(mesRefFormatos.iso) : (fatMesRef.includes(mesRefFormatos.iso) || fatMesRef.includes(mesRefFormatos.barra) ||
+          fatMesRef.includes(mesRefFormatos.extenso));
         if (!matchMes) return false;
       } else if (!mesRefCorresponde(s.mes_referencia)) return false;
       return true;
@@ -237,7 +241,6 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       }
 
       const ped = normalizarPedido(s.id_pedido);
-      const custoFlex = flexMap.get(ped) || 0;
       const ruleObj = channelRules.find((r: any) => normalizarTexto(canonizarCanal(r.canal, canaisOficiais)) === normalizarTexto(s.canal)) || {};
       let repasseLiquido = parseCurrency(s.repasse_liquido);
 
@@ -254,7 +257,7 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       if ((nomeCanal.includes("site") || nomeCanal.includes("loja virtual")) && tarifasSiteMap[ped]) {
         repasseLiquido = Math.max(0, repasseLiquido - parseCurrency(tarifasSiteMap[ped]));
       }
-      return { ...s, preco_venda: precoVenda, custoCMV, custoFlex, repasse_liquido: repasseLiquido };
+      return { ...s, preco_venda: precoVenda, custoCMV, repasse_liquido: repasseLiquido };
     });
 
   const [refAnoStr, refMesStr] = mesIso.split("-");
@@ -288,16 +291,18 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       .filter((c: any) => canonizarCanal(c.canal, canaisOficiais) === channelName)
       .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
-    let estRepasseCanc = 0, estCmvCanc = 0, estFlexCanc = 0;
+    let estRepasseCanc = 0, estCmvCanc = 0;
+    const pedidosCancelados = new Set<string>();
     const pedidosEstornados = new Set<string>();
     activeCancelados.forEach((c: any) => {
       if (canonizarCanal(c.canal, canaisOficiais) !== channelName) return;
       const ped = normalizarPedido(c.id_pedido);
+      if (ped) pedidosCancelados.add(ped);
       const vendasDoPedido = ped ? chSales.filter((s: any) => normalizarPedido(s.id_pedido) === ped) : [];
       if (vendasDoPedido.length > 0) {
         if (pedidosEstornados.has(ped)) return;
         pedidosEstornados.add(ped);
-        vendasDoPedido.forEach((s: any) => { estRepasseCanc += s.repasse_liquido || 0; estCmvCanc += s.custoCMV || 0; estFlexCanc += s.custoFlex || 0; });
+        vendasDoPedido.forEach((s: any) => { estRepasseCanc += s.repasse_liquido || 0; estCmvCanc += s.custoCMV || 0; });
       } else if (c.sku) {
         const custoP = produtosCustoMap.get(normalizarSku(c.sku)) || { custo_unitario: 0, custo_embalagem: 0 };
         estCmvCanc += (custoP.custo_unitario + custoP.custo_embalagem) * (parseCurrency(c.quantidade) || 1);
@@ -332,9 +337,11 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
     const canalAds = adsMap.get(normalizarTexto(channelName)) || 0;
     const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0) - estCmvCanc;
     const cmvCanalTotal = Math.max(0, cmvVendasCanal - devCmvTotal);
-    const flexCanal = Math.max(0, chSales.reduce((sum: number, s: any) => sum + s.custoFlex, 0) - estFlexCanc);
+    const flexCanal = flexRows
+      .filter((f) => f.mes === mesRefFormatos.iso && f.canal === channelName && !pedidosCancelados.has(f.ped))
+      .reduce((sum, f) => sum + f.valor, 0);
     const impostoCanal = (faturadoComRedutor * aliquotaImpostoGlobal) / 100;
-    const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - impostoCanal - flexCanal - canalAds - devFreteLiquido;
+    const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - impostoCanal - (DESCONTAR_FRETE_ADS_NO_LUCRO ? flexCanal + canalAds + devFreteLiquido : 0);
 
     const metaBase = parseCurrency(goalObj.meta_valor);
     return {
