@@ -77,6 +77,17 @@ function skuTerminaEmF(skuNorm: string): boolean {
   return /(f|fba)$/.test(skuNorm);
 }
 
+// SKU da Amazon sem o sufixo de FBA: "18181042001-F", "18181042001-FBA" e "18181042001F" viram "18181042001".
+// Um SKU que já existe exatamente assim na base de custos é preservado.
+function limparSkuAmazon(valor: any, skusBase?: Set<string>): string {
+  const original = normalizarSku(valor);
+  if (!original) return "";
+  const semHifen = normalizarSku(removerSufixoFba(String(valor ?? "")));
+  if (skusBase && skusBase.has(original) && semHifen === original) return original;
+  if (skusBase && skusBase.has(semHifen)) return semHifen;
+  return semHifen.replace(/(\d)(fba|f)$/, "$1");
+}
+
 function parseSmartFloat(val: any): number {
   if (val === undefined || val === null || val === '') return 0;
   if (typeof val === 'number') {
@@ -894,8 +905,9 @@ export default function UpdatesPage() {
           }
 
           const skuRaw = idxSku >= 0 && row[idxSku] !== undefined ? row[idxSku] : '';
-          const skuNorm = normalizarSku(skuRaw);
-          
+          // Amazon: "-F", "-FBA" (e o que vier depois) e o "F"/"FBA" colado ao código não fazem parte do SKU
+          const skuNorm = isAmazon ? limparSkuAmazon(skuRaw, skusBaseSet as Set<string>) : normalizarSku(skuRaw);
+
           const quantidade = Math.max(1, avaliarExpressaoOuColuna(colQtdDef, row) || 1);
           const precoVenda = avaliarExpressaoOuColuna(colPdvDef, row, { QTD: quantidade });
 
