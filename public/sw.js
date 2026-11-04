@@ -11,7 +11,9 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(titulo, {
       body: dados.corpo || "",
       tag: dados.tag || undefined,
-      requireInteraction: true,
+      requireInteraction: true,   // fica na tela até a pessoa fechar
+      silent: false,              // toca o som padrão de notificação do Windows
+      vibrate: [200, 100, 200],
       renotify: !!dados.tag,
       data: { url: dados.url || "/inicio" },
     })
