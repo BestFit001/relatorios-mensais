@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 import {
+  normTexto,
   statusCancelado,
   detectarColunasML,
   avaliarFormulaCanal,
@@ -16,7 +17,7 @@ import {
   DIAS_COBRANCA_PADRAO,
   type Lote,
 } from "../../lib/fulfillment";
-import { calcularLiquidoTarifacao, ehMercadoLivre } from "../../lib/tarifacao";
+import { ehMercadoLivre } from "../../lib/tarifacao";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -96,7 +97,7 @@ export default function LogisticaPage() {
   const [salvando, setSalvando] = useState(false);
 
   const [modoLogistica, setModoLogistica] = useState<"full" | "padrao">("padrao");
-  const [subAba, setSubAba] = useState<"estoque" | "vendas" | "relatorio">("vendas");
+  const [subAba, setSubAba] = useState<"estoque" | "vendas" | "relatorio" | "config">("vendas");
 
   const [canais, setCanais] = useState<string[]>([]);
   const [canalSelecionado, setCanalSelecionado] = useState("");
@@ -144,7 +145,10 @@ export default function LogisticaPage() {
   const [colEntregaVendas, setColEntregaVendas] = useState("AS");  // Forma de Entrega (Flex)
 
   // Conceito / Fórmula de Líquido do Canal
-  const [formulaCanal, setFormulaCanal] = useState<"ml_recalculo" | "tarifacao_faixas" | "liquido_direto" | "formula_regras">("ml_recalculo");
+  const [formulaCanal, setFormulaCanal] = useState<"ml_recalculo" | "formula_regras">("ml_recalculo");
+  // Texto que identifica, na coluna de entrega, o envio que gera taxa (ML: "Flex"; outros canais: definido por canal)
+  const [textoEntrega, setTextoEntrega] = useState("flex");
+  const [cfgSalva, setCfgSalva] = useState(false);
   // Fórmula de vendas dos canais fora do ML (mesmo formato da aba Regras: ex. "PDV - (PDV * 12%)")
   const [formulaVendas, setFormulaVendas] = useState("");
 
@@ -176,6 +180,7 @@ export default function LogisticaPage() {
       carregarHistoricoGravado();
       setDadosProcessados([]);
       setLayoutDetectado("");
+      setCfgSalva(false);
     }
   }, [canalSelecionado, mesSelecionado, modoLogistica, regrasCanais]);
 
@@ -278,15 +283,25 @@ export default function LogisticaPage() {
   // Aplica a configuração da aba Regras (col_sku, col_pdv, col_quantidade, formula_excel) ao canal escolhido
   const aplicarRegrasDoCanal = (canal: string, lista: any[] = regrasCanais) => {
     const regra = lista.find((r: any) => String(r.canal || "").trim().toLowerCase() === canal.trim().toLowerCase());
-    if (!regra) return false;
-    setFormulaVendas(regra.formula_excel || "PDV - (PDV * 12%)");
-    setColSkuVendas(String(regra.col_sku || "B").toUpperCase());
-    setColPdvVendas(String(regra.col_pdv || regra.col_preco_venda || "P").toUpperCase());
-    setColQtdVendas(String(regra.col_quantidade || "O").toUpperCase());
-    setColPedidoVendas(String(regra.col_id_pedido || "A").toUpperCase());
+    setFormulaVendas(regra?.formula_excel || "PDV - (PDV * 12%)");
+    setColSkuVendas(String(regra?.col_sku || "B").toUpperCase());
+    setColPdvVendas(String(regra?.col_pdv || regra?.col_preco_venda || "P").toUpperCase());
+    setColQtdVendas(String(regra?.col_quantidade || "O").toUpperCase());
+    setColPedidoVendas(String(regra?.col_id_pedido || "A").toUpperCase());
     setColCarrinhoVendas("");   // status é opcional fora do ML (se informar, "cancelado" também é removido)
     setLinhaVendas("2");
-    return true;
+    // Fora do ML cada canal descreve a entrega de um jeito: por padrão nada é descontado até você configurar
+    setColEntregaVendas("");
+    setTextoEntrega("");
+    setTaxaFlex("0");
+    return !!regra;
+  };
+
+  // Padrão do Mercado Livre (relatório de vendas do ML)
+  const aplicarPadraoML = () => {
+    setLinhaVendas("7"); setColPedidoVendas("A"); setColCarrinhoVendas("D"); setColSkuVendas("X");
+    setColMlbVendas("Y"); setColQtdVendas("H"); setColPdvVendas("AC"); setColLiquidoVendas("T");
+    setColReceitaPacote("I"); setColEntregaVendas("AS"); setTextoEntrega("flex"); setTaxaFlex("12.99");
   };
 
   const carregarConfiguracoes = (canal: string) => {
@@ -298,35 +313,43 @@ export default function LogisticaPage() {
       if (r.colSku) setColSkuRemessa(r.colSku);
       if (r.colQtd) setColQtdRemessa(r.colQtd);
     }
-    const salvoVen = localStorage.getItem(`${keyPrefix}vendas_${canal.toLowerCase()}`);
-    if (salvoVen) {
-      const p = JSON.parse(salvoVen);
+    let p: any = null;
+    try { const salvoVen = localStorage.getItem(`${keyPrefix}vendas_${canal.toLowerCase()}`); if (salvoVen) p = JSON.parse(salvoVen); } catch { p = null; }
+
+    // Só existem dois conceitos: Mercado Livre e Fórmula de Vendas (Regras).
+    // Configuração antiga (tarifação por faixa / líquido direto) é descartada e volta ao padrão do canal.
+    const tipoSalvo = p && (p.formula === "ml_recalculo" || p.formula === "formula_regras") ? p.formula : null;
+    const tipo: "ml_recalculo" | "formula_regras" = tipoSalvo || (ehMercadoLivre(canal) ? "ml_recalculo" : "formula_regras");
+    const usarSalvo = !!tipoSalvo && p;
+
+    // Parte sempre do padrão do tipo (não herda valores do canal anterior) e depois aplica o que foi salvo
+    setFormulaCanal(tipo);
+    if (tipo === "ml_recalculo") aplicarPadraoML();
+    else aplicarRegrasDoCanal(canal);
+
+    if (usarSalvo) {
       if (p.linha) setLinhaVendas(p.linha);
-      if (p.colPedido) setColPedidoVendas(p.colPedido);
-      setColCarrinhoVendas(p.colCarrinho ?? "D");
+      if (p.colPedido !== undefined) setColPedidoVendas(p.colPedido);
+      if (p.colCarrinho !== undefined) setColCarrinhoVendas(p.colCarrinho);
       if (p.colSku) setColSkuVendas(p.colSku);
       if (p.colMlb) setColMlbVendas(p.colMlb);
       if (p.colQtd) setColQtdVendas(p.colQtd);
       if (p.colPdv) setColPdvVendas(p.colPdv);
       if (p.colLiquido) setColLiquidoVendas(p.colLiquido);
       if (p.colPacoteRec) setColReceitaPacote(p.colPacoteRec);
-      if (p.colEntrega) setColEntregaVendas(p.colEntrega);
-      if (p.taxaFlex) setTaxaFlex(p.taxaFlex);
+      if (p.colEntrega !== undefined) setColEntregaVendas(p.colEntrega);
+      if (p.textoEntrega !== undefined) setTextoEntrega(p.textoEntrega);
+      if (p.taxaFlex !== undefined) setTaxaFlex(p.taxaFlex);
+      if (p.formulaVendas !== undefined && tipo === "formula_regras") setFormulaVendas(p.formulaVendas);
+    }
+    if (p) {
       if (p.comissao) setComissaoPadrao(p.comissao);
       if (p.imposto) setAliquotaImposto(p.imposto);
       if (p.metaDias) setMetaDiasCobertura(p.metaDias);
       if (p.embalagem) setCustoEmbalagem(p.embalagem);
-      if (p.formula) setFormulaCanal(p.formula);
-      if (p.formulaVendas !== undefined) setFormulaVendas(p.formulaVendas);
       if (p.margemMin) setMargemMinimaPromissora(p.margemMin);
       if (p.vendasMin) setVendasMinimasPromissoras(p.vendasMin);
       if (p.tetoDev) setTetoMaxDevolucao(p.tetoDev);
-    } else if (ehMercadoLivre(canal)) {
-      setFormulaCanal("ml_recalculo");
-    } else {
-      // Fora do ML: usa o que está cadastrado na aba Regras (fórmula + colunas de SKU, PDV e Qtd)
-      if (aplicarRegrasDoCanal(canal)) setFormulaCanal("formula_regras");
-      else setFormulaCanal("tarifacao_faixas");
     }
   };
 
@@ -335,7 +358,7 @@ export default function LogisticaPage() {
     localStorage.setItem(`${keyPrefix}vendas_${canalSelecionado.toLowerCase()}`, JSON.stringify({
       linha: linhaVendas, colPedido: colPedidoVendas, colCarrinho: colCarrinhoVendas, 
       colSku: colSkuVendas, colMlb: colMlbVendas, colQtd: colQtdVendas, colPdv: colPdvVendas, 
-      colLiquido: colLiquidoVendas, colPacoteRec: colReceitaPacote, colEntrega: colEntregaVendas, 
+      colLiquido: colLiquidoVendas, colPacoteRec: colReceitaPacote, colEntrega: colEntregaVendas, textoEntrega: textoEntrega,
       taxaFlex: taxaFlex, comissao: comissaoPadrao, imposto: aliquotaImposto, metaDias: metaDiasCobertura, 
       embalagem: custoEmbalagem, formula: formulaCanal, formulaVendas: formulaVendas, margemMin: margemMinimaPromissora,
       vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao
@@ -522,16 +545,23 @@ export default function LogisticaPage() {
     const colRecPacote = colReceitaPacote.trim().toUpperCase();
     const colEntrega = colEntregaVendas.trim().toUpperCase();
     const modoFormulaRegras = formulaCanal === "formula_regras";
-    const temColunaEntrega = !modoFormulaRegras && colEntrega !== "" && colEntrega !== "ZZZ";
+    const palavraEntrega = normTexto(textoEntrega);
+    const temColunaEntrega = colEntrega !== "" && colEntrega !== "ZZZ" && palavraEntrega !== "";
+    // Envio que gera taxa (no ML: "Flex"; nos outros canais: o texto que você definir na Configuração do Canal)
+    const ehEnvioComTaxa = (valor: any) => temColunaEntrega && normTexto(valor).includes(palavraEntrega);
 
-    if (modoFormulaRegras && !formulaVendas.trim()) {
-      setLoading(false);
-      return alert("Informe a fórmula de vendas do canal (ex.: PDV - (PDV * 12%)), igual à aba Regras.");
+    if (modoFormulaRegras) {
+      if (!formulaVendas.trim() || avaliarFormulaCanal(formulaVendas, 100, 1, colPdv, colQtd) === null) {
+        setLoading(false);
+        setSubAba("config");
+        return alert("A fórmula de vendas do canal está vazia ou inválida. Ajuste em Configuração do Canal (ex.: PDV - (PDV * 12%)), como na aba Regras.");
+      }
     }
 
     const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
     const embalagemUnit = Number(custoEmbalagem.replace(",", ".")) || 0;
-    const taxaFlexUnit = Number(taxaFlex.replace(",", ".")) || 12.99;
+    const taxaFlexNum = Number(String(taxaFlex).replace(",", "."));
+    const taxaFlexUnit = isNaN(taxaFlexNum) ? 0 : taxaFlexNum;
     const metaDias = Number(metaDiasCobertura) || 45;
 
     const metaMargemPromissora = Number(margemMinimaPromissora.replace(",", ".")) || 12;
@@ -553,7 +583,7 @@ export default function LogisticaPage() {
         const rec = parseNumero(row[colRecPacote]);
         let liq = parseNumero(row[colLiquido]);
         const forma = temColunaEntrega ? String(row[colEntrega] || "") : "";
-        const isFlex = forma.toLowerCase().includes("flex");
+        const isFlex = ehEnvioComTaxa(forma);
 
         if (isFlex) {
           liq -= taxaFlexUnit;
@@ -611,7 +641,7 @@ export default function LogisticaPage() {
 
       // Forma de entrega Flex
       const formaEntregaTexto = temColunaEntrega ? String(row[colEntrega] || "") : "";
-      const isFlex = formaEntregaTexto.toLowerCase().includes("flex");
+      const isFlex = ehEnvioComTaxa(formaEntregaTexto);
 
       // CANCELADO: a informação está no próprio status (coluna D). Linha cancelada não é venda:
       // não entra PDV (receita) nem o abatimento do custo (CMV) do SKU.
@@ -757,34 +787,11 @@ export default function LogisticaPage() {
         if (modoFormulaRegras) {
           // CANAIS FORA DO ML: PDV, SKU e Qtd nas colunas informadas + fórmula de vendas (igual à aba Regras)
           const calc = avaliarFormulaCanal(formulaVendas, pdvUnit, qtdLinha, colPdv, colQtd);
-          liquidoLinha = calc !== null
-            ? calc
-            : calcularLiquidoTarifacao(regrasTarifacao, canalSelecionado, pdvUnit, qtdLinha).liquido; // fórmula inválida: regra da calculadora
-        } else if (formulaCanal === "tarifacao_faixas") {
-          // SHOPEE / AMAZON: Recálculo baseado nas regras de tarifação do canal por faixa de preço
-          const regrasDoCanal = regrasTarifacao.filter((rg: any) => rg.canal.toLowerCase() === canalSelecionado.toLowerCase());
-          let comissaoPct = Number(comissaoPadrao) || 15;
-          let tarifaFixa = 0;
-          let freteUnit = 0;
-
-          if (regrasDoCanal.length > 0) {
-            let regraAplicavel = regrasDoCanal[0];
-            for (const rg of regrasDoCanal) {
-              const numeros = rg.faixa_preco.match(/\d+[\.,]?\d*/g);
-              if (numeros && numeros.length >= 2) {
-                const min = parseFloat(numeros[0].replace(',', '.'));
-                const max = parseFloat(numeros[1].replace(',', '.'));
-                if (pdvUnit >= min && pdvUnit <= max) { regraAplicavel = rg; break; }
-              }
-            }
-            comissaoPct = Number(regraAplicavel.comissao || 0);
-            tarifaFixa = Number(regraAplicavel.tarifa_fixa || 0);
-            freteUnit = Number(regraAplicavel.frete || 0);
-          }
-
-          liquidoLinha = receitaBrutaLinha - (receitaBrutaLinha * (comissaoPct / 100)) - (tarifaFixa * qtdLinha) - (freteUnit * qtdLinha);
+          // resultado inválido numa linha (ex.: negativo): mesmo critério do dashboard, PDV − 16%
+          liquidoLinha = calc !== null ? calc : Math.max(0, receitaBrutaLinha * 0.84);
+          if (isFlex) liquidoLinha -= taxaFlexUnit;   // envio com taxa definido na Configuração do Canal (opcional)
         } else {
-          // MERCADO LIVRE / LÍQUIDO DIRETO: Coluna T com abatimento de Flex
+          // MERCADO LIVRE: Coluna T com abatimento de Flex
           liquidoLinha = parseNumero(row[colLiquido]);
           if (isFlex) {
             liquidoLinha -= taxaFlexUnit;
@@ -1093,6 +1100,9 @@ export default function LogisticaPage() {
           <button onClick={() => setSubAba("relatorio")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "relatorio" ? "bg-emerald-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
             📊 {modoLogistica === "full" ? "3. Ranking e Relatório" : "2. Veredicto e Relatório"}
           </button>
+          <button onClick={() => setSubAba("config")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "config" ? "bg-cyan-600 text-white shadow-cyan-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
+            ⚙️ Configuração do Canal
+          </button>
         </div>
 
         {/* ABA ESTOQUE (SÓ FULL) */}
@@ -1215,6 +1225,146 @@ export default function LogisticaPage() {
           </div>
         )}
 
+        {/* ABA CONFIGURAÇÃO DO CANAL */}
+        {subAba === "config" && (
+          <div className="space-y-6 animate-in fade-in zoom-in duration-300">
+            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+              <div className="flex flex-wrap justify-between items-start gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-cyan-400 flex items-center gap-2"><span>⚙️ Configuração do Canal — {canalSelecionado}</span></h2>
+                  <p className="text-xs text-slate-400 mt-1">Cada canal tem a sua própria configuração: onde estão as colunas na planilha de vendas e como o líquido é calculado. Fica salva neste navegador, por canal.</p>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => {
+                    if (formulaCanal === "ml_recalculo") aplicarPadraoML();
+                    else if (!aplicarRegrasDoCanal(canalSelecionado)) alert("Este canal ainda não tem fórmula cadastrada na aba Regras. Foi aplicado o modelo padrão (colunas B, O e P); ajuste conforme a sua planilha.");
+                    setCfgSalva(false);
+                  }} className="bg-slate-800 hover:bg-slate-700 text-white font-bold px-4 py-2 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer">↺ Restaurar padrão do canal</button>
+                  <button type="button" onClick={() => { salvarConfiguracoes(); setCfgSalva(true); }} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold px-4 py-2 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer shadow-lg shadow-cyan-900/40">💾 Salvar configuração</button>
+                </div>
+              </div>
+              {cfgSalva && <div className="text-xs text-emerald-400 font-bold">✔ Configuração de {canalSelecionado} salva. Ela será carregada sempre que você escolher este canal.</div>}
+
+              {/* CONCEITO DO CANAL */}
+              <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+                  <div>
+                    <label className="block text-[10px] font-black text-purple-400 uppercase tracking-wider mb-1">Como o líquido deste canal é calculado:</label>
+                    <select
+                      value={formulaCanal}
+                      onChange={e => {
+                        const novo = e.target.value as "ml_recalculo" | "formula_regras";
+                        setFormulaCanal(novo);
+                        if (novo === "ml_recalculo") aplicarPadraoML(); else aplicarRegrasDoCanal(canalSelecionado);
+                        setCfgSalva(false);
+                      }}
+                      className="w-full bg-slate-900 border border-purple-500/50 rounded-lg p-2 text-xs font-bold text-white outline-none cursor-pointer"
+                    >
+                      <option value="ml_recalculo">Mercado Livre (relatório de vendas do ML)</option>
+                      <option value="formula_regras">Fórmula de Vendas (como na aba Regras)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-500 mt-1">Ao trocar, as colunas voltam ao padrão do conceito escolhido.</p>
+                  </div>
+                  <div className="md:col-span-2 text-xs text-slate-300 bg-slate-900/80 p-3 rounded-lg border border-slate-800/80 leading-relaxed">
+                    {formulaCanal === "ml_recalculo" ? (
+                      <span><strong className="text-emerald-400">Mercado Livre:</strong> usa o líquido da planilha (coluna T). Carrinhos ignoram a linha-mãe e calculam cada item pelo MLB: comissão %, R$ 6,50 se PDV &lt; R$ 79 ou frete por cubagem se &ge; R$ 79. Trocas debitam o custo 1x. Status “cancelado” remove a linha (sem PDV e sem custo), inclusive dentro de pacotes.</span>
+                    ) : (
+                      <span><strong className="text-emerald-400">Fórmula de Vendas:</strong> você indica em que coluna estão SKU, Quantidade e PDV e escreve a fórmula, igual à aba Regras. Use <code className="text-amber-300">PDV</code> e <code className="text-amber-300">QTD</code>; o resultado é o líquido da linha. Não usa MLB nem outras regras do ML.</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* FÓRMULA (fora do ML) */}
+              {formulaCanal === "formula_regras" && (
+                <div className="bg-emerald-950/10 p-4 rounded-xl border border-emerald-900/30 space-y-2">
+                  <label className="block text-[10px] font-black text-emerald-400 uppercase tracking-wider">Fórmula de vendas (líquido da linha):</label>
+                  <div className="flex gap-2">
+                    <input type="text" value={formulaVendas} onChange={e => { setFormulaVendas(e.target.value); setCfgSalva(false); }} placeholder="PDV - (PDV * 12%)" className="flex-1 bg-slate-950 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-emerald-300 font-bold outline-none" />
+                    <button type="button" onClick={() => { if (!aplicarRegrasDoCanal(canalSelecionado)) alert("Este canal não tem fórmula cadastrada na aba Regras."); setCfgSalva(false); }} className="bg-slate-800 hover:bg-slate-700 text-white font-bold px-3 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer whitespace-nowrap">↻ Carregar da aba Regras</button>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Exemplos: <code className="text-amber-300">PDV - (PDV * 12%)</code> · <code className="text-amber-300">(PDV * QTD) - ((PDV * QTD) * 14%) - 5</code>. Ao usar QTD, a fórmula já devolve o valor total da linha.</p>
+                  {formulaVendas.trim() && avaliarFormulaCanal(formulaVendas, 100, 1, colPdvVendas, colQtdVendas) === null && <p className="text-[11px] text-rose-400 font-bold">⚠ Fórmula inválida ou com resultado negativo para PDV = 100.</p>}
+                  {formulaVendas.trim() && avaliarFormulaCanal(formulaVendas, 100, 1, colPdvVendas, colQtdVendas) !== null && <p className="text-[11px] text-slate-400">Teste: PDV 100, QTD 1 → líquido R$ {(avaliarFormulaCanal(formulaVendas, 100, 1, colPdvVendas, colQtdVendas) as number).toFixed(2)}</p>}
+                </div>
+              )}
+
+              {/* COLUNAS DA PLANILHA DE VENDAS */}
+              <div className={`p-5 rounded-xl border ${modoLogistica === "full" ? "bg-purple-950/10 border-purple-900/20" : "bg-indigo-950/10 border-indigo-900/20"}`}>
+                <h3 className="text-[11px] font-black text-slate-300 uppercase tracking-wider mb-3">Onde está cada informação na planilha de vendas de {canalSelecionado}</h3>
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label>
+                    <input type="number" value={linhaVendas} onChange={e => { setLinhaVendas(e.target.value); setCfgSalva(false); }} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Col. SKU</label>
+                    <input type="text" value={colSkuVendas} onChange={e => { setColSkuVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Col. Qtd</label>
+                    <input type="text" value={colQtdVendas} onChange={e => { setColQtdVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-cyan-400 uppercase mb-1" title="Preço unitário de venda do item">Col. PDV</label>
+                    <input type="text" value={colPdvVendas} onChange={e => { setColPdvVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} className="w-full bg-slate-900 border border-cyan-600/50 rounded-lg p-2 text-xs font-mono text-center text-cyan-300 font-bold outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-indigo-400 uppercase mb-1">Col. N.º Pedido</label>
+                    <input type="text" value={colPedidoVendas} onChange={e => { setColPedidoVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} className="w-full bg-slate-900 border border-indigo-600/50 rounded-lg p-2 text-xs font-mono text-center text-indigo-300 font-bold outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-amber-400 uppercase mb-1" title={formulaCanal === "ml_recalculo" ? "Coluna D do ML: 'Pacote de X produtos' ou o Status da venda. Se constar 'cancelado', a linha sai." : "Opcional. Se o canal tiver coluna de status, linhas com 'cancelado' saem do PDV e do custo."}>{formulaCanal === "ml_recalculo" ? "Col. Status/Pacote" : "Col. Status (opcional)"}</label>
+                    <input type="text" value={colCarrinhoVendas} onChange={e => { setColCarrinhoVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} placeholder={formulaCanal === "ml_recalculo" ? "D" : "—"} className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
+                  </div>
+
+                  {formulaCanal === "ml_recalculo" && (
+                    <>
+                      <div>
+                        <label className="block text-[9px] font-bold text-purple-400 uppercase mb-1" title="Coluna com o código MLB do anúncio">Col. MLB Anúncio</label>
+                        <input type="text" value={colMlbVendas} onChange={e => { setColMlbVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} className="w-full bg-slate-900 border border-purple-600/50 rounded-lg p-2 text-xs font-mono text-center text-purple-300 font-bold outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-emerald-400 uppercase mb-1" title="Coluna com o valor líquido recebido (Total)">Col. Líquido</label>
+                        <input type="text" value={colLiquidoVendas} onChange={e => { setColLiquidoVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-center text-emerald-300 font-bold outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-amber-300 uppercase mb-1" title="Comissão usada quando o MLB não tem regra cadastrada">Comissão Padrão (%)</label>
+                        <input type="number" value={comissaoPadrao} onChange={e => { setComissaoPadrao(e.target.value); setCfgSalva(false); }} className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* ENTREGA — cada canal descreve de um jeito */}
+                <div className="mt-5 pt-4 border-t border-slate-800/80">
+                  <h4 className="text-[10px] font-black text-amber-300 uppercase tracking-wider mb-1">Envio com taxa (opcional)</h4>
+                  <p className="text-[10px] text-slate-500 mb-3">Cada canal escreve a forma de entrega de um jeito. Informe a coluna, o trecho de texto que identifica o envio que gera taxa e o valor descontado por pedido. Deixe a coluna vazia para não descontar nada.</p>
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-amber-300 uppercase mb-1">Col. Forma de Entrega</label>
+                      <input type="text" value={colEntregaVendas} onChange={e => { setColEntregaVendas(e.target.value.toUpperCase()); setCfgSalva(false); }} placeholder="—" className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[9px] font-bold text-amber-300 uppercase mb-1">Texto que identifica o envio com taxa</label>
+                      <input type="text" value={textoEntrega} onChange={e => { setTextoEntrega(e.target.value); setCfgSalva(false); }} placeholder={formulaCanal === "ml_recalculo" ? "flex" : "ex.: envio próprio"} className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-amber-300 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-amber-300 uppercase mb-1">Taxa por pedido (R$)</label>
+                      <input type="number" step="0.01" value={taxaFlex} onChange={e => { setTaxaFlex(e.target.value); setCfgSalva(false); }} className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
+                    </div>
+                  </div>
+                </div>
+                {layoutDetectado && <p className="text-[10px] text-emerald-400 mt-3">✔ {layoutDetectado}</p>}
+              </div>
+
+              <div className="flex justify-end">
+                <button type="button" onClick={() => setSubAba("vendas")} className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">← Voltar ao Motor</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ABA VENDAS / MOTOR */}
         {subAba === "vendas" && (
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
@@ -1224,7 +1374,7 @@ export default function LogisticaPage() {
                   <span>⚡ Cruzamento e Motor ({modoLogistica === "full" ? "Reposição" : "Diagnóstico"})</span>
                 </h2>
               </div>
-              
+
               {/* FILTROS SUPERIORES DE CUSTOS E VALIDAÇÃO */}
               <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-4">
                 <div className="md:col-span-2">
@@ -1235,118 +1385,40 @@ export default function LogisticaPage() {
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Imposto (%):</label>
                   <input type="number" value={aliquotaImposto} onChange={e => setAliquotaImposto(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-emerald-400 outline-none" />
                 </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Comissão Padrão (%):</label>
-                  <input type="number" value={comissaoPadrao} onChange={e => setComissaoPadrao(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-amber-400 font-bold outline-none" title="Comissão caso o MLB não tenha regra específica" />
-                </div>
-
                 {modoLogistica === "full" ? (
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Meta Cobertura (Dias):</label>
                     <input type="number" value={metaDiasCobertura} onChange={e => setMetaDiasCobertura(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-indigo-400 outline-none" />
                   </div>
                 ) : (
-                  <>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Custo Embalagem (R$):</label>
-                      <input type="number" step="0.01" value={custoEmbalagem} onChange={e => setCustoEmbalagem(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-rose-400 outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2" title="Custo debitado do líquido em envios Flex">Taxa Flex (R$):</label>
-                      <input type="number" step="0.01" value={taxaFlex} onChange={e => setTaxaFlex(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-amber-400 font-bold outline-none" />
-                    </div>
-                  </>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Custo Embalagem (R$):</label>
+                    <input type="number" step="0.01" value={custoEmbalagem} onChange={e => setCustoEmbalagem(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-rose-400 outline-none" />
+                  </div>
                 )}
               </div>
 
-              {/* SELETOR DE CONCEITO / FÓRMULA DO CANAL */}
-              <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 mb-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+              {/* RESUMO DA CONFIGURAÇÃO DO CANAL (edição na aba Configuração do Canal) */}
+              <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 mb-6 flex flex-wrap items-center justify-between gap-4">
+                <div className="text-xs text-slate-300 leading-relaxed space-y-1">
                   <div>
-                    <label className="block text-[10px] font-black text-purple-400 uppercase tracking-wider mb-1">
-                      ⚙️ Conceito / Fórmula de Líquido do Canal:
-                    </label>
-                    <select 
-                      value={formulaCanal} 
-                      onChange={e => setFormulaCanal(e.target.value as any)} 
-                      className="w-full bg-slate-900 border border-purple-500/50 rounded-lg p-2 text-xs font-bold text-white outline-none cursor-pointer"
-                    >
-                      <option value="ml_recalculo">Mercado Livre (Col T + Recálculo de Carrinhos via MLB)</option>
-                      <option value="formula_regras">Fórmula de Vendas (como na aba Regras) — canais fora do ML</option>
-                      <option value="tarifacao_faixas">Regras de Tarifação por Faixa (Shopee / Amazon / Outros)</option>
-                      <option value="liquido_direto">Líquido Direto da Planilha (Coluna T pura)</option>
-                    </select>
+                    <span className="font-bold text-cyan-400">⚙️ {canalSelecionado}: </span>
+                    {formulaCanal === "ml_recalculo" ? "Mercado Livre (líquido da coluna " + colLiquidoVendas + " + recálculo de carrinhos via MLB)" : <>Fórmula de vendas <code className="text-emerald-300">{formulaVendas || "— não definida —"}</code></>}
                   </div>
-                  <div className="md:col-span-2 text-xs text-slate-300 bg-slate-900/80 p-3 rounded-lg border border-slate-800/80 leading-relaxed">
-                    <span className="font-bold text-emerald-400">Fórmula Ativa: </span>
-                    {formulaCanal === "ml_recalculo" && (
-                      <span><strong>ML Especial:</strong> Carrinho ignora linha-mãe e calcula cada item via MLB com Comissão %, [R$ 6,50 se &lt; R$ 79 OU Frete por Cubagem se &ge; R$ 79]. Trocas debitam custo 1x.</span>
-                    )}
-                    {formulaCanal === "formula_regras" && (
-                      <div className="space-y-2">
-                        <span><strong>Canal fora do ML:</strong> informe abaixo em que coluna estão o SKU, a Quantidade e o PDV da planilha e a fórmula de vendas. Use <code className="text-amber-300">PDV</code> e <code className="text-amber-300">QTD</code>, ex.: <code className="text-amber-300">(PDV * QTD) - ((PDV * QTD) * 12%)</code>. O resultado é o líquido da linha.</span>
-                        <div className="flex gap-2">
-                          <input type="text" value={formulaVendas} onChange={e => setFormulaVendas(e.target.value)} placeholder="PDV - (PDV * 12%)" className="flex-1 bg-slate-950 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-emerald-300 font-bold outline-none" />
-                          <button type="button" onClick={() => { if (!aplicarRegrasDoCanal(canalSelecionado)) alert("Este canal não tem fórmula cadastrada na aba Regras."); }} className="bg-slate-800 hover:bg-slate-700 text-white font-bold px-3 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer whitespace-nowrap">↻ Carregar da aba Regras</button>
-                        </div>
-                      </div>
-                    )}
-                    {formulaCanal === "tarifacao_faixas" && (
-                      <span><strong>Shopee / Amazon:</strong> PDV - Comissão % do Canal - Tarifa Fixa da Faixa - Frete da Faixa (cadastrados em Regras de Tarifação).</span>
-                    )}
-                    {formulaCanal === "liquido_direto" && (
-                      <span><strong>Direto:</strong> Valor recebido na Coluna T - Custo SKU - Imposto (9%) - Embalagem.</span>
-                    )}
+                  <div className="text-[11px] text-slate-500 font-mono">
+                    Linha {linhaVendas} · SKU {colSkuVendas} · Qtd {colQtdVendas} · PDV {colPdvVendas}
+                    {formulaCanal === "ml_recalculo" ? ` · MLB ${colMlbVendas}` : ""}
+                    {colCarrinhoVendas ? ` · Status ${colCarrinhoVendas}` : ""}
+                    {colEntregaVendas && textoEntrega ? ` · Entrega ${colEntregaVendas} (“${textoEntrega}” = −R$ ${taxaFlex})` : ""}
+                  </div>
+                  {layoutDetectado && <div className="text-[10px] text-emerald-400">✔ {layoutDetectado}</div>}
+                  <div className="text-[10px] text-slate-500">
+                    {formulaCanal === "formula_regras"
+                      ? "Status “cancelado” (se a coluna de status estiver configurada) remove a linha do PDV e do custo."
+                      : "Status “cancelado” na coluna D remove a linha: sem PDV e sem abatimento do custo (vale também para cada item dentro de um pacote)."}
                   </div>
                 </div>
-              </div>
-
-              {/* MAPEAMENTO DE COLUNAS */}
-              <div className={`p-5 rounded-xl border mb-6 ${modoLogistica === "full" ? "bg-purple-950/10 border-purple-900/20" : "bg-indigo-950/10 border-indigo-900/20"}`}>
-                <div className="grid grid-cols-2 md:grid-cols-9 gap-3">
-                  <div>
-                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Linha Inicial</label>
-                    <input type="number" value={linhaVendas} onChange={e => setLinhaVendas(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-bold text-indigo-400 uppercase mb-1" title="Coluna A do ML com o N.º de Venda">Col. N.º Venda</label>
-                    <input type="text" value={colPedidoVendas} onChange={e => setColPedidoVendas(e.target.value.toUpperCase())} placeholder="A" className="w-full bg-slate-900 border border-indigo-600/50 rounded-lg p-2 text-xs font-mono text-center text-indigo-300 font-bold outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-bold text-amber-400 uppercase mb-1" title="Coluna D do ML: 'Pacote de X produtos' ou o Status da venda. Se constar 'cancelado', a linha sai (sem PDV e sem custo).">Col. Status/Pacote</label>
-                    <input type="text" value={colCarrinhoVendas} onChange={e => setColCarrinhoVendas(e.target.value.toUpperCase())} placeholder="D" className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Col. SKU</label>
-                    <input type="text" value={colSkuVendas} onChange={e => setColSkuVendas(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
-                  </div>
-                  <div className={formulaCanal === "formula_regras" ? "hidden" : ""}>
-                    <label className="block text-[9px] font-bold text-purple-400 uppercase mb-1" title="Coluna Y do ML com o código MLB">Col. MLB Anúncio</label>
-                    <input type="text" value={colMlbVendas} onChange={e => setColMlbVendas(e.target.value.toUpperCase())} placeholder="Y" className="w-full bg-slate-900 border border-purple-600/50 rounded-lg p-2 text-xs font-mono text-center text-purple-300 font-bold outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Col. Qtd</label>
-                    <input type="text" value={colQtdVendas} onChange={e => setColQtdVendas(e.target.value.toUpperCase())} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-center text-white outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-bold text-cyan-400 uppercase mb-1" title="Coluna AC do ML com o preço unitário do item">Col. PDV (Col AC)</label>
-                    <input type="text" value={colPdvVendas} onChange={e => setColPdvVendas(e.target.value.toUpperCase())} placeholder="AC" className="w-full bg-slate-900 border border-cyan-600/50 rounded-lg p-2 text-xs font-mono text-center text-cyan-300 font-bold outline-none" />
-                  </div>
-                  <div className={formulaCanal === "formula_regras" ? "hidden" : ""}>
-                    <label className="block text-[9px] font-bold text-emerald-400 uppercase mb-1" title="Coluna T do ML com o valor líquido recebido">Col. Líquido (Col T)</label>
-                    <input type="text" value={colLiquidoVendas} onChange={e => setColLiquidoVendas(e.target.value.toUpperCase())} placeholder="T" className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-center text-emerald-300 font-bold outline-none" />
-                  </div>
-                  <div className={formulaCanal === "formula_regras" ? "hidden" : ""}>
-                    <label className="block text-[9px] font-bold text-amber-300 uppercase mb-1" title="Coluna AS do ML com 'Mercado Envios Flex'. Use ZZZ se não houver.">Col. Entrega (Flex)</label>
-                    <input type="text" value={colEntregaVendas} onChange={e => setColEntregaVendas(e.target.value.toUpperCase())} placeholder="AS" className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2 text-xs font-mono text-center text-amber-300 font-bold outline-none" />
-                  </div>
-                </div>
-                <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
-                  {formulaCanal === "formula_regras"
-                    ? "Status é opcional: se informar a coluna e o texto contiver “cancelado”, a linha sai do PDV e do custo."
-                    : "Status “cancelado” na coluna D remove a linha: sem PDV e sem abatimento do custo (vale também para cada item dentro de um pacote)."}
-                </p>
-                {layoutDetectado && <p className="text-[10px] text-emerald-400 mt-1">✔ {layoutDetectado}</p>}
+                <button type="button" onClick={() => setSubAba("config")} className="bg-cyan-700/80 hover:bg-cyan-600 text-white font-bold px-4 py-2 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer whitespace-nowrap">⚙️ Configuração do Canal</button>
               </div>
 
               <div className="flex justify-end gap-3">
@@ -1364,7 +1436,12 @@ export default function LogisticaPage() {
             {dadosProcessados.length > 0 && (
               <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 text-center animate-in zoom-in duration-300">
                  <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
-                 <p className="text-sm text-slate-400 mb-4">O motor recalculou os pacotes com base nas regras do MLB, aplicou a regra dos R$ 79,00 e filtrou as devoluções, consolidando <strong>{dadosProcessados.length} SKUs</strong>.</p>
+                 <p className="text-sm text-slate-400 mb-4">
+                   {formulaCanal === "ml_recalculo"
+                     ? "O motor recalculou os pacotes com base nas regras do MLB, aplicou a regra dos R$ 79,00 e removeu os cancelados e devoluções, "
+                     : "O motor aplicou a fórmula de vendas do canal e removeu os cancelados e devoluções, "}
+                   consolidando <strong>{dadosProcessados.length} SKUs</strong>.
+                 </p>
                  <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" para armazenar os dados e ir para o Relatório Oficial.</p>
               </div>
             )}
