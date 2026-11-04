@@ -20,6 +20,7 @@ const rotasDisponiveis = [
   { id: "/calculadora", nome: "Calculadora" },
   { id: "/produtos", nome: "Produtos & Vídeos" },
   { id: "/padronizacao", nome: "Padronização IA" },
+  { id: "/dimensoes-peso", nome: "Dimensões e Peso" },
   { id: "/promocoes/ml", nome: "Promoções: Mercado Livre" },
   { id: "/promocoes/magalu", nome: "Promoções: Magazine Luiza" },
   { id: "/promocoes/shopee", nome: "Promoções: Shopee" },

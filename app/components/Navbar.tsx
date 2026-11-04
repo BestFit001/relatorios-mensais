@@ -31,6 +31,7 @@ export default function Navbar() {
       pathname.startsWith("/calculadora") || 
       pathname.startsWith("/produtos") || 
       pathname.startsWith("/padronizacao") || 
+      pathname.startsWith("/dimensoes-peso") || 
       pathname.startsWith("/plp")
     ) {
       setMenuExpandido("ferramentas");
@@ -99,7 +100,8 @@ export default function Navbar() {
             "/promocoes/magalu",
             "/promocoes/tiktok",
             "/produtos",
-            "/padronizacao"
+            "/padronizacao",
+            "/dimensoes-peso"
           ]);
         } else {
           setPaginasPermitidas(user.paginas_permitidas || ["/"]);
@@ -490,13 +492,13 @@ export default function Navbar() {
           )}
 
           {/* FERRAMENTAS */}
-          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/plp")) && (
+          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/dimensoes-peso") || temPermissao("/plp")) && (
             <div>
               <button
                 onClick={() => toggleSecao("ferramentas")}
                 title="Ferramentas"
                 className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname === "/calculadora" || pathname === "/produtos" || pathname === "/padronizacao" || pathname === "/plp"
+                  pathname === "/calculadora" || pathname === "/produtos" || pathname === "/padronizacao" || pathname === "/dimensoes-peso" || pathname === "/plp"
                     ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
                     : "text-slate-400 hover:text-white hover:bg-slate-900/60"
                 }`}
@@ -527,6 +529,11 @@ export default function Navbar() {
                   {temPermissao("/padronizacao") && (
                     <Link href="/padronizacao" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/padronizacao" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
                       Padronização IA
+                    </Link>
+                  )}
+                  {temPermissao("/dimensoes-peso") && (
+                    <Link href="/dimensoes-peso" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/dimensoes-peso" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
+                      Dimensões e Peso
                     </Link>
                   )}
                   {temPermissao("/plp") && (

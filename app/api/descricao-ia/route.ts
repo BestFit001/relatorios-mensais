@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
+import { INSTRUCAO_FORMATO_DESCRICAO, limparDescricao } from "../../../lib/textoDescricao";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -83,7 +84,7 @@ export async function POST(req: Request) {
       if (padroesOficiais && padroesOficiais.length > 0) {
         contextoAcumulado += "\n--- Padrões Oficiais Homologados ---\n";
         padroesOficiais.forEach((p, idx) => {
-          contextoAcumulado += `[Padrão ${idx + 1}]:\n${p.descricao_complementar}\n`;
+          contextoAcumulado += `[Padrão ${idx + 1}]:\n${limparDescricao(p.descricao_complementar)}\n`;
         });
       }
 
@@ -100,7 +101,7 @@ export async function POST(req: Request) {
         ? `[MODO TREINAMENTO]: O usuário aplicou a seguinte instrução de refinamento: "${prompt}". Atualize a diretriz para este produto aplicando rigorosamente esta melhoria.`
         : `Gere a descrição otimizada para este produto utilizando a fusão perfeita entre os Padrões Oficiais e as Correções Recentes do chat, garantindo uma copy de alta conversão e alinhada ao Tiny.`;
 
-      contents.push(`${contextoAcumulado}\n${infoProduto}\n\n${instrucaoFinal}`);
+      contents.push(`${contextoAcumulado}\n${infoProduto}\n\n${instrucaoFinal}\n\n${INSTRUCAO_FORMATO_DESCRICAO}`);
 
       try {
         const response = await ai.models.generateContent({
@@ -136,9 +137,10 @@ export async function POST(req: Request) {
       ].filter(Boolean).join("\n");
     }
 
+    // garantia final: texto puro, sem **, ###, --- etc., mesmo que a IA desobedeça
     return NextResponse.json({
       sucesso: true,
-      resposta: respostaIA,
+      resposta: limparDescricao(respostaIA),
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

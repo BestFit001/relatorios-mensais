@@ -327,7 +327,7 @@ export default function ProdutosPage() {
       if (atual.length) lotes.push(atual);
 
       const linhas: any[] = [];
-      const resumo = { produtos: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0, skusGenericos: [] as string[] };
+      const resumo = { produtos: 0, medidasReais: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0, skusGenericos: [] as string[] };
       for (let i = 0; i < lotes.length; i++) {
         const res = await fetch("/api/exportar-tiny", {
           method: "POST",
@@ -345,6 +345,7 @@ export default function ProdutosPage() {
         linhas.push(...data.dados);
         if (data.resumo) {
           resumo.produtos += data.resumo.produtos || 0;
+          resumo.medidasReais += data.resumo.medidasReais || 0;
           resumo.medidasProprias += data.resumo.medidasProprias || 0;
           resumo.medidasDoPadrao += data.resumo.medidasDoPadrao || 0;
           resumo.genericas += data.resumo.genericas || 0;
@@ -359,6 +360,7 @@ export default function ProdutosPage() {
 
       alert(
         `✅ Planilha gerada com ${resumo.produtos} produto(s).\n\nMedidas da embalagem:\n` +
+        `- ${resumo.medidasReais} com as medidas e o peso reais da aba Dimensões e Peso\n` +
         `- ${resumo.medidasProprias} com as medidas informadas no cadastro\n` +
         `- ${resumo.medidasDoPadrao} com as medidas do modelo da aba Padronização\n` +
         `- ${resumo.genericas} com medidas genéricas (20x20x20 cm, 0,5 kg)` +

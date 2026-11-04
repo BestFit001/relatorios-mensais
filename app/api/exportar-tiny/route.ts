@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
 import { acharPadrao, medidasDoProduto } from "../../../lib/padroesAnuncios";
+import { normSkuPai } from "../../../lib/dimensoesPeso";
+import { INSTRUCAO_FORMATO_DESCRICAO, limparDescricao } from "../../../lib/textoDescricao";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -88,7 +90,7 @@ async function descricaoDoPai(
       if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
         let textoBase = padraoEncontrado.descricao_complementar;
         if (padraoEncontrado.titulo) {
-          const regexTitulo = new RegExp(padraoEncontrado.titulo, "gi");
+          const regexTitulo = new RegExp(String(padraoEncontrado.titulo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
           textoBase = textoBase.replace(regexTitulo, nomePaiFormatado);
         }
         descricaoComplementarPai = textoBase;
@@ -104,7 +106,9 @@ DIRETRIZES CRÍTICAS:
  - NUNCA misture categorias! Uma lancheira jamais é um biquíni.
 2. Respeite rigorosamente a marca original (${marcaPai}).
 3. NUNCA inclua tamanho ou cor na seção de especificações.
-4. Estruture o texto limpo com parágrafo introdutório, Especificações, Benefícios, Composição e Cuidados.
+4. Estruture o texto com parágrafo introdutório, Especificações, Benefícios, Composição e Cuidados e Conservação.
+
+${INSTRUCAO_FORMATO_DESCRICAO}
 
 DADOS DO PRODUTO:
 - Nome/Título: ${nomePaiFormatado}
@@ -177,7 +181,9 @@ DADOS DO PRODUTO:
       }
     }
 
-  return descricaoComplementarPai;
+  // garantia final: o campo "Descrição complementar" do Tiny é texto puro (sem **, ###, --- etc.),
+  // venha o texto do histórico, de um padrão antigo ou da IA
+  return limparDescricao(descricaoComplementarPai);
 }
 
 const COLUNAS_BASE = (o: {
@@ -300,8 +306,17 @@ export async function POST(req: Request) {
       })
     );
 
+    // medidas e peso REAIS informados na aba "Dimensões e Peso" (por SKU pai): prioridade máxima
+    const { data: dimensoes } = await supabase.from("dimensoes_peso").select("*").in("sku_pai", entradas.map(([k]) => k));
+    const dimPorPai = new Map<string, any>();
+    (dimensoes || []).forEach((d: any) => dimPorPai.set(normSkuPai(d.sku_pai), d));
+    const medidasFinais = (item: any, padrao: any, dim: any) =>
+      dim
+        ? { altura: Number(dim.altura), largura: Number(dim.largura), comprimento: Number(dim.comprimento), peso: Number(dim.peso), origem: "dimensoes" as const }
+        : medidasDoProduto(item, padrao);
+
     const linhasExportacao: Record<string, string | number>[] = [];
-    const resumo = { produtos: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0, padroesUsados: [] as string[], skusGenericos: [] as string[] };
+    const resumo = { produtos: 0, medidasReais: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0, padroesUsados: [] as string[], skusGenericos: [] as string[] };
 
     entradas.forEach(([paiKey, itensDoPai], idx) => {
       const produtoBase = itensDoPai[0];
@@ -309,6 +324,7 @@ export async function POST(req: Request) {
       const nomePaiFormatado = toTitleCase(nomePaiRaw);
       const marcaPai = produtoBase.marca || "Best Fit";
       const descricaoComplementarPai = descricoes[idx];
+      const dim = dimPorPai.get(normSkuPai(paiKey)) || null;
 
       // outras informações do produto: modelo parecido na Padronização (medidas, peso, categoria)
       const achado = acharPadrao(nomePaiRaw, marcaPai, padroesOficiais || []);
@@ -323,7 +339,7 @@ export async function POST(req: Request) {
         tipo: "V", pai: "", variacoes: "", marca: marcaPai, tituloSeo: nomePaiFormatado,
         descSeo: `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
         kw: gerarPalavrasChave(nomePaiFormatado), slug: gerarSlug(nomePaiFormatado),
-        complementar: descricaoComplementarPai, categoria, medidas: medidasDoProduto(produtoBase, padrao),
+        complementar: descricaoComplementarPai, categoria, medidas: medidasFinais(produtoBase, padrao, dim),
       }));
 
       // 2. Produtos Filhos / Variações (Tipo do produto = S)
@@ -332,9 +348,10 @@ export async function POST(req: Request) {
         const marcaFilho = p.marca || "Best Fit";
         const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
-        const medidas = medidasDoProduto(p, padrao);
+        const medidas = medidasFinais(p, padrao, dim);
         resumo.produtos++;
-        if (medidas.origem === "produto") resumo.medidasProprias++;
+        if (medidas.origem === "dimensoes") resumo.medidasReais++;
+        else if (medidas.origem === "produto") resumo.medidasProprias++;
         else if (medidas.origem === "padrao") resumo.medidasDoPadrao++;
         else { resumo.genericas++; resumo.skusGenericos.push(String(p.sku)); }
 

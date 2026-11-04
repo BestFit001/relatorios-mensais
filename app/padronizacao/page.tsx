@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import Navbar from "../components/Navbar";
 import { modelosDaPlanilha, norm, type ModeloPadrao } from "../../lib/padroesAnuncios";
+import { limparDescricao, temMarkdown } from "../../lib/textoDescricao";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -69,7 +70,7 @@ export default function PadronizacaoPage() {
     setTitulo(txt(p.titulo)); setMarca(txt(p.marca)); setSlug(txt(p.slug)); setPalavrasChave(txt(p.palavras_chave_seo));
     setCategoria(txt(p.categoria));
     setAltura(txt(p.altura)); setLargura(txt(p.largura)); setComprimento(txt(p.comprimento)); setPeso(txt(p.peso));
-    setDescricaoSeo(txt(p.descricao_seo)); setDescricaoComplementar(txt(p.descricao_complementar));
+    setDescricaoSeo(txt(p.descricao_seo)); setDescricaoComplementar(limparDescricao(p.descricao_complementar));   // modelos antigos com **, ### etc. já abrem limpos
     setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   }
 
@@ -96,7 +97,7 @@ export default function PadronizacaoPage() {
       comprimento: num(comprimento),
       peso: num(peso),
       descricao_seo: descricaoSeo,
-      descricao_complementar: descricaoComplementar,
+      descricao_complementar: limparDescricao(descricaoComplementar),   // sempre texto puro, sem **, ###, ---
     };
 
     setSalvando(true);
@@ -170,7 +171,7 @@ export default function PadronizacaoPage() {
         comprimento: m.comprimento,
         peso: m.peso,
         descricao_seo: m.descricao_seo,
-        descricao_complementar: m.descricao_complementar,
+        descricao_complementar: limparDescricao(m.descricao_complementar),
       };
       const ja = existentes.get(chaveModelo(m.titulo, marcaFinal));
       const { error } = ja
@@ -187,6 +188,23 @@ export default function PadronizacaoPage() {
       (erros.length ? ` Erros: ${erros.join(" | ")}` : "") +
       " Revise na lista abaixo e use ✏️ Editar para ajustar o que precisar."
     );
+    carregarPadroes();
+  }
+
+  // modelos antigos que ficaram com **, ###, --- etc. na descrição
+  const comSimbolos = padroes.filter((p) => temMarkdown(p.descricao_complementar));
+  const [limpando, setLimpando] = useState(false);
+  async function limparSimbolosDosModelos() {
+    if (comSimbolos.length === 0) return;
+    if (!confirm(`Limpar os símbolos (**, ###, ---) da descrição de ${comSimbolos.length} modelo(s)? O texto continua o mesmo, só sem os caracteres especiais.`)) return;
+    setLimpando(true);
+    const erros: string[] = [];
+    for (const p of comSimbolos) {
+      const { error } = await supabase.from("padroes_anuncios").update({ descricao_complementar: limparDescricao(p.descricao_complementar) }).eq("id", p.id);
+      if (error) erros.push(`${p.titulo}: ${error.message}`);
+    }
+    setLimpando(false);
+    if (erros.length) alert("Alguns modelos não foram limpos: " + erros.join(" | "));
     carregarPadroes();
   }
 
@@ -358,8 +376,13 @@ export default function PadronizacaoPage() {
 
         {/* Listagem */}
         <div className="bg-[#131625] rounded-xl border border-gray-800 overflow-hidden">
-          <div className="p-4 border-b border-gray-800">
+          <div className="p-4 border-b border-gray-800 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold">Modelos Cadastrados ({padroes.length})</h2>
+            {comSimbolos.length > 0 && (
+              <button type="button" data-limpar-simbolos disabled={limpando} onClick={limparSimbolosDosModelos} className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer">
+                {limpando ? "Limpando..." : `🧹 Limpar símbolos (**, ###, ---) de ${comSimbolos.length} modelo(s)`}
+              </button>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -391,6 +414,7 @@ export default function PadronizacaoPage() {
                       <td className="p-4 text-gray-300">
                         <span className={p.descricao_seo ? "text-green-400" : "text-gray-500"}>✓ SEO</span> •{" "}
                         <span className={p.descricao_complementar ? "text-green-400" : "text-gray-500"}>✓ Desc.</span>
+                        {temMarkdown(p.descricao_complementar) && <span title="A descrição tem símbolos de Markdown (**, ###). Use o botão Limpar símbolos." className="text-amber-300"> ⚠</span>}
                       </td>
                       <td className="p-4 text-center whitespace-nowrap">
                         <button onClick={() => editarPadrao(p)} data-editar className="bg-indigo-900/60 hover:bg-indigo-800 text-indigo-100 px-3 py-1 rounded text-xs transition cursor-pointer mr-2">
