@@ -57,6 +57,26 @@ function normalizarIdPedido(val: any): string {
     .toUpperCase();
 }
 
+function normalizarCanal(canal: any): string {
+  return String(canal ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+// Clubes (Hebraica, Paineiras e qualquer outro "Clube ...") vendem em loja física: não têm ID de pedido nem SKU de marketplace
+// e nunca entram na aba de vendas pendentes nem nas planilhas auxiliares.
+function ehCanalClube(canal: any): boolean {
+  const n = normalizarCanal(canal);
+  return n.includes("clube") || n.includes("hebraica") || n.includes("paineiras");
+}
+
+function ehCanalAmazon(canal: any): boolean {
+  return normalizarCanal(canal).includes("amazon");
+}
+
+// SKU já normalizado (sem hífen) que termina em "f" ou "fba": é o "-F"/"-FBA" da Amazon colado ao código (ex.: 18181042001f)
+function skuTerminaEmF(skuNorm: string): boolean {
+  return /(f|fba)$/.test(skuNorm);
+}
+
 function parseSmartFloat(val: any): number {
   if (val === undefined || val === null || val === '') return 0;
   if (typeof val === 'number') {
@@ -196,6 +216,10 @@ export default function UpdatesPage() {
   const [edicoesPendentes, setEdicoesPendentes] = useState<{ [id: number]: string }>({});
   const [selecionadosPendentes, setSelecionadosPendentes] = useState<{ [id: number]: boolean }>({});
   const [skuEmLote, setSkuEmLote] = useState("");
+  const [filtroPendentes, setFiltroPendentes] = useState<"todos" | "sem_sku" | "fora_base">("todos");
+  // Cadastro rápido de custo (lápis) para SKUs que existem nas vendas mas não na base de custos
+  const [cadastroCusto, setCadastroCusto] = useState<{ sku: string; produto: string; marca: string; custo: string } | null>(null);
+  const [cadastroSalvando, setCadastroSalvando] = useState(false);
 
   const [mesUpload, setMesUpload] = useState("10");
   const [anoUpload, setAnoUpload] = useState("2026");
@@ -288,16 +312,86 @@ export default function UpdatesPage() {
 
       const skusComCusto = new Set(custos.map((c: any) => normalizarSku(c.sku)));
 
-      const pendentes = vendas.filter((v: any) => {
-        const skuNorm = normalizarSku(v.sku);
-        if (!skuNorm || skuNorm === 'semsku') return true;
-        return !skusComCusto.has(skuNorm);
-      });
+      // Vendas de clubes nunca entram nesta aba
+      const pendentes = vendas
+        .filter((v: any) => !ehCanalClube(v.canal))
+        .map((v: any) => {
+          const skuNorm = normalizarSku(v.sku);
+          const semSku = !skuNorm || skuNorm === 'semsku';
+          return { ...v, __semSku: semSku, __foraBase: !semSku && !skusComCusto.has(skuNorm) };
+        })
+        .filter((v: any) => v.__semSku || v.__foraBase);
 
       setVendasPendentes(pendentes);
     } catch (err) {
       console.error("Erro ao carregar vendas pendentes:", err);
     }
+  };
+
+  // Itens com SKU preenchido que não existem na base de custos, agrupados por SKU
+  const agruparForaDaBase = () => {
+    const mapa = new Map<string, { sku: string; produtos: string[]; canais: Set<string>; linhas: number; somaPreco: number }>();
+    vendasPendentes.filter((v) => v.__foraBase).forEach((v) => {
+      const sku = normalizarSku(v.sku);
+      const g = mapa.get(sku) || { sku, produtos: [], canais: new Set<string>(), linhas: 0, somaPreco: 0 };
+      const nome = String(v.produto ?? "").trim();
+      if (nome && isNaN(Number(nome)) && !g.produtos.includes(nome)) g.produtos.push(nome);
+      g.canais.add(String(v.canal || ""));
+      g.linhas += 1;
+      g.somaPreco += Number(v.preco_venda || v.valor || 0);
+      mapa.set(sku, g);
+    });
+    return Array.from(mapa.values());
+  };
+
+  // Baixa a lista de SKUs fora da base já no layout do upload de custos (B=SKU, C=Produto, D=Marca, E=Custo)
+  const baixarItensForaDaBase = () => {
+    const grupos = agruparForaDaBase();
+    if (grupos.length === 0) return alert("Nenhum item fora da base de custos no momento.");
+    const linhas = grupos
+      .sort((a, b) => b.linhas - a.linhas)
+      .map((g, i) => [
+        i + 1, g.sku, g.produtos[0] || "", "", "", Array.from(g.canais).join(" / "), g.linhas, Number((g.somaPreco / g.linhas).toFixed(2)),
+      ]);
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["#", "SKU", "PRODUTO", "MARCA", "CUSTO UNITÁRIO", "CANAIS", "LINHAS DE VENDA", "PREÇO MÉDIO"],
+      ...linhas,
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Fora da base");
+    XLSX.writeFile(wb, `itens_fora_da_base_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const abrirCadastroCusto = (item: any) => {
+    const nome = String(item.produto ?? "").trim();
+    setCadastroCusto({ sku: normalizarSku(item.sku), produto: nome && isNaN(Number(nome)) ? nome : "", marca: "BEST FIT", custo: "" });
+  };
+
+  const salvarCadastroCusto = async () => {
+    if (!cadastroCusto) return;
+    const produto = cadastroCusto.produto.trim();
+    const marca = cadastroCusto.marca.trim() || "BEST FIT";
+    const custoTxt = cadastroCusto.custo.trim();
+    if (!produto) return alert("Informe o nome do produto.");
+    if (!custoTxt) return alert("Informe o custo unitário.");
+    const custo = parseSmartFloat(custoTxt);
+    if (!(custo > 0)) return alert("Informe um custo unitário válido (maior que zero).");
+
+    setCadastroSalvando(true);
+    try {
+      const { error } = await supabase
+        .from("tabela_custos_skus")
+        .upsert({ sku: cadastroCusto.sku, produto, marca, custo_unitario: custo }, { onConflict: "sku" });
+      if (error) throw error;
+      // As vendas desse SKU passam a mostrar o nome cadastrado
+      await supabase.from("vendas_canais").update({ produto }).eq("sku", cadastroCusto.sku);
+      setCadastroCusto(null);
+      await carregarVendasPendentes();
+      pesquisarCustosNoBanco();
+    } catch (err: any) {
+      alert("Erro ao cadastrar o custo: " + err.message);
+    }
+    setCadastroSalvando(false);
   };
 
   const salvarSkuPendente = async (id: number, skuInput?: string) => {
@@ -384,24 +478,32 @@ export default function UpdatesPage() {
       }
 
       // 2) Vendas no banco e custos (para informar o nome do produto)
-      const vendas = await fetchTodosRegistros("vendas_canais", "id, id_pedido, sku");
+      const vendas = await fetchTodosRegistros("vendas_canais", "id, id_pedido, sku, canal");
       const custos = await fetchTodosRegistros("tabela_custos_skus", "sku, produto");
       const produtoPorSku = new Map<string, string>();
       custos.forEach((c: any) => { const k = normalizarSku(c.sku); if (k && c.produto) produtoPorSku.set(k, c.produto); });
 
       const existentes = new Set<string>();
       const pendentesPorPedido = new Map<string, any[]>();
+      const idsComSufixo = new Set<number>();   // vendas da Amazon cujo SKU terminava em f/-f/-fba e serão substituídas
       vendas.forEach((v: any) => {
+        if (ehCanalClube(v.canal)) return;                       // clubes nunca são alterados
         const ped = normalizarIdPedido(v.id_pedido);
         if (!ped) return;
         existentes.add(ped);
         const sk = normalizarSku(v.sku);
-        if (!sk || sk === "semsku") pendentesPorPedido.set(ped, [...(pendentesPorPedido.get(ped) || []), v]);
+        const vazio = !sk || sk === "semsku";
+        // Na Amazon, além dos vazios, também troca o SKU que termina em "f"/"fba" (o "-F"/"-FBA" colado), desde que não seja um SKU válido da base
+        const comSufixo = !vazio && ehCanalAmazon(v.canal) && skuTerminaEmF(sk) && !produtoPorSku.has(sk);
+        if (vazio || comSufixo) {
+          if (comSufixo) idsComSufixo.add(v.id);
+          pendentesPorPedido.set(ped, [...(pendentesPorPedido.get(ped) || []), v]);
+        }
       });
 
       // 3) Casa pedido a pedido: 1 SKU -> todas as linhas em branco do pedido; vários SKUs -> um por linha, na ordem
       const atualizar = new Map<string, number[]>();          // sku -> ids das vendas
-      let pedidosCorrigidos = 0, jaTinhamSku = 0, naoEncontrados = 0, linhasSemSku = 0, vendasCorrigidas = 0;
+      let pedidosCorrigidos = 0, jaTinhamSku = 0, naoEncontrados = 0, linhasSemSku = 0, vendasCorrigidas = 0, sufixosSubstituidos = 0;
       const exemplosNaoEncontrados: string[] = [];
       porPedido.forEach((skus, pedido) => {
         const linhas = (pendentesPorPedido.get(pedido) || []).slice().sort((a: any, b: any) => Number(a.id) - Number(b.id));
@@ -416,6 +518,7 @@ export default function UpdatesPage() {
           if (!sku) { linhasSemSku++; return; }
           atualizar.set(sku, [...(atualizar.get(sku) || []), linha.id]);
           vendasCorrigidas++; algum = true;
+          if (idsComSufixo.has(linha.id)) sufixosSubstituidos++;
         });
         if (algum) pedidosCorrigidos++;
       });
@@ -434,7 +537,7 @@ export default function UpdatesPage() {
       }
 
       setAuxResultado({
-        arquivos: porArquivo, pedidosNaPlanilha: porPedido.size, pedidosCorrigidos, vendasCorrigidas, jaTinhamSku,
+        arquivos: porArquivo, pedidosNaPlanilha: porPedido.size, pedidosCorrigidos, vendasCorrigidas, sufixosSubstituidos, jaTinhamSku,
         naoEncontrados, exemplosNaoEncontrados, linhasSemSku, skusForaDaBase, erros,
       });
       await carregarVendasPendentes();
@@ -444,11 +547,14 @@ export default function UpdatesPage() {
     setAuxProcessando(false);
   };
 
+  const listaPendentesVisivel = () =>
+    vendasPendentes.filter((v) => filtroPendentes === "todos" || (filtroPendentes === "sem_sku" ? v.__semSku : v.__foraBase));
+
   const selecionarTodosPendentes = (e: ChangeEvent<HTMLInputElement>) => {
     const checked = e.target.checked;
     const novoMap: { [id: number]: boolean } = {};
     if (checked) {
-      vendasPendentes.forEach(item => {
+      listaPendentesVisivel().forEach(item => {
         novoMap[item.id] = true;
       });
     }
@@ -1502,7 +1608,7 @@ export default function UpdatesPage() {
               <div>
                 <h2 className="text-lg font-bold text-white">⚠️ Vendas Pendentes de Ajustes de SKU</h2>
                 <p className="text-xs text-slate-400 mt-1">
-                  Estes itens foram importados nas vendas, mas o SKU veio inválido, vazio ou não foi encontrado na base de custos.
+                  Estes itens foram importados nas vendas, mas o SKU veio inválido, vazio ou não foi encontrado na base de custos. Vendas dos clubes não aparecem aqui.
                 </p>
               </div>
 
@@ -1531,7 +1637,8 @@ export default function UpdatesPage() {
                 <h3 className="text-sm font-black text-violet-300 uppercase tracking-wider">📎 Planilhas auxiliares de SKU (ID do pedido → SKU)</h3>
                 <p className="text-[11px] text-slate-400 mt-1">
                   Quando o canal oculta o SKU, suba aqui a planilha com 2 colunas: o ID do pedido e o SKU dele. O SKU é gravado nas vendas que estão <strong>sem SKU</strong>;
-                  vendas que já têm SKU não são alteradas e as outras colunas da planilha são descartadas. Você pode selecionar várias planilhas de uma vez (qualquer formato: xlsx, xls, csv, txt…).
+                  vendas que já têm SKU não são alteradas, <strong>exceto na Amazon</strong>, onde SKUs terminados em <strong>f, -f ou -fba</strong> (que não existem na base) também são substituídos. Clubes nunca são alterados.
+                  As outras colunas da planilha são descartadas. Você pode selecionar várias planilhas de uma vez (qualquer formato: xlsx, xls, csv, txt…).
                 </p>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
@@ -1568,6 +1675,7 @@ export default function UpdatesPage() {
               {auxResultado && (
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs space-y-1.5" data-resultado-aux>
                   <div className="text-sm font-black text-emerald-400">✅ {auxResultado.vendasCorrigidas} venda(s) corrigida(s) em {auxResultado.pedidosCorrigidos} pedido(s)</div>
+                  {auxResultado.sufixosSubstituidos > 0 && <div className="text-emerald-300">↻ {auxResultado.sufixosSubstituidos} venda(s) da Amazon tinham SKU terminado em f/-f/-fba e foram substituídas.</div>}
                   {auxResultado.arquivos.map((a: any, i: number) => (
                     <div key={i} className={a.erro ? "text-rose-300" : "text-slate-400"}>
                       📄 {a.nome}: {a.erro ? `não foi possível ler (${a.erro})` : `${a.lidas} linha(s) lida(s)${a.ignoradas ? `, ${a.ignoradas} ignorada(s) (sem ID ou sem SKU)` : ""}`}
@@ -1585,6 +1693,24 @@ export default function UpdatesPage() {
               )}
             </div>
 
+            {/* FILTRO + DOWNLOAD DOS ITENS FORA DA BASE */}
+            <div className="flex flex-wrap items-center gap-2" data-barra-pendentes>
+              {([
+                ["todos", `Todos (${vendasPendentes.length})`],
+                ["sem_sku", `Sem SKU (${vendasPendentes.filter((v) => v.__semSku).length})`],
+                ["fora_base", `Fora da base (${vendasPendentes.filter((v) => v.__foraBase).length})`],
+              ] as const).map(([chave, rotulo]) => (
+                <button key={chave} type="button" onClick={() => setFiltroPendentes(chave)}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider cursor-pointer border transition ${filtroPendentes === chave ? "bg-amber-600 text-white border-amber-500" : "bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-700"}`}>
+                  {rotulo}
+                </button>
+              ))}
+              <button type="button" onClick={baixarItensForaDaBase}
+                className="ml-auto bg-sky-700 hover:bg-sky-600 text-white font-bold px-4 py-1.5 rounded-lg text-[11px] uppercase tracking-wider cursor-pointer shadow">
+                ⬇️ Baixar itens fora da base ({agruparForaDaBase().length} SKU{agruparForaDaBase().length === 1 ? "" : "s"})
+              </button>
+            </div>
+
             <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
               <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                 <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
@@ -1593,7 +1719,7 @@ export default function UpdatesPage() {
                       <input 
                         type="checkbox" 
                         onChange={selecionarTodosPendentes}
-                        checked={vendasPendentes.length > 0 && vendasPendentes.every(item => selecionadosPendentes[item.id])}
+                        checked={listaPendentesVisivel().length > 0 && listaPendentesVisivel().every(item => selecionadosPendentes[item.id])}
                         className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                       />
                     </th>
@@ -1608,7 +1734,7 @@ export default function UpdatesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                  {vendasPendentes.map((item) => (
+                  {listaPendentesVisivel().map((item) => (
                     <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
                       <td className="p-3 text-center">
                         <input 
@@ -1621,7 +1747,11 @@ export default function UpdatesPage() {
                       <td className="p-3 font-mono font-bold text-indigo-400">{item.id_pedido}</td>
                       <td className="p-3 font-bold text-white">{item.canal}</td>
                       <td className="p-3 font-mono text-slate-400">{item.mes_referencia}</td>
-                      <td className="p-3 text-slate-300 max-w-[250px] truncate" title={item.produto}>{item.produto}</td>
+                      <td className="p-3 max-w-[250px] truncate" title={item.__foraBase ? `Planilha: ${item.produto ?? ""}` : item.produto}>
+                        {item.__foraBase
+                          ? <span className="inline-block px-2 py-0.5 rounded-md bg-yellow-400/15 border border-yellow-500/40 text-yellow-300 font-black uppercase tracking-wider text-[10px]">fora da base</span>
+                          : <span className="text-slate-300">{item.produto}</span>}
+                      </td>
                       <td className="p-3 text-right font-mono text-emerald-400 font-bold">R$ {Number(item.preco_venda || item.valor || 0).toFixed(2)}</td>
                       <td className="p-3 text-center font-mono text-rose-400 font-bold">{item.sku || "vazio"}</td>
                       <td className="p-3">
@@ -1634,27 +1764,84 @@ export default function UpdatesPage() {
                         />
                       </td>
                       <td className="p-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => salvarSkuPendente(item.id)}
-                          disabled={loading}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer shadow-sm transition-all"
-                        >
-                          Salvar
-                        </button>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => salvarSkuPendente(item.id)}
+                            disabled={loading}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer shadow-sm transition-all"
+                          >
+                            Salvar
+                          </button>
+                          {item.__foraBase && (
+                            <button
+                              type="button"
+                              onClick={() => abrirCadastroCusto(item)}
+                              title="Cadastrar este SKU na base de custos"
+                              aria-label="Cadastrar custo"
+                              data-lapis
+                              className="bg-yellow-500/20 hover:bg-yellow-500/40 border border-yellow-500/50 text-yellow-300 px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-all"
+                            >
+                              ✏️
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
-                  {vendasPendentes.length === 0 && (
+                  {listaPendentesVisivel().length === 0 && (
                     <tr>
                       <td colSpan={9} className="p-12 text-center text-emerald-400 font-bold">
-                        🎉 Parabéns! Não há nenhuma venda pendente de ajustes. Todos os SKUs estão validados com sucesso.
+                        {vendasPendentes.length === 0
+                          ? "🎉 Parabéns! Não há nenhuma venda pendente de ajustes. Todos os SKUs estão validados com sucesso."
+                          : "Nenhum item neste filtro."}
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
+
+            {/* CADASTRO RÁPIDO DE CUSTO (lápis) */}
+            {cadastroCusto && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" data-modal-custo onClick={() => !cadastroSalvando && setCadastroCusto(null)}>
+                <div className="w-full max-w-md bg-slate-900 border border-yellow-600/50 rounded-2xl p-6 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                  <div>
+                    <h3 className="text-sm font-black text-yellow-300 uppercase tracking-wider">✏️ Cadastrar na base de custos</h3>
+                    <p className="text-[11px] text-slate-400 mt-1">Grava o SKU em <span className="font-mono">tabela_custos_skus</span>. As vendas desse SKU saem da lista de pendentes.</p>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU</label>
+                    <input type="text" value={cadastroCusto.sku} readOnly className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-400 outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Produto (nome)</label>
+                    <input type="text" value={cadastroCusto.produto} onChange={(e) => setCadastroCusto({ ...cadastroCusto, produto: e.target.value })}
+                      placeholder="Ex.: Tapete para Yoga em EVA" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-yellow-500" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
+                      <input type="text" value={cadastroCusto.marca} onChange={(e) => setCadastroCusto({ ...cadastroCusto, marca: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-yellow-500" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Custo unitário (R$)</label>
+                      <input type="text" inputMode="decimal" value={cadastroCusto.custo} onChange={(e) => setCadastroCusto({ ...cadastroCusto, custo: e.target.value })}
+                        placeholder="0,00" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs font-mono text-white outline-none focus:border-yellow-500" />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button type="button" onClick={() => setCadastroCusto(null)} disabled={cadastroSalvando}
+                      className="px-4 py-2 rounded-lg text-xs font-bold uppercase bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer">Cancelar</button>
+                    <button type="button" onClick={salvarCadastroCusto} disabled={cadastroSalvando}
+                      className="px-5 py-2 rounded-lg text-xs font-bold uppercase bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white cursor-pointer shadow">
+                      {cadastroSalvando ? "Salvando..." : "Cadastrar"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
