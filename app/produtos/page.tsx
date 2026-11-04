@@ -55,10 +55,12 @@ export default function ProdutosPage() {
   const [buscandoConfig, setBuscandoConfig] = useState(false);
 
   const [modalAberto, setModalAberto] = useState(false);
-  const [formManual, setFormManual] = useState({
-    sku: "", produto: "", cor: "", tamanho: "", ncm: "", cest: "", ean: "",
-    custo: 0, preco_venda: 0, marca: "BEST FIT", qtdd_ecom: 0
-  });
+  const formManualVazio = {
+    sku: "", produto: "", cor: "", tamanho: "", ean: "", ncm: "", cest: "",
+    custo: "", preco_venda: "", altura: "", largura: "", comprimento: "", marca: "BEST FIT",
+  };
+  const [formManual, setFormManual] = useState<any>(formManualVazio);
+  const [editandoManualSku, setEditandoManualSku] = useState<string | null>(null);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -307,23 +309,63 @@ export default function ProdutosPage() {
 
     try {
       setLoading(true);
-      const res = await fetch("/api/exportar-tiny", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skus: skusSelecionados })
+      // agrupa por produto pai e manda em lotes pequenos (3 pais por vez): a IA gera uma descrição por pai e um lote grande pode estourar o tempo do servidor
+      const porPai = new Map<string, string[]>();
+      skusSelecionados.forEach((sku) => {
+        const it = dadosPendentes.find((p: any) => p.sku === sku);
+        const pai = it?.sku_pai || (sku.length > 5 ? sku.substring(0, 5) : sku);
+        porPai.set(pai, [...(porPai.get(pai) || []), sku]);
       });
-      const data = await res.json();
-
-      if (res.ok && data.dados) {
-        const worksheet = XLSX.utils.json_to_sheet(data.dados);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Produtos Tiny");
-        XLSX.writeFile(workbook, `produtos_tiny_${Date.now()}.xlsx`);
-      } else {
-        alert("Erro ao exportar: " + (data.error || "Desconhecido"));
+      const lotes: string[][] = [];
+      let atual: string[] = [];
+      let paisNoLote = 0;
+      for (const lista of porPai.values()) {
+        atual.push(...lista);
+        paisNoLote++;
+        if (paisNoLote >= 3) { lotes.push(atual); atual = []; paisNoLote = 0; }
       }
+      if (atual.length) lotes.push(atual);
+
+      const linhas: any[] = [];
+      const resumo = { produtos: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0, skusGenericos: [] as string[] };
+      for (let i = 0; i < lotes.length; i++) {
+        const res = await fetch("/api/exportar-tiny", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ skus: lotes[i] })
+        });
+        const texto = await res.text();
+        let data: any = {};
+        try { data = JSON.parse(texto); } catch { /* corpo vazio ou não-JSON */ }
+        if (!res.ok || !data.dados) {
+          const motivo = data.error
+            || (texto ? `resposta inesperada do servidor (HTTP ${res.status}): ${texto.replace(/\s+/g, " ").slice(0, 140)}` : `o servidor não devolveu resposta (HTTP ${res.status}) — provavelmente demorou demais`);
+          throw new Error(`${motivo}${lotes.length > 1 ? ` [lote ${i + 1} de ${lotes.length}]` : ""}`);
+        }
+        linhas.push(...data.dados);
+        if (data.resumo) {
+          resumo.produtos += data.resumo.produtos || 0;
+          resumo.medidasProprias += data.resumo.medidasProprias || 0;
+          resumo.medidasDoPadrao += data.resumo.medidasDoPadrao || 0;
+          resumo.genericas += data.resumo.genericas || 0;
+          resumo.skusGenericos.push(...(data.resumo.skusGenericos || []));
+        }
+      }
+
+      const worksheet = XLSX.utils.json_to_sheet(linhas);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Produtos Tiny");
+      XLSX.writeFile(workbook, `produtos_tiny_${Date.now()}.xlsx`);
+
+      alert(
+        `✅ Planilha gerada com ${resumo.produtos} produto(s).\n\nMedidas da embalagem:\n` +
+        `- ${resumo.medidasProprias} com as medidas informadas no cadastro\n` +
+        `- ${resumo.medidasDoPadrao} com as medidas do modelo da aba Padronização\n` +
+        `- ${resumo.genericas} com medidas genéricas (20x20x20 cm, 0,5 kg)` +
+        (resumo.skusGenericos.length ? `\n\nSem medidas (revise no Tiny): ${resumo.skusGenericos.slice(0, 12).join(", ")}${resumo.skusGenericos.length > 12 ? "…" : ""}` : "")
+      );
     } catch (err: any) {
-      alert("Erro na requisição: " + err.message);
+      alert("Erro ao exportar: " + err.message);
     }
     setLoading(false);
   };
@@ -366,6 +408,15 @@ export default function ProdutosPage() {
         const idxMarca = getCol(/marca/i);
         const idxQtdEcom = getCol(/qtdd ecom|ecom/i);
         const idxAtivo = getCol(/ativo/i);
+        const idxAltura = getCol(/altura/i);
+        const idxLargura = getCol(/largura/i);
+        const idxComp = getCol(/comprimento|cumprimento/i);
+        const medida = (row: any[], idx: number) => {
+          if (idx === -1) return null;
+          const v = String(row[idx] ?? "").trim().replace(",", ".");
+          const n = Number(v);
+          return v !== "" && Number.isFinite(n) && n > 0 ? n : null;
+        };
 
         const skusExistentesSet = new Set([
           ...dadosPendentes.map((c: any) => String(c.sku).trim().toLowerCase()),
@@ -410,7 +461,10 @@ export default function ProdutosPage() {
             custo: idxCusto !== -1 ? Number(row[idxCusto]) || 0 : 0,
             preco_venda: idxPreco !== -1 ? Number(row[idxPreco]) || 0 : 0,
             marca: idxMarca !== -1 ? String(row[idxMarca] || "").trim() : "BEST FIT",
-            qtdd_ecom: idxQtdEcom !== -1 ? Number(row[idxQtdEcom]) || 0 : 0
+            qtdd_ecom: idxQtdEcom !== -1 ? Number(row[idxQtdEcom]) || 0 : 0,
+            altura: medida(row, idxAltura),
+            largura: medida(row, idxLargura),
+            comprimento: medida(row, idxComp),
           });
         }
 
@@ -427,23 +481,53 @@ export default function ProdutosPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  const abrirManualNovo = () => { setEditandoManualSku(null); setFormManual(formManualVazio); setModalAberto(true); };
+  const abrirManualEdicao = (item: any) => {
+    const t = (v: any) => (v === null || v === undefined ? "" : String(v));
+    setEditandoManualSku(item.sku);
+    setFormManual({
+      sku: t(item.sku), produto: t(item.produto), cor: t(item.cor), tamanho: t(item.tamanho), ean: t(item.ean), ncm: t(item.ncm), cest: t(item.cest),
+      custo: t(item.custo), preco_venda: t(item.preco_venda), altura: t(item.altura), largura: t(item.largura), comprimento: t(item.comprimento),
+      marca: t(item.marca) || "BEST FIT",
+    });
+    setModalAberto(true);
+  };
+
   const handleSalvarManual = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formManual.sku || !formManual.produto) {
+    const sku = String(formManual.sku || "").trim();
+    const produto = String(formManual.produto || "").trim();
+    if (!sku || !produto) {
       alert("Preencha ao menos o SKU e o Nome do Produto.");
       return;
     }
+    const num = (v: any): number | null => {
+      if (v === "" || v === null || v === undefined) return null;
+      const n = Number(String(v).replace(",", "."));
+      return Number.isFinite(n) ? n : null;
+    };
+    const txt = (v: any) => { const t = String(v ?? "").trim(); return t === "" ? null : t; };
 
     setLoading(true);
-    const skuPai = formManual.sku.length > 5 ? formManual.sku.substring(0, 5) : formManual.sku;
-    const payload = { ...formManual, sku_pai: skuPai };
+    const payload: any = {
+      sku,
+      sku_pai: sku.length > 5 ? sku.substring(0, 5) : sku,
+      produto,
+      cor: txt(formManual.cor), tamanho: txt(formManual.tamanho), ean: txt(formManual.ean), ncm: txt(formManual.ncm), cest: txt(formManual.cest),
+      custo: num(formManual.custo) ?? 0, preco_venda: num(formManual.preco_venda) ?? 0,
+      altura: num(formManual.altura), largura: num(formManual.largura), comprimento: num(formManual.comprimento),
+      marca: txt(formManual.marca) || "BEST FIT",
+    };
+    if (!editandoManualSku) payload.qtdd_ecom = 0;
 
     const { error } = await supabase.from("produtos_pendentes").upsert([payload], { onConflict: "sku" });
     if (error) {
       alert("Erro ao salvar: " + error.message);
     } else {
-      alert("✅ Produto adicionado aos Pendentes com sucesso!");
+      alert(editandoManualSku ? "✅ Produto atualizado!" : "✅ Produto adicionado aos Pendentes com sucesso!");
       setModalAberto(false);
+      setEditandoManualSku(null);
+      setFormManual(formManualVazio);
       carregarPendentesDoBanco();
     }
     setLoading(false);
@@ -558,6 +642,9 @@ export default function ProdutosPage() {
         preco_venda: item.preco_venda,
         cor: item.cor,
         tamanho: item.tamanho,
+        altura: item.altura ?? null,
+        largura: item.largura ?? null,
+        comprimento: item.comprimento ?? null,
         data_cadastro: new Date().toISOString(),
         canais_enviados: {},
         clipes_enviados: {}
@@ -596,6 +683,9 @@ export default function ProdutosPage() {
           preco_venda: item.preco_venda,
           cor: item.cor,
           tamanho: item.tamanho,
+          altura: item.altura ?? null,
+          largura: item.largura ?? null,
+          comprimento: item.comprimento ?? null,
           data_cadastro: new Date().toISOString(),
           canais_enviados: {},
           clipes_enviados: {}
@@ -891,7 +981,7 @@ export default function ProdutosPage() {
                 {dadosPendentes.length > 0 && (
                   <button onClick={limparTodosPendentes} className="bg-rose-950 hover:bg-rose-900 text-rose-300 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer">🗑️ Limpar Todos</button>
                 )}
-                <button onClick={() => setModalAberto(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer">+ Manual</button>
+                <button onClick={abrirManualNovo} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer">+ Manual</button>
               </div>
             </div>
 
@@ -915,6 +1005,7 @@ export default function ProdutosPage() {
                       <th className="p-3">NCM</th>
                       <th className="p-3">CEST</th>
                       <th className="p-3">EAN</th>
+                      <th className="p-3">Medidas A×L×C (cm)</th>
                       <th className="p-3">Marca</th>
                       <th className="p-3 text-center">Qtd Ecom</th>
                       <th className="p-3 text-right">Custo</th>
@@ -943,11 +1034,13 @@ export default function ProdutosPage() {
                         <td className="p-3 text-slate-300 font-mono">{item.ncm || "—"}</td>
                         <td className="p-3 text-slate-300 font-mono">{item.cest || "—"}</td>
                         <td className="p-3 text-slate-300 font-mono">{item.ean || "—"}</td>
+                        <td className="p-3 text-slate-300 font-mono" data-medidas>{(item.altura || item.largura || item.comprimento) ? `${item.altura ?? "—"}×${item.largura ?? "—"}×${item.comprimento ?? "—"}` : "—"}</td>
                         <td className="p-3 text-slate-300">{item.marca || "—"}</td>
                         <td className="p-3 text-center text-slate-300">{item.qtdd_ecom}</td>
                         <td className="p-3 text-right font-mono text-rose-400">R$ {Number(item.custo).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda).toFixed(2)}</td>
                         <td className="p-3 text-center sticky right-0 bg-slate-950 shadow-l flex items-center justify-center gap-2">
+                          <button onClick={() => abrirManualEdicao(item)} data-editar-pendente className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-1 rounded text-xs font-bold cursor-pointer" title="Editar produto">✏️</button>
                           <button onClick={() => enviarParaRealizados(item)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold cursor-pointer">Cadastrar</button>
                           <button onClick={() => excluirPendenteIndividual(item.sku)} className="bg-rose-950 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded text-xs font-bold cursor-pointer">Excluir</button>
                         </td>
@@ -955,7 +1048,7 @@ export default function ProdutosPage() {
                     ))}
                     {pendentesFiltrados.length === 0 && (
                       <tr>
-                        <td colSpan={13} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
+                        <td colSpan={14} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -1472,36 +1565,69 @@ export default function ProdutosPage() {
         )}
 
         {modalAberto && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl p-6 space-y-4">
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-auto">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl p-6 space-y-4 my-auto">
               <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                <h3 className="text-base font-bold text-white">Inserir Produto Manualmente (Pendentes)</h3>
-                <button onClick={() => setModalAberto(false)} className="text-slate-400 hover:text-white font-bold cursor-pointer">✕</button>
+                <h3 className="text-base font-bold text-white">{editandoManualSku ? `Editar Produto Pendente — ${editandoManualSku}` : "Inserir Produto Manualmente (Pendentes)"}</h3>
+                <button onClick={() => { setModalAberto(false); setEditandoManualSku(null); }} className="text-slate-400 hover:text-white font-bold cursor-pointer">✕</button>
               </div>
-              <form onSubmit={handleSalvarManual} className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <form onSubmit={handleSalvarManual} data-form-manual className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU *</label>
-                  <input type="text" required value={formManual.sku} onChange={(e) => setFormManual({...formManual, sku: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
+                  <input type="text" required readOnly={!!editandoManualSku} data-m-sku value={formManual.sku} onChange={(e) => setFormManual({...formManual, sku: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
                 </div>
-                <div className="md:col-span-2">
+                <div className="col-span-2 md:col-span-3">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nome do Produto *</label>
-                  <input type="text" required value={formManual.produto} onChange={(e) => setFormManual({...formManual, produto: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
+                  <input type="text" required data-m-produto value={formManual.produto} onChange={(e) => setFormManual({...formManual, produto: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Cor</label>
+                  <input type="text" data-m-cor value={formManual.cor} onChange={(e) => setFormManual({...formManual, cor: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Tamanho</label>
+                  <input type="text" data-m-tamanho value={formManual.tamanho} onChange={(e) => setFormManual({...formManual, tamanho: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">EAN</label>
+                  <input type="text" data-m-ean value={formManual.ean} onChange={(e) => setFormManual({...formManual, ean: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">NCM</label>
+                  <input type="text" data-m-ncm value={formManual.ncm} onChange={(e) => setFormManual({...formManual, ncm: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">CEST</label>
+                  <input type="text" data-m-cest value={formManual.cest} onChange={(e) => setFormManual({...formManual, cest: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Custo (R$)</label>
-                  <input type="number" step="0.01" value={formManual.custo} onChange={(e) => setFormManual({...formManual, custo: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
+                  <input type="number" step="0.01" data-m-custo value={formManual.custo} onChange={(e) => setFormManual({...formManual, custo: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Preço Venda (R$)</label>
-                  <input type="number" step="0.01" value={formManual.preco_venda} onChange={(e) => setFormManual({...formManual, preco_venda: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none" />
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">PDV — Preço de venda (R$)</label>
+                  <input type="number" step="0.01" data-m-preco_venda value={formManual.preco_venda} onChange={(e) => setFormManual({...formManual, preco_venda: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
-                  <input type="text" value={formManual.marca} onChange={(e) => setFormManual({...formManual, marca: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white" />
+                  <input type="text" data-m-marca value={formManual.marca} onChange={(e) => setFormManual({...formManual, marca: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
                 </div>
-                <div className="md:col-span-3 flex justify-end gap-2 pt-3 border-t border-slate-800">
-                  <button type="button" onClick={() => setModalAberto(false)} className="bg-slate-800 px-4 py-2 rounded-xl text-white font-bold cursor-pointer">Cancelar</button>
-                  <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-white font-bold cursor-pointer">Salvar</button>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Altura (cm)</label>
+                  <input type="number" step="0.01" data-m-altura value={formManual.altura} onChange={(e) => setFormManual({...formManual, altura: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Largura (cm)</label>
+                  <input type="number" step="0.01" data-m-largura value={formManual.largura} onChange={(e) => setFormManual({...formManual, largura: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Comprimento (cm)</label>
+                  <input type="number" step="0.01" data-m-comprimento value={formManual.comprimento} onChange={(e) => setFormManual({...formManual, comprimento: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
+                </div>
+                <p className="col-span-2 md:col-span-4 text-[10px] text-slate-500">Só SKU e Nome são obrigatórios. Se as medidas ficarem em branco, a planilha do Tiny usa as do modelo parecido da aba Padronização e, se não houver, as genéricas (20×20×20 cm).</p>
+                <div className="col-span-2 md:col-span-4 flex justify-end gap-2 pt-3 border-t border-slate-800">
+                  <button type="button" onClick={() => { setModalAberto(false); setEditandoManualSku(null); }} className="bg-slate-800 px-4 py-2 rounded-xl text-white font-bold cursor-pointer">Cancelar</button>
+                  <button type="submit" data-m-salvar className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-white font-bold cursor-pointer">Salvar</button>
                 </div>
               </form>
             </div>
