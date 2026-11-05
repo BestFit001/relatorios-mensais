@@ -110,12 +110,12 @@ export function modelosDaPlanilha(linhas: Linha[]): { modelos: ModeloPadrao[]; i
 // ---------- escolha do modelo para um produto ----------
 const IGNORAR = new Set(["de", "do", "da", "dos", "das", "e", "em", "com", "para", "a", "o", "original", "estampa", "estampado", "estampada", "best", "fit"]);
 
-function tokens(texto: string, marca = ""): string[] {
+export function tokens(texto: string, marca = ""): string[] {
   const base = norm(texto).replace(/(\d)\s+(ml|l|g|kg|cm|mm)\b/g, "$1$2").replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
   const marcas = new Set(norm(marca).replace(/[^a-z0-9]+/g, " ").split(" ").filter(Boolean));
   return Array.from(new Set(base.filter((t) => t.length >= 2 && !IGNORAR.has(t) && !marcas.has(t))));
 }
-const capacidade = (toks: string[]) => toks.filter((t) => /^\d+(ml|l)$/.test(t));
+export const capacidade = (toks: string[]) => toks.filter((t) => /^\d+(ml|l)$/.test(t));
 
 export interface PadraoBase {
   titulo?: string | null; marca?: string | null; categoria?: string | null;
@@ -149,6 +149,45 @@ export function acharPadrao<T extends PadraoBase>(nome: string, marca: string, p
     }
   }
   return melhor ? { padrao: melhor.padrao, score: melhor.score } : null;
+}
+
+export interface ModeloParecido<T> { padrao: T; comuns: number; proporcao: number }
+
+/**
+ * Modelos da Padronização que podem ser "o mesmo tipo de produto" do produto novo — mesma marca e mesmo tipo/linha,
+ * mesmo que a estampa/cor seja outra (ex.: "Mini Cooler Farofa Lenço Magia" x "Mini Cooler Farofa Praia Bahia Thal").
+ * Ordenados do mais parecido para o menos. Quem decide se serve de verdade é a IA (ou a regra de modeloParecido).
+ */
+export function rankearModelos<T extends PadraoBase>(nome: string, marca: string, padroes: T[]): ModeloParecido<T>[] {
+  const tp = tokens(nome, marca);
+  if (tp.length === 0) return [];
+  const out: ModeloParecido<T>[] = [];
+  for (const p of padroes) {
+    if (!p.titulo) continue;
+    const mp = norm(p.marca), mm = norm(marca);
+    if (mp && mm && !mp.includes(mm) && !mm.includes(mp)) continue;
+    const tm = tokens(String(p.titulo), String(p.marca || marca));
+    if (tm.length === 0) continue;
+    const capA = capacidade(tm), capB = capacidade(tp);
+    if (capA.length && capB.length && !capA.some((c) => capB.includes(c))) continue;   // 350ml x 500ml: outro produto
+    const comuns = tm.filter((t) => tp.includes(t)).length;
+    const proporcao = comuns / Math.min(tm.length, tp.length);
+    if (comuns < Math.min(2, tm.length) || proporcao < 0.4) continue;
+    out.push({ padrao: p, comuns, proporcao });
+  }
+  return out.sort((a, b) => b.proporcao - a.proporcao || b.comuns - a.comuns || String(b.padrao.created_at || "").localeCompare(String(a.padrao.created_at || "")));
+}
+
+/** Melhor modelo "do mesmo tipo" quando a IA não está disponível (medidas, peso e categoria vêm dele). */
+export function modeloParecido<T extends PadraoBase>(nome: string, marca: string, padroes: T[]): T | null {
+  const r = rankearModelos(nome, marca, padroes)[0];
+  return r && r.comuns >= 2 && (r.comuns >= 3 || r.proporcao >= 0.6) ? r.padrao : null;
+}
+
+/** true se os dois nomes têm exatamente as mesmas palavras (mesmo produto, mesma estampa). */
+export function nomesEquivalentes(a: string, b: string, marca = ""): boolean {
+  const ta = tokens(a, marca).sort().join("|"), tb = tokens(b, marca).sort().join("|");
+  return ta !== "" && ta === tb;
 }
 
 export const MEDIDAS_GENERICAS = { altura: 20, largura: 20, comprimento: 20, peso: 0.5 };

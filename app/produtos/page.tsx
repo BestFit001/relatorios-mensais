@@ -327,7 +327,11 @@ export default function ProdutosPage() {
       if (atual.length) lotes.push(atual);
 
       const linhas: any[] = [];
-      const resumo = { produtos: 0, medidasReais: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0, skusGenericos: [] as string[] };
+      const resumo = {
+        produtos: 0, medidasReais: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0, skusGenericos: [] as string[],
+        descricoes: { modeloIA: 0, modeloIgual: 0, historico: 0, iaSemModelo: 0, textoPadrao: 0 },
+        paisSemIA: [] as string[],
+      };
       for (let i = 0; i < lotes.length; i++) {
         const res = await fetch("/api/exportar-tiny", {
           method: "POST",
@@ -350,6 +354,9 @@ export default function ProdutosPage() {
           resumo.medidasDoPadrao += data.resumo.medidasDoPadrao || 0;
           resumo.genericas += data.resumo.genericas || 0;
           resumo.skusGenericos.push(...(data.resumo.skusGenericos || []));
+          const dd = data.resumo.descricoes || {};
+          (Object.keys(resumo.descricoes) as (keyof typeof resumo.descricoes)[]).forEach((k) => { resumo.descricoes[k] += dd[k] || 0; });
+          resumo.paisSemIA.push(...(data.resumo.paisSemIA || []));
         }
       }
 
@@ -358,8 +365,18 @@ export default function ProdutosPage() {
       XLSX.utils.book_append_sheet(workbook, worksheet, "Produtos Tiny");
       XLSX.writeFile(workbook, `produtos_tiny_${Date.now()}.xlsx`);
 
+      const d = resumo.descricoes;
+      const linhasDescricao = [
+        d.modeloIA ? `- ${d.modeloIA} produto(s) pai: a IA leu o modelo da Padronização e adaptou título, descrição, SEO e palavras-chave` : "",
+        d.modeloIgual ? `- ${d.modeloIgual} produto(s) pai: mesmo nome do modelo, texto copiado do modelo` : "",
+        d.historico ? `- ${d.historico} produto(s) pai: texto já salvo no histórico do SKU` : "",
+        d.iaSemModelo ? `- ${d.iaSemModelo} produto(s) pai: sem modelo parecido, a IA escreveu do zero` : "",
+        d.textoPadrao ? `- ${d.textoPadrao} produto(s) pai: texto padrão genérico` : "",
+      ].filter(Boolean).join("\n");
       alert(
-        `✅ Planilha gerada com ${resumo.produtos} produto(s).\n\nMedidas da embalagem:\n` +
+        `✅ Planilha gerada com ${resumo.produtos} produto(s).\n\nDescrições:\n${linhasDescricao}` +
+        (resumo.paisSemIA.length ? `\n\n⚠️ A IA não respondeu e a descrição saiu genérica (tente exportar de novo): ${resumo.paisSemIA.join(", ")}` : "") +
+        `\n\nMedidas da embalagem:\n` +
         `- ${resumo.medidasReais} com as medidas e o peso reais da aba Dimensões e Peso\n` +
         `- ${resumo.medidasProprias} com as medidas informadas no cadastro\n` +
         `- ${resumo.medidasDoPadrao} com as medidas do modelo da aba Padronização\n` +

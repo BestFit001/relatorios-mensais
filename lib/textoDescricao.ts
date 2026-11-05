@@ -16,10 +16,9 @@
 //   Linha 1.
 //   Linha 2.
 
-/** Trecho que vai dentro do prompt da IA, explicando o formato exigido. */
-export const INSTRUCAO_FORMATO_DESCRICAO = `FORMATO OBRIGATÓRIO (TEXTO PURO, pronto para colar no campo "Descrição complementar" do Tiny):
+/** Regras de formato da descrição (sem a frase sobre "responder somente com a descrição"), para prompts que devolvem JSON. */
+export const REGRAS_FORMATO_DESCRICAO = `FORMATO OBRIGATÓRIO (TEXTO PURO, pronto para colar no campo "Descrição complementar" do Tiny):
 - PROIBIDO usar Markdown ou qualquer símbolo de formatação: nada de **negrito**, *itálico*, # títulos, --- linhas, \`código\`, tabelas, emojis ou links.
-- Não escreva saudação, explicação, comentário nem "Aqui está": responda SOMENTE com a descrição.
 - Estrutura exata, nesta ordem, separando cada bloco com UMA linha em branco:
   1) Um parágrafo de abertura (3 a 5 frases, sem título).
   2) "Especificações:" seguido de linhas começando com "- Rótulo: valor." (Marca, Modelo, e as medidas/capacidade/material/detalhes reais do produto).
@@ -48,6 +47,12 @@ Composição:
 Cuidados e Conservação:
 Limpar delicadamente apenas com um pano úmido e sabão neutro.
 Secar obrigatoriamente à sombra em local ventilado.`;
+
+/** Trecho que vai dentro do prompt da IA quando a resposta inteira deve ser só a descrição. */
+export const INSTRUCAO_FORMATO_DESCRICAO = REGRAS_FORMATO_DESCRICAO.replace(
+  "- PROIBIDO usar Markdown",
+  '- Não escreva saudação, explicação, comentário nem "Aqui está": responda SOMENTE com a descrição.\n- PROIBIDO usar Markdown'
+);
 
 const TITULOS_CONHECIDOS = [
   "especificacoes", "especificacao", "beneficios", "composicao", "cuidados e conservacao", "cuidados", "conservacao",

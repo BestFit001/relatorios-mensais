@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
-import { acharPadrao, medidasDoProduto } from "../../../lib/padroesAnuncios";
+import { medidasDoProduto, modeloParecido, nomesEquivalentes, rankearModelos } from "../../../lib/padroesAnuncios";
+import { ajustarTitulo, lerRespostaAdaptacao, montarPedidoAdaptacao, slugDoTitulo } from "../../../lib/adaptarModelo";
 import { normSkuPai } from "../../../lib/dimensoesPeso";
 import { INSTRUCAO_FORMATO_DESCRICAO, limparDescricao } from "../../../lib/textoDescricao";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;   // a IA pode demorar: sem isso a Vercel corta a resposta e o navegador recebe corpo vazio
-const LIMITE_IA_MS = 25000;       // se a IA não responder em 25 s, usa o texto padrão e segue
+const LIMITE_IA_MS = 40000;       // se a IA não responder em 40 s, usa o texto padrão e segue (a função tem 60 s no total)
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -63,46 +64,144 @@ function comTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-/** Texto "Descrição complementar" do pai: histórico do SKU -> padrão oficial -> IA (com limite de tempo) -> texto padrão. */
-async function descricaoDoPai(
+type FonteConteudo = "historico" | "modelo-ia" | "modelo-igual" | "ia" | "texto-padrao";
+interface ConteudoPai {
+  descricao: string;
+  fonte: FonteConteudo;
+  /** modelo da Padronização que serve ao produto (medidas, peso e categoria vêm dele); null = nenhum */
+  padrao: any | null;
+  /** só quando a IA adaptou o modelo: título, descrição SEO e palavras-chave já ajustados */
+  titulo?: string;
+  descSeo?: string;
+  palavrasChave?: string;
+  /** havia modelo do mesmo tipo, mas a IA não respondeu: a descrição saiu genérica */
+  modeloSemIA?: boolean;
+}
+
+function textoPadraoSemIA(nomePaiFormatado: string, marcaPai: string): string {
+  const n = nomePaiFormatado.toLowerCase();
+  const isBiquini = n.includes("biquíni") || n.includes("biquini") || n.includes("conjunto");
+  if (isBiquini) {
+    return [
+      `O Conjunto Biquíni Infantil ${nomePaiFormatado} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
+      "",
+      "Especificações:",
+      `- Marca: ${marcaPai}`,
+      `- Modelo: ${nomePaiFormatado}`,
+      "- Proteção: Solar UV50+ permanente no tecido",
+      "",
+      "Benefícios:",
+      "- Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.",
+      "- Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.",
+      "- Estilo: Design com acabamentos e estampas lúdicas que estimulam a imaginação.",
+      "- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar.",
+      "",
+      "Composição:",
+      "- Tecido Externo: 84% Poliéster / 16% Elastano",
+      "- Forro: 100% Poliamida (proporciona toque macio e secagem rápida)",
+      "",
+      "Cuidados:",
+      "Lavar preferencialmente à mão ou em ciclo delicado na máquina.",
+      "Utilizar água fria ou morna e sabão neutro.",
+      "Não deixar de molho e não utilizar alvejantes à base de cloro.",
+      "Secar à sombra e evitar o uso de secadoras.",
+      "Não passar a ferro para não danificar as fibras de elastano e a estampa.",
+    ].join("\n");
+  }
+  return [
+    `A ${nomePaiFormatado} da ${marcaPai} foi desenvolvida para unir praticidade, estilo e alta qualidade no transporte das refeições ou pertences do dia a dia. Com um design moderno e funcional, oferece excelente espaço interno e facilidade de limpeza.`,
+    "",
+    "Especificações:",
+    `- Marca: ${marcaPai}`,
+    `- Modelo: ${nomePaiFormatado}`,
+    "",
+    "Benefícios:",
+    "- Praticidade: Estrutura funcional e fácil de transportar para a escola ou passeios.",
+    "- Alta Durabilidade: Materiais resistentes de excelente acabamento.",
+    "- Estilo: Estampa exclusiva e autêntica da marca.",
+    "",
+    "Composição:",
+    "- Materiais de alta performance e fácil higienização.",
+    "",
+    "Cuidados:",
+    "- Limpar com pano úmido e sabão neutro.",
+    "- Não lavar na máquina e secar à sombra.",
+  ].join("\n");
+}
+
+/**
+ * Conteúdo do produto pai (descrição complementar, e quando há modelo: título, descrição SEO e palavras-chave).
+ * Ordem: 1) texto já salvo no histórico do SKU; 2) IA lê o modelo da Padronização do mesmo tipo de produto e ADAPTA
+ * (mantém o que é igual, troca/remove o que é da estampa do modelo); 3) cópia do modelo só se o nome for idêntico;
+ * 4) IA sem modelo; 5) texto padrão.
+ */
+async function conteudoDoPai(
+  nomePaiRaw: string,
   nomePaiFormatado: string,
   marcaPai: string,
+  cores: string[],
   histSku: { resposta_ia?: string | null } | null,
-  padroesOficiais: any[] | null,
+  padroes: any[],
   ai: GoogleGenAI | null
-): Promise<string> {
-  let descricaoComplementarPai = "";
-    if (histSku?.resposta_ia) {
-      descricaoComplementarPai = histSku.resposta_ia;
-    } else {
-      // 2. Procura padrão na base APENAS se a marca e o contexto baterem de verdade
-      let padraoEncontrado: any = null;
-      if (padroesOficiais && padroesOficiais.length > 0) {
-        padraoEncontrado = padroesOficiais.find(
-          (p) => 
-            p.marca && 
-            p.marca.toLowerCase().includes(marcaPai.toLowerCase()) &&
-            p.titulo && 
-            nomePaiFormatado.toLowerCase().includes(p.titulo.toLowerCase().split(" ")[0])
-        );
-      }
+): Promise<ConteudoPai> {
+  const candidatos = rankearModelos(nomePaiRaw, marcaPai, padroes).slice(0, 3);
+  const parecido = modeloParecido(nomePaiRaw, marcaPai, padroes);
 
-      if (padraoEncontrado && padraoEncontrado.descricao_complementar) {
-        let textoBase = padraoEncontrado.descricao_complementar;
-        if (padraoEncontrado.titulo) {
-          const regexTitulo = new RegExp(String(padraoEncontrado.titulo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-          textoBase = textoBase.replace(regexTitulo, nomePaiFormatado);
-        }
-        descricaoComplementarPai = textoBase;
-      } else if (ai) {
-        // 3. Se não há padrão idêntico, usa a IA com rigor absoluto para analisar o que o produto REALMENTE é
-        try {
-          const promptEquilibrado = `Você é um analista sênior de e-commerce da Best Fit. Elabore uma descrição comercial impecável e 100% fiel ao produto abaixo.
+  // 1. descrição já aprovada para este SKU (histórico do chat)
+  if (histSku?.resposta_ia) {
+    return { descricao: limparDescricao(histSku.resposta_ia), fonte: "historico", padrao: parecido };
+  }
+
+  // 2. a IA analisa o modelo e adapta para o produto novo
+  let iaFalhou = false;
+  if (candidatos.length > 0 && ai) {
+    try {
+      const modelos = candidatos.map((c) => c.padrao);
+      const pedido = montarPedidoAdaptacao({ nome: nomePaiFormatado, marca: marcaPai, cores }, modelos);
+      const resposta: any = await comTimeout(
+        ai.models.generateContent({ model: "gemini-3.8-flash", contents: [pedido], config: { responseMimeType: "application/json" } }),
+        LIMITE_IA_MS
+      );
+      const r = lerRespostaAdaptacao(resposta?.text, modelos.length);
+      if (r) {
+        const escolhido = r.modelo > 0 ? modelos[r.modelo - 1] : null;
+        return {
+          descricao: r.descricao_complementar,
+          fonte: "modelo-ia",
+          padrao: escolhido,
+          titulo: r.titulo ? toTitleCase(ajustarTitulo(r.titulo)) : undefined,
+          descSeo: r.descricao_seo || undefined,
+          palavrasChave: r.palavras_chave || undefined,
+        };
+      }
+      iaFalhou = true;
+    } catch (e) {
+      iaFalhou = true;
+      console.error("Erro na IA (adaptar modelo):", e);
+    }
+  }
+
+  // 3. mesmo nome do modelo (mesma estampa): aí sim vale copiar o texto do modelo
+  const igual = candidatos.find((c) => c.padrao.descricao_complementar && nomesEquivalentes(String(c.padrao.titulo), nomePaiRaw, marcaPai));
+  if (igual) {
+    return {
+      descricao: limparDescricao(igual.padrao.descricao_complementar),
+      fonte: "modelo-igual",
+      padrao: igual.padrao,
+      descSeo: igual.padrao.descricao_seo || undefined,
+      palavrasChave: igual.padrao.palavras_chave_seo || undefined,
+    };
+  }
+
+  // 4. sem modelo parecido: IA escreve do zero lendo o nome do produto
+  if (candidatos.length === 0 && ai) {
+    try {
+      const prompt = `Você é um analista sênior de e-commerce da Best Fit. Elabore uma descrição comercial impecável e 100% fiel ao produto abaixo.
 
 DIRETRIZES CRÍTICAS:
-1. LEITURA REAL DO ITEM: Identifique o que o produto é pelo título ("${nomePaiFormatado}"). 
+1. LEITURA REAL DO ITEM: Identifique o que o produto é pelo título ("${nomePaiFormatado}").
  - Se for um biquíni/conjunto infantil, mencione proteção UV50+, conforto térmico, tecido próprio para praia/piscina, composição de elastano/poliéster e cuidados de lavagem.
- - Se for uma lancheira, bolsa ou acessório, mencione espaço interno, material resistente, praticidade para o dia a dia e facilidade de limpeza. 
+ - Se for uma lancheira, bolsa ou acessório, mencione espaço interno, material resistente, praticidade para o dia a dia e facilidade de limpeza.
  - NUNCA misture categorias! Uma lancheira jamais é um biquíni.
 2. Respeite rigorosamente a marca original (${marcaPai}).
 3. NUNCA inclua tamanho ou cor na seção de especificações.
@@ -113,77 +212,20 @@ ${INSTRUCAO_FORMATO_DESCRICAO}
 DADOS DO PRODUTO:
 - Nome/Título: ${nomePaiFormatado}
 - Marca: ${marcaPai}`;
-
-          const response: any = await comTimeout(ai.models.generateContent({
-            model: "gemini-3.8-flash",
-            contents: [promptEquilibrado],
-          }), LIMITE_IA_MS);
-
-          if (response.text) {
-            descricaoComplementarPai = response.text.trim();
-          }
-        } catch (e) {
-          console.error("Erro na IA:", e);
-        }
-      }
+      const resposta: any = await comTimeout(ai.models.generateContent({ model: "gemini-3.8-flash", contents: [prompt] }), LIMITE_IA_MS);
+      if (resposta?.text) return { descricao: limparDescricao(resposta.text), fonte: "ia", padrao: null };
+    } catch (e) {
+      console.error("Erro na IA:", e);
     }
+  }
 
-    // 4. Fallback contextual se tudo o mais falhar
-    if (!descricaoComplementarPai) {
-      const isBiquini = nomePaiFormatado.toLowerCase().includes("biquíni") || nomePaiFormatado.toLowerCase().includes("biquini") || nomePaiFormatado.toLowerCase().includes("conjunto");
-      
-      if (isBiquini) {
-        descricaoComplementarPai = [
-          `O Conjunto Biquíni Infantil ${nomePaiFormatado} foi desenvolvido para proporcionar momentos inesquecíveis sob o sol com máxima segurança. Composto por um top charmoso e uma calcinha combinando, o conjunto apresenta uma estampa exclusiva e vibrante que encanta as pequenas. Além do design exclusivo, a peça conta com proteção solar UV50+ integrada ao tecido, bloqueando os raios solares nocivos e garantindo conforto térmico e respirabilidade durante toda a diversão na praia ou piscina.`,
-          "",
-          "Especificações:",
-          `- Marca: ${marcaPai}`,
-          `- Modelo: ${nomePaiFormatado}`,
-          "- Proteção: Solar UV50+ permanente no tecido",
-          "",
-          "Benefícios:",
-          "- Segurança: Proteção UV50+ que mantém a pele protegida durante as brincadeiras ao ar livre.",
-          "- Conforto: Tecido leve e flexível que permite liberdade total de movimentos sem causar irritações.",
-          "- Estilo: Design com acabamentos e estampas lúdicas que estimulam a imaginação.",
-          "- Ajuste Perfeito: Modelagem ajustada que oferece segurança sem apertar.",
-          "",
-          "Composição:",
-          "- Tecido Externo: 84% Poliéster / 16% Elastano",
-          "- Forro: 100% Poliamida (proporciona toque macio e secagem rápida)",
-          "",
-          "Cuidados:",
-          "Lavar preferencialmente à mão ou em ciclo delicado na máquina.",
-          "Utilizar água fria ou morna e sabão neutro.",
-          "Não deixar de molho e não utilizar alvejantes à base de cloro.",
-          "Secar à sombra e evitar o uso de secadoras.",
-          "Não passar a ferro para não danificar as fibras de elastano e a estampa."
-        ].join("\n");
-      } else {
-        descricaoComplementarPai = [
-          `A ${nomePaiFormatado} da ${marcaPai} foi desenvolvida para unir praticidade, estilo e alta qualidade no transporte das refeições ou pertences do dia a dia. Com um design moderno e funcional, oferece excelente espaço interno e facilidade de limpeza.`,
-          "",
-          "Especificações:",
-          `- Marca: ${marcaPai}`,
-          `- Modelo: ${nomePaiFormatado}`,
-          "",
-          "Benefícios:",
-          "- Praticidade: Estrutura funcional e fácil de transportar para a escola ou passeios.",
-          "- Alta Durabilidade: Materiais resistentes de excelente acabamento.",
-          "- Estilo: Estampa exclusiva e autêntica da marca.",
-          "",
-          "Composição:",
-          "- Materiais de alta performance e fácil higienização.",
-          "",
-          "Cuidados:",
-          "- Limpar com pano úmido e sabão neutro.",
-          "- Não lavar na máquina e secar à sombra."
-        ].join("\n");
-      }
-    }
-
-  // garantia final: o campo "Descrição complementar" do Tiny é texto puro (sem **, ###, --- etc.),
-  // venha o texto do histórico, de um padrão antigo ou da IA
-  return limparDescricao(descricaoComplementarPai);
+  // 5. texto padrão (a IA não respondeu ou não está configurada)
+  return {
+    descricao: limparDescricao(textoPadraoSemIA(nomePaiFormatado, marcaPai)),
+    fonte: "texto-padrao",
+    padrao: parecido,
+    modeloSemIA: candidatos.length > 0 && (iaFalhou || !ai),
+  };
 }
 
 const COLUNAS_BASE = (o: {
@@ -296,13 +338,14 @@ export async function POST(req: Request) {
     const histPorSku = new Map<string, { resposta_ia?: string | null }>();
     (historicos || []).forEach((h: any) => { if (!histPorSku.has(h.sku)) histPorSku.set(h.sku, h); });
 
-    // descrições de todos os pais EM PARALELO (cada IA com limite de tempo)
+    // conteúdo de todos os pais EM PARALELO (cada IA com limite de tempo): a IA lê o modelo da Padronização e adapta
     const entradas = Array.from(grupos.entries());
-    const descricoes = await Promise.all(
+    const conteudos = await Promise.all(
       entradas.map(([, itens]) => {
         const base = itens[0];
-        const nomePai = toTitleCase(limparTextoEstrito(String(base.produto || "").split("-")[0]));
-        return descricaoDoPai(nomePai, base.marca || "Best Fit", histPorSku.get(base.sku) || null, padroesOficiais || [], ai);
+        const nomeRaw = limparTextoEstrito(String(base.produto || "").split("-")[0]);
+        const cores = Array.from(new Set(itens.map((i: any) => (i.cor ? toTitleCase(limparTextoEstrito(i.cor)) : "")).filter(Boolean))) as string[];
+        return conteudoDoPai(nomeRaw, toTitleCase(nomeRaw), base.marca || "Best Fit", cores, histPorSku.get(base.sku) || null, padroesOficiais || [], ai);
       })
     );
 
@@ -316,35 +359,57 @@ export async function POST(req: Request) {
         : medidasDoProduto(item, padrao);
 
     const linhasExportacao: Record<string, string | number>[] = [];
-    const resumo = { produtos: 0, medidasReais: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0, padroesUsados: [] as string[], skusGenericos: [] as string[] };
+    const resumo = {
+      produtos: 0, medidasReais: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0,
+      padroesUsados: [] as string[], skusGenericos: [] as string[],
+      // de onde veio a descrição de cada produto pai
+      descricoes: { modeloIA: 0, modeloIgual: 0, historico: 0, iaSemModelo: 0, textoPadrao: 0 },
+      paisSemIA: [] as string[],   // havia modelo do mesmo tipo, mas a IA não respondeu (texto genérico)
+    };
 
     entradas.forEach(([paiKey, itensDoPai], idx) => {
       const produtoBase = itensDoPai[0];
       const nomePaiRaw = limparTextoEstrito(String(produtoBase.produto || "").split("-")[0]);
       const nomePaiFormatado = toTitleCase(nomePaiRaw);
       const marcaPai = produtoBase.marca || "Best Fit";
-      const descricaoComplementarPai = descricoes[idx];
+      const cont = conteudos[idx];
+      const descricaoComplementarPai = cont.descricao;
       const dim = dimPorPai.get(normSkuPai(paiKey)) || null;
+      if (cont.fonte === "modelo-ia") resumo.descricoes.modeloIA++;
+      else if (cont.fonte === "modelo-igual") resumo.descricoes.modeloIgual++;
+      else if (cont.fonte === "historico") resumo.descricoes.historico++;
+      else if (cont.fonte === "ia") resumo.descricoes.iaSemModelo++;
+      else resumo.descricoes.textoPadrao++;
+      if (cont.modeloSemIA) resumo.paisSemIA.push(`${paiKey} (${nomePaiFormatado})`);
 
-      // outras informações do produto: modelo parecido na Padronização (medidas, peso, categoria)
-      const achado = acharPadrao(nomePaiRaw, marcaPai, padroesOficiais || []);
-      const padrao = achado?.padrao || null;
+      // título final do pai (a IA adapta o do modelo; máx. 60 caracteres, sem cortar palavras) e demais dados do anúncio
+      const tituloPai = cont.titulo || nomePaiFormatado;
+      const slugDe = (t: string) => (cont.titulo ? slugDoTitulo(t, cont.padrao?.slug || "") : gerarSlug(t));
+      const kwDe = (t: string) => cont.palavrasChave || gerarPalavrasChave(t);
+
+      // outras informações do produto: modelo escolhido na Padronização (medidas, peso, categoria)
+      const padrao = cont.padrao;
       const categoria = padrao?.categoria ? String(padrao.categoria) : "";
       if (padrao?.titulo && !resumo.padroesUsados.includes(String(padrao.titulo))) resumo.padroesUsados.push(String(padrao.titulo));
 
       // 1. Produto Pai (Tipo do produto = V)
       linhasExportacao.push(COLUNAS_BASE({
-        sku: paiKey, descricao: nomePaiFormatado, ncm: produtoBase.ncm || "", origem: produtoBase.origem || "0",
+        sku: paiKey, descricao: tituloPai, ncm: produtoBase.ncm || "", origem: produtoBase.origem || "0",
         preco: produtoBase.preco_venda || 0, custo: produtoBase.custo || 0, ean: "", cest: produtoBase.cest || "",
-        tipo: "V", pai: "", variacoes: "", marca: marcaPai, tituloSeo: nomePaiFormatado,
-        descSeo: `Compre ${nomePaiFormatado} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
-        kw: gerarPalavrasChave(nomePaiFormatado), slug: gerarSlug(nomePaiFormatado),
+        tipo: "V", pai: "", variacoes: "", marca: marcaPai, tituloSeo: tituloPai,
+        descSeo: cont.descSeo || `Compre ${tituloPai} na ${marcaPai}. Qualidade superior, conforto e estilo para você. Garanta já o seu!`,
+        kw: kwDe(tituloPai), slug: slugDe(tituloPai),
         complementar: descricaoComplementarPai, categoria, medidas: medidasFinais(produtoBase, padrao, dim),
       }));
 
       // 2. Produtos Filhos / Variações (Tipo do produto = S)
       for (const p of itensDoPai) {
-        const nomeFilhoFormatado = toTitleCase(limparTextoEstrito(p.produto || ""));
+        // variação sem sufixo no nome ("Nome") usa o título final do pai; com sufixo ("Nome - Cor - Tam") troca só a parte do pai
+        const nomeOriginal = String(p.produto || "");
+        const resto = nomeOriginal.includes("-") ? nomeOriginal.slice(nomeOriginal.indexOf("-")) : "";
+        const nomeFilhoFormatado = cont.titulo
+          ? toTitleCase(limparTextoEstrito(`${tituloPai}${resto ? " " + resto : ""}`))
+          : toTitleCase(limparTextoEstrito(nomeOriginal));
         const marcaFilho = p.marca || "Best Fit";
         const corFormatada = p.cor ? toTitleCase(limparTextoEstrito(p.cor)) : "";
         const tamFormatado = p.tamanho ? limparTextoEstrito(String(p.tamanho)) : "";
@@ -361,7 +426,7 @@ export async function POST(req: Request) {
           tipo: "S", pai: paiKey, variacoes: `Cor:${corFormatada}||Tamanho:${tamFormatado}||`, marca: marcaFilho,
           tituloSeo: nomeFilhoFormatado,
           descSeo: `Compre ${nomeFilhoFormatado} - Cor: ${corFormatada}, Tam: ${tamFormatado} na ${marcaFilho}. Conforto e qualidade garantidos.`,
-          kw: gerarPalavrasChave(nomeFilhoFormatado), slug: gerarSlug(nomeFilhoFormatado),
+          kw: kwDe(nomeFilhoFormatado), slug: slugDe(nomeFilhoFormatado),
           complementar: descricaoComplementarPai, categoria, medidas,
         }));
       }
