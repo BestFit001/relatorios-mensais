@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { GoogleGenAI } from "@google/genai";
+import { gerarTexto, provedoresConfigurados, resumirFalhas } from "../../../lib/iaProvedores";
 import { INSTRUCAO_FORMATO_DESCRICAO, limparDescricao } from "../../../lib/textoDescricao";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -62,22 +66,13 @@ export async function POST(req: Request) {
       .order("id", { ascending: false })
       .limit(6);
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    // Gemini e/ou DeepSeek (o que tiver chave no Vercel): se um falhar, o outro assume
+    const provedores = provedoresConfigurados();
     let respostaIA = "";
+    let provedorUsado: string | null = null;
+    let falhasIA = "";
 
-    if (apiKey) {
-      const ai = new GoogleGenAI({ apiKey });
-      const contents: any[] = [];
-
-      if (imagemBase64) {
-        contents.push({
-          inlineData: {
-            data: imagemBase64,
-            mimeType: mimeType || "image/jpeg",
-          },
-        });
-      }
-
+    if (provedores.length > 0) {
       // Constrói o contexto acumulado com os padrões da base e o aprendizado contínuo do chat
       let contextoAcumulado = "DIRETRIZES DE APRENDIZAGEM E PADRÃO DE QUALIDADE (Best Fit):\n";
 
@@ -96,22 +91,19 @@ export async function POST(req: Request) {
       }
 
       const infoProduto = `\nProduto Atual a Processar:\n- SKU: ${produto.sku}\n- Nome: ${produto.produto}\n- Marca: ${produto.marca || "Best Fit"}\n- Cor: ${produto.cor || "N/A"}\n- Tamanho: ${produto.tamanho || "N/A"}`;
-      
+
       const instrucaoFinal = modo === "treinar"
         ? `[MODO TREINAMENTO]: O usuário aplicou a seguinte instrução de refinamento: "${prompt}". Atualize a diretriz para este produto aplicando rigorosamente esta melhoria.`
         : `Gere a descrição otimizada para este produto utilizando a fusão perfeita entre os Padrões Oficiais e as Correções Recentes do chat, garantindo uma copy de alta conversão e alinhada ao Tiny.`;
 
-      contents.push(`${contextoAcumulado}\n${infoProduto}\n\n${instrucaoFinal}\n\n${INSTRUCAO_FORMATO_DESCRICAO}`);
-
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: contents,
-        });
-        respostaIA = response.text || "";
-      } catch (e) {
-        respostaIA = "";
-      }
+      // com imagem só o Gemini consegue ler; sem imagem, qualquer um dos dois
+      const res = await gerarTexto(provedores, `${contextoAcumulado}\n${infoProduto}\n\n${instrucaoFinal}\n\n${INSTRUCAO_FORMATO_DESCRICAO}`, {
+        prazoFinal: Date.now() + 50000,
+        imagem: imagemBase64 ? { base64: imagemBase64, mimeType: mimeType || "image/jpeg" } : undefined,
+      });
+      respostaIA = res.texto || "";
+      provedorUsado = res.provedor;
+      falhasIA = resumirFalhas(res.falhas);
     }
 
     if (!respostaIA) {
@@ -141,6 +133,8 @@ export async function POST(req: Request) {
     return NextResponse.json({
       sucesso: true,
       resposta: limparDescricao(respostaIA),
+      ia: provedorUsado,                 // "Gemini", "DeepSeek" ou null (texto padrão)
+      avisoIA: falhasIA || undefined,    // por que uma IA falhou (mesmo quando a outra respondeu)
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

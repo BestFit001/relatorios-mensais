@@ -119,25 +119,26 @@ export function lerRespostaAdaptacao(texto: any, totalModelos: number): Resposta
   };
 }
 
-/** Traduz um erro da chamada ao Gemini em uma frase que o usuário entende (e diz se vale tentar de novo). Nunca inclui a chave. */
-export function analisarErroIA(e: any): { motivo: string; transitorio: boolean; status: number } {
+/** Traduz um erro da chamada à IA (Gemini ou DeepSeek) em uma frase que o usuário entende e diz se vale tentar de novo. Nunca inclui a chave. */
+export function analisarErroIA(e: any, nome = "Gemini", variavel = "GEMINI_API_KEY"): { motivo: string; transitorio: boolean; status: number } {
   const bruto = String(e?.message ?? e ?? "");
   let msg = bruto;
   try { const j = JSON.parse(bruto); msg = String(j?.error?.message ?? j?.message ?? bruto); } catch { /* texto simples */ }
-  msg = msg.replace(/AIza[0-9A-Za-z_\-]{20,}/g, "***").replace(/\s+/g, " ").trim().slice(0, 160);
+  msg = msg.replace(/AIza[0-9A-Za-z_\-]{20,}/g, "***").replace(/sk-[0-9A-Za-z_\-]{16,}/g, "***").replace(/\s+/g, " ").trim().slice(0, 160);
   const status = Number(e?.status ?? e?.code ?? (bruto.match(/\b(4\d\d|5\d\d)\b/)?.[1] ?? 0)) || 0;
-  if (/sem resposta em/i.test(bruto)) return { motivo: `o Gemini demorou demais (${msg})`, transitorio: true, status: 0 };
-  if (status === 429 || /quota|rate.?limit|resource.?exhausted/i.test(bruto)) return { motivo: `limite/cota do Gemini estourado (erro 429): ${msg}`, transitorio: true, status };
-  if (status === 401 || status === 403 || /api key|permission/i.test(bruto)) return { motivo: `o Gemini recusou a chave (erro ${status || 403}): ${msg}. Confira a GEMINI_API_KEY no Vercel`, transitorio: false, status };
-  if (status === 404) return { motivo: `o Gemini não encontrou o modelo (erro 404): ${msg}`, transitorio: false, status };
-  if (status === 400) return { motivo: `o Gemini recusou o pedido (erro 400): ${msg}`, transitorio: false, status };
-  if (status >= 500) return { motivo: `o Gemini está indisponível (erro ${status}): ${msg}`, transitorio: true, status };
-  return { motivo: `falha ao falar com o Gemini: ${msg || "erro desconhecido"}`, transitorio: true, status };
+  if (/sem resposta em/i.test(bruto)) return { motivo: `o ${nome} demorou demais (${msg})`, transitorio: true, status: 0 };
+  if (status === 402 || /insufficient balance/i.test(bruto)) return { motivo: `o ${nome} está sem saldo (erro 402): ${msg}. Recarregue o crédito da conta`, transitorio: false, status: 402 };
+  if (status === 429 || /quota|rate.?limit|resource.?exhausted/i.test(bruto)) return { motivo: `limite/cota do ${nome} estourado (erro 429): ${msg}`, transitorio: true, status };
+  if (status === 401 || status === 403 || /api key|permission|authentication/i.test(bruto)) return { motivo: `o ${nome} recusou a chave (erro ${status || 403}): ${msg}. Confira a ${variavel} no Vercel`, transitorio: false, status };
+  if (status === 404) return { motivo: `o ${nome} não encontrou o modelo (erro 404): ${msg}`, transitorio: false, status };
+  if (status === 400 || status === 422) return { motivo: `o ${nome} recusou o pedido (erro ${status}): ${msg}`, transitorio: false, status };
+  if (status >= 500) return { motivo: `o ${nome} está indisponível (erro ${status}): ${msg}`, transitorio: true, status };
+  return { motivo: `falha ao falar com o ${nome}: ${msg || "erro desconhecido"}`, transitorio: true, status };
 }
 
-export const MOTIVO_SEM_CHAVE = "a chave do Gemini não está configurada no Vercel (variável GEMINI_API_KEY)";
+export const MOTIVO_SEM_CHAVE = "nenhuma IA está configurada no Vercel (faltam GEMINI_API_KEY e DEEPSEEK_API_KEY)";
 
-export function motivoRespostaInvalida(texto: any): string {
+export function motivoRespostaInvalida(texto: any, nome = "Gemini"): string {
   const t = String(texto ?? "").replace(/\s+/g, " ").trim();
-  return t ? `o Gemini respondeu fora do formato esperado: "${t.slice(0, 140)}${t.length > 140 ? "…" : ""}"` : "o Gemini devolveu uma resposta vazia";
+  return t ? `o ${nome} respondeu fora do formato esperado: "${t.slice(0, 140)}${t.length > 140 ? "…" : ""}"` : `o ${nome} devolveu uma resposta vazia`;
 }

@@ -332,6 +332,8 @@ export default function ProdutosPage() {
         descricoes: { modeloIA: 0, modeloIgual: 0, historico: 0, iaSemModelo: 0, textoPadrao: 0 },
         paisSemIA: [] as string[],
         motivosIA: [] as string[],
+        iaUsada: {} as Record<string, number>,
+        avisosIA: [] as string[],
       };
       for (let i = 0; i < lotes.length; i++) {
         const res = await fetch("/api/exportar-tiny", {
@@ -359,6 +361,8 @@ export default function ProdutosPage() {
           (Object.keys(resumo.descricoes) as (keyof typeof resumo.descricoes)[]).forEach((k) => { resumo.descricoes[k] += dd[k] || 0; });
           resumo.paisSemIA.push(...(data.resumo.paisSemIA || []));
           (data.resumo.motivosIA || []).forEach((m: string) => { if (!resumo.motivosIA.includes(m)) resumo.motivosIA.push(m); });
+          Object.entries(data.resumo.iaUsada || {}).forEach(([nome, n]) => { resumo.iaUsada[nome] = (resumo.iaUsada[nome] || 0) + Number(n || 0); });
+          (data.resumo.avisosIA || []).forEach((m: string) => { if (!resumo.avisosIA.includes(m)) resumo.avisosIA.push(m); });
         }
       }
 
@@ -375,8 +379,11 @@ export default function ProdutosPage() {
         d.iaSemModelo ? `- ${d.iaSemModelo} produto(s) pai: sem modelo parecido, a IA escreveu do zero` : "",
         d.textoPadrao ? `- ${d.textoPadrao} produto(s) pai: texto padrão genérico` : "",
       ].filter(Boolean).join("\n");
+      const iaTexto = Object.entries(resumo.iaUsada).map(([nome, n]) => `${nome}: ${n}`).join(" · ");
       alert(
         `✅ Planilha gerada com ${resumo.produtos} produto(s).\n\nDescrições:\n${linhasDescricao}` +
+        (iaTexto ? `\n\n🤖 IA que respondeu (produtos pai) — ${iaTexto}` : "") +
+        (resumo.avisosIA.length ? `\n↪ A IA principal falhou e a reserva assumiu: ${resumo.avisosIA.join(" | ")}` : "") +
         (resumo.paisSemIA.length ? `\n\n⚠️ A IA não foi aproveitada e a descrição saiu genérica: ${resumo.paisSemIA.join(", ")}` : "") +
         (resumo.motivosIA.length ? `\n\nMotivo: ${resumo.motivosIA.join(" | ")}` : "") +
         `\n\nMedidas da embalagem:\n` +

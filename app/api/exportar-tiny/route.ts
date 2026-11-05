@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { medidasDoProduto, modeloParecido, nomesEquivalentes, rankearModelos } from "../../../lib/padroesAnuncios";
-import { ajustarTitulo, analisarErroIA, lerRespostaAdaptacao, montarPedidoAdaptacao, motivoRespostaInvalida, MOTIVO_SEM_CHAVE, slugDoTitulo, type RespostaAdaptacao } from "../../../lib/adaptarModelo";
+import { ajustarTitulo, lerRespostaAdaptacao, montarPedidoAdaptacao, MOTIVO_SEM_CHAVE, slugDoTitulo, type RespostaAdaptacao } from "../../../lib/adaptarModelo";
+import { gerarTexto, provedoresConfigurados, resumirFalhas, type ProvedorIA } from "../../../lib/iaProvedores";
 import { normSkuPai } from "../../../lib/dimensoesPeso";
 import { INSTRUCAO_FORMATO_DESCRICAO, limparDescricao } from "../../../lib/textoDescricao";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;   // a IA pode demorar: sem isso a Vercel corta a resposta e o navegador recebe corpo vazio
-const LIMITE_IA_MS = 40000;       // se a IA não responder em 40 s, usa o texto padrão e segue (a função tem 60 s no total)
+const PRAZO_IA_MS = 50000;        // tempo total da IA (todas as tentativas, nos 2 provedores) antes de usar o texto padrão; a função tem 60 s
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -57,13 +57,6 @@ function gerarPalavrasChave(titulo: string) {
   return `${base},${base} Confortável,${base} Original Best Fit,Moda Fitness e Casual`;
 }
 
-function comTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`IA sem resposta em ${ms / 1000}s`)), ms);
-    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
-  });
-}
-
 type FonteConteudo = "historico" | "modelo-ia" | "modelo-igual" | "ia" | "texto-padrao";
 interface ConteudoPai {
   descricao: string;
@@ -78,37 +71,28 @@ interface ConteudoPai {
   modeloSemIA?: boolean;
   /** por que a IA não foi aproveitada (mostrado no aviso final) */
   motivoIA?: string;
+  /** qual IA respondeu ("Gemini" ou "DeepSeek"); vazio quando nenhuma foi usada */
+  provedorIA?: string;
+  /** a IA principal falhou, mas a reserva respondeu: o que aconteceu com a principal */
+  avisoIA?: string;
 }
 
 /**
- * Pede à IA a adaptação do modelo. O Gemini 3.8 Flash "pensa" em nível médio por padrão, o que demora; para esta tarefa
- * (comparar e reescrever) o nível baixo basta e responde bem mais rápido. Tenta de novo uma vez em erro passageiro
- * (limite, demora, formato) e, se o Gemini recusar o parâmetro de raciocínio (erro 400), refaz sem ele.
+ * Pede à IA a adaptação do modelo. Tenta o Gemini (raciocínio baixo, para responder rápido) e, se ele falhar, demorar ou
+ * responder fora do formato, o DeepSeek. Qualquer um que tenha chave configurada serve; basta um.
  */
-async function pedirAdaptacao(ai: GoogleGenAI, pedido: string, totalModelos: number): Promise<{ r: RespostaAdaptacao | null; motivo: string }> {
-  const limites = [30000, 22000];   // 2 tentativas cabem nos 60 s da função
-  let motivo = "";
-  let raciocinioBaixo = true;
-  for (let t = 0; t < limites.length; t++) {
-    try {
-      const config: any = { responseMimeType: "application/json" };
-      if (raciocinioBaixo) config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
-      const inicio = Date.now();
-      const resposta: any = await comTimeout(ai.models.generateContent({ model: "gemini-3.8-flash", contents: [pedido], config }), limites[t]);
-      console.log(`IA (adaptar modelo): resposta em ${Date.now() - inicio} ms (raciocínio ${raciocinioBaixo ? "baixo" : "padrão"})`);
-      const r = lerRespostaAdaptacao(resposta?.text, totalModelos);
-      if (r) return { r, motivo: "" };
-      motivo = motivoRespostaInvalida(resposta?.text);
-      console.error("IA (adaptar modelo): resposta fora do formato:", String(resposta?.text ?? "").slice(0, 300));
-    } catch (e) {
-      const a = analisarErroIA(e);
-      motivo = a.motivo;
-      console.error("Erro na IA (adaptar modelo):", e);
-      if (a.status === 400 && raciocinioBaixo) { raciocinioBaixo = false; continue; }   // refaz sem o parâmetro de raciocínio
-      if (!a.transitorio) break;
-    }
-  }
-  return { r: null, motivo };
+async function pedirAdaptacao(
+  provedores: ProvedorIA[], pedido: string, totalModelos: number, prazoFinal: number
+): Promise<{ r: RespostaAdaptacao | null; provedor: string | null; motivo: string; aviso: string }> {
+  let lida: RespostaAdaptacao | null = null;
+  const res = await gerarTexto(provedores, pedido, {
+    json: true,
+    prazoFinal,
+    aceitar: (t) => { lida = lerRespostaAdaptacao(t, totalModelos); return !!lida; },
+  });
+  const falhas = resumirFalhas(res.falhas);
+  if (res.provedor && lida) return { r: lida, provedor: res.provedor, motivo: "", aviso: falhas };
+  return { r: null, provedor: null, motivo: falhas || "a IA não respondeu", aviso: "" };
 }
 
 function textoPadraoSemIA(nomePaiFormatado: string, marcaPai: string): string {
@@ -175,7 +159,8 @@ async function conteudoDoPai(
   cores: string[],
   histSku: { resposta_ia?: string | null } | null,
   padroes: any[],
-  ai: GoogleGenAI | null
+  provedores: ProvedorIA[],
+  prazoFinal: number
 ): Promise<ConteudoPai> {
   const candidatos = rankearModelos(nomePaiRaw, marcaPai, padroes).slice(0, 3);
   const parecido = modeloParecido(nomePaiRaw, marcaPai, padroes);
@@ -187,8 +172,9 @@ async function conteudoDoPai(
 
   // 2. a IA analisa o modelo e adapta para o produto novo
   let motivoIA = "";
-  if (candidatos.length > 0 && !ai) motivoIA = MOTIVO_SEM_CHAVE;
-  if (candidatos.length > 0 && ai) {
+  const temIA = provedores.length > 0;
+  if (candidatos.length > 0 && !temIA) motivoIA = MOTIVO_SEM_CHAVE;
+  if (candidatos.length > 0 && temIA) {
     const modelos = candidatos.map((c) => c.padrao);
     let pedido = "";
     try {
@@ -198,7 +184,7 @@ async function conteudoDoPai(
       console.error(motivoIA, e);
     }
     if (pedido) {
-      const { r, motivo } = await pedirAdaptacao(ai, pedido, modelos.length);
+      const { r, provedor, motivo, aviso } = await pedirAdaptacao(provedores, pedido, modelos.length, prazoFinal);
       if (r) {
         const escolhido = r.modelo > 0 ? modelos[r.modelo - 1] : null;
         return {
@@ -208,6 +194,8 @@ async function conteudoDoPai(
           titulo: r.titulo ? toTitleCase(ajustarTitulo(r.titulo)) : undefined,
           descSeo: r.descricao_seo || undefined,
           palavrasChave: r.palavras_chave || undefined,
+          provedorIA: provedor || undefined,
+          avisoIA: aviso || undefined,
         };
       }
       motivoIA = motivo;
@@ -227,9 +215,8 @@ async function conteudoDoPai(
   }
 
   // 4. sem modelo parecido: IA escreve do zero lendo o nome do produto
-  if (candidatos.length === 0 && ai) {
-    try {
-      const prompt = `Você é um analista sênior de e-commerce da Best Fit. Elabore uma descrição comercial impecável e 100% fiel ao produto abaixo.
+  if (candidatos.length === 0 && temIA) {
+    const prompt = `Você é um analista sênior de e-commerce da Best Fit. Elabore uma descrição comercial impecável e 100% fiel ao produto abaixo.
 
 DIRETRIZES CRÍTICAS:
 1. LEITURA REAL DO ITEM: Identifique o que o produto é pelo título ("${nomePaiFormatado}").
@@ -245,14 +232,10 @@ ${INSTRUCAO_FORMATO_DESCRICAO}
 DADOS DO PRODUTO:
 - Nome/Título: ${nomePaiFormatado}
 - Marca: ${marcaPai}`;
-      const resposta: any = await comTimeout(ai.models.generateContent({ model: "gemini-3.8-flash", contents: [prompt], config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } }), LIMITE_IA_MS);
-      if (resposta?.text) return { descricao: limparDescricao(resposta.text), fonte: "ia", padrao: null };
-      motivoIA = "o Gemini devolveu uma resposta vazia";
-    } catch (e) {
-      motivoIA = analisarErroIA(e).motivo;
-      console.error("Erro na IA:", e);
-    }
-  } else if (candidatos.length === 0 && !ai) {
+    const res = await gerarTexto(provedores, prompt, { prazoFinal });
+    if (res.texto) return { descricao: limparDescricao(res.texto), fonte: "ia", padrao: null, provedorIA: res.provedor || undefined, avisoIA: resumirFalhas(res.falhas) || undefined };
+    motivoIA = resumirFalhas(res.falhas) || "a IA devolveu uma resposta vazia";
+  } else if (candidatos.length === 0 && !temIA) {
     motivoIA = MOTIVO_SEM_CHAVE;
   }
 
@@ -356,8 +339,8 @@ export async function POST(req: Request) {
 
     const { data: padroesOficiais } = await supabase.from("padroes_anuncios").select("*");
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-    const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+    // IAs configuradas no Vercel (GEMINI_API_KEY e/ou DEEPSEEK_API_KEY): se uma falhar, a outra assume
+    const provedores = provedoresConfigurados();
 
     // grupos por pai (mantém a ordem)
     const grupos = new Map<string, any[]>();
@@ -378,12 +361,13 @@ export async function POST(req: Request) {
 
     // conteúdo de todos os pais EM PARALELO (cada IA com limite de tempo): a IA lê o modelo da Padronização e adapta
     const entradas = Array.from(grupos.entries());
+    const prazoIA = Date.now() + PRAZO_IA_MS;
     const conteudos = await Promise.all(
       entradas.map(([, itens]) => {
         const base = itens[0];
         const nomeRaw = limparTextoEstrito(String(base.produto || "").split("-")[0]);
         const cores = Array.from(new Set(itens.map((i: any) => (i.cor ? toTitleCase(limparTextoEstrito(i.cor)) : "")).filter(Boolean))) as string[];
-        return conteudoDoPai(nomeRaw, toTitleCase(nomeRaw), base.marca || "Best Fit", cores, histPorSku.get(base.sku) || null, padroesOficiais || [], ai);
+        return conteudoDoPai(nomeRaw, toTitleCase(nomeRaw), base.marca || "Best Fit", cores, histPorSku.get(base.sku) || null, padroesOficiais || [], provedores, prazoIA);
       })
     );
 
@@ -404,6 +388,9 @@ export async function POST(req: Request) {
       descricoes: { modeloIA: 0, modeloIgual: 0, historico: 0, iaSemModelo: 0, textoPadrao: 0 },
       paisSemIA: [] as string[],   // havia modelo do mesmo tipo, mas a IA não respondeu (texto genérico)
       motivosIA: [] as string[],   // por que a IA não foi aproveitada (sem repetição)
+      iaUsada: {} as Record<string, number>,   // quantos produtos pai cada IA respondeu
+      avisosIA: [] as string[],    // a IA principal falhou e a reserva assumiu (sem repetição)
+      iasConfiguradas: provedores.map((p) => p.nome),
     };
 
     entradas.forEach(([paiKey, itensDoPai], idx) => {
@@ -421,6 +408,8 @@ export async function POST(req: Request) {
       else resumo.descricoes.textoPadrao++;
       if (cont.modeloSemIA) resumo.paisSemIA.push(`${paiKey} (${nomePaiFormatado})`);
       if (cont.motivoIA && !resumo.motivosIA.includes(cont.motivoIA)) resumo.motivosIA.push(cont.motivoIA);
+      if (cont.provedorIA) resumo.iaUsada[cont.provedorIA] = (resumo.iaUsada[cont.provedorIA] || 0) + 1;
+      if (cont.avisoIA && !resumo.avisosIA.includes(cont.avisoIA)) resumo.avisosIA.push(cont.avisoIA);
 
       // título final do pai (a IA adapta o do modelo; máx. 60 caracteres, sem cortar palavras) e demais dados do anúncio
       const tituloPai = cont.titulo || nomePaiFormatado;
