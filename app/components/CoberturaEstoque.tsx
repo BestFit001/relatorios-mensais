@@ -76,13 +76,14 @@ function RetornoCelula({ valor, onSalvar }: { valor: string; onSalvar: (texto: s
 }
 
 export default function CoberturaEstoque({
-  linhas, dias, periodo, colunasOcultas, onIrParaConfig,
+  linhas, dias, periodo, mes, colunasOcultas, onIrParaConfig,
 }: {
-  linhas: LinhaABC[]; dias: number; periodo: string; colunasOcultas: string[]; onIrParaConfig: () => void;
+  linhas: LinhaABC[]; dias: number; periodo: string; mes: string; colunasOcultas: string[]; onIrParaConfig: () => void;
 }) {
   const [estoque, setEstoque] = useState<Map<string, number>>(new Map());
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState("");
   const [retornos, setRetornos] = useState<Record<string, string>>({});
+  const [retornosCarregados, setRetornosCarregados] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [erros, setErros] = useState<string[]>([]);
   const [aviso, setAviso] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
@@ -124,11 +125,6 @@ export default function CoberturaEstoque({
       setCarregando(true);
       const e: string[] = [];
       const err1 = await carregarEstoque(); if (err1) e.push(err1);
-      const r2 = await lerTodos("curva_retorno_compras", "id, sku, retorno");
-      if (r2.erro) e.push(r2.erro);
-      const m: Record<string, string> = {};
-      r2.dados.forEach((x) => { if (x.sku && x.retorno) m[String(x.sku)] = String(x.retorno); });
-      setRetornos(m);
       const rg = await supabase.from("config_regras_tiny").select("campo, coluna").in("campo", ["sku", "estoque"]);
       const pad = { sku: "", estoque: "" };
       (rg.data || []).forEach((x: any) => { if (x.campo === "sku") pad.sku = String(x.coluna || ""); if (x.campo === "estoque") pad.estoque = String(x.coluna || ""); });
@@ -136,6 +132,28 @@ export default function CoberturaEstoque({
       setErros(e); setCarregando(false);
     })();
   }, [carregarEstoque]);
+
+  // Retorno de compras é do MÊS: ao trocar de mês a lista volta em branco (ou com o que foi escolhido naquele mês)
+  useEffect(() => {
+    let cancelado = false;
+    setRetornos({}); setRetornosCarregados(false);
+    (async () => {
+      let todos: any[] = [], de = 0, erro = "";
+      for (;;) {
+        const { data, error } = await supabase.from("curva_retorno_compras").select("id, sku, retorno").eq("mes", mes).order("id").range(de, de + 999);
+        if (error) { erro = "curva_retorno_compras: " + error.message; break; }
+        if (!data || data.length === 0) break;
+        todos = todos.concat(data); de += 1000;
+        if (data.length < 1000) break;
+      }
+      if (cancelado) return;
+      const m: Record<string, string> = {};
+      todos.forEach((x) => { if (x.sku && x.retorno) m[String(x.sku)] = String(x.retorno); });
+      setRetornos(m); setRetornosCarregados(true);
+      setErros((p) => [...p.filter((x) => !x.startsWith("curva_retorno_compras:")), ...(erro ? [erro] : [])]);
+    })();
+    return () => { cancelado = true; };
+  }, [mes]);
 
   // ---- linhas calculadas ----
   const dados = useMemo(() => linhas.map((l) => {
@@ -183,15 +201,19 @@ export default function CoberturaEstoque({
 
   // ---- retorno de compras ----
   const salvarRetorno = async (l: { skuNorm: string }, texto: string) => {
+    if (!retornosCarregados) return;   // ainda trocando de mês: não grava no mês errado
     const t = texto.trim();
+    const mesDaGravacao = mes;
     const anterior = retornos[l.skuNorm] || "";
     if (t === anterior) return;
     setRetornos((p) => { const n = { ...p }; if (t) n[l.skuNorm] = t; else delete n[l.skuNorm]; return n; });
     const { error } = t
-      ? await supabase.from("curva_retorno_compras").upsert({ sku: l.skuNorm, retorno: t, atualizado_por: usuarioLogado() || null, atualizado_em: new Date().toISOString() }, { onConflict: "sku" })
-      : await supabase.from("curva_retorno_compras").delete().eq("sku", l.skuNorm);
-    if (error) {
+      ? await supabase.from("curva_retorno_compras").upsert({ mes: mesDaGravacao, sku: l.skuNorm, retorno: t, atualizado_por: usuarioLogado() || null, atualizado_em: new Date().toISOString() }, { onConflict: "mes,sku" })
+      : await supabase.from("curva_retorno_compras").delete().eq("mes", mesDaGravacao).eq("sku", l.skuNorm);
+    if (error && mesDaGravacao === mes) {
       setRetornos((p) => { const n = { ...p }; if (anterior) n[l.skuNorm] = anterior; else delete n[l.skuNorm]; return n; });
+      setAviso({ tipo: "erro", texto: "Não consegui salvar o retorno: " + error.message });
+    } else if (error) {
       setAviso({ tipo: "erro", texto: "Não consegui salvar o retorno: " + error.message });
     } else setAviso(null);
   };
@@ -429,7 +451,7 @@ export default function CoberturaEstoque({
         <div className="p-4 border-b border-slate-800 flex flex-wrap justify-between gap-2">
           <div>
             <h3 className="font-black text-white text-sm">Cobertura de Estoque por SKU</h3>
-            <p className="text-[11px] text-slate-400">Período: {periodo} · média diária = vendas ÷ {dias} dia(s) · meta de cobertura: 2 meses (roupão: 2,5)</p>
+            <p className="text-[11px] text-slate-400">Período: {periodo} · média diária = vendas ÷ {dias} dia(s) · meta de cobertura: 2 meses (roupão: 2,5) · <strong className="text-indigo-300" data-mes-retorno>retorno de compras de {mes.slice(5)}/{mes.slice(0, 4)}</strong></p>
           </div>
           <p className="text-[11px] text-slate-500 self-end" data-contagem>{filtradas.length} SKUs {totais.semCadastro > 0 && <>· {totais.semCadastro} sem cadastro no Tiny (estoque 0)</>}</p>
         </div>

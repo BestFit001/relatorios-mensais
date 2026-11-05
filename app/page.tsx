@@ -144,6 +144,8 @@ export default function CurvaABCPage() {
 
   // Sub-abas da Curva ABC + colunas que somem em "Ocultar informações" (valem para todos os usuários)
   const [subAba, setSubAba] = useState<"analise" | "cobertura" | "config">("analise");
+  // Mês dos retornos de compras: o mês fechado escolhido; nos demais períodos, o mês corrente
+  const mesAtual = (() => { const h = new Date(); return `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}`; })();
   const [colunasOcultas, setColunasOcultas] = useState<string[]>([]);
   const [salvandoConfig, setSalvandoConfig] = useState(false);
   const [erroConfig, setErroConfig] = useState("");
@@ -718,6 +720,7 @@ export default function CurvaABCPage() {
             }))}
             dias={diasPeriodo}
             periodo={dateFilter === "MES_REF" && mesRef ? mesRef : dateFilter === "PERSONALIZADO" ? `${customStartDate || "?"} a ${customEndDate || "?"}` : ({ HOJE: "hoje", SEMANA: "últimos 7 dias", QUINZENA: "últimos 15 dias", MES: "últimos 30 dias", TUDO: "todo o histórico" } as Record<string, string>)[dateFilter] || dateFilter}
+            mes={dateFilter === "MES_REF" && /^\d{4}-\d{2}$/.test(mesRef) ? mesRef : dateFilter === "PERSONALIZADO" && /^\d{4}-\d{2}/.test(customEndDate) ? customEndDate.slice(0, 7) : mesAtual}
             colunasOcultas={colunasOcultas}
             onIrParaConfig={() => setSubAba("config")}
           />
