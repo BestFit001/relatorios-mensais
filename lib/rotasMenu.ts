@@ -20,11 +20,12 @@ export const SECOES_MENU: SecaoMenu[] = [
   ] },
   { titulo: "Relatórios", submenu: true, rotas: [
     { id: "/", nome: "Curva ABC" },
-    { id: "/mapeamento", nome: "Cadastros" },
+    { id: "/mapeamento", nome: "Mapa de Cadastros" },
     { id: "/ads", nome: "Adsense" },
     { id: "/devolucoes", nome: "Devoluções" },
     { id: "/full", nome: "Fulfillment" },
     { id: "/lives", nome: "Lives" },
+    { id: "/videos", nome: "Vídeos" },
     { id: "/analise-mercado", nome: "Análise de mercado" },
   ] },
   { titulo: "Promoções", submenu: true, rotas: [
@@ -35,7 +36,7 @@ export const SECOES_MENU: SecaoMenu[] = [
   ] },
   { titulo: "Ferramentas", submenu: true, rotas: [
     { id: "/calculadora", nome: "Calculadora" },
-    { id: "/produtos", nome: "Produtos & Vídeos" },
+    { id: "/produtos", nome: "Novos Cadastros" },
     { id: "/padronizacao", nome: "Padronização IA" },
     { id: "/dimensoes-peso", nome: "Dimensões e Peso" },
     { id: "/plp", nome: "PLPs (Expedição)" },

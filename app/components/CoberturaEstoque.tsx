@@ -387,7 +387,7 @@ export default function CoberturaEstoque({
         <div className="bg-slate-900/90 p-5 rounded-2xl border border-indigo-500/30 space-y-4" data-upload-painel>
           <div>
             <h3 className="font-black text-white text-sm">Subir estoque do Tiny</h3>
-            <p className="text-[11px] text-slate-400">Só o SKU e a quantidade são guardados. Você escolhe as colunas. <strong className="text-amber-300">O estoque da Sede é substituído por completo</strong> (a aba Fulfillment e a de Cadastros usam essa mesma base).</p>
+            <p className="text-[11px] text-slate-400">Só o SKU e a quantidade são guardados. Você escolhe as colunas. <strong className="text-amber-300">O estoque da Sede é substituído por completo</strong> (o Fulfillment e o Mapa de Cadastros usam essa mesma base).</p>
           </div>
           <input type="file" accept=".xls,.xlsx,.csv" data-upload-arquivo onChange={(e) => { escolherArquivo(e.target.files?.[0]); e.target.value = ""; }}
             className="block text-xs text-slate-300 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-slate-800 file:text-slate-200 file:font-bold file:cursor-pointer" />

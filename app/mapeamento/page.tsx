@@ -4,6 +4,7 @@ import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import { buscarTudo } from "../../lib/buscarTudo";
+import ConfigMapaCadastros from "../components/ConfigMapaCadastros";
 
 // ───────────────────────── utilidades ─────────────────────────
 
@@ -97,7 +98,7 @@ export default function MapeamentoPage() {
   const [canais, setCanais] = useState<string[]>([]);
   const [itens, setItens] = useState<ItemCadastro[]>([]);
 
-  const [subAba, setSubAba] = useState<"progresso" | "graficos">("progresso");
+  const [subAba, setSubAba] = useState<"progresso" | "graficos" | "config">("progresso");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroEstoque, setFiltroEstoque] = useState("ComEstoque");
   const [pesquisaSku, setPesquisaSku] = useState("");
@@ -226,7 +227,7 @@ export default function MapeamentoPage() {
         {/* CABEÇALHO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Análise e Progresso de Cadastros</h1>
+            <h1 className="text-2xl font-black text-white tracking-tight">Mapa de Cadastros</h1>
             <p className="text-sm font-medium text-slate-400">Monitore a presença do catálogo por canal com filtros avançados</p>
           </div>
           <Navbar />
@@ -239,6 +240,9 @@ export default function MapeamentoPage() {
           </button>
           <button data-subaba="graficos" onClick={() => setSubAba("graficos")} className={classeAba(subAba === "graficos")}>
             Gráficos
+          </button>
+          <button data-subaba="config" onClick={() => setSubAba("config")} className={classeAba(subAba === "config")}>
+            ⚙️ Configurações
           </button>
           <button
             onClick={carregar}
@@ -253,6 +257,18 @@ export default function MapeamentoPage() {
           <div data-erro className="mb-6 p-4 rounded-xl border border-rose-900/60 bg-rose-950/40 text-rose-300 text-sm font-semibold">
             ⚠️ {erro}
           </div>
+        )}
+
+        {/* ═════════════ SUB-ABA: CONFIGURAÇÕES (uploads que alimentam o painel) ═════════════ */}
+        {subAba === "config" && (
+          <ConfigMapaCadastros
+            resumo={{
+              total: itens.length,
+              normais: itens.filter((i) => i.grupo !== G_OBSOLETO).length,
+              obsoletos: itens.filter((i) => i.grupo === G_OBSOLETO).length,
+            }}
+            onAtualizado={carregar}
+          />
         )}
 
         {/* ═════════════ SUB-ABA: GRÁFICOS ═════════════ */}

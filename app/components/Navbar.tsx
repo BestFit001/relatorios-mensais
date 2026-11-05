@@ -352,13 +352,13 @@ export default function Navbar() {
           )}
 
           {/* RELATÓRIOS E OPERAÇÃO */}
-          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/lives") || temPermissao("/analise-mercado")) && (
+          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/lives") || temPermissao("/videos") || temPermissao("/analise-mercado")) && (
             <div>
               <button
                 onClick={() => toggleSecao("relatorios")}
                 title="Relatórios"
                 className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname === "/" || pathname === "/mapeamento" || pathname === "/ads" || pathname === "/devolucoes" || pathname === "/full" || pathname === "/lives" || pathname === "/analise-mercado"
+                  pathname === "/" || pathname === "/mapeamento" || pathname === "/ads" || pathname === "/devolucoes" || pathname === "/full" || pathname === "/lives" || pathname === "/videos" || pathname === "/analise-mercado"
                     ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
                     : "text-slate-400 hover:text-white hover:bg-slate-900/60"
                 }`}
@@ -383,7 +383,7 @@ export default function Navbar() {
                   )}
                   {temPermissao("/mapeamento") && (
                     <Link href="/mapeamento" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/mapeamento" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Cadastros
+                      Mapa de Cadastros
                     </Link>
                   )}
                   {temPermissao("/ads") && (
@@ -404,6 +404,11 @@ export default function Navbar() {
                   {temPermissao("/lives") && (
                     <Link href="/lives" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/lives" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
                       Lives
+                    </Link>
+                  )}
+                  {temPermissao("/videos") && (
+                    <Link href="/videos" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/videos" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
+                      Vídeos
                     </Link>
                   )}
                   {temPermissao("/analise-mercado") && (
@@ -498,7 +503,7 @@ export default function Navbar() {
                   )}
                   {temPermissao("/produtos") && (
                     <Link href="/produtos" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/produtos" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Produtos & Vídeos
+                      Novos Cadastros
                     </Link>
                   )}
                   {temPermissao("/padronizacao") && (

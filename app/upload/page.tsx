@@ -236,7 +236,7 @@ const MESES_NOMES: Record<string, string> = {
 
 export default function UpdatesPage() {
   const router = useRouter();
-  const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "cadastros" | "custos" | "regras_ml" | "vendas_pendentes" | "dashboard_admin">("relatorios");
+  const [abaAtiva, setAbaAtiva] = useState<"relatorios" | "custos" | "regras_ml" | "vendas_pendentes" | "dashboard_admin">("relatorios");
 
   const [mes, setMes] = useState("10");
   const [ano, setAno] = useState("2026");
@@ -248,8 +248,6 @@ export default function UpdatesPage() {
   const [loadingDelete, setLoadingDelete] = useState(false);
   const [loadingDownloadCustos, setLoadingDownloadCustos] = useState(false);
 
-  const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
-  const [regrasTiny, setRegrasTiny] = useState({ sku: 'C', estoque: 'F', status_sku: 'A', status_valor: 'B' });
   
   const [contaMlSelecionada, setContaMlSelecionada] = useState<"Mercado Livre 1" | "Mercado Livre 2">("Mercado Livre 1");
 
@@ -261,8 +259,6 @@ export default function UpdatesPage() {
   const [regrasColsCusto, setRegrasColsCusto] = useState({
     custo_sku: 'B', custo_produto: 'C', custo_valor: 'E', custo_marca: 'D'
   });
-
-  const [estatisticas, setEstatisticas] = useState({ totalTiny: 0, normais: 0, obsoletos: 0 });
 
   const [pesquisaCusto, setPesquisaCusto] = useState("");
   const [listaCustosFiltrados, setListaCustosFiltrados] = useState<any[]>([]);
@@ -350,7 +346,6 @@ export default function UpdatesPage() {
     } catch { /* configuração corrompida: usa o padrão */ }
     carregarDadosCadastros().finally(() => {
       const salva = cfgSalvaRef.current;
-      if (salva?.regrasTiny) setRegrasTiny((prev) => ({ ...prev, ...salva.regrasTiny }));
       if (salva?.regrasColsCusto) setRegrasColsCusto((prev) => ({ ...prev, ...salva.regrasColsCusto }));
       setUploadCfgPronta(true);
     });
@@ -377,46 +372,27 @@ export default function UpdatesPage() {
     if (!uploadCfgPronta) return;
     const atual = JSON.stringify({
       mes, ano, mesUpload, anoUpload, canalAlvoDash, colunaIdFaturados, colunaDataFaturados, colunaIdSite, colunaTarifaSite,
-      contaMlSelecionada, colunasPorConta, regrasColsCusto, regrasTiny, cfgImportPorCanal,
+      contaMlSelecionada, colunasPorConta, regrasColsCusto, cfgImportPorCanal,
     });
     if (baselineUploadCfg.current === "") { baselineUploadCfg.current = atual; return; }
     if (atual === baselineUploadCfg.current && !jaSalvouUploadCfg.current) return;
     jaSalvouUploadCfg.current = true;
     try { localStorage.setItem("upload_cfg_v2", atual); } catch { /* ignora */ }
-  }, [uploadCfgPronta, mes, ano, mesUpload, anoUpload, canalAlvoDash, colunaIdFaturados, colunaDataFaturados, colunaIdSite, colunaTarifaSite, contaMlSelecionada, colunasPorConta, regrasColsCusto, regrasTiny, cfgImportPorCanal]);
+  }, [uploadCfgPronta, mes, ano, mesUpload, anoUpload, canalAlvoDash, colunaIdFaturados, colunaDataFaturados, colunaIdSite, colunaTarifaSite, contaMlSelecionada, colunasPorConta, regrasColsCusto, cfgImportPorCanal]);
 
   useEffect(() => {
     pesquisarCustosNoBanco();
   }, [pesquisaCusto]);
 
+  // Colunas padrão da planilha de custos (as de Tiny/Status/Canais agora ficam em Mapa de Cadastros > Configurações)
   const carregarDadosCadastros = async () => {
-    const { data: regras } = await supabase.from('config_regras_canais').select('*').order('id');
-    if (regras) setRegrasCanais(regras);
-
     const { data: tinyConfig } = await supabase.from('config_regras_tiny').select('*');
     if (tinyConfig) {
       const getC = (k: string, d: string) => tinyConfig.find((t: any) => t.campo === k)?.coluna || d;
-      setRegrasTiny({ sku: getC('sku', 'C'), estoque: getC('estoque', 'F'), status_sku: getC('status_sku', 'A'), status_valor: getC('status_valor', 'B') });
       setRegrasColsCusto({
         custo_sku: getC('custo_sku', 'B'), custo_produto: getC('custo_produto', 'C'), custo_valor: getC('custo_valor', 'E'), custo_marca: getC('custo_marca', 'D')
       });
     }
-
-    const allTiny = await fetchTodosRegistros('cadastros_base_tiny', 'sku, estoque');
-    const statusData = await fetchTodosRegistros('status_skus_catalogo', 'sku, status');
-    
-    const totalTiny = allTiny.length;
-    const mapaStatus = new Map(statusData.map((s: any) => [String(s.sku).trim(), s.status]));
-
-    let normais = 0;
-    let obsoletos = 0;
-    allTiny.forEach(item => {
-      const st = mapaStatus.get(String(item.sku).trim()) || 'Normal';
-      if (st === 'Obsoleto') obsoletos++;
-      else normais++;
-    });
-
-    setEstatisticas({ totalTiny, normais, obsoletos });
   };
 
   const carregarVendasPendentes = async () => {
@@ -699,18 +675,6 @@ export default function UpdatesPage() {
       alert("Erro ao salvar em lote: " + err.message);
     }
     setLoading(false);
-  };
-
-  const atualizarColunaSkuCanal = async (id: number, novaLetraCol: string) => {
-    const letraUpper = novaLetraCol.toUpperCase().trim();
-    const atualizadas = regrasCanais.map(r => r.id === id ? { ...r, coluna_sku: letraUpper } : r);
-    setRegrasCanais(atualizadas);
-
-    try {
-      await supabase.from('config_regras_canais').update({ coluna_sku: letraUpper }).eq('id', id);
-    } catch (err) {
-      console.error("Erro ao atualizar coluna do canal:", err);
-    }
   };
 
   const salvarRegrasMlSupabase = async () => {
@@ -1340,85 +1304,6 @@ export default function UpdatesPage() {
     alert(`🗑 Dados limpos.`);
   };
 
-  const limparBaseTiny = async () => {
-    if (!confirm("Tem certeza que deseja apagar toda a base do Tiny ERP?")) return;
-    await supabase.from('cadastros_base_tiny').delete().neq('id', 0);
-  };
-
-  const limparCanal = async (canalNome: string) => {
-    if (!confirm(`Apagar canal "${canalNome}"?`)) return;
-    await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
-    alert(`Canal limpo.`);
-  };
-
-  const handleUploadTiny = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    const indiceSku = letraParaIndice(regrasTiny.sku);
-    const indiceEstoque = letraParaIndice(regrasTiny.estoque);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const buffer = evt.target?.result;
-        const workbook = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        const mapaUnico = new Map();
-        for (let i = 0; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= Math.max(indiceSku, indiceEstoque)) continue;
-          const sku = normalizarSku(row[indiceSku]);
-          const estoque = Number(row[indiceEstoque] || 0);
-          if (sku && !/sku|código|codigo/i.test(sku)) {
-            mapaUnico.set(sku, { sku, estoque: isNaN(estoque) ? 0 : estoque });
-          }
-        }
-        const registros = Array.from(mapaUnico.values());
-        for (let i = 0; i < registros.length; i += 500) {
-          await supabase.from('cadastros_base_tiny').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
-        }
-        alert(`Base Tiny atualizada! ${registros.length} SKUs processados.`);
-        setLoading(false);
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  const handleUploadStatus = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    const indiceSku = letraParaIndice(regrasTiny.status_sku);
-    const indiceValor = letraParaIndice(regrasTiny.status_valor);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array", cellDates: true, raw: false });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        const mapaUnico = new Map();
-        for (let i = 0; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= Math.max(indiceSku, indiceValor)) continue;
-          const sku = normalizarSku(row[indiceSku]);
-          let statusVal = String(row[indiceValor] || 'Normal').trim();
-          if (/obsoleto|inativo|arquivo|descontinuado/i.test(statusVal)) statusVal = 'Obsoleto';
-          else statusVal = 'Normal';
-          mapaUnico.set(sku, { sku, status: statusVal });
-        }
-        const registros = Array.from(mapaUnico.values());
-        for (let i = 0; i < registros.length; i += 500) {
-          await supabase.from('status_skus_catalogo').upsert(registros.slice(i, i + 500), { onConflict: 'sku' });
-        }
-        alert(`Status atualizados! ${registros.length} SKUs validados.`);
-        setLoading(false);
-      } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
   const handleUploadCustosUnitarios = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1518,42 +1403,6 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  const handleUploadCanalMultiplos = async (canalNome: string, letraColuna: string, e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    setLoading(true);
-    const indiceColuna = letraParaIndice(letraColuna || "A");
-    try {
-      const allTiny = await fetchTodosRegistros('cadastros_base_tiny', 'sku');
-      const skusTinySet = new Set(allTiny.map((t: any) => normalizarSku(t.sku)));
-      const skusEncontradosNoCanal = new Set<string>();
-
-      for (let f = 0; f < files.length; f++) {
-        const file = files[f];
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: true, raw: false });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" }) as any[];
-        for (let i = 4; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length <= indiceColuna) continue;
-          const skuVal = normalizarSku(row[indiceColuna]);
-          if (skuVal && skusTinySet.has(skuVal)) {
-            skusEncontradosNoCanal.add(skuVal);
-          }
-        }
-      }
-
-      await supabase.from('mapeamento_canais_skus').delete().eq('canal', canalNome);
-      const registrosUpsert = Array.from(skusEncontradosNoCanal).map(sku => ({ canal: canalNome, sku, presente: true }));
-      for (let i = 0; i < registrosUpsert.length; i += 500) {
-        await supabase.from('mapeamento_canais_skus').insert(registrosUpsert.slice(i, i + 500));
-      }
-      alert(`Canal "${canalNome}" sincronizado com sucesso!`);
-      setLoading(false);
-    } catch (err: any) { alert("Erro: " + err.message); setLoading(false); }
-  };
-
   const pesquisarCustosNoBanco = async () => {
     if (!pesquisaCusto || pesquisaCusto.trim() === "") { setListaCustosFiltrados([]); return; }
     const termo = pesquisaCusto.trim();
@@ -1583,9 +1432,6 @@ export default function UpdatesPage() {
         <div className="flex flex-wrap gap-3 mb-6">
           <button onClick={() => setAbaAtiva("relatorios")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "relatorios" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             📊 Relatórios (ABC & Inventário)
-          </button>
-          <button onClick={() => setAbaAtiva("cadastros")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "cadastros" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
-            🛒 Cadastros e Canais
           </button>
           <button onClick={() => setAbaAtiva("custos")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "custos" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             💰 Custos por SKU
@@ -1642,74 +1488,6 @@ export default function UpdatesPage() {
                   </button>
                 </div>
               )}
-            </div>
-          </div>
-        )}
-
-        {/* ABA: CADASTROS E CANAIS */}
-        {abaAtiva === "cadastros" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total SKUs Tiny</span>
-                <p className="text-3xl font-black text-white mt-2">{estatisticas.totalTiny}</p>
-              </div>
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
-                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Normais</span>
-                <p className="text-3xl font-black text-white mt-2">{estatisticas.normais}</p>
-              </div>
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-lg">
-                <span className="text-xs font-bold text-rose-400 uppercase tracking-wider">Obsoletos</span>
-                <p className="text-3xl font-black text-white mt-2">{estatisticas.obsoletos}</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Base Central (Tiny ERP)</h3>
-                    <button onClick={limparBaseTiny} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer">
-                      🗑️ Limpar Base Tiny
-                    </button>
-                  </div>
-                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.sku}</strong>, Estoque: <strong>{regrasTiny.estoque}</strong>).</p>
-                </div>
-                <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadTiny} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-indigo-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
-              </div>
-
-              <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-white mb-2 uppercase tracking-wider">Status (Normal / Obsoleto)</h3>
-                  <p className="text-xs text-slate-400 mb-3">Lê linhas (SKU: <strong>{regrasTiny.status_sku}</strong>, Status: <strong>{regrasTiny.status_valor}</strong>).</p>
-                </div>
-                <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadStatus} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-xl file:bg-violet-600 file:text-white cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
-              </div>
-            </div>
-
-            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-              <p className="text-xs text-slate-400 mb-6">Suba as planilhas por canal definindo e salvando a coluna onde o SKU será lido.</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {regrasCanais.map((r, idx) => (
-                  <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-white text-sm">{r.canal}</span>
-                      <button onClick={() => limparCanal(r.canal)} className="text-rose-400 text-[10px] font-bold bg-rose-950/40 px-2.5 py-1 rounded cursor-pointer">Limpar</button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Coluna SKU:</label>
-                      <input 
-                        type="text" 
-                        value={r.coluna_sku || "A"} 
-                        onChange={(e) => atualizarColunaSkuCanal(r.id, e.target.value)}
-                        className="w-14 bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" 
-                      />
-                    </div>
-                    <input type="file" multiple accept=".xlsx, .xls, .csv" onChange={(e) => handleUploadCanalMultiplos(r.canal, r.coluna_sku, e)} className="block w-full text-[10px] text-slate-400 file:py-1.5 file:px-3 file:rounded-lg file:bg-slate-800 file:text-slate-200 cursor-pointer bg-slate-900 p-1.5 rounded-lg border border-slate-800" />
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
         )}
