@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { ROTAS_DISPONIVEIS } from "@/lib/rotasMenu";
 
 export default function Navbar() {
   const router = useRouter();
@@ -76,33 +77,7 @@ export default function Navbar() {
         setEmailUsuario(user.email || "");
         setPerfilUsuario(user.perfil || "compras");
         if (user.perfil === "admin") {
-          setPaginasPermitidas([
-            "/",
-            "/dashboard",
-            "/executivo",
-            "/reputacao",
-            "/marketing",
-            "/marketing/ajustes",
-            "/mapeamento",
-            "/ads",
-            "/devolucoes",
-            "/full",
-            "/lives",
-            "/analise-mercado",
-            "/plp",
-            "/agenda",
-            "/regras",
-            "/upload",
-            "/admin",
-            "/calculadora",
-            "/promocoes/ml",
-            "/promocoes/shopee",
-            "/promocoes/magalu",
-            "/promocoes/tiktok",
-            "/produtos",
-            "/padronizacao",
-            "/dimensoes-peso"
-          ]);
+          setPaginasPermitidas(ROTAS_DISPONIVEIS.map((r) => r.id));
         } else {
           setPaginasPermitidas(user.paginas_permitidas || ["/"]);
         }

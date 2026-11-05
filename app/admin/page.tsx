@@ -3,33 +3,60 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
+import { ROTAS_DISPONIVEIS, SECOES_MENU, ROTA_INICIO, nomeDaRota } from "../../lib/rotasMenu";
 
-const rotasDisponiveis = [
-  { id: "/", nome: "Curva ABC (Início)" },
-  { id: "/dashboard", nome: "Dashboard (Simplificado)" },
-  { id: "/executivo", nome: "Dashboard (Executivo)" },
-  { id: "/reputacao", nome: "Reputação dos Canais" },
-  { id: "/marketing", nome: "Marketing" },
-  { id: "/mapeamento", nome: "Cadastros" },
-  { id: "/ads", nome: "Adsense" },
-  { id: "/devolucoes", nome: "Devoluções" },
-  { id: "/full", nome: "Fulfillment (FULL / FBA)" },
-  { id: "/lives", nome: "Lives" },
-  { id: "/analise-mercado", nome: "Análise de mercado" },
-  { id: "/plp", nome: "PLPs (Expedição)" },
-  { id: "/calculadora", nome: "Calculadora" },
-  { id: "/produtos", nome: "Produtos & Vídeos" },
-  { id: "/padronizacao", nome: "Padronização IA" },
-  { id: "/dimensoes-peso", nome: "Dimensões e Peso" },
-  { id: "/promocoes/ml", nome: "Promoções: Mercado Livre" },
-  { id: "/promocoes/magalu", nome: "Promoções: Magazine Luiza" },
-  { id: "/promocoes/shopee", nome: "Promoções: Shopee" },
-  { id: "/promocoes/tiktok", nome: "Promoções: TikTok Shop" },
-  { id: "/agenda", nome: "Agenda (Restrito)" }, 
-  { id: "/regras", nome: "Regras Gerais" },
-  { id: "/upload", nome: "Uploads Base" },
-  { id: "/admin", nome: "Painel Admin" }
-];
+const rotasDisponiveis = ROTAS_DISPONIVEIS;
+
+/** Grade de permissões agrupada como o menu lateral (Início, Dashboard, Marketing, Relatórios...). */
+function GradePermissoes({ selecionadas, onToggle, compacto = false }: { selecionadas: string[]; onToggle: (id: string) => void; compacto?: boolean }) {
+  const soltas = SECOES_MENU.filter((s) => !s.submenu).flatMap((s) => s.rotas);
+  const grupos = [
+    { titulo: "Geral", itens: soltas },
+    ...SECOES_MENU.filter((s) => s.submenu).map((s) => ({ titulo: s.titulo, itens: s.rotas })),
+  ];
+  const conhecidas = new Set<string>([ROTA_INICIO.id, ...ROTAS_DISPONIVEIS.map((r) => r.id)]);
+  const antigas = selecionadas.filter((id) => !conhecidas.has(id));   // acessos gravados no passado que não existem mais
+  const caixa = compacto
+    ? "flex items-center gap-1.5 cursor-pointer text-[10px] font-semibold bg-slate-950 px-2 py-1.5 rounded border border-slate-700"
+    : "flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-slate-200 bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 hover:border-slate-700 transition-colors";
+  const tituloGrupo = "text-[10px] font-black text-indigo-300 uppercase tracking-wider mb-1.5";
+  return (
+    <div className="space-y-3" data-grade-permissoes>
+      {grupos.map((g) => (
+        <div key={g.titulo} data-grupo={g.titulo}>
+          <p className={tituloGrupo}>{g.titulo}</p>
+          <div className={compacto ? "flex flex-wrap gap-2" : "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5"}>
+            {g.titulo === "Geral" && (
+              <label className={caixa + " opacity-70 cursor-default"} title="O Início aparece para todos os usuários logados">
+                <input type="checkbox" checked disabled data-rota="/inicio" className="accent-indigo-600" />
+                <span className="truncate">{ROTA_INICIO.nome} <span className="text-slate-500 font-normal">(todos)</span></span>
+              </label>
+            )}
+            {g.itens.map((rota) => (
+              <label key={rota.id} className={caixa}>
+                <input type="checkbox" data-rota={rota.id} checked={selecionadas.includes(rota.id)} onChange={() => onToggle(rota.id)} className="accent-indigo-600" />
+                <span className="truncate">{rota.nome}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ))}
+      {antigas.length > 0 && (
+        <div data-grupo="antigos">
+          <p className={tituloGrupo + " !text-amber-300"}>Acessos antigos (já não existem no menu)</p>
+          <div className="flex flex-wrap gap-2">
+            {antigas.map((id) => (
+              <label key={id} className={caixa}>
+                <input type="checkbox" data-rota={id} checked onChange={() => onToggle(id)} className="accent-amber-500" />
+                <span className="truncate">{id}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AdminPage() {
   const [email, setEmail] = useState("");
@@ -160,11 +187,10 @@ export default function AdminPage() {
 
   const formatarPaginasPermitidas = (paginasArray: string[]) => {
     if (!paginasArray || !Array.isArray(paginasArray)) return "-";
-    const nomes = paginasArray.map(path => {
-      const rotaEncontrada = rotasDisponiveis.find(r => r.id === path);
-      return rotaEncontrada ? rotaEncontrada.nome : path;
-    });
-    return nomes.join(", ");
+    // Início é de todos; os demais seguem a ordem do menu lateral
+    const ordem = new Map(ROTAS_DISPONIVEIS.map((r, i) => [r.id, i]));
+    const ordenadas = [...paginasArray].sort((x, y) => (ordem.get(x) ?? 999) - (ordem.get(y) ?? 999));
+    return ["Início", ...ordenadas.filter((id) => id !== ROTA_INICIO.id).map(nomeDaRota)].join(", ");
   };
 
   return (
@@ -255,19 +281,7 @@ export default function AdminPage() {
                   </button>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-                {rotasDisponiveis.map(rota => (
-                  <label key={rota.id} className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-slate-200 bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 hover:border-slate-700 hover:bg-slate-850 transition-colors">
-                    <input 
-                      type="checkbox" 
-                      checked={paginasSelecionadas.includes(rota.id)} 
-                      onChange={() => togglePagina(rota.id)} 
-                      className="accent-indigo-600 w-4 h-4 cursor-pointer" 
-                    />
-                    <span className="truncate">{rota.nome}</span>
-                  </label>
-                ))}
-              </div>
+              <GradePermissoes selecionadas={paginasSelecionadas} onToggle={togglePagina} />
             </div>
 
             <div className="md:col-span-3 flex justify-end mt-2">
@@ -328,19 +342,7 @@ export default function AdminPage() {
 
                         <td className="p-4 text-slate-300">
                           {isEditing ? (
-                            <div className="flex flex-wrap gap-2 max-w-xl">
-                              {rotasDisponiveis.map(rota => (
-                                <label key={rota.id} className="flex items-center gap-1.5 cursor-pointer text-[10px] font-semibold bg-slate-950 px-2 py-1.5 rounded border border-slate-700">
-                                  <input 
-                                    type="checkbox" 
-                                    checked={editandoPaginas.includes(rota.id)} 
-                                    onChange={() => toggleEditandoPagina(rota.id)} 
-                                    className="accent-indigo-600" 
-                                  />
-                                  {rota.nome}
-                                </label>
-                              ))}
-                            </div>
+                            <div className="max-w-2xl"><GradePermissoes compacto selecionadas={editandoPaginas} onToggle={toggleEditandoPagina} /></div>
                           ) : (
                             <div className="leading-relaxed">
                               {formatarPaginasPermitidas(u.paginas_permitidas)}
