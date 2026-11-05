@@ -331,6 +331,7 @@ export default function ProdutosPage() {
         produtos: 0, medidasReais: 0, medidasProprias: 0, medidasDoPadrao: 0, genericas: 0, skusGenericos: [] as string[],
         descricoes: { modeloIA: 0, modeloIgual: 0, historico: 0, iaSemModelo: 0, textoPadrao: 0 },
         paisSemIA: [] as string[],
+        motivosIA: [] as string[],
       };
       for (let i = 0; i < lotes.length; i++) {
         const res = await fetch("/api/exportar-tiny", {
@@ -357,6 +358,7 @@ export default function ProdutosPage() {
           const dd = data.resumo.descricoes || {};
           (Object.keys(resumo.descricoes) as (keyof typeof resumo.descricoes)[]).forEach((k) => { resumo.descricoes[k] += dd[k] || 0; });
           resumo.paisSemIA.push(...(data.resumo.paisSemIA || []));
+          (data.resumo.motivosIA || []).forEach((m: string) => { if (!resumo.motivosIA.includes(m)) resumo.motivosIA.push(m); });
         }
       }
 
@@ -375,7 +377,8 @@ export default function ProdutosPage() {
       ].filter(Boolean).join("\n");
       alert(
         `✅ Planilha gerada com ${resumo.produtos} produto(s).\n\nDescrições:\n${linhasDescricao}` +
-        (resumo.paisSemIA.length ? `\n\n⚠️ A IA não respondeu e a descrição saiu genérica (tente exportar de novo): ${resumo.paisSemIA.join(", ")}` : "") +
+        (resumo.paisSemIA.length ? `\n\n⚠️ A IA não foi aproveitada e a descrição saiu genérica: ${resumo.paisSemIA.join(", ")}` : "") +
+        (resumo.motivosIA.length ? `\n\nMotivo: ${resumo.motivosIA.join(" | ")}` : "") +
         `\n\nMedidas da embalagem:\n` +
         `- ${resumo.medidasReais} com as medidas e o peso reais da aba Dimensões e Peso\n` +
         `- ${resumo.medidasProprias} com as medidas informadas no cadastro\n` +

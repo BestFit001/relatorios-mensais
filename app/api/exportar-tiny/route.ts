@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
 import { medidasDoProduto, modeloParecido, nomesEquivalentes, rankearModelos } from "../../../lib/padroesAnuncios";
-import { ajustarTitulo, lerRespostaAdaptacao, montarPedidoAdaptacao, slugDoTitulo } from "../../../lib/adaptarModelo";
+import { ajustarTitulo, analisarErroIA, lerRespostaAdaptacao, montarPedidoAdaptacao, motivoRespostaInvalida, MOTIVO_SEM_CHAVE, slugDoTitulo, type RespostaAdaptacao } from "../../../lib/adaptarModelo";
 import { normSkuPai } from "../../../lib/dimensoesPeso";
 import { INSTRUCAO_FORMATO_DESCRICAO, limparDescricao } from "../../../lib/textoDescricao";
 
@@ -76,6 +76,32 @@ interface ConteudoPai {
   palavrasChave?: string;
   /** havia modelo do mesmo tipo, mas a IA não respondeu: a descrição saiu genérica */
   modeloSemIA?: boolean;
+  /** por que a IA não foi aproveitada (mostrado no aviso final) */
+  motivoIA?: string;
+}
+
+/** Pede à IA a adaptação do modelo; tenta de novo uma vez se o erro for passageiro (limite, demora, resposta fora do formato). */
+async function pedirAdaptacao(ai: GoogleGenAI, pedido: string, totalModelos: number): Promise<{ r: RespostaAdaptacao | null; motivo: string }> {
+  const limites = [26000, 20000];   // 2 tentativas cabem nos 60 s da função
+  let motivo = "";
+  for (let t = 0; t < limites.length; t++) {
+    try {
+      const resposta: any = await comTimeout(
+        ai.models.generateContent({ model: "gemini-3.8-flash", contents: [pedido], config: { responseMimeType: "application/json" } }),
+        limites[t]
+      );
+      const r = lerRespostaAdaptacao(resposta?.text, totalModelos);
+      if (r) return { r, motivo: "" };
+      motivo = motivoRespostaInvalida(resposta?.text);
+      console.error("IA (adaptar modelo): resposta fora do formato:", String(resposta?.text ?? "").slice(0, 300));
+    } catch (e) {
+      const a = analisarErroIA(e);
+      motivo = a.motivo;
+      console.error("Erro na IA (adaptar modelo):", e);
+      if (!a.transitorio) break;
+    }
+  }
+  return { r: null, motivo };
 }
 
 function textoPadraoSemIA(nomePaiFormatado: string, marcaPai: string): string {
@@ -153,16 +179,19 @@ async function conteudoDoPai(
   }
 
   // 2. a IA analisa o modelo e adapta para o produto novo
-  let iaFalhou = false;
+  let motivoIA = "";
+  if (candidatos.length > 0 && !ai) motivoIA = MOTIVO_SEM_CHAVE;
   if (candidatos.length > 0 && ai) {
+    const modelos = candidatos.map((c) => c.padrao);
+    let pedido = "";
     try {
-      const modelos = candidatos.map((c) => c.padrao);
-      const pedido = montarPedidoAdaptacao({ nome: nomePaiFormatado, marca: marcaPai, cores }, modelos);
-      const resposta: any = await comTimeout(
-        ai.models.generateContent({ model: "gemini-3.8-flash", contents: [pedido], config: { responseMimeType: "application/json" } }),
-        LIMITE_IA_MS
-      );
-      const r = lerRespostaAdaptacao(resposta?.text, modelos.length);
+      pedido = montarPedidoAdaptacao({ nome: nomePaiFormatado, marca: marcaPai, cores }, modelos);
+    } catch (e) {
+      motivoIA = "erro ao montar o pedido para a IA: " + String((e as any)?.message ?? e).slice(0, 120);
+      console.error(motivoIA, e);
+    }
+    if (pedido) {
+      const { r, motivo } = await pedirAdaptacao(ai, pedido, modelos.length);
       if (r) {
         const escolhido = r.modelo > 0 ? modelos[r.modelo - 1] : null;
         return {
@@ -174,10 +203,7 @@ async function conteudoDoPai(
           palavrasChave: r.palavras_chave || undefined,
         };
       }
-      iaFalhou = true;
-    } catch (e) {
-      iaFalhou = true;
-      console.error("Erro na IA (adaptar modelo):", e);
+      motivoIA = motivo;
     }
   }
 
@@ -214,9 +240,13 @@ DADOS DO PRODUTO:
 - Marca: ${marcaPai}`;
       const resposta: any = await comTimeout(ai.models.generateContent({ model: "gemini-3.8-flash", contents: [prompt] }), LIMITE_IA_MS);
       if (resposta?.text) return { descricao: limparDescricao(resposta.text), fonte: "ia", padrao: null };
+      motivoIA = "o Gemini devolveu uma resposta vazia";
     } catch (e) {
+      motivoIA = analisarErroIA(e).motivo;
       console.error("Erro na IA:", e);
     }
+  } else if (candidatos.length === 0 && !ai) {
+    motivoIA = MOTIVO_SEM_CHAVE;
   }
 
   // 5. texto padrão (a IA não respondeu ou não está configurada)
@@ -224,7 +254,8 @@ DADOS DO PRODUTO:
     descricao: limparDescricao(textoPadraoSemIA(nomePaiFormatado, marcaPai)),
     fonte: "texto-padrao",
     padrao: parecido,
-    modeloSemIA: candidatos.length > 0 && (iaFalhou || !ai),
+    modeloSemIA: candidatos.length > 0 && !!motivoIA,
+    motivoIA: motivoIA || undefined,
   };
 }
 
@@ -365,6 +396,7 @@ export async function POST(req: Request) {
       // de onde veio a descrição de cada produto pai
       descricoes: { modeloIA: 0, modeloIgual: 0, historico: 0, iaSemModelo: 0, textoPadrao: 0 },
       paisSemIA: [] as string[],   // havia modelo do mesmo tipo, mas a IA não respondeu (texto genérico)
+      motivosIA: [] as string[],   // por que a IA não foi aproveitada (sem repetição)
     };
 
     entradas.forEach(([paiKey, itensDoPai], idx) => {
@@ -381,6 +413,7 @@ export async function POST(req: Request) {
       else if (cont.fonte === "ia") resumo.descricoes.iaSemModelo++;
       else resumo.descricoes.textoPadrao++;
       if (cont.modeloSemIA) resumo.paisSemIA.push(`${paiKey} (${nomePaiFormatado})`);
+      if (cont.motivoIA && !resumo.motivosIA.includes(cont.motivoIA)) resumo.motivosIA.push(cont.motivoIA);
 
       // título final do pai (a IA adapta o do modelo; máx. 60 caracteres, sem cortar palavras) e demais dados do anúncio
       const tituloPai = cont.titulo || nomePaiFormatado;
