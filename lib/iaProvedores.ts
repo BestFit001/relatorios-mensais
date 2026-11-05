@@ -84,19 +84,32 @@ function esperaPedida(res: Response): number {
  * Groq (API compatível com a da OpenAI). O plano grátis limita tokens por MINUTO por modelo; quando estoura, o Groq responde
  * 429 com "retry-after". Se a espera cabe no tempo desta chamada, espera e tenta de novo uma vez aqui dentro.
  */
+// O Groq troca de modelos com frequência (o llama-3.3-70b-versatile saiu do ar em 16/08/2026). Se o modelo não existir mais,
+// o app tenta o próximo da lista sozinho. GROQ_MODEL (Vercel) entra na frente da lista.
+const MODELOS_GROQ_PADRAO = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"];
+let groqModeloVivo = 0;   // índice do último modelo que funcionou nesta instância do servidor
+
+const modeloSumiu = (status: number, bruto: string) =>
+  status === 404 || (status === 400 && /model_decommissioned|model_not_found|does not exist|decommissioned/i.test(bruto));
+
 function criarGroq(apiKey: string): ProvedorIA {
   const base = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
-  const modelo = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  const modelos = Array.from(new Set([process.env.GROQ_MODEL, ...MODELOS_GROQ_PADRAO].filter(Boolean) as string[]));
   return {
     id: "groq", nome: "Groq", variavel: "GROQ_API_KEY", aceitaImagem: false,
     async gerar(prompt, o) {
       const inicio = Date.now();
       let jaEsperou = false;
+      let semExtras = false;   // true depois que o Groq recusou response_format/reasoning_effort (400)
+      let idx = Math.min(groqModeloVivo, modelos.length - 1);
       for (;;) {
+        const modelo = modelos[idx];
+        const raciocina = /^openai\/gpt-oss/.test(modelo);   // modelos "que pensam": raciocínio baixo para responder rápido
         const restante = Math.max(o.limiteMs - (Date.now() - inicio), 1000);
         // max_tokens baixo de propósito: o Groq conta o máximo pedido contra o limite por minuto
-        const corpo: any = { model: modelo, messages: [{ role: "user", content: prompt }], stream: false, max_tokens: o.maxTokens ?? 2200, temperature: 0.3 };
-        if (o.json) corpo.response_format = { type: "json_object" };
+        const corpo: any = { model: modelo, messages: [{ role: "user", content: prompt }], stream: false, max_tokens: o.maxTokens ?? (raciocina ? 2800 : 2200), temperature: 0.3 };
+        if (o.json && !semExtras) corpo.response_format = { type: "json_object" };
+        if (raciocina && !semExtras) corpo.reasoning_effort = "low";
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), restante);
         try {
@@ -118,11 +131,25 @@ function criarGroq(apiKey: string): ProvedorIA {
               continue;
             }
           }
+          // modelo descontinuado/inexistente: passa para o próximo da lista
+          if (!res.ok && modeloSumiu(res.status, bruto) && idx < modelos.length - 1) {
+            console.error(`IA Groq: modelo ${modelo} indisponível (${res.status}); tentando ${modelos[idx + 1]}`);
+            idx++; groqModeloVivo = idx;
+            clearTimeout(timer);
+            continue;
+          }
+          // o Groq recusou algum parâmetro opcional (response_format / reasoning_effort): refaz sem eles
+          if (res.status === 400 && !semExtras && (o.json || raciocina)) {
+            semExtras = true;
+            clearTimeout(timer);
+            continue;
+          }
           // limite por minuto com espera longa: repetir logo em seguida não adianta
           if (!res.ok) throw Object.assign(new Error(bruto || `HTTP ${res.status}`), { status: res.status, naoRepetir: res.status === 429 && esperaPedida(res) > 25000 });
           let j: any;
           try { j = JSON.parse(bruto); } catch { throw new Error("resposta que não é JSON: " + bruto.slice(0, 100)); }
-          console.log(`IA Groq: resposta em ${Date.now() - inicio} ms`);
+          groqModeloVivo = idx;
+          console.log(`IA Groq (${modelo}): resposta em ${Date.now() - inicio} ms`);
           return String(j?.choices?.[0]?.message?.content ?? "");
         } catch (e: any) {
           if (e?.name === "AbortError") throw new Error(`IA sem resposta em ${Math.round(restante / 1000)}s`);
