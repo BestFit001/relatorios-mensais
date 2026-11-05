@@ -6,6 +6,9 @@ import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "./components/Navbar";
 import { avaliarFormulaPorUnidade } from "../lib/formulaRepasse";
+import { diasDoPeriodo } from "../lib/cobertura";
+import CoberturaEstoque from "./components/CoberturaEstoque";
+import ConfigCobertura from "./components/ConfigCobertura";
 
 // Função para equiparar SKUs com formatos diferentes entre canais, custos e devoluções
 function normalizarSku(valor: any): string {
@@ -139,9 +142,31 @@ export default function CurvaABCPage() {
   const [currentPageOrders, setCurrentPageOrders] = useState(1);
   const itemsPerPageOrders = 20;
 
+  // Sub-abas da Curva ABC + colunas que somem em "Ocultar informações" (valem para todos os usuários)
+  const [subAba, setSubAba] = useState<"analise" | "cobertura" | "config">("analise");
+  const [colunasOcultas, setColunasOcultas] = useState<string[]>([]);
+  const [salvandoConfig, setSalvandoConfig] = useState(false);
+  const [erroConfig, setErroConfig] = useState("");
+
   useEffect(() => {
     carregarDadosBase();
+    (async () => {
+      const { data, error } = await supabase.from("curva_cobertura_config").select("colunas_ocultas").eq("id", 1).maybeSingle();
+      if (error) setErroConfig("Não consegui ler a configuração: " + error.message);
+      else if (Array.isArray(data?.colunas_ocultas)) setColunasOcultas(data!.colunas_ocultas.map(String));
+    })();
   }, []);
+
+  const alterarColunasOcultas = async (novas: string[]) => {
+    const anteriores = colunasOcultas;
+    setColunasOcultas(novas); setSalvandoConfig(true); setErroConfig("");
+    let email = "";
+    try { email = String(JSON.parse(localStorage.getItem("usuario_logado") || "{}").email || ""); } catch { /* sem usuário */ }
+    const { error } = await supabase.from("curva_cobertura_config")
+      .upsert({ id: 1, colunas_ocultas: novas, atualizado_por: email || null, atualizado_em: new Date().toISOString() }, { onConflict: "id" });
+    setSalvandoConfig(false);
+    if (error) { setColunasOcultas(anteriores); setErroConfig("Não consegui salvar: " + error.message); }
+  };
 
   useEffect(() => {
     setCurrentPageOrders(1);
@@ -336,8 +361,17 @@ export default function CurvaABCPage() {
     todos.forEach((s: any) => {
       const antes = totalPeriodo > 0 ? (acumulado / totalPeriodo) * 100 : 0;   // o item que cruza 80% ainda é A
       acumulado += s.revenue;
+      s.pctAcumulada = totalPeriodo > 0 ? (acumulado / totalPeriodo) * 100 : 0;
       s.curva = antes < 80 ? "A" : antes < 95 ? "B" : "C";
     });
+
+    // Dias do período para a média diária da Cobertura de Estoque (mês em andamento conta só até hoje)
+    let primeiraVenda: number | undefined, ultimaVenda: number | undefined;
+    atual.forEach((l) => {
+      if (primeiraVenda === undefined || l.t < primeiraVenda) primeiraVenda = l.t;
+      if (ultimaVenda === undefined || l.t > ultimaVenda) ultimaVenda = l.t;
+    });
+    const diasPeriodo = diasDoPeriodo(per.curr, Date.now(), primeiraVenda, ultimaVenda);
 
     const termo = searchSku.trim().toLowerCase();
     const passa = (skuNorm: string, sku: any, titulo: string, marca: string) => {
@@ -401,7 +435,7 @@ export default function CurvaABCPage() {
     devolucoes.forEach((d) => { const k = normalizarPedido(d.pedido); if (k) devPorPedido[k] = (devPorPedido[k] || 0) + num(d.pdv); });
 
     return {
-      atual, canceladas, linhasFiltradas, skus, brandStats, devPorPedido,
+      atual, canceladas, linhasFiltradas, skus, brandStats, devPorPedido, diasPeriodo,
       kpis: {
         faturamentoTotal: fat, lucroTotal: luc, devolucoesTotal: dev, unidades: qtd, pedidos: pedidosSet.size,
         ticketPedido: pedidosSet.size > 0 ? fat / pedidosSet.size : 0,
@@ -418,7 +452,7 @@ export default function CurvaABCPage() {
     };
   }, [linhasBase, chavesVendas, custosMap, devolucoes, cancelados, dateFilter, customStartDate, customEndDate, mesRef, searchSku, selectedBrand, selectedChannel]);
 
-  const { skus, brandStats, kpis, linhasFiltradas } = analise;
+  const { skus, brandStats, kpis, linhasFiltradas, diasPeriodo } = analise;
 
   // ----- Tabela principal: ordenação por Faturamento / Quantidade / Ticket / Lucro -----
   const skusOrdenados = useMemo(() => {
@@ -568,7 +602,18 @@ export default function CurvaABCPage() {
           </div>
         )}
 
+        {/* SUB-ABAS */}
+        <div className="flex flex-wrap gap-2 bg-slate-900/90 p-2 rounded-2xl border border-slate-800 w-fit" data-subabas>
+          {([["analise", "📊 Análise"], ["cobertura", "📦 Cobertura de Estoque"], ["config", "⚙️ Configurações"]] as const).map(([id, nome]) => (
+            <button key={id} type="button" onClick={() => setSubAba(id)} data-subaba={id} aria-pressed={subAba === id}
+              className={`px-4 py-2 rounded-xl text-xs font-black cursor-pointer ${subAba === id ? "bg-indigo-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}>
+              {nome}
+            </button>
+          ))}
+        </div>
+
         {/* BARRA DE FILTROS */}
+        {subAba !== "config" && (
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900/90 p-5 rounded-2xl border border-slate-800 gap-4 shadow-xl">
           <div className="flex flex-wrap gap-3 items-center w-full">
             <div className="flex gap-2 items-center bg-slate-950 p-2 rounded-xl border border-slate-800 w-full sm:w-auto">
@@ -659,7 +704,26 @@ export default function CurvaABCPage() {
             )}
           </div>
         </div>
+        )}
 
+        {subAba === "cobertura" && (
+          <CoberturaEstoque
+            linhas={skus.map((s: any) => ({
+              sku: String(s.sku ?? ""), skuNorm: s.skuNorm, titulo: s.titulo, marca: s.marca,
+              qtd: s.qtd, revenue: s.revenue, pctRepresentatividade: s.pctRepresentatividade, pctAcumulada: s.pctAcumulada, curva: s.curva,
+            }))}
+            dias={diasPeriodo}
+            periodo={dateFilter === "MES_REF" && mesRef ? mesRef : dateFilter === "PERSONALIZADO" ? `${customStartDate || "?"} a ${customEndDate || "?"}` : ({ HOJE: "hoje", SEMANA: "últimos 7 dias", QUINZENA: "últimos 15 dias", MES: "últimos 30 dias", TUDO: "todo o histórico" } as Record<string, string>)[dateFilter] || dateFilter}
+            colunasOcultas={colunasOcultas}
+            onIrParaConfig={() => setSubAba("config")}
+          />
+        )}
+
+        {subAba === "config" && (
+          <ConfigCobertura colunasOcultas={colunasOcultas} onAlterar={alterarColunasOcultas} salvando={salvandoConfig} erro={erroConfig} />
+        )}
+
+        {subAba === "analise" && (<>
         {/* CARDS DE KPI COM IMPACTO DE DEVOLUÇÕES */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-center">
@@ -1118,6 +1182,7 @@ export default function CurvaABCPage() {
             </div>
           )}
         </div>
+        </>)}
 
         {semFaturamento > 0 && (
           <p className="text-[10px] text-slate-600 text-center">
