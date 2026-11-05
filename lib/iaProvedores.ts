@@ -1,12 +1,12 @@
 // Camada de IA com reserva (somente servidor): tenta um provedor e, se ele falhar, demorar ou responder fora do formato,
-// tenta o outro. Hoje: Gemini (GEMINI_API_KEY) e DeepSeek (DEEPSEEK_API_KEY). Basta ter UMA das chaves configuradas.
+// tenta o outro. Hoje: Gemini (GEMINI_API_KEY) e Groq (GROQ_API_KEY). Basta ter UMA das chaves configuradas.
 //
 // Variáveis de ambiente (Vercel):
 //   GEMINI_API_KEY / GOOGLE_API_KEY  chave do Gemini
-//   DEEPSEEK_API_KEY                 chave do DeepSeek
-//   IA_PRIMARIA                      "gemini" (padrão) ou "deepseek": quem é tentado primeiro
-//   GEMINI_MODEL, DEEPSEEK_MODEL     trocam o modelo sem mexer no código (padrões abaixo)
-//   DEEPSEEK_BASE_URL                só para testes (padrão https://api.deepseek.com)
+//   GROQ_API_KEY                     chave do Groq
+//   IA_PRIMARIA                      "gemini" (padrão) ou "groq": quem é tentado primeiro
+//   GEMINI_MODEL, GROQ_MODEL         trocam o modelo sem mexer no código (padrões abaixo)
+//   GROQ_BASE_URL                    só para testes (padrão https://api.groq.com/openai/v1)
 
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { analisarErroIA, motivoRespostaInvalida } from "./adaptarModelo";
@@ -15,11 +15,13 @@ export interface OpcoesGerar {
   json: boolean;
   /** tempo máximo desta chamada, em ms */
   limiteMs: number;
+  /** teto de tokens da resposta (só o Groq usa: ele conta esse valor contra o limite por minuto) */
+  maxTokens?: number;
   imagem?: { base64: string; mimeType: string };
 }
 
 export interface ProvedorIA {
-  id: "gemini" | "deepseek";
+  id: "gemini" | "groq";
   nome: string;
   variavel: string;
   aceitaImagem: boolean;
@@ -72,19 +74,29 @@ function criarGemini(apiKey: string): ProvedorIA {
   };
 }
 
-function criarDeepSeek(apiKey: string): ProvedorIA {
-  const base = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, "");
-  const modelo = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+/** Espera (ms) que o Groq pede num erro 429 (cabeçalho retry-after, em segundos); 0 se não informou. */
+function esperaPedida(res: Response): number {
+  const v = Number(res.headers.get("retry-after"));
+  return Number.isFinite(v) && v > 0 ? Math.ceil(v * 1000) : 0;
+}
+
+/**
+ * Groq (API compatível com a da OpenAI). O plano grátis limita tokens por MINUTO por modelo; quando estoura, o Groq responde
+ * 429 com "retry-after". Se a espera cabe no tempo desta chamada, espera e tenta de novo uma vez aqui dentro.
+ */
+function criarGroq(apiKey: string): ProvedorIA {
+  const base = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+  const modelo = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
   return {
-    id: "deepseek", nome: "DeepSeek", variavel: "DEEPSEEK_API_KEY", aceitaImagem: false,
+    id: "groq", nome: "Groq", variavel: "GROQ_API_KEY", aceitaImagem: false,
     async gerar(prompt, o) {
       const inicio = Date.now();
-      let semRaciocinio = true;   // pedimos o modo sem "pensar" (mais rápido); se a API recusar o parâmetro, refaz sem ele
+      let jaEsperou = false;
       for (;;) {
         const restante = Math.max(o.limiteMs - (Date.now() - inicio), 1000);
-        const corpo: any = { model: modelo, messages: [{ role: "user", content: prompt }], stream: false, max_tokens: 4096, temperature: 0.3 };
+        // max_tokens baixo de propósito: o Groq conta o máximo pedido contra o limite por minuto
+        const corpo: any = { model: modelo, messages: [{ role: "user", content: prompt }], stream: false, max_tokens: o.maxTokens ?? 2200, temperature: 0.3 };
         if (o.json) corpo.response_format = { type: "json_object" };
-        if (semRaciocinio) corpo.thinking = { type: "disabled" };
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), restante);
         try {
@@ -95,14 +107,25 @@ function criarDeepSeek(apiKey: string): ProvedorIA {
             signal: ctrl.signal,
           });
           const bruto = await res.text();
-          if (!res.ok) throw Object.assign(new Error(bruto || `HTTP ${res.status}`), { status: res.status });
+          if (res.status === 429 && !jaEsperou) {
+            const espera = esperaPedida(res);
+            const sobra = o.limiteMs - (Date.now() - inicio);
+            if (espera > 0 && espera <= 25000 && espera + 4000 < sobra) {
+              jaEsperou = true;
+              console.log(`IA Groq: limite por minuto, esperando ${espera} ms e tentando de novo`);
+              clearTimeout(timer);
+              await new Promise((r) => setTimeout(r, espera));
+              continue;
+            }
+          }
+          // limite por minuto com espera longa: repetir logo em seguida não adianta
+          if (!res.ok) throw Object.assign(new Error(bruto || `HTTP ${res.status}`), { status: res.status, naoRepetir: res.status === 429 && esperaPedida(res) > 25000 });
           let j: any;
           try { j = JSON.parse(bruto); } catch { throw new Error("resposta que não é JSON: " + bruto.slice(0, 100)); }
-          console.log(`IA DeepSeek: resposta em ${Date.now() - inicio} ms`);
+          console.log(`IA Groq: resposta em ${Date.now() - inicio} ms`);
           return String(j?.choices?.[0]?.message?.content ?? "");
         } catch (e: any) {
           if (e?.name === "AbortError") throw new Error(`IA sem resposta em ${Math.round(restante / 1000)}s`);
-          if (semRaciocinio && analisarErroIA(e).status === 400) { semRaciocinio = false; continue; }
           throw e;
         } finally {
           clearTimeout(timer);
@@ -116,10 +139,10 @@ function criarDeepSeek(apiKey: string): ProvedorIA {
 export function provedoresConfigurados(): ProvedorIA[] {
   const lista: ProvedorIA[] = [];
   const gemini = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  const deepseek = process.env.DEEPSEEK_API_KEY;
+  const groq = process.env.GROQ_API_KEY;
   if (gemini) lista.push(criarGemini(gemini));
-  if (deepseek) lista.push(criarDeepSeek(deepseek));
-  if ((process.env.IA_PRIMARIA || "").toLowerCase() === "deepseek") lista.sort((a, b) => (a.id === "deepseek" ? -1 : b.id === "deepseek" ? 1 : 0));
+  if (groq) lista.push(criarGroq(groq));
+  if ((process.env.IA_PRIMARIA || "").toLowerCase() === "groq") lista.sort((a, b) => (a.id === "groq" ? -1 : b.id === "groq" ? 1 : 0));
   return lista;
 }
 
@@ -134,6 +157,7 @@ export async function gerarTexto(
   prompt: string,
   o: {
     json?: boolean;
+    maxTokens?: number;
     prazoFinal: number;
     imagem?: { base64: string; mimeType: string };
     aceitar?: (texto: string) => boolean;
@@ -155,7 +179,7 @@ export async function gerarTexto(
     const limiteMs = Math.floor((restante * peso) / fila.reduce((s, x) => s + x.peso, 0));
     fila = fila.slice(1);
     try {
-      const texto = await p.gerar(prompt, { json: !!o.json, limiteMs, imagem: o.imagem });
+      const texto = await p.gerar(prompt, { json: !!o.json, limiteMs, imagem: o.imagem, maxTokens: o.maxTokens });
       if (o.aceitar ? o.aceitar(texto) : texto.trim() !== "") return { texto, provedor: p.nome, falhas };
       falhas.push({ provedor: p.nome, motivo: motivoRespostaInvalida(texto, p.nome) });
       console.error(`IA ${p.nome}: resposta fora do formato:`, String(texto).slice(0, 300));
@@ -165,13 +189,13 @@ export async function gerarTexto(
       const a = analisarErroIA(e, p.nome, p.variavel);
       falhas.push({ provedor: p.nome, motivo: a.motivo });
       console.error(`Erro na IA ${p.nome}:`, e);
-      if (!a.transitorio) fila = fila.filter((x) => x.p !== p);
+      if (!a.transitorio || (e as any)?.naoRepetir) fila = fila.filter((x) => x.p !== p);
     }
   }
   return { texto: null, provedor: null, falhas };
 }
 
-/** Junta as falhas numa frase só: "o Gemini demorou demais (…) → o DeepSeek recusou a chave (…)". Repetições são colapsadas. */
+/** Junta as falhas numa frase só: "o Gemini demorou demais (…) → o Groq recusou a chave (…)". Repetições são colapsadas. */
 export function resumirFalhas(falhas: FalhaIA[]): string {
   const vistos: string[] = [];
   for (const f of falhas) if (!vistos.includes(f.motivo)) vistos.push(f.motivo);

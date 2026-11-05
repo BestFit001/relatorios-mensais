@@ -71,7 +71,7 @@ interface ConteudoPai {
   modeloSemIA?: boolean;
   /** por que a IA não foi aproveitada (mostrado no aviso final) */
   motivoIA?: string;
-  /** qual IA respondeu ("Gemini" ou "DeepSeek"); vazio quando nenhuma foi usada */
+  /** qual IA respondeu ("Gemini" ou "Groq"); vazio quando nenhuma foi usada */
   provedorIA?: string;
   /** a IA principal falhou, mas a reserva respondeu: o que aconteceu com a principal */
   avisoIA?: string;
@@ -79,7 +79,7 @@ interface ConteudoPai {
 
 /**
  * Pede à IA a adaptação do modelo. Tenta o Gemini (raciocínio baixo, para responder rápido) e, se ele falhar, demorar ou
- * responder fora do formato, o DeepSeek. Qualquer um que tenha chave configurada serve; basta um.
+ * responder fora do formato, o Groq. Qualquer um que tenha chave configurada serve; basta um.
  */
 async function pedirAdaptacao(
   provedores: ProvedorIA[], pedido: string, totalModelos: number, prazoFinal: number
@@ -175,7 +175,8 @@ async function conteudoDoPai(
   const temIA = provedores.length > 0;
   if (candidatos.length > 0 && !temIA) motivoIA = MOTIVO_SEM_CHAVE;
   if (candidatos.length > 0 && temIA) {
-    const modelos = candidatos.map((c) => c.padrao);
+    // só os 2 melhores modelos vão para a IA: pedido menor responde mais rápido e cabe no limite por minuto do Groq
+    const modelos = candidatos.slice(0, 2).map((c) => c.padrao);
     let pedido = "";
     try {
       pedido = montarPedidoAdaptacao({ nome: nomePaiFormatado, marca: marcaPai, cores }, modelos);
@@ -339,7 +340,7 @@ export async function POST(req: Request) {
 
     const { data: padroesOficiais } = await supabase.from("padroes_anuncios").select("*");
 
-    // IAs configuradas no Vercel (GEMINI_API_KEY e/ou DEEPSEEK_API_KEY): se uma falhar, a outra assume
+    // IAs configuradas no Vercel (GEMINI_API_KEY e/ou GROQ_API_KEY): se uma falhar, a outra assume
     const provedores = provedoresConfigurados();
 
     // grupos por pai (mantém a ordem)

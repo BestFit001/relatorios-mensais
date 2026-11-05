@@ -66,7 +66,7 @@ export async function POST(req: Request) {
       .order("id", { ascending: false })
       .limit(6);
 
-    // Gemini e/ou DeepSeek (o que tiver chave no Vercel): se um falhar, o outro assume
+    // Gemini e/ou Groq (o que tiver chave no Vercel): se um falhar, o outro assume
     const provedores = provedoresConfigurados();
     let respostaIA = "";
     let provedorUsado: string | null = null;
@@ -133,7 +133,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       sucesso: true,
       resposta: limparDescricao(respostaIA),
-      ia: provedorUsado,                 // "Gemini", "DeepSeek" ou null (texto padrão)
+      ia: provedorUsado,                 // "Gemini", "Groq" ou null (texto padrão)
       avisoIA: falhasIA || undefined,    // por que uma IA falhou (mesmo quando a outra respondeu)
     });
   } catch (error: any) {

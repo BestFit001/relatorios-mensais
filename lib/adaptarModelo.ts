@@ -119,24 +119,24 @@ export function lerRespostaAdaptacao(texto: any, totalModelos: number): Resposta
   };
 }
 
-/** Traduz um erro da chamada à IA (Gemini ou DeepSeek) em uma frase que o usuário entende e diz se vale tentar de novo. Nunca inclui a chave. */
+/** Traduz um erro da chamada à IA (Gemini ou Groq) em uma frase que o usuário entende e diz se vale tentar de novo. Nunca inclui a chave. */
 export function analisarErroIA(e: any, nome = "Gemini", variavel = "GEMINI_API_KEY"): { motivo: string; transitorio: boolean; status: number } {
   const bruto = String(e?.message ?? e ?? "");
   let msg = bruto;
   try { const j = JSON.parse(bruto); msg = String(j?.error?.message ?? j?.message ?? bruto); } catch { /* texto simples */ }
-  msg = msg.replace(/AIza[0-9A-Za-z_\-]{20,}/g, "***").replace(/sk-[0-9A-Za-z_\-]{16,}/g, "***").replace(/\s+/g, " ").trim().slice(0, 160);
+  msg = msg.replace(/AIza[0-9A-Za-z_\-]{20,}/g, "***").replace(/(?:sk|gsk)[-_][0-9A-Za-z_\-]{16,}/g, "***").replace(/\s+/g, " ").trim().slice(0, 160);
   const status = Number(e?.status ?? e?.code ?? (bruto.match(/\b(4\d\d|5\d\d)\b/)?.[1] ?? 0)) || 0;
   if (/sem resposta em/i.test(bruto)) return { motivo: `o ${nome} demorou demais (${msg})`, transitorio: true, status: 0 };
-  if (status === 402 || /insufficient balance/i.test(bruto)) return { motivo: `o ${nome} está sem saldo (erro 402): ${msg}. Recarregue o crédito da conta`, transitorio: false, status: 402 };
+  if (status === 402 || /insufficient balance/i.test(bruto)) return { motivo: `o ${nome} está sem saldo (erro 402): ${msg}. Verifique o saldo/plano da conta`, transitorio: false, status: 402 };
   if (status === 429 || /quota|rate.?limit|resource.?exhausted/i.test(bruto)) return { motivo: `limite/cota do ${nome} estourado (erro 429): ${msg}`, transitorio: true, status };
   if (status === 401 || status === 403 || /api key|permission|authentication/i.test(bruto)) return { motivo: `o ${nome} recusou a chave (erro ${status || 403}): ${msg}. Confira a ${variavel} no Vercel`, transitorio: false, status };
-  if (status === 404) return { motivo: `o ${nome} não encontrou o modelo (erro 404): ${msg}`, transitorio: false, status };
+  if (status === 404) return { motivo: `o ${nome} não encontrou o modelo (erro 404): ${msg}. Informe o modelo certo em ${variavel.replace("API_KEY", "MODEL")} no Vercel`, transitorio: false, status };
   if (status === 400 || status === 422) return { motivo: `o ${nome} recusou o pedido (erro ${status}): ${msg}`, transitorio: false, status };
   if (status >= 500) return { motivo: `o ${nome} está indisponível (erro ${status}): ${msg}`, transitorio: true, status };
   return { motivo: `falha ao falar com o ${nome}: ${msg || "erro desconhecido"}`, transitorio: true, status };
 }
 
-export const MOTIVO_SEM_CHAVE = "nenhuma IA está configurada no Vercel (faltam GEMINI_API_KEY e DEEPSEEK_API_KEY)";
+export const MOTIVO_SEM_CHAVE = "nenhuma IA está configurada no Vercel (faltam GEMINI_API_KEY e GROQ_API_KEY)";
 
 export function motivoRespostaInvalida(texto: any, nome = "Gemini"): string {
   const t = String(texto ?? "").replace(/\s+/g, " ").trim();
