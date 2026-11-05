@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import { buscarTudo } from "../../lib/buscarTudo";
 import ConfigMapaCadastros from "../components/ConfigMapaCadastros";
+import { normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
 
 // ───────────────────────── utilidades ─────────────────────────
 
@@ -102,6 +103,8 @@ export default function MapeamentoPage() {
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroEstoque, setFiltroEstoque] = useState("ComEstoque");
   const [pesquisaSku, setPesquisaSku] = useState("");
+  const [sincronizando, setSincronizando] = useState(false);
+  const [avisoSync, setAvisoSync] = useState<{ tipo: "ok" | "info" | "erro"; texto: string } | null>(null);
   const pesquisaAdiada = useDeferredValue(pesquisaSku);
 
   const carregar = useCallback(async () => {
@@ -118,7 +121,8 @@ export default function MapeamentoPage() {
       if (regras.error) throw new Error(regras.error.message);
 
       const listaCanais: string[] = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal)));
-      const idxCanal = new Map<string, number>(listaCanais.map((c, i) => [c, i]));
+      // compara o nome do canal sem maiúsculas/acento ("Tiktok" = "TikTok")
+      const idxCanal = new Map<string, number>(listaCanais.map((c, i) => [normalizarNomeCanal(c), i]));
 
       const mapaStatus = new Map<string, string>();
       for (const s of status) mapaStatus.set(normalizarSku(s.sku), s.status);
@@ -126,7 +130,7 @@ export default function MapeamentoPage() {
       // sku -> presença por canal, montado uma única vez
       const presencaPorSku = new Map<string, boolean[]>();
       for (const m of mapas) {
-        const i = idxCanal.get(m.canal);
+        const i = idxCanal.get(normalizarNomeCanal(m.canal));
         if (i === undefined) continue;
         const k = normalizarSku(m.sku);
         let arr = presencaPorSku.get(k);
@@ -155,13 +159,55 @@ export default function MapeamentoPage() {
     }
   }, []);
 
+  // SKU que vendeu em um canal conta como cadastrado nele: registra o que faltar em mapeamento_canais_skus
+  const sincronizarVendas = useCallback(async () => {
+    setSincronizando(true);
+    try {
+      const [regras, tiny, mapas, vendas] = await Promise.all([
+        supabase.from("config_regras_canais").select("canal").order("id"),
+        buscarTudo("cadastros_base_tiny", "sku"),
+        buscarTudo("mapeamento_canais_skus", "canal, sku", (q) => q.eq("presente", true)),
+        buscarTudo("vendas_canais", "canal, sku"),
+      ]);
+      if (regras.error) throw new Error(regras.error.message);
+      const listaCanais = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal)));
+      const skusBase = new Set<string>(tiny.map((t: any) => normalizarSkuVenda(t.sku)));
+      const r = pendentesDeRegistro({ vendas, canais: listaCanais, presentes: mapas, skusBase });
+
+      // grava o SKU como está na base do Tiny (mesmo formato dos uploads de canal)
+      const original = new Map<string, string>();
+      for (const t of tiny) original.set(normalizarSkuVenda(t.sku), String(t.sku));
+      const linhas = r.novos.map((n) => ({ canal: n.canal, sku: original.get(n.sku) || n.sku, presente: true }));
+      for (let i = 0; i < linhas.length; i += 500) {
+        const { error } = await supabase.from("mapeamento_canais_skus").upsert(linhas.slice(i, i + 500), { onConflict: "canal,sku" });
+        if (error) throw new Error(error.message);
+      }
+
+      const porCanal = new Map<string, number>();
+      for (const n of r.novos) porCanal.set(n.canal, (porCanal.get(n.canal) || 0) + 1);
+      const detalhe = Array.from(porCanal.entries()).map(([c, q]) => `${c}: ${q}`).join(" · ");
+      const extras: string[] = [];
+      if (r.foraDaBase.length) extras.push(`${r.foraDaBase.length} SKU(s) vendido(s) não estão na base do Tiny e não foram registrados`);
+      if (r.canaisSemCadastro.length) extras.push(`vendas em canal(is) sem cadastro na lista: ${r.canaisSemCadastro.join(", ")}`);
+      const base = linhas.length
+        ? `✅ ${linhas.length} SKU(s) com venda foram registrados como cadastrados (${detalhe}).`
+        : "Vendas conferidas: nenhum SKU vendido estava faltando como cadastrado.";
+      setAvisoSync({ tipo: linhas.length ? "ok" : "info", texto: base + (extras.length ? " ⚠️ " + extras.join("; ") + "." : "") });
+      if (linhas.length) await carregar();
+    } catch (e: any) {
+      setAvisoSync({ tipo: "erro", texto: "Não consegui sincronizar com as vendas: " + (e?.message || e) });
+    } finally {
+      setSincronizando(false);
+    }
+  }, [carregar]);
+
   useEffect(() => {
     if (!localStorage.getItem("usuario_logado")) {
       router.push("/login");
       return;
     }
-    carregar();
-  }, [carregar, router]);
+    carregar().then(sincronizarVendas);
+  }, [carregar, sincronizarVendas, router]);
 
   // ── universo filtrado + presença por canal: uma única passada ──
   const { filtrados, progresso } = useMemo(() => {
@@ -259,6 +305,16 @@ export default function MapeamentoPage() {
           </div>
         )}
 
+        {avisoSync && (
+          <div data-aviso-sync className={`mb-6 p-4 rounded-xl border text-sm font-semibold flex items-start justify-between gap-3 ${
+            avisoSync.tipo === "erro" ? "border-rose-900/60 bg-rose-950/40 text-rose-300"
+            : avisoSync.tipo === "ok" ? "border-emerald-900/60 bg-emerald-950/40 text-emerald-300"
+            : "border-slate-800 bg-slate-900/60 text-slate-300"}`}>
+            <span>{avisoSync.texto}</span>
+            <button type="button" onClick={() => setAvisoSync(null)} className="text-xs opacity-70 hover:opacity-100 cursor-pointer">✕</button>
+          </div>
+        )}
+
         {/* ═════════════ SUB-ABA: CONFIGURAÇÕES (uploads que alimentam o painel) ═════════════ */}
         {subAba === "config" && (
           <ConfigMapaCadastros
@@ -268,6 +324,8 @@ export default function MapeamentoPage() {
               obsoletos: itens.filter((i) => i.grupo === G_OBSOLETO).length,
             }}
             onAtualizado={carregar}
+            onSincronizar={sincronizarVendas}
+            sincronizando={sincronizando}
           />
         )}
 

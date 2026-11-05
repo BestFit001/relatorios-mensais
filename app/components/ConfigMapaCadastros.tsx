@@ -8,7 +8,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
 import { buscarTudo } from "@/lib/buscarTudo";
-import { indiceDaLetra, normalizarSkuEstoque, paraNumero } from "@/lib/cobertura";
+import { indiceDaLetra, lerEstoque, normalizarSkuEstoque } from "@/lib/cobertura";
+import { normalizarNomeCanal } from "@/lib/vendasCanaisLogica";
 
 type Letras = { sku: string; estoque: string; status_sku: string; status_valor: string };
 type Aviso = { tipo: "ok" | "erro"; texto: string } | null;
@@ -45,14 +46,17 @@ function CampoLetra({ rotulo, valor, onMudar, onSalvar, dado }: { rotulo: string
 }
 
 export default function ConfigMapaCadastros({
-  resumo, onAtualizado,
+  resumo, onAtualizado, onSincronizar, sincronizando,
 }: {
   resumo: { total: number; normais: number; obsoletos: number }; onAtualizado: () => void;
+  /** registra como cadastrado (por canal) todo SKU que já vendeu; mostra o resultado no aviso da página */
+  onSincronizar: () => Promise<void>; sincronizando: boolean;
 }) {
   const [letras, setLetras] = useState<Letras>(LETRAS_PADRAO);
   const [canais, setCanais] = useState<RegraCanal[]>([]);
   const [ocupado, setOcupado] = useState("");
   const [aviso, setAviso] = useState<Aviso>(null);
+  const [novoCanal, setNovoCanal] = useState("");
 
   const carregar = useCallback(async () => {
     const [{ data: tiny }, { data: regras }] = await Promise.all([
@@ -91,16 +95,27 @@ export default function ConfigMapaCadastros({
     setOcupado("tiny"); setAviso(null);
     try {
       const linhas = await lerPrimeiraAba(arquivo);
-      const mapa = new Map<string, { sku: string; estoque: number }>();
-      for (const row of linhas) {
-        if (!row || row.length <= Math.max(iSku, iEst)) continue;
-        const sku = normalizarSkuEstoque(row[iSku]);
-        if (!sku || /sku|c[oó]digo/i.test(sku)) continue;
-        mapa.set(sku, { sku, estoque: paraNumero(row[iEst]) ?? 0 });
+      const leitura = lerEstoque(linhas, iSku, iEst);   // ignora o cabeçalho; SKU repetido tem as quantidades somadas
+      if (leitura.registros.length === 0) return terminar("erro", "Nenhum SKU foi lido com essas colunas. Confira as letras do SKU e do estoque.");
+
+      // quem sairia da base: pede confirmação se for muita coisa (sinal de coluna errada)
+      const atual = await buscarTudo("cadastros_base_tiny", "id, sku");
+      const novos = new Set(leitura.registros.map((r) => r.sku));
+      const idsRemover: number[] = atual.filter((t: any) => !novos.has(normalizarSkuEstoque(t.sku))).map((t: any) => t.id);
+      const removidos = idsRemover.length;
+      if (removidos > Math.max(50, atual.length * 0.2) &&
+          !confirm(`Atenção: ${removidos} dos ${atual.length} SKUs da base não estão nesta planilha e serão removidos. As colunas estão certas? Continuar?`)) {
+        return terminar("erro", "Upload cancelado: nada foi alterado.");
       }
-      const erro = await gravarEmLotes("cadastros_base_tiny", Array.from(mapa.values()), { onConflict: "sku" });
-      if (erro) return terminar("erro", "Falhou ao gravar a base do Tiny: " + erro);
-      terminar("ok", `✅ Base Tiny atualizada: ${mapa.size} SKUs processados.`);
+
+      const ts = new Date().toISOString();
+      const erro = await gravarEmLotes("cadastros_base_tiny", leitura.registros.map((r) => ({ sku: r.sku, estoque: r.estoque, atualizado_em: ts })), { onConflict: "sku" });
+      if (erro) return terminar("erro", "Falhou ao gravar a base do Tiny (nada foi apagado): " + erro);
+      for (let i = 0; i < idsRemover.length; i += 200) {   // só depois de gravar tudo
+        const del = await supabase.from("cadastros_base_tiny").delete().in("id", idsRemover.slice(i, i + 200));
+        if (del.error) return terminar("erro", `Estoque gravado (${leitura.registros.length} SKUs), mas não consegui remover os que saíram da planilha: ${del.error.message}`);
+      }
+      terminar("ok", `✅ Base Tiny substituída: ${leitura.registros.length} SKUs gravados${removidos ? `, ${removidos} que não estavam na planilha foram removidos` : ""}${leitura.repetidos.length ? `, ${leitura.repetidos.length} SKU(s) repetido(s) com as quantidades somadas` : ""}.`);
     } catch (e: any) { terminar("erro", "Erro ao ler a planilha: " + (e?.message || e)); }
   };
   const limparBaseTiny = async () => {
@@ -150,17 +165,37 @@ export default function ConfigMapaCadastros({
           if (sku && conhecidos.has(sku)) encontrados.add(sku);
         }
       }
-      const del = await supabase.from("mapeamento_canais_skus").delete().eq("canal", r.canal);
+      const del = await supabase.from("mapeamento_canais_skus").delete().ilike("canal", r.canal.replace(/[\\%_]/g, "\\$&"));
       if (del.error) return terminar("erro", "Não consegui limpar o canal antes de regravar: " + del.error.message);
       const erro = await gravarEmLotes("mapeamento_canais_skus", Array.from(encontrados).map((sku) => ({ canal: r.canal, sku, presente: true })));
       if (erro) return terminar("erro", `Falhou ao gravar ${r.canal}: ${erro}`);
       terminar("ok", `✅ Canal “${r.canal}” sincronizado: ${encontrados.size} SKUs presentes.`);
+      await onSincronizar();   // SKU que vendeu mas não estava na planilha também conta como cadastrado
     } catch (e: any) { terminar("erro", "Erro ao ler a planilha: " + (e?.message || e)); }
   };
   const limparCanal = async (canal: string) => {
     if (!confirm(`Apagar os dados do canal "${canal}"?`)) return;
-    const { error } = await supabase.from("mapeamento_canais_skus").delete().eq("canal", canal);
+    const { error } = await supabase.from("mapeamento_canais_skus").delete().ilike("canal", canal.replace(/[\\%_]/g, "\\$&"));
     terminar(error ? "erro" : "ok", error ? "Não consegui limpar o canal: " + error.message : `🗑️ Canal “${canal}” limpo.`);
+  };
+  const limparTodosCanais = async () => {
+    if (!confirm("Apagar os dados de TODOS os canais? O Progresso por canal volta a zero até você subir as planilhas de novo ou usar “Sincronizar com vendas”.")) return;
+    setOcupado("limpar-todos"); setAviso(null);
+    const { error } = await supabase.from("mapeamento_canais_skus").delete().neq("id", 0);
+    terminar(error ? "erro" : "ok", error ? "Não consegui limpar os canais: " + error.message : "🗑️ Todos os canais foram limpos.");
+  };
+
+  // ---- novo canal (novos marketplaces) ----
+  const adicionarCanal = async () => {
+    const nome = novoCanal.trim().replace(/\s+/g, " ");
+    if (!nome) return setAviso({ tipo: "erro", texto: "Digite o nome do canal." });
+    if (nome.length > 40) return setAviso({ tipo: "erro", texto: "Nome muito longo (máximo 40 caracteres)." });
+    if (canais.some((c) => normalizarNomeCanal(c.canal) === normalizarNomeCanal(nome))) return setAviso({ tipo: "erro", texto: `O canal “${nome}” já existe (a comparação ignora maiúsculas e acentos).` });
+    setOcupado("novo-canal"); setAviso(null);
+    const { error } = await supabase.from("config_regras_canais").insert({ canal: nome, coluna_sku: "A" });
+    if (error) return terminar("erro", "Não consegui criar o canal: " + error.message);
+    setNovoCanal(""); await carregar();
+    terminar("ok", `✅ Canal “${nome}” criado. Suba a planilha dele abaixo (ajuste a coluna do SKU se precisar). Para usar nos uploads de vendas e no Dashboard, configure também em Regras Gerais.`);
   };
 
   const arquivoCls = "block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-white file:font-bold file:cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700 disabled:opacity-50";
@@ -197,7 +232,7 @@ export default function ConfigMapaCadastros({
             <h3 className="text-sm font-bold text-white uppercase tracking-wider">Base Central (Tiny ERP)</h3>
             <button type="button" onClick={limparBaseTiny} disabled={!!ocupado} className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer disabled:opacity-50">🗑️ Limpar Base Tiny</button>
           </div>
-          <p className="text-xs text-slate-400">Atualiza o estoque de cada SKU (SKUs novos entram; os que não vierem na planilha são mantidos).</p>
+          <p className="text-xs text-slate-400">Substitui o estoque da base: SKU que não vier na planilha sai da base e SKU repetido tem as quantidades somadas (mesma regra da Curva ABC).</p>
           <div className="flex flex-wrap gap-4">
             <CampoLetra rotulo="Coluna do SKU" dado="sku" valor={letras.sku} onMudar={(v) => setLetras((l) => ({ ...l, sku: v }))} onSalvar={() => salvarLetra("sku")} />
             <CampoLetra rotulo="Coluna do estoque" dado="estoque" valor={letras.estoque} onMudar={(v) => setLetras((l) => ({ ...l, estoque: v }))} onSalvar={() => salvarLetra("estoque")} />
@@ -217,8 +252,19 @@ export default function ConfigMapaCadastros({
       </div>
 
       <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-        <h2 className="text-lg font-bold mb-2 text-white">Upload e Gestão Individual dos Canais</h2>
-        <p className="text-xs text-slate-400 mb-6">Suba as planilhas por canal definindo a coluna onde o SKU será lido (fica salva). Pode enviar vários arquivos de uma vez.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+          <h2 className="text-lg font-bold text-white">Upload e Gestão Individual dos Canais</h2>
+          <button type="button" onClick={limparTodosCanais} disabled={!!ocupado} data-limpar-todos
+            className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[11px] font-bold py-1.5 px-3 rounded-lg cursor-pointer disabled:opacity-50">🗑️ Limpar todos os canais</button>
+        </div>
+        <p className="text-xs text-slate-400 mb-4">Suba as planilhas por canal definindo a coluna onde o SKU será lido (fica salva). Pode enviar vários arquivos de uma vez.</p>
+
+        <form onSubmit={(e) => { e.preventDefault(); adicionarCanal(); }} className="flex flex-wrap items-center gap-2 mb-6" data-form-novo-canal>
+          <input type="text" value={novoCanal} onChange={(e) => setNovoCanal(e.target.value)} maxLength={40} placeholder="Novo canal (ex.: Kabum)" data-novo-canal
+            className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500 w-64" />
+          <button type="submit" disabled={!!ocupado || !novoCanal.trim()} data-adicionar-canal
+            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-xl cursor-pointer disabled:opacity-40">+ Adicionar canal</button>
+        </form>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {canais.map((r) => (
             <div key={r.id} data-canal-card={r.canal} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
@@ -241,6 +287,20 @@ export default function ConfigMapaCadastros({
           ))}
           {canais.length === 0 && <p className="text-xs text-slate-500">Nenhum canal cadastrado em Regras Gerais.</p>}
         </div>
+      </div>
+
+      <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
+        <div className="max-w-3xl">
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Vendas → Cadastros</h3>
+          <p className="text-xs text-slate-400 mt-1">
+            Se um SKU vendeu em um canal (pelos uploads de vendas) mas não consta como cadastrado nele, o Mapa registra como cadastrado automaticamente
+            ao abrir esta tela e depois de cada upload de canal. Só entram SKUs que existem na base do Tiny.
+          </p>
+        </div>
+        <button type="button" onClick={onSincronizar} disabled={sincronizando || !!ocupado} data-sincronizar-vendas
+          className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black px-5 py-2.5 rounded-xl cursor-pointer disabled:opacity-40">
+          {sincronizando ? "Sincronizando…" : "🔄 Sincronizar com vendas agora"}
+        </button>
       </div>
     </div>
   );
