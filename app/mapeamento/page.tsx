@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import { buscarTudo } from "../../lib/buscarTudo";
 import ConfigMapaCadastros from "../components/ConfigMapaCadastros";
-import { normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
+import { canalTemCadastro, normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
 
 // ───────────────────────── utilidades ─────────────────────────
 
@@ -120,7 +120,8 @@ export default function MapeamentoPage() {
       ]);
       if (regras.error) throw new Error(regras.error.message);
 
-      const listaCanais: string[] = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal)));
+      // canais sem catálogo (Clube Hebraica, Clube Paineiras…) não entram no Mapa
+      const listaCanais: string[] = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal))).filter(canalTemCadastro);
       // compara o nome do canal sem maiúsculas/acento ("Tiktok" = "TikTok")
       const idxCanal = new Map<string, number>(listaCanais.map((c, i) => [normalizarNomeCanal(c), i]));
 
@@ -170,7 +171,7 @@ export default function MapeamentoPage() {
         buscarTudo("vendas_canais", "canal, sku"),
       ]);
       if (regras.error) throw new Error(regras.error.message);
-      const listaCanais = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal)));
+      const listaCanais = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal))).filter(canalTemCadastro);
       const skusBase = new Set<string>(tiny.map((t: any) => normalizarSkuVenda(t.sku)));
       const r = pendentesDeRegistro({ vendas, canais: listaCanais, presentes: mapas, skusBase });
 
@@ -188,7 +189,8 @@ export default function MapeamentoPage() {
       const detalhe = Array.from(porCanal.entries()).map(([c, q]) => `${c}: ${q}`).join(" · ");
       const extras: string[] = [];
       if (r.foraDaBase.length) extras.push(`${r.foraDaBase.length} SKU(s) vendido(s) não estão na base do Tiny e não foram registrados`);
-      if (r.canaisSemCadastro.length) extras.push(`vendas em canal(is) sem cadastro na lista: ${r.canaisSemCadastro.join(", ")}`);
+      const semLista = r.canaisSemCadastro.filter(canalTemCadastro);
+      if (semLista.length) extras.push(`vendas em canal(is) sem cadastro na lista: ${semLista.join(", ")}`);
       const base = linhas.length
         ? `✅ ${linhas.length} SKU(s) com venda foram registrados como cadastrados (${detalhe}).`
         : "Vendas conferidas: nenhum SKU vendido estava faltando como cadastrado.";

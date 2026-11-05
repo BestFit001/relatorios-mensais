@@ -14,6 +14,9 @@ export function normalizarSkuVenda(valor: any): string {
   return s.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 }
 
+/** Canais que não têm catálogo/cadastro (ex.: Clube Hebraica, Clube Paineiras): ficam fora do Mapa de Cadastros. */
+export const canalTemCadastro = (nome: any): boolean => !normalizarNomeCanal(nome).startsWith("clube");
+
 // Nome usado nas vendas -> nome usado na lista de canais
 const ALIAS_CANAL: Record<string, string> = { magalu: "magazineluiza" };
 

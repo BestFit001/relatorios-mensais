@@ -9,7 +9,7 @@ import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
 import { buscarTudo } from "@/lib/buscarTudo";
 import { indiceDaLetra, lerEstoque, normalizarSkuEstoque } from "@/lib/cobertura";
-import { normalizarNomeCanal } from "@/lib/vendasCanaisLogica";
+import { canalTemCadastro, normalizarNomeCanal } from "@/lib/vendasCanaisLogica";
 
 type Letras = { sku: string; estoque: string; status_sku: string; status_valor: string };
 type Aviso = { tipo: "ok" | "erro"; texto: string } | null;
@@ -266,7 +266,7 @@ export default function ConfigMapaCadastros({
             className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-xl cursor-pointer disabled:opacity-40">+ Adicionar canal</button>
         </form>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {canais.map((r) => (
+          {canais.filter((r) => canalTemCadastro(r.canal)).map((r) => (   // canais sem catálogo (clubes) não têm upload
             <div key={r.id} data-canal-card={r.canal} className="bg-slate-950 p-5 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
               <div className="flex justify-between items-center">
                 <span className="font-bold text-white text-sm">{r.canal}</span>
