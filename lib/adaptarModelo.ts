@@ -120,19 +120,19 @@ export function lerRespostaAdaptacao(texto: any, totalModelos: number): Resposta
 }
 
 /** Traduz um erro da chamada ao Gemini em uma frase que o usuário entende (e diz se vale tentar de novo). Nunca inclui a chave. */
-export function analisarErroIA(e: any): { motivo: string; transitorio: boolean } {
+export function analisarErroIA(e: any): { motivo: string; transitorio: boolean; status: number } {
   const bruto = String(e?.message ?? e ?? "");
   let msg = bruto;
   try { const j = JSON.parse(bruto); msg = String(j?.error?.message ?? j?.message ?? bruto); } catch { /* texto simples */ }
   msg = msg.replace(/AIza[0-9A-Za-z_\-]{20,}/g, "***").replace(/\s+/g, " ").trim().slice(0, 160);
   const status = Number(e?.status ?? e?.code ?? (bruto.match(/\b(4\d\d|5\d\d)\b/)?.[1] ?? 0)) || 0;
-  if (/sem resposta em/i.test(bruto)) return { motivo: `o Gemini demorou demais (${msg})`, transitorio: true };
-  if (status === 429 || /quota|rate.?limit|resource.?exhausted/i.test(bruto)) return { motivo: `limite/cota do Gemini estourado (erro 429): ${msg}`, transitorio: true };
-  if (status === 401 || status === 403 || /api key|permission/i.test(bruto)) return { motivo: `o Gemini recusou a chave (erro ${status || 403}): ${msg}. Confira a GEMINI_API_KEY no Vercel`, transitorio: false };
-  if (status === 404) return { motivo: `o Gemini não encontrou o modelo (erro 404): ${msg}`, transitorio: false };
-  if (status === 400) return { motivo: `o Gemini recusou o pedido (erro 400): ${msg}`, transitorio: false };
-  if (status >= 500) return { motivo: `o Gemini está indisponível (erro ${status}): ${msg}`, transitorio: true };
-  return { motivo: `falha ao falar com o Gemini: ${msg || "erro desconhecido"}`, transitorio: true };
+  if (/sem resposta em/i.test(bruto)) return { motivo: `o Gemini demorou demais (${msg})`, transitorio: true, status: 0 };
+  if (status === 429 || /quota|rate.?limit|resource.?exhausted/i.test(bruto)) return { motivo: `limite/cota do Gemini estourado (erro 429): ${msg}`, transitorio: true, status };
+  if (status === 401 || status === 403 || /api key|permission/i.test(bruto)) return { motivo: `o Gemini recusou a chave (erro ${status || 403}): ${msg}. Confira a GEMINI_API_KEY no Vercel`, transitorio: false, status };
+  if (status === 404) return { motivo: `o Gemini não encontrou o modelo (erro 404): ${msg}`, transitorio: false, status };
+  if (status === 400) return { motivo: `o Gemini recusou o pedido (erro 400): ${msg}`, transitorio: false, status };
+  if (status >= 500) return { motivo: `o Gemini está indisponível (erro ${status}): ${msg}`, transitorio: true, status };
+  return { motivo: `falha ao falar com o Gemini: ${msg || "erro desconhecido"}`, transitorio: true, status };
 }
 
 export const MOTIVO_SEM_CHAVE = "a chave do Gemini não está configurada no Vercel (variável GEMINI_API_KEY)";

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { medidasDoProduto, modeloParecido, nomesEquivalentes, rankearModelos } from "../../../lib/padroesAnuncios";
 import { ajustarTitulo, analisarErroIA, lerRespostaAdaptacao, montarPedidoAdaptacao, motivoRespostaInvalida, MOTIVO_SEM_CHAVE, slugDoTitulo, type RespostaAdaptacao } from "../../../lib/adaptarModelo";
 import { normSkuPai } from "../../../lib/dimensoesPeso";
@@ -80,16 +80,22 @@ interface ConteudoPai {
   motivoIA?: string;
 }
 
-/** Pede à IA a adaptação do modelo; tenta de novo uma vez se o erro for passageiro (limite, demora, resposta fora do formato). */
+/**
+ * Pede à IA a adaptação do modelo. O Gemini 3.8 Flash "pensa" em nível médio por padrão, o que demora; para esta tarefa
+ * (comparar e reescrever) o nível baixo basta e responde bem mais rápido. Tenta de novo uma vez em erro passageiro
+ * (limite, demora, formato) e, se o Gemini recusar o parâmetro de raciocínio (erro 400), refaz sem ele.
+ */
 async function pedirAdaptacao(ai: GoogleGenAI, pedido: string, totalModelos: number): Promise<{ r: RespostaAdaptacao | null; motivo: string }> {
-  const limites = [26000, 20000];   // 2 tentativas cabem nos 60 s da função
+  const limites = [30000, 22000];   // 2 tentativas cabem nos 60 s da função
   let motivo = "";
+  let raciocinioBaixo = true;
   for (let t = 0; t < limites.length; t++) {
     try {
-      const resposta: any = await comTimeout(
-        ai.models.generateContent({ model: "gemini-3.8-flash", contents: [pedido], config: { responseMimeType: "application/json" } }),
-        limites[t]
-      );
+      const config: any = { responseMimeType: "application/json" };
+      if (raciocinioBaixo) config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+      const inicio = Date.now();
+      const resposta: any = await comTimeout(ai.models.generateContent({ model: "gemini-3.8-flash", contents: [pedido], config }), limites[t]);
+      console.log(`IA (adaptar modelo): resposta em ${Date.now() - inicio} ms (raciocínio ${raciocinioBaixo ? "baixo" : "padrão"})`);
       const r = lerRespostaAdaptacao(resposta?.text, totalModelos);
       if (r) return { r, motivo: "" };
       motivo = motivoRespostaInvalida(resposta?.text);
@@ -98,6 +104,7 @@ async function pedirAdaptacao(ai: GoogleGenAI, pedido: string, totalModelos: num
       const a = analisarErroIA(e);
       motivo = a.motivo;
       console.error("Erro na IA (adaptar modelo):", e);
+      if (a.status === 400 && raciocinioBaixo) { raciocinioBaixo = false; continue; }   // refaz sem o parâmetro de raciocínio
       if (!a.transitorio) break;
     }
   }
@@ -238,7 +245,7 @@ ${INSTRUCAO_FORMATO_DESCRICAO}
 DADOS DO PRODUTO:
 - Nome/Título: ${nomePaiFormatado}
 - Marca: ${marcaPai}`;
-      const resposta: any = await comTimeout(ai.models.generateContent({ model: "gemini-3.8-flash", contents: [prompt] }), LIMITE_IA_MS);
+      const resposta: any = await comTimeout(ai.models.generateContent({ model: "gemini-3.8-flash", contents: [prompt], config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } }), LIMITE_IA_MS);
       if (resposta?.text) return { descricao: limparDescricao(resposta.text), fonte: "ia", padrao: null };
       motivoIA = "o Gemini devolveu uma resposta vazia";
     } catch (e) {
