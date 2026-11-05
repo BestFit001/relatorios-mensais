@@ -27,7 +27,7 @@ export const OPCOES_RETORNO = [
 export const COLUNAS_COBERTURA: { id: string; nome: string }[] = [
   { id: "codigo", nome: "Código" },
   { id: "produto", nome: "Produto" },
-  { id: "vendas", nome: "Vendas" },
+  { id: "vendas", nome: "Vendas (unidades)" },
   { id: "valor", nome: "Valor" },
   { id: "pct_individual", nome: "% Individual" },
   { id: "pct_acumulado", nome: "% Acumulado" },

@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
 import {
   COLUNAS_COBERTURA, OPCOES_RETORNO, TODOS_STATUS, STATUS_SUGESTAO, STATUS_VALIDAR,
-  calcularCobertura, corCoberturaDias, corCoberturaMeses, indiceDaLetra, lerEstoque, rotulosDasColunas,
+  calcularCobertura, normalizarSkuEstoque, corCoberturaDias, corCoberturaMeses, indiceDaLetra, lerEstoque, rotulosDasColunas,
 } from "@/lib/cobertura";
 
 export interface LinhaABC {
@@ -91,7 +91,8 @@ export default function CoberturaEstoque({
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroCurva, setFiltroCurva] = useState("TODAS");
   const [filtroRetorno, setFiltroRetorno] = useState("TODOS");
-  const [ordem, setOrdem] = useState<"FAT" | "COBERTURA">("FAT");
+  const [ordem, setOrdem] = useState<"FAT" | "QTD" | "QTD_ASC" | "VALOR" | "PDV" | "COBERTURA">("FAT");
+  const [busca, setBusca] = useState("");
   const [pagina, setPagina] = useState(1);
 
   // upload do estoque do Tiny
@@ -145,15 +146,23 @@ export default function CoberturaEstoque({
   }), [linhas, estoque, retornos, dias]);
 
   const filtradas = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    const termoNorm = normalizarSkuEstoque(busca);
     let r = dados.filter((d) =>
+      (!termo || d.sku.toLowerCase().includes(termo) || (!!termoNorm && d.skuNorm.includes(termoNorm)) || d.titulo.toLowerCase().includes(termo)) &&
       (filtroStatus === "TODOS" || d.status === filtroStatus) &&
       (filtroCurva === "TODAS" || d.curva === filtroCurva) &&
       (filtroRetorno === "TODOS" || (filtroRetorno === "SEM" ? !d.retorno : !!d.retorno)));
+    const pdvUn = (d: { qtd: number; revenue: number }) => (d.qtd > 0 ? d.revenue / d.qtd : 0);
     if (ordem === "COBERTURA") r = [...r].sort((a, b) => a.coberturaDias - b.coberturaDias || b.revenue - a.revenue);
+    else if (ordem === "QTD") r = [...r].sort((a, b) => b.qtd - a.qtd || b.revenue - a.revenue);
+    else if (ordem === "QTD_ASC") r = [...r].sort((a, b) => a.qtd - b.qtd || a.revenue - b.revenue);
+    else if (ordem === "VALOR") r = [...r].sort((a, b) => b.revenue - a.revenue);
+    else if (ordem === "PDV") r = [...r].sort((a, b) => pdvUn(b) - pdvUn(a) || b.revenue - a.revenue);
     return r;
-  }, [dados, filtroStatus, filtroCurva, filtroRetorno, ordem]);
+  }, [dados, filtroStatus, filtroCurva, filtroRetorno, ordem, busca]);
 
-  useEffect(() => { setPagina(1); }, [filtroStatus, filtroCurva, filtroRetorno, ordem, linhas, dias]);
+  useEffect(() => { setPagina(1); }, [filtroStatus, filtroCurva, filtroRetorno, ordem, busca, linhas, dias]);
   const totalPaginas = Math.max(1, Math.ceil(filtradas.length / POR_PAGINA));
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = filtradas.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
@@ -320,6 +329,12 @@ export default function CoberturaEstoque({
         )}
 
         <div className="flex flex-wrap gap-2 ml-auto items-center">
+          <div className="flex gap-2 items-center bg-slate-950 border border-slate-700 rounded-xl px-2 py-2">
+            <span className="text-slate-400 text-xs">🔍</span>
+            <input type="text" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Pesquisar SKU ou produto…" data-busca-sku
+              className="bg-transparent text-slate-200 font-bold text-xs outline-none w-44" />
+            {busca && <button type="button" onClick={() => setBusca("")} title="Limpar" className="text-slate-500 hover:text-slate-200 text-xs cursor-pointer">✕</button>}
+          </div>
           <select value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)} data-filtro-status className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-200 outline-none cursor-pointer">
             <option value="TODOS">Todos os status</option>
             {TODOS_STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -331,7 +346,12 @@ export default function CoberturaEstoque({
             <option value="TODOS">Retorno: todos</option><option value="SEM">Sem retorno</option><option value="COM">Com retorno</option>
           </select>
           <select value={ordem} onChange={(e) => setOrdem(e.target.value as any)} data-ordem className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-200 outline-none cursor-pointer">
-            <option value="FAT">Ordem: faturamento (Curva ABC)</option><option value="COBERTURA">Ordem: menor cobertura primeiro</option>
+            <option value="FAT">Ordem: faturamento (Curva ABC)</option>
+            <option value="QTD">Ordem: mais vendidos (unidades)</option>
+            <option value="QTD_ASC">Ordem: menos vendidos (unidades)</option>
+            <option value="VALOR">Ordem: maior valor vendido (R$)</option>
+            <option value="PDV">Ordem: maior PDV (preço médio por unidade)</option>
+            <option value="COBERTURA">Ordem: menor cobertura primeiro</option>
           </select>
         </div>
       </div>

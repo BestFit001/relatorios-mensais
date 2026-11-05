@@ -380,6 +380,8 @@ export default function CurvaABCPage() {
       return true;
     };
     const skus = todos.filter((s: any) => passa(s.skuNorm, s.sku, s.titulo, s.marca));
+    // Cobertura de Estoque tem a própria pesquisa: recebe os SKUs do período/canal/marca, sem a busca do topo
+    const skusCobertura = todos.filter((s: any) => selectedBrand === "TODAS" || s.marca === selectedBrand);
     const skuVisivel = new Set(skus.map((s: any) => s.skuNorm));
     const linhasFiltradas = atual.filter((l) => skuVisivel.has(l.skuNorm));
 
@@ -435,7 +437,7 @@ export default function CurvaABCPage() {
     devolucoes.forEach((d) => { const k = normalizarPedido(d.pedido); if (k) devPorPedido[k] = (devPorPedido[k] || 0) + num(d.pdv); });
 
     return {
-      atual, canceladas, linhasFiltradas, skus, brandStats, devPorPedido, diasPeriodo,
+      atual, canceladas, linhasFiltradas, skus, skusCobertura, brandStats, devPorPedido, diasPeriodo,
       kpis: {
         faturamentoTotal: fat, lucroTotal: luc, devolucoesTotal: dev, unidades: qtd, pedidos: pedidosSet.size,
         ticketPedido: pedidosSet.size > 0 ? fat / pedidosSet.size : 0,
@@ -452,7 +454,7 @@ export default function CurvaABCPage() {
     };
   }, [linhasBase, chavesVendas, custosMap, devolucoes, cancelados, dateFilter, customStartDate, customEndDate, mesRef, searchSku, selectedBrand, selectedChannel]);
 
-  const { skus, brandStats, kpis, linhasFiltradas, diasPeriodo } = analise;
+  const { skus, skusCobertura, brandStats, kpis, linhasFiltradas, diasPeriodo } = analise;
 
   // ----- Tabela principal: ordenação por Faturamento / Quantidade / Ticket / Lucro -----
   const skusOrdenados = useMemo(() => {
@@ -616,6 +618,7 @@ export default function CurvaABCPage() {
         {subAba !== "config" && (
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-slate-900/90 p-5 rounded-2xl border border-slate-800 gap-4 shadow-xl">
           <div className="flex flex-wrap gap-3 items-center w-full">
+            {subAba !== "cobertura" && (
             <div className="flex gap-2 items-center bg-slate-950 p-2 rounded-xl border border-slate-800 w-full sm:w-auto">
               <span className="text-slate-400 text-xs">🔍</span>
               <input
@@ -626,6 +629,7 @@ export default function CurvaABCPage() {
                 className="bg-transparent text-slate-200 font-bold text-xs outline-none w-full sm:w-36"
               />
             </div>
+            )}
 
             <div className="flex gap-2 items-center bg-slate-950 p-2 rounded-xl border border-slate-800 w-full sm:w-auto">
               <span className="text-sky-400 text-xs">🏪</span>
@@ -708,7 +712,7 @@ export default function CurvaABCPage() {
 
         {subAba === "cobertura" && (
           <CoberturaEstoque
-            linhas={skus.map((s: any) => ({
+            linhas={skusCobertura.map((s: any) => ({
               sku: String(s.sku ?? ""), skuNorm: s.skuNorm, titulo: s.titulo, marca: s.marca,
               qtd: s.qtd, revenue: s.revenue, pctRepresentatividade: s.pctRepresentatividade, pctAcumulada: s.pctAcumulada, curva: s.curva,
             }))}
