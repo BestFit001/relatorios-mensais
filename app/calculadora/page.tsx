@@ -89,6 +89,13 @@ export default function CalculadoraPage() {
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
   const [canaisSelecionados, setCanaisSelecionados] = useState<string[]>([]);
 
+  const [subAba, setSubAba] = useState<"calculadora" | "lote">("calculadora");
+  // correção de custo (lápis) do produto buscado
+  const [editandoCusto, setEditandoCusto] = useState(false);
+  const [custoEdit, setCustoEdit] = useState("");
+  const [salvandoCusto, setSalvandoCusto] = useState(false);
+  const [avisoCusto, setAvisoCusto] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+
   // Precificação em lote (planilha de SKUs)
   const [custosTodos, setCustosTodos] = useState<Map<string, any>>(new Map());
   const [canalLote, setCanalLote] = useState("Mercado Livre 1 Clássico");
@@ -226,6 +233,7 @@ export default function CalculadoraPage() {
       alert("Digite um SKU válido com pelo menos 10 dígitos.");
       return;
     }
+    setEditandoCusto(false); setAvisoCusto(null);
     const match = custosMap.get(key);
     if (match) {
       setProdutoEncontrado(match);
@@ -237,6 +245,36 @@ export default function CalculadoraPage() {
         custo_unitario: 25.88
       });
     }
+  };
+
+  // o produto buscado existe na base de custos (tem id)?  Se não, é só uma simulação com custo padrão.
+  const produtoNaBase = Boolean(produtoEncontrado?.id);
+
+  const abrirEdicaoCusto = () => {
+    if (!produtoEncontrado) return;
+    setCustoEdit(Number(produtoEncontrado.custo_unitario || 0).toFixed(2).replace(".", ","));
+    setAvisoCusto(null);
+    setEditandoCusto(true);
+  };
+
+  const salvarCustoProduto = async () => {
+    if (!produtoEncontrado?.id) return;
+    const novo = parseNumero(custoEdit);
+    if (!(novo > 0)) { setAvisoCusto({ tipo: "erro", texto: "Informe um custo válido (maior que zero)." }); return; }
+    setSalvandoCusto(true);
+    const antigo = Number(produtoEncontrado.custo_unitario || 0);
+    const { error } = await supabase.from("tabela_custos_skus").update({ custo_unitario: novo }).eq("id", produtoEncontrado.id);
+    setSalvandoCusto(false);
+    if (error) { setAvisoCusto({ tipo: "erro", texto: "Não consegui salvar o custo: " + error.message }); return; }
+    // a base passa a ter o custo novo (calculadora, lote e demais telas leem esta tabela)
+    const atualizado = { ...produtoEncontrado, custo_unitario: novo };
+    const key = normalizarSku(produtoEncontrado.sku);
+    setCustosMap((m) => (m.has(key) ? new Map(m).set(key, atualizado) : m));
+    setCustosTodos((m) => new Map(m).set(key, atualizado));
+    setProdutoEncontrado(atualizado);
+    setResultadoLote(null);
+    setEditandoCusto(false);
+    setAvisoCusto({ tipo: "ok", texto: `Custo atualizado na base: ${formatarMoeda(antigo)} → ${formatarMoeda(novo)}.` });
   };
 
   const toggleCanalSelecao = (canalNome: string) => {
@@ -613,6 +651,19 @@ export default function CalculadoraPage() {
           <Navbar />
         </div>
 
+        <div className="flex flex-wrap gap-2 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit" data-subabas-calc>
+          <button data-subaba="calculadora" onClick={() => setSubAba("calculadora")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${subAba === "calculadora" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"}`}>
+            🧮 Calculadora
+          </button>
+          <button data-subaba="lote" onClick={() => setSubAba("lote")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${subAba === "lote" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"}`}>
+            📑 Precificação em lote
+          </button>
+        </div>
+
+        {subAba === "calculadora" && (
+          <>
         <div className="flex flex-wrap gap-2 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
           <button
             onClick={() => setModoCalculo("pdv_ideal")}
@@ -759,71 +810,6 @@ export default function CalculadoraPage() {
           </div>
         </div>
 
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-indigo-500/30 shadow-xl space-y-4" data-lote>
-          <div>
-            <h2 className="text-sm font-black text-white">📑 Precificação em lote (planilha de SKUs)</h2>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              Suba uma planilha com os SKUs na <strong>coluna A</strong>, escolha o canal e a margem. A calculadora aplica a regra do canal (comissão, tarifa, frete e imposto de 9%)
-              e devolve uma planilha com o SKU na coluna A e o <strong>PDV</strong> na coluna B. SKU sem custo na aba de custos recebe &quot;sem custo na base&quot;.
-            </p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-            <div>
-              <label className="block text-[10px] font-bold text-sky-400 uppercase mb-1">Canal:</label>
-              <select
-                value={canalLote}
-                onChange={(e) => { setCanalLote(e.target.value); setResultadoLote(null); }}
-                data-lote-canal
-                className="w-full bg-slate-950 border border-sky-600/50 rounded-xl p-2.5 text-xs font-bold text-sky-300 outline-none cursor-pointer"
-              >
-                {canaisConfig.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem desejada (%):</label>
-              <input
-                type="number"
-                value={margemLote}
-                onChange={(e) => { setMargemLote(e.target.value); setResultadoLote(null); }}
-                data-lote-margem
-                className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de SKUs (xlsx, xls, csv...):</label>
-              <input
-                type="file"
-                data-lote-arquivo
-                disabled={processandoLote || loading}
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadLote(f); e.target.value = ""; }}
-                className="w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-indigo-600 file:text-white file:font-bold file:cursor-pointer cursor-pointer"
-              />
-            </div>
-          </div>
-          {parseNumero(rebatesCanais[canalLote] || "0") > 0 && (
-            <p className="text-[11px] text-purple-300">Rebate de R$ {parseNumero(rebatesCanais[canalLote]).toFixed(2)} informado em {canalLote} será considerado no cálculo.</p>
-          )}
-          {processandoLote && <p className="text-xs text-slate-400">Calculando...</p>}
-          {erroLote && <p className="text-xs font-bold text-rose-400" data-lote-erro>{erroLote}</p>}
-          {resultadoLote && (
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl p-4" data-lote-resultado>
-              <div className="text-xs text-slate-300 space-y-0.5">
-                <p><strong className="text-white">{resultadoLote.total}</strong> SKU(s) lidos · <strong className="text-emerald-400">{resultadoLote.calculados}</strong> com PDV calculado ({resultadoLote.canal}, margem {resultadoLote.margem}%)</p>
-                {resultadoLote.semCusto > 0 && <p className="text-amber-400"><strong>{resultadoLote.semCusto}</strong> sem custo na base</p>}
-                {resultadoLote.inviaveis > 0 && <p className="text-rose-400"><strong>{resultadoLote.inviaveis}</strong> com margem inviável para o canal (comissão + imposto + margem ≥ 100%)</p>}
-              </div>
-              <button
-                type="button"
-                onClick={baixarResultadoLote}
-                data-lote-baixar
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow"
-              >
-                ⬇️ Baixar planilha (SKU + PDV)
-              </button>
-            </div>
-          )}
-        </div>
-
         {produtoEncontrado && (
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -840,12 +826,39 @@ export default function CalculadoraPage() {
             </div>
             <div>
               <span className="block text-[9px] font-bold text-slate-500 uppercase">Custo Base Atual (CMV)</span>
-              <span className="text-xs font-mono font-bold text-rose-400">{formatarMoeda(produtoEncontrado.custo_unitario)}</span>
+              {editandoCusto ? (
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <input
+                    type="text" inputMode="decimal" autoFocus value={custoEdit} data-custo-calc-input
+                    onChange={(e) => setCustoEdit(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") salvarCustoProduto(); if (e.key === "Escape") setEditandoCusto(false); }}
+                    className="w-24 bg-slate-950 border border-indigo-500/60 rounded-lg px-2 py-1 text-xs font-mono font-bold text-white outline-none"
+                  />
+                  <button type="button" onClick={salvarCustoProduto} disabled={salvandoCusto} data-custo-calc-salvar
+                    className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-[11px] font-bold px-2.5 py-1 rounded-lg cursor-pointer">{salvandoCusto ? "..." : "Salvar"}</button>
+                  <button type="button" onClick={() => setEditandoCusto(false)} disabled={salvandoCusto}
+                    className="bg-slate-800 text-slate-200 text-[11px] font-bold px-2.5 py-1 rounded-lg cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold text-rose-400" data-custo-calc-valor>{formatarMoeda(produtoEncontrado.custo_unitario)}</span>
+                  {produtoNaBase && (
+                    <button type="button" onClick={abrirEdicaoCusto} data-editar-custo-calc title="Corrigir o custo deste produto na base"
+                      className="text-sm leading-none cursor-pointer hover:scale-110 transition-transform">✏️</button>
+                  )}
+                </span>
+              )}
             </div>
             <div className="bg-emerald-950/40 border border-emerald-900/50 px-3 py-1.5 rounded-xl">
               <span className="block text-[9px] font-bold text-emerald-400 uppercase">Status do Item</span>
               <span className="text-xs font-bold text-emerald-300">LINHA NORMAL (Ativo)</span>
             </div>
+            {!produtoNaBase && (
+              <p className="basis-full text-[11px] text-amber-400" data-sku-fora-base>SKU fora da base de custos: o cálculo usa um custo padrão só para simular. Cadastre o SKU em Uploads &gt; Custos por SKU para corrigir o custo.</p>
+            )}
+            {avisoCusto && (
+              <p className={`basis-full text-[11px] font-bold ${avisoCusto.tipo === "ok" ? "text-emerald-400" : "text-rose-400"}`} data-aviso-custo>{avisoCusto.tipo === "ok" ? "✅ " : "⚠️ "}{avisoCusto.texto}</p>
+            )}
           </div>
         )}
 
@@ -940,6 +953,77 @@ export default function CalculadoraPage() {
             </div>
           ))}
         </div>
+
+          </>
+        )}
+
+        {subAba === "lote" && (
+        <div className="bg-slate-900/90 p-6 rounded-2xl border border-indigo-500/30 shadow-xl space-y-4" data-lote>
+          <div>
+            <h2 className="text-sm font-black text-white">📑 Precificação em lote (planilha de SKUs)</h2>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Suba uma planilha com os SKUs na <strong>coluna A</strong>, escolha o canal e a margem. A calculadora aplica a regra do canal (comissão, tarifa, frete e imposto de 9%)
+              e devolve uma planilha com o SKU na coluna A e o <strong>PDV</strong> na coluna B. SKU sem custo na aba de custos recebe &quot;sem custo na base&quot;.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+            <div>
+              <label className="block text-[10px] font-bold text-sky-400 uppercase mb-1">Canal:</label>
+              <select
+                value={canalLote}
+                onChange={(e) => { setCanalLote(e.target.value); setResultadoLote(null); }}
+                data-lote-canal
+                className="w-full bg-slate-950 border border-sky-600/50 rounded-xl p-2.5 text-xs font-bold text-sky-300 outline-none cursor-pointer"
+              >
+                {canaisConfig.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Margem desejada (%):</label>
+              <input
+                type="number"
+                value={margemLote}
+                onChange={(e) => { setMargemLote(e.target.value); setResultadoLote(null); }}
+                data-lote-margem
+                className="w-full bg-slate-950 border border-amber-600/50 rounded-xl p-2.5 text-xs font-mono text-amber-300 font-bold outline-none"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de SKUs (xlsx, xls, csv...):</label>
+              <input
+                type="file"
+                data-lote-arquivo
+                disabled={processandoLote || loading}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadLote(f); e.target.value = ""; }}
+                className="w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-indigo-600 file:text-white file:font-bold file:cursor-pointer cursor-pointer"
+              />
+            </div>
+          </div>
+          {parseNumero(rebatesCanais[canalLote] || "0") > 0 && (
+            <p className="text-[11px] text-purple-300">Rebate de R$ {parseNumero(rebatesCanais[canalLote]).toFixed(2)} informado em {canalLote} será considerado no cálculo.</p>
+          )}
+          {processandoLote && <p className="text-xs text-slate-400">Calculando...</p>}
+          {erroLote && <p className="text-xs font-bold text-rose-400" data-lote-erro>{erroLote}</p>}
+          {resultadoLote && (
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl p-4" data-lote-resultado>
+              <div className="text-xs text-slate-300 space-y-0.5">
+                <p><strong className="text-white">{resultadoLote.total}</strong> SKU(s) lidos · <strong className="text-emerald-400">{resultadoLote.calculados}</strong> com PDV calculado ({resultadoLote.canal}, margem {resultadoLote.margem}%)</p>
+                {resultadoLote.semCusto > 0 && <p className="text-amber-400"><strong>{resultadoLote.semCusto}</strong> sem custo na base</p>}
+                {resultadoLote.inviaveis > 0 && <p className="text-rose-400"><strong>{resultadoLote.inviaveis}</strong> com margem inviável para o canal (comissão + imposto + margem ≥ 100%)</p>}
+              </div>
+              <button
+                type="button"
+                onClick={baixarResultadoLote}
+                data-lote-baixar
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow"
+              >
+                ⬇️ Baixar planilha (SKU + PDV)
+              </button>
+            </div>
+          )}
+        </div>
+
+        )}
 
       </div>
     </div>

@@ -194,20 +194,30 @@ export default function VideosPage() {
   const itensAtuaisVideos = itensUnificadosVideos.slice((paginaSegura - 1) * itensPorPaginaVideos, paginaSegura * itensPorPaginaVideos);
 
   // ---- período ----
-  const realizadosFiltradosPorPeriodo = cadastrosRealizados.filter((item) => {
+  // Unidade = a mesma da aba Vídeos/Clipes: um SKU Pai (cadastrados) ou um produto incluído manualmente.
+  //  - Cadastros no período: unidades cadastradas/incluídas dentro das datas (manuais entram pela data de inclusão)
+  //  - Produtos com vídeo: unidades com TODOS os canais ativos (Configurações) marcados
+  //  - Total de vídeos postados: quantidade de caixas marcadas (unidade x canal ativo)
+  const noPeriodo = (data: any) => {
     if (!dataInicio && !dataFim) return true;
-    const dataItem = new Date(item.data_cadastro || Date.now());
-    if (dataInicio && dataItem < new Date(dataInicio)) return false;
-    if (dataFim && dataItem > new Date(dataFim + "T23:59:59")) return false;
+    const d = new Date(data || Date.now());
+    if (dataInicio && d < new Date(dataInicio)) return false;
+    if (dataFim && d > new Date(dataFim + "T23:59:59")) return false;
     return true;
+  };
+  const unidadesPeriodoMap: { [pai: string]: any[] } = {};
+  cadastrosRealizados.filter((it) => noPeriodo(it.data_cadastro)).forEach((it) => {
+    const pai = paiDe(it);
+    (unidadesPeriodoMap[pai] = unidadesPeriodoMap[pai] || []).push(it);
   });
-  let produtosComVideo = 0;
-  let totalVideosPostados = 0;
-  realizadosFiltradosPorPeriodo.forEach((item) => {
-    const clipes = item.clipes_enviados || {};
-    const comClipes = canaisLista.filter((c) => clipes[c] && canaisComClipesConfig[c]);
-    if (comClipes.length > 0) { produtosComVideo += 1; totalVideosPostados += comClipes.length; }
-  });
+  const unidadesPeriodo: { tipo: "realizado" | "manual"; itens: any[] }[] = [
+    ...Object.values(unidadesPeriodoMap).map((itens) => ({ tipo: "realizado" as const, itens })),
+    ...produtosVideosManual.filter((it) => noPeriodo(it.created_at)).map((it) => ({ tipo: "manual" as const, itens: [it] })),
+  ];
+  const marcado = (itens: any[], canal: string) => itens.every((it) => Boolean((it.clipes_enviados || {})[canal]));
+  const totalCadastros = unidadesPeriodo.length;
+  const produtosComVideo = canaisAtivosClipes.length === 0 ? 0 : unidadesPeriodo.filter((u) => canaisAtivosClipes.every((c) => marcado(u.itens, c))).length;
+  const totalVideosPostados = unidadesPeriodo.reduce((soma, u) => soma + canaisAtivosClipes.filter((c) => marcado(u.itens, c)).length, 0);
 
   const abaCls = (ativa: boolean) => `px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${ativa ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"}`;
 
@@ -372,17 +382,18 @@ export default function VideosPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Cadastros no Período</span>
-                <p className="text-3xl font-black text-emerald-400 mt-2" data-total-cadastros>{realizadosFiltradosPorPeriodo.length}</p>
+                <p className="text-3xl font-black text-emerald-400 mt-2" data-total-cadastros>{totalCadastros}</p>
+                <span className="text-[10px] text-slate-500 mt-1 block">Cadastrados + incluídos manualmente</span>
               </div>
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Produtos com Vídeo</span>
                 <p className="text-3xl font-black text-purple-400 mt-2" data-produtos-com-video>{produtosComVideo}</p>
-                <span className="text-[10px] text-slate-500 mt-1 block">Vídeos produzidos únicos</span>
+                <span className="text-[10px] text-slate-500 mt-1 block">Com todos os canais ativos marcados</span>
               </div>
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Total Vídeos Postados</span>
                 <p className="text-3xl font-black text-indigo-400 mt-2" data-total-videos>{totalVideosPostados}</p>
-                <span className="text-[10px] text-slate-500 mt-1 block">Soma de posts em canais com clipe</span>
+                <span className="text-[10px] text-slate-500 mt-1 block">Itens marcados nos canais ativos</span>
               </div>
             </div>
           </div>
