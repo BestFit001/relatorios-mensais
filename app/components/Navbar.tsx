@@ -34,7 +34,8 @@ export default function Navbar() {
       pathname.startsWith("/padronizacao") || 
       pathname.startsWith("/dimensoes-peso") || 
       pathname.startsWith("/plp") ||
-      pathname.startsWith("/checagem-cancelados")
+      pathname.startsWith("/checagem-cancelados") ||
+      pathname.startsWith("/apresentacao-time")
     ) {
       setMenuExpandido("ferramentas");
     } else if (
@@ -473,13 +474,13 @@ export default function Navbar() {
           )}
 
           {/* FERRAMENTAS */}
-          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/dimensoes-peso") || temPermissao("/plp") || temPermissao("/checagem-cancelados")) && (
+          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/dimensoes-peso") || temPermissao("/plp") || temPermissao("/checagem-cancelados") || temPermissao("/apresentacao-time")) && (
             <div>
               <button
                 onClick={() => toggleSecao("ferramentas")}
                 title="Ferramentas"
                 className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname === "/calculadora" || pathname === "/produtos" || pathname === "/padronizacao" || pathname === "/dimensoes-peso" || pathname === "/plp" || pathname === "/checagem-cancelados"
+                  pathname === "/calculadora" || pathname === "/produtos" || pathname === "/padronizacao" || pathname === "/dimensoes-peso" || pathname === "/plp" || pathname === "/checagem-cancelados" || pathname === "/apresentacao-time"
                     ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
                     : "text-slate-400 hover:text-white hover:bg-slate-900/60"
                 }`}
@@ -525,6 +526,11 @@ export default function Navbar() {
                   {temPermissao("/checagem-cancelados") && (
                     <Link href="/checagem-cancelados" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/checagem-cancelados" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
                       Checagem de Cancelados
+                    </Link>
+                  )}
+                  {temPermissao("/apresentacao-time") && (
+                    <Link href="/apresentacao-time" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/apresentacao-time" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
+                      Apresentação Time
                     </Link>
                   )}
                 </div>
