@@ -241,9 +241,7 @@ export default function UpdatesPage() {
   const [mes, setMes] = useState("10");
   const [ano, setAno] = useState("2026");
   const [ficheiroABC, setFicheiroABC] = useState("");
-  const [ficheiroInventario, setFicheiroInventario] = useState("");
   const [dadosABC, setDadosABC] = useState<any[]>([]);
-  const [dadosInvBruto, setDadosInvBruto] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
   const [loadingDownloadCustos, setLoadingDownloadCustos] = useState(false);
@@ -279,7 +277,11 @@ export default function UpdatesPage() {
   const [skuEmLote, setSkuEmLote] = useState("");
   const [filtroPendentes, setFiltroPendentes] = useState<"todos" | "sem_sku" | "fora_base">("todos");
   // Cadastro rápido de custo (lápis) para SKUs que existem nas vendas mas não na base de custos
-  const [cadastroCusto, setCadastroCusto] = useState<{ sku: string; produto: string; marca: string; custo: string } | null>(null);
+  // `novo` = SKU digitado à mão (aba Custos); `vendas` = quantas linhas de venda serão atualizadas (vindo das pendentes)
+  const [cadastroCusto, setCadastroCusto] = useState<{ sku: string; produto: string; marca: string; custo: string; novo?: boolean; vendas?: number; skusOriginais?: string[] } | null>(null);
+  // edição de um custo já salvo (aba Custos)
+  const [editCusto, setEditCusto] = useState<{ id: number; sku: string; produtoOriginal: string; produto: string; marca: string; custo: string } | null>(null);
+  const [editCustoSalvando, setEditCustoSalvando] = useState(false);
   const [cadastroSalvando, setCadastroSalvando] = useState(false);
 
   const [mesUpload, setMesUpload] = useState("10");
@@ -420,10 +422,11 @@ export default function UpdatesPage() {
 
   // Itens com SKU preenchido que não existem na base de custos, agrupados por SKU
   const agruparForaDaBase = () => {
-    const mapa = new Map<string, { sku: string; produtos: string[]; canais: Set<string>; linhas: number; somaPreco: number }>();
+    const mapa = new Map<string, { sku: string; produtos: string[]; canais: Set<string>; linhas: number; somaPreco: number; skusOriginais: Set<string> }>();
     vendasPendentes.filter((v) => v.__foraBase).forEach((v) => {
       const sku = normalizarSku(v.sku);
-      const g = mapa.get(sku) || { sku, produtos: [], canais: new Set<string>(), linhas: 0, somaPreco: 0 };
+      const g = mapa.get(sku) || { sku, produtos: [], canais: new Set<string>(), linhas: 0, somaPreco: 0, skusOriginais: new Set<string>() };
+      g.skusOriginais.add(String(v.sku ?? ""));
       const nome = String(v.produto ?? "").trim();
       if (nome && isNaN(Number(nome)) && !g.produtos.includes(nome)) g.produtos.push(nome);
       g.canais.add(String(v.canal || ""));
@@ -434,54 +437,78 @@ export default function UpdatesPage() {
     return Array.from(mapa.values());
   };
 
-  // Baixa a lista de SKUs fora da base já no layout do upload de custos (B=SKU, C=Produto, D=Marca, E=Custo)
-  const baixarItensForaDaBase = () => {
-    const grupos = agruparForaDaBase();
-    if (grupos.length === 0) return alert("Nenhum item fora da base de custos no momento.");
-    const linhas = grupos
-      .sort((a, b) => b.linhas - a.linhas)
-      .map((g, i) => [
-        i + 1, g.sku, g.produtos[0] || "", "", "", Array.from(g.canais).join(" / "), g.linhas, Number((g.somaPreco / g.linhas).toFixed(2)),
-      ]);
-    const ws = XLSX.utils.aoa_to_sheet([
-      ["#", "SKU", "PRODUTO", "MARCA", "CUSTO UNITÁRIO", "CANAIS", "LINHAS DE VENDA", "PREÇO MÉDIO"],
-      ...linhas,
-    ]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Fora da base");
-    XLSX.writeFile(wb, `itens_fora_da_base_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
-
   const abrirCadastroCusto = (item: any) => {
     const nome = String(item.produto ?? "").trim();
-    setCadastroCusto({ sku: normalizarSku(item.sku), produto: nome && isNaN(Number(nome)) ? nome : "", marca: "BEST FIT", custo: "" });
+    const sku = normalizarSku(item.sku);
+    const grupo = agruparForaDaBase().find((g) => g.sku === sku);
+    setCadastroCusto({
+      sku, produto: nome && isNaN(Number(nome)) ? nome : "", marca: "BEST FIT", custo: "",
+      vendas: grupo?.linhas, skusOriginais: grupo ? Array.from(grupo.skusOriginais) : undefined,
+    });
+  };
+
+  const abrirCadastroGrupo = (g: { sku: string; produtos: string[]; linhas: number; skusOriginais: Set<string> }) => {
+    setCadastroCusto({ sku: g.sku, produto: g.produtos[0] || "", marca: "BEST FIT", custo: "", vendas: g.linhas, skusOriginais: Array.from(g.skusOriginais) });
   };
 
   const salvarCadastroCusto = async () => {
     if (!cadastroCusto) return;
+    const sku = normalizarSku(cadastroCusto.sku);
     const produto = cadastroCusto.produto.trim();
     const marca = cadastroCusto.marca.trim() || "BEST FIT";
     const custoTxt = cadastroCusto.custo.trim();
-    if (!produto) return alert("Informe o nome do produto.");
+    if (!sku) return alert("Informe o SKU.");
+    if (!produto) return alert("Informe o título do produto.");
     if (!custoTxt) return alert("Informe o custo unitário.");
     const custo = parseSmartFloat(custoTxt);
     if (!(custo > 0)) return alert("Informe um custo unitário válido (maior que zero).");
 
     setCadastroSalvando(true);
     try {
+      if (cadastroCusto.novo) {
+        const { data: jaExiste } = await supabase.from("tabela_custos_skus").select("id").eq("sku", sku).maybeSingle();
+        if (jaExiste) { setCadastroSalvando(false); return alert(`O SKU ${sku} já está cadastrado. Pesquise por ele na lista e use “Editar”.`); }
+      }
       const { error } = await supabase
         .from("tabela_custos_skus")
-        .upsert({ sku: cadastroCusto.sku, produto, marca, custo_unitario: custo }, { onConflict: "sku" });
+        .upsert({ sku, produto, marca, custo_unitario: custo }, { onConflict: "sku" });
       if (error) throw error;
-      // As vendas desse SKU passam a mostrar o nome cadastrado
-      await supabase.from("vendas_canais").update({ produto }).eq("sku", cadastroCusto.sku);
+      // Todas as vendas desse SKU passam a mostrar o título cadastrado (o custo é lido da base por SKU)
+      const skusDasVendas = Array.from(new Set([sku, ...(cadastroCusto.skusOriginais || [])])).filter(Boolean);
+      for (let k = 0; k < skusDasVendas.length; k += 50) {
+        await supabase.from("vendas_canais").update({ produto }).in("sku", skusDasVendas.slice(k, k + 50));
+      }
       setCadastroCusto(null);
       await carregarVendasPendentes();
       pesquisarCustosNoBanco();
     } catch (err: any) {
-      alert("Erro ao cadastrar o custo: " + err.message);
+      alert("Erro ao cadastrar o produto: " + err.message);
     }
     setCadastroSalvando(false);
+  };
+
+  const editarCusto = (item: any) =>
+    setEditCusto({ id: item.id, sku: item.sku, produtoOriginal: String(item.produto ?? ""), produto: String(item.produto ?? ""), marca: String(item.marca ?? ""), custo: String(Number(item.custo_unitario).toFixed(2)).replace(".", ",") });
+
+  const salvarEdicaoCusto = async () => {
+    if (!editCusto) return;
+    const produto = editCusto.produto.trim();
+    const marca = editCusto.marca.trim();
+    const custo = parseSmartFloat(editCusto.custo.trim());
+    if (!produto) return alert("O título não pode ficar vazio.");
+    if (!(custo > 0)) return alert("Informe um custo unitário válido (maior que zero).");
+    setEditCustoSalvando(true);
+    try {
+      const { error } = await supabase.from("tabela_custos_skus").update({ produto, marca, custo_unitario: custo }).eq("id", editCusto.id);
+      if (error) throw error;
+      // título novo vale também para as vendas desse SKU
+      if (produto !== editCusto.produtoOriginal.trim()) await supabase.from("vendas_canais").update({ produto }).eq("sku", editCusto.sku);
+      setListaCustosFiltrados((prev) => prev.map((c) => (c.id === editCusto.id ? { ...c, produto, marca, custo_unitario: custo } : c)));
+      setEditCusto(null);
+    } catch (err: any) {
+      alert("Erro ao salvar o custo: " + err.message);
+    }
+    setEditCustoSalvando(false);
   };
 
   const salvarSkuPendente = async (id: number, skuInput?: string) => {
@@ -1249,57 +1276,20 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  const processarInventario = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (dadosABC.length === 0) { alert("Processe primeiro a Curva ABC."); e.target.value = ""; return; }
-    setFicheiroInventario(file.name);
-    const skusPermitidos = new Set(dadosABC.map(item => String(item.codigo).trim()));
-    const reader = new FileReader();
-    reader.onload = (evento) => {
-      try {
-        const data = new Uint8Array(evento.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[];
-        const formatado = [];
-        for (let i = 0; i < json.length; i++) {
-          const row = json[i];
-          if (!row || row.length === 0) continue;
-          let skuEncontrado = "";
-          for (let col = 0; col < row.length; col++) {
-            const val = normalizarSku(row[col]);
-            if (skusPermitidos.has(val)) { skuEncontrado = val; break; }
-          }
-          if (skuEncontrado) {
-            const saldoVal = Number(row[row.length - 1] ?? 0);
-            formatado.push({ mes_referencia: mesReferencia, codigo_sku: skuEncontrado, saldo: isNaN(saldoVal) ? 0 : saldoVal });
-          }
-        }
-        setDadosInvBruto(formatado);
-        alert(`Inventário processado: ${formatado.length} SKUs identificados.`);
-      } catch (err: any) { alert("Erro ao ler Inventário: " + err.message); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
   const enviarParaBanco = async () => {
     if (dadosABC.length === 0) return;
     setLoading(true);
     await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
-    await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
     await supabase.from('curva_abc').insert(dadosABC);
-    if (dadosInvBruto.length > 0) await supabase.from('inventario').insert(dadosInvBruto);
     setLoading(false);
     alert(`🚀 Dados guardados no Supabase com sucesso!`);
-    setFicheiroABC(""); setFicheiroInventario(""); setDadosABC([]); setDadosInvBruto([]);
+    setFicheiroABC(""); setDadosABC([]);
   };
 
   const limparDadosCompetencia = async () => {
     if (!mesReferencia) return;
     setLoadingDelete(true);
     await supabase.from('curva_abc').delete().eq('mes_referencia', mesReferencia);
-    await supabase.from('inventario').delete().eq('mes_referencia', mesReferencia);
     setLoadingDelete(false);
     alert(`🗑 Dados limpos.`);
   };
@@ -1431,7 +1421,7 @@ export default function UpdatesPage() {
         {/* NAVEGAÇÃO DE ABAS */}
         <div className="flex flex-wrap gap-3 mb-6">
           <button onClick={() => setAbaAtiva("relatorios")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "relatorios" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
-            📊 Relatórios (ABC & Inventário)
+            📊 Relatórios (Curva ABC)
           </button>
           <button onClick={() => setAbaAtiva("custos")} className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${abaAtiva === "custos" ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>
             💰 Custos por SKU
@@ -1451,7 +1441,7 @@ export default function UpdatesPage() {
         {abaAtiva === "relatorios" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
             <h2 className="text-lg font-bold mb-1 text-white">Relatórios Mensais</h2>
-            <p className="text-xs text-slate-400 mb-6">Defina a competência e envie as planilhas mensais.</p>
+            <p className="text-xs text-slate-400 mb-6">Defina a competência e envie a Curva ABC do mês. Ela é usada pelo Full e pelo Ads como o total de vendas de cada SKU no mês.</p>
             <div className="bg-slate-950 p-6 rounded-xl border border-slate-800/80 mb-6">
               <div className="mb-6 border-b border-slate-800 pb-6">
                 <div className="flex justify-between items-center mb-3">
@@ -1469,19 +1459,12 @@ export default function UpdatesPage() {
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Curva ABC</label>
-                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia} onChange={processarABC} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-lg file:bg-indigo-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" />
-                  {ficheiroABC && <p className="mt-2 text-xs text-emerald-400 font-bold">✓ {ficheiroABC}</p>}
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Inventário</label>
-                  <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia || dadosABC.length === 0} onChange={processarInventario} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-lg file:bg-indigo-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" />
-                  {ficheiroInventario && <p className="mt-2 text-xs text-emerald-400 font-bold">✓ {ficheiroInventario}</p>}
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider">Curva ABC</label>
+                <input type="file" accept=".xls,.xlsx" disabled={!mesReferencia} onChange={processarABC} className="block w-full text-xs text-slate-400 file:py-2 file:px-4 file:rounded-lg file:bg-indigo-600 file:text-white cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-700" />
+                {ficheiroABC && <p className="mt-2 text-xs text-emerald-400 font-bold">✓ {ficheiroABC}</p>}
               </div>
-              {(dadosABC.length > 0 || dadosInvBruto.length > 0) && (
+              {dadosABC.length > 0 && (
                 <div className="mt-6 pt-5 border-t border-slate-800 flex justify-end">
                   <button onClick={enviarParaBanco} disabled={loading} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">
                     {loading ? "A gravar..." : "🚀 Gravar Dados no Supabase"}
@@ -1498,6 +1481,13 @@ export default function UpdatesPage() {
             <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
               <h2 className="text-lg font-bold text-white">Gestão de Custos Unitários por SKU</h2>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setCadastroCusto({ sku: "", produto: "", marca: "BEST FIT", custo: "", novo: true })}
+                  data-cadastrar-sku
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition shadow"
+                >
+                  ➕ Cadastrar SKU
+                </button>
                 <button 
                   onClick={baixarCustosExcel} 
                   disabled={loadingDownloadCustos}
@@ -1534,20 +1524,38 @@ export default function UpdatesPage() {
             <input type="text" value={pesquisaCusto} onChange={(e) => setPesquisaCusto(e.target.value)} placeholder="🔍 Pesquisar SKU..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none mb-4" />
             
             {pesquisaCusto.trim() !== "" && (
-              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[400px]">
+              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[400px]" data-tabela-custos>
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-950 text-slate-400 font-bold uppercase text-[10px]">
-                    <tr><th className="p-3">SKU</th><th className="p-3">Produto</th><th className="p-3">Custo Unitário</th><th className="p-3 text-center">Ações</th></tr>
+                    <tr><th className="p-3">SKU</th><th className="p-3">Produto</th><th className="p-3">Marca</th><th className="p-3">Custo Unitário</th><th className="p-3 text-center">Ações</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800">
-                    {listaCustosFiltrados.map(item => (
+                    {listaCustosFiltrados.map(item => editCusto?.id === item.id ? (
+                      <tr key={item.id} className="bg-indigo-950/30" data-linha-edicao>
+                        <td className="p-3 font-mono">{item.sku}</td>
+                        <td className="p-2"><input type="text" value={editCusto!.produto} onChange={(e) => { const v = e.target.value; setEditCusto((p) => (p ? { ...p, produto: v } : p)); }} data-edit-produto className="w-full min-w-[220px] bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none focus:border-indigo-500" /></td>
+                        <td className="p-2"><input type="text" value={editCusto!.marca} onChange={(e) => { const v = e.target.value; setEditCusto((p) => (p ? { ...p, marca: v } : p)); }} data-edit-marca className="w-full min-w-[110px] bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none focus:border-indigo-500" /></td>
+                        <td className="p-2"><input type="text" inputMode="decimal" value={editCusto!.custo} onChange={(e) => { const v = e.target.value; setEditCusto((p) => (p ? { ...p, custo: v } : p)); }} data-edit-custo className="w-28 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-indigo-500" /></td>
+                        <td className="p-2 text-center whitespace-nowrap">
+                          <button onClick={salvarEdicaoCusto} disabled={editCustoSalvando} data-salvar-edicao className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg font-bold cursor-pointer">{editCustoSalvando ? "Salvando..." : "Salvar"}</button>
+                          <button onClick={() => setEditCusto(null)} disabled={editCustoSalvando} className="ml-2 bg-slate-800 text-slate-200 px-3 py-1.5 rounded-lg font-bold cursor-pointer">Cancelar</button>
+                        </td>
+                      </tr>
+                    ) : (
                       <tr key={item.id} className="hover:bg-slate-800/40">
                         <td className="p-3 font-mono">{item.sku}</td>
                         <td className="p-3">{item.produto}</td>
+                        <td className="p-3 text-slate-300">{item.marca || "—"}</td>
                         <td className="p-3 font-mono text-emerald-400 font-bold">R$ {Number(item.custo_unitario).toFixed(2)}</td>
-                        <td className="p-3 text-center"><button onClick={() => excluirCusto(item.id)} className="text-rose-400 font-bold">Remover</button></td>
+                        <td className="p-3 text-center whitespace-nowrap">
+                          <button onClick={() => editarCusto(item)} data-editar-custo className="text-indigo-300 font-bold mr-4 cursor-pointer">✏️ Editar</button>
+                          <button onClick={() => excluirCusto(item.id)} className="text-rose-400 font-bold cursor-pointer">Remover</button>
+                        </td>
                       </tr>
                     ))}
+                    {listaCustosFiltrados.length === 0 && (
+                      <tr><td colSpan={5} className="p-6 text-center text-slate-500">Nenhum SKU encontrado. Use “Cadastrar SKU” para criar um novo.</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1713,11 +1721,41 @@ export default function UpdatesPage() {
                   {rotulo}
                 </button>
               ))}
-              <button type="button" onClick={baixarItensForaDaBase}
-                className="ml-auto bg-sky-700 hover:bg-sky-600 text-white font-bold px-4 py-1.5 rounded-lg text-[11px] uppercase tracking-wider cursor-pointer shadow">
-                ⬇️ Baixar itens fora da base ({agruparForaDaBase().length} SKU{agruparForaDaBase().length === 1 ? "" : "s"})
-              </button>
             </div>
+
+            {/* CADASTRAR PRODUTO: 1 linha por SKU fora da base (vale para todas as vendas dele) */}
+            {filtroPendentes !== "sem_sku" && agruparForaDaBase().length > 0 && (
+              <div className="rounded-xl border border-yellow-700/40 bg-slate-950/60" data-painel-fora-base>
+                <div className="px-4 py-3 border-b border-slate-800">
+                  <h3 className="text-xs font-black text-yellow-300 uppercase tracking-wider">➕ SKUs fora da base de custos ({agruparForaDaBase().length})</h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Cadastre o produto uma única vez: o custo e o título passam a valer para todas as vendas desse SKU.</p>
+                </div>
+                <div className="overflow-x-auto max-h-[280px]">
+                  <table className="w-full text-left text-xs whitespace-nowrap">
+                    <thead className="bg-slate-950 sticky top-0 text-slate-400 font-bold uppercase text-[10px]">
+                      <tr><th className="p-3">SKU</th><th className="p-3">Produto (planilha)</th><th className="p-3">Canais</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">Preço médio</th><th className="p-3 text-center">Ação</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {agruparForaDaBase().sort((x, y) => y.linhas - x.linhas).map((g) => (
+                        <tr key={g.sku} className="hover:bg-slate-800/40" data-grupo-fora-base={g.sku}>
+                          <td className="p-3 font-mono font-bold text-rose-400">{g.sku}</td>
+                          <td className="p-3 max-w-[280px] truncate text-slate-300" title={g.produtos[0] || ""}>{g.produtos[0] || "—"}</td>
+                          <td className="p-3 text-slate-400">{Array.from(g.canais).join(" / ")}</td>
+                          <td className="p-3 text-right font-mono text-white font-bold">{g.linhas}</td>
+                          <td className="p-3 text-right font-mono text-emerald-400">R$ {(g.somaPreco / g.linhas).toFixed(2)}</td>
+                          <td className="p-3 text-center">
+                            <button type="button" onClick={() => abrirCadastroGrupo(g)} data-cadastrar-grupo
+                              className="bg-yellow-500/20 hover:bg-yellow-500/40 border border-yellow-500/50 text-yellow-200 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase cursor-pointer">
+                              Cadastrar produto
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px]">
               <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
@@ -1785,12 +1823,12 @@ export default function UpdatesPage() {
                             <button
                               type="button"
                               onClick={() => abrirCadastroCusto(item)}
-                              title="Cadastrar este SKU na base de custos"
-                              aria-label="Cadastrar custo"
+                              title="Cadastrar este SKU na base de custos (vale para todas as vendas dele)"
+                              aria-label="Cadastrar produto"
                               data-lapis
-                              className="bg-yellow-500/20 hover:bg-yellow-500/40 border border-yellow-500/50 text-yellow-300 px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-all"
+                              className="bg-yellow-500/20 hover:bg-yellow-500/40 border border-yellow-500/50 text-yellow-300 px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-all"
                             >
-                              ✏️
+                              ➕ Cadastrar
                             </button>
                           )}
                         </div>
@@ -1810,46 +1848,56 @@ export default function UpdatesPage() {
               </table>
             </div>
 
-            {/* CADASTRO RÁPIDO DE CUSTO (lápis) */}
-            {cadastroCusto && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" data-modal-custo onClick={() => !cadastroSalvando && setCadastroCusto(null)}>
-                <div className="w-full max-w-md bg-slate-900 border border-yellow-600/50 rounded-2xl p-6 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-                  <div>
-                    <h3 className="text-sm font-black text-yellow-300 uppercase tracking-wider">✏️ Cadastrar na base de custos</h3>
-                    <p className="text-[11px] text-slate-400 mt-1">Grava o SKU em <span className="font-mono">tabela_custos_skus</span>. As vendas desse SKU saem da lista de pendentes.</p>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU</label>
-                    <input type="text" value={cadastroCusto.sku} readOnly className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-400 outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Produto (nome)</label>
-                    <input type="text" value={cadastroCusto.produto} onChange={(e) => setCadastroCusto({ ...cadastroCusto, produto: e.target.value })}
-                      placeholder="Ex.: Tapete para Yoga em EVA" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-yellow-500" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
-                      <input type="text" value={cadastroCusto.marca} onChange={(e) => setCadastroCusto({ ...cadastroCusto, marca: e.target.value })}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-yellow-500" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Custo unitário (R$)</label>
-                      <input type="text" inputMode="decimal" value={cadastroCusto.custo} onChange={(e) => setCadastroCusto({ ...cadastroCusto, custo: e.target.value })}
-                        placeholder="0,00" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs font-mono text-white outline-none focus:border-yellow-500" />
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2 pt-1">
-                    <button type="button" onClick={() => setCadastroCusto(null)} disabled={cadastroSalvando}
-                      className="px-4 py-2 rounded-lg text-xs font-bold uppercase bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer">Cancelar</button>
-                    <button type="button" onClick={salvarCadastroCusto} disabled={cadastroSalvando}
-                      className="px-5 py-2 rounded-lg text-xs font-bold uppercase bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white cursor-pointer shadow">
-                      {cadastroSalvando ? "Salvando..." : "Cadastrar"}
-                    </button>
-                  </div>
+          </div>
+        )}
+
+        {/* CADASTRAR PRODUTO (usado nas Vendas Pendentes e na aba Custos) */}
+        {cadastroCusto && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" data-modal-custo onClick={() => !cadastroSalvando && setCadastroCusto(null)}>
+            <div className="w-full max-w-md bg-slate-900 border border-yellow-600/50 rounded-2xl p-6 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div>
+                <h3 className="text-sm font-black text-yellow-300 uppercase tracking-wider">➕ Cadastrar produto</h3>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Grava o SKU na base de custos.
+                  {cadastroCusto.vendas ? <> As <strong className="text-white">{cadastroCusto.vendas} venda(s)</strong> desse SKU passam a usar esse título e esse custo e saem da lista de pendentes.</> : null}
+                </p>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU</label>
+                <input type="text" value={cadastroCusto.sku} readOnly={!cadastroCusto.novo}
+                  onChange={(e) => { const v = e.target.value; setCadastroCusto((p) => (p ? { ...p, sku: v } : p)); }} data-cad-sku
+                  placeholder={cadastroCusto.novo ? "Digite o SKU" : ""}
+                  className={`w-full bg-slate-950 border rounded-lg p-2.5 text-xs font-mono outline-none ${cadastroCusto.novo ? "border-slate-700 text-white focus:border-yellow-500" : "border-slate-800 text-slate-400"}`} />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Título do produto</label>
+                <input type="text" value={cadastroCusto.produto} data-cad-produto
+                  onChange={(e) => { const v = e.target.value; setCadastroCusto((p) => (p ? { ...p, produto: v } : p)); }}
+                  placeholder="Ex.: Tapete para Yoga em EVA" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-yellow-500" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca</label>
+                  <input type="text" value={cadastroCusto.marca} data-cad-marca
+                    onChange={(e) => { const v = e.target.value; setCadastroCusto((p) => (p ? { ...p, marca: v } : p)); }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-yellow-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Preço de custo (R$)</label>
+                  <input type="text" inputMode="decimal" value={cadastroCusto.custo} data-cad-custo
+                    onChange={(e) => { const v = e.target.value; setCadastroCusto((p) => (p ? { ...p, custo: v } : p)); }}
+                    placeholder="0,00" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs font-mono text-white outline-none focus:border-yellow-500" />
                 </div>
               </div>
-            )}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setCadastroCusto(null)} disabled={cadastroSalvando}
+                  className="px-4 py-2 rounded-lg text-xs font-bold uppercase bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer">Cancelar</button>
+                <button type="button" onClick={salvarCadastroCusto} disabled={cadastroSalvando} data-cad-salvar
+                  className="px-5 py-2 rounded-lg text-xs font-bold uppercase bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white cursor-pointer shadow">
+                  {cadastroSalvando ? "Salvando..." : "Cadastrar"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

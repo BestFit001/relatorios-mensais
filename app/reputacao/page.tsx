@@ -5,13 +5,17 @@ export const dynamic = 'force-dynamic';
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "../components/Navbar";
+import { camposDaRegra, dentroDaMeta, descreverMeta, regraDaMetrica, type RegraMetrica } from "@/lib/reputacaoLogica";
 
 interface MetricaReputacaoConfig {
   id: string;
   nome: string;
   tipo: "numero" | "percentual";
   meta: number;
+  /** campo antigo, mantido por compatibilidade: menor_melhor = teto, maior_melhor = piso */
   sentido: "menor_melhor" | "maior_melhor";
+  /** teto: vermelho se passar da meta · piso: vermelho se ficar abaixo · complemento: lança-se o % realizado e a meta é o teto de falhas */
+  regra?: RegraMetrica;
 }
 
 interface CanalReputacao {
@@ -59,8 +63,10 @@ export default function MonitoramentoPage() {
   const [novaMetricaRep, setNovaMetricaRep] = useState<Partial<MetricaReputacaoConfig>>({
     tipo: "percentual",
     sentido: "menor_melhor",
+    regra: "teto",
     meta: 0
   });
+  const [editandoMetricaId, setEditandoMetricaId] = useState<string | null>(null);
 
   // Estados - Análise de Vendas
   const [canaisVendas, setCanaisVendas] = useState<string[]>([
@@ -236,21 +242,28 @@ export default function MonitoramentoPage() {
   const adicionarMetricaReputacao = async () => {
     if (!canalReputacaoAtual || !novaMetricaRep.nome?.trim()) return;
 
-    const idMetrica = novaMetricaRep.nome
+    // ao editar mantém o id (os valores já lançados continuam ligados à métrica, mesmo trocando o nome)
+    const idMetrica = editandoMetricaId ?? novaMetricaRep.nome
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9]/g, "_");
 
+    const regra: RegraMetrica = (novaMetricaRep.regra as RegraMetrica) || "teto";
+    const metaNum = Number(novaMetricaRep.meta || 0);
+    if (regra === "complemento" && (metaNum < 0 || metaNum > 100)) { alert("No modo “% realizado”, o teto de falhas deve ficar entre 0 e 100."); return; }
+
     const novaConfig: MetricaReputacaoConfig = {
       id: idMetrica,
       nome: novaMetricaRep.nome.trim(),
       tipo: novaMetricaRep.tipo || "percentual",
-      meta: Number(novaMetricaRep.meta || 0),
-      sentido: novaMetricaRep.sentido || "menor_melhor"
+      meta: metaNum,
+      ...camposDaRegra(regra)
     };
 
-    const metricasAtualizadas = [...canalReputacaoAtual.metricas.filter((m) => m.id !== idMetrica), novaConfig];
+    const metricasAtualizadas = editandoMetricaId
+      ? canalReputacaoAtual.metricas.map((m) => (m.id === editandoMetricaId ? novaConfig : m))
+      : [...canalReputacaoAtual.metricas.filter((m) => m.id !== idMetrica), novaConfig];
 
     const { error } = await supabase
       .from("reputacao_canais")
@@ -259,9 +272,19 @@ export default function MonitoramentoPage() {
 
     if (error) alert("Erro: " + error.message);
     else {
-      setNovaMetricaRep({ tipo: "percentual", sentido: "menor_melhor", meta: 0, nome: "" });
+      cancelarEdicaoMetrica();
       carregarCanaisReputacao();
     }
+  };
+
+  const cancelarEdicaoMetrica = () => {
+    setEditandoMetricaId(null);
+    setNovaMetricaRep({ tipo: "percentual", sentido: "menor_melhor", regra: "teto", meta: 0, nome: "" });
+  };
+
+  const editarMetricaReputacao = (m: MetricaReputacaoConfig) => {
+    setEditandoMetricaId(m.id);
+    setNovaMetricaRep({ nome: m.nome, tipo: m.tipo, meta: m.meta, sentido: m.sentido, regra: regraDaMetrica(m) });
   };
 
   const removerMetricaReputacao = async (metricaId: string) => {
@@ -463,7 +486,7 @@ export default function MonitoramentoPage() {
                           <div className="flex justify-between items-center mb-1.5">
                             <label className="text-[11px] font-bold text-slate-300 uppercase truncate">{metrica.nome}</label>
                             <span className="text-[10px] text-slate-500 font-mono">
-                              Meta: {metrica.meta}{metrica.tipo === "percentual" ? "%" : ""}
+                              Meta: {descreverMeta(metrica, metrica.tipo === "percentual")}
                             </span>
                           </div>
                           <div className="relative">
@@ -513,16 +536,16 @@ export default function MonitoramentoPage() {
                     const ultimo = historicoReputacao[0];
                     const valorAtual = ultimo?.valores?.[metrica.id];
                     const temValor = valorAtual !== undefined;
-                    const dentroDaMeta = temValor ? (metrica.sentido === "menor_melhor" ? valorAtual <= metrica.meta : valorAtual >= metrica.meta) : true;
+                    const dentroDaMetaAtual = temValor ? dentroDaMeta(metrica, valorAtual) : true;
 
                     return (
                       <div key={metrica.id} className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl">
                         <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{metrica.nome}</span>
                         <div className="flex items-baseline justify-between mt-2">
-                          <span className={`text-2xl font-black ${!temValor ? "text-slate-600" : dentroDaMeta ? "text-emerald-400" : "text-rose-400"}`}>
+                          <span className={`text-2xl font-black ${!temValor ? "text-slate-600" : dentroDaMetaAtual ? "text-emerald-400" : "text-rose-400"}`}>
                             {temValor ? `${valorAtual}${metrica.tipo === "percentual" ? "%" : ""}` : "--"}
                           </span>
-                          <span className="text-[10px] text-slate-500 font-mono">Meta: {metrica.meta}{metrica.tipo === "percentual" ? "%" : ""}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">Meta: {descreverMeta(metrica, metrica.tipo === "percentual")}</span>
                         </div>
                       </div>
                     );
@@ -548,7 +571,7 @@ export default function MonitoramentoPage() {
                             <td className="p-3 text-slate-300 font-bold whitespace-nowrap">{reg.data.split("-").reverse().join("/")}</td>
                             {canalReputacaoAtual?.metricas.map((m) => {
                               const val = reg.valores?.[m.id];
-                              const ok = val !== undefined ? (m.sentido === "menor_melhor" ? val <= m.meta : val >= m.meta) : true;
+                              const ok = val !== undefined ? dentroDaMeta(m, val) : true;
                               return (
                                 <td key={m.id} className="p-3 text-center">
                                   {val !== undefined ? (
@@ -586,8 +609,10 @@ export default function MonitoramentoPage() {
                 </div>
 
                 <div className="md:col-span-2 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 space-y-4">
-                  <h3 className="text-sm font-bold text-white">Adicionar Campo ao Canal: <span className="text-indigo-400">{canalReputacaoAtual?.nome}</span></h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800 items-end">
+                  <h3 className="text-sm font-bold text-white">
+                    {editandoMetricaId ? "Editar Campo do Canal: " : "Adicionar Campo ao Canal: "}<span className="text-indigo-400">{canalReputacaoAtual?.nome}</span>
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800 items-end" data-form-metrica>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nome do Campo</label>
                       <input
@@ -595,6 +620,7 @@ export default function MonitoramentoPage() {
                         placeholder="Ex: Cancelamentos"
                         value={novaMetricaRep.nome || ""}
                         onChange={(e) => setNovaMetricaRep({ ...novaMetricaRep, nome: e.target.value })}
+                        data-metrica-nome
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
                       />
                     </div>
@@ -610,25 +636,50 @@ export default function MonitoramentoPage() {
                       </select>
                     </div>
                     <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">O valor da meta é…</label>
+                      <select
+                        value={(novaMetricaRep.regra as string) || "teto"}
+                        onChange={(e) => setNovaMetricaRep({ ...novaMetricaRep, regra: e.target.value as RegraMetrica })}
+                        data-metrica-regra
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer"
+                      >
+                        <option value="teto">Teto (passou = vermelho)</option>
+                        <option value="piso">Piso (abaixo = vermelho)</option>
+                        <option value="complemento">Teto de falhas, lanço o % realizado</option>
+                      </select>
+                    </div>
+                    <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Meta</label>
                       <input
                         type="number"
                         step="0.01"
-                        value={novaMetricaRep.meta}
+                        value={Number.isNaN(novaMetricaRep.meta as number) ? "" : novaMetricaRep.meta}
                         onChange={(e) => setNovaMetricaRep({ ...novaMetricaRep, meta: parseFloat(e.target.value) })}
+                        data-metrica-meta
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none"
                       />
                     </div>
-                    <div>
-                      <button onClick={adicionarMetricaReputacao} className="w-full bg-indigo-600 text-white font-bold py-2 rounded-lg text-xs uppercase cursor-pointer">Salvar</button>
+                    <div className="flex gap-2">
+                      <button onClick={adicionarMetricaReputacao} data-metrica-salvar className="flex-1 bg-indigo-600 text-white font-bold py-2 rounded-lg text-xs uppercase cursor-pointer">{editandoMetricaId ? "Atualizar" : "Salvar"}</button>
+                      {editandoMetricaId && (
+                        <button onClick={cancelarEdicaoMetrica} data-metrica-cancelar className="bg-slate-800 text-slate-200 font-bold px-3 py-2 rounded-lg text-xs uppercase cursor-pointer">Cancelar</button>
+                      )}
                     </div>
+                    <p className="sm:col-span-5 text-[11px] text-slate-400" data-ajuda-regra>
+                      {(novaMetricaRep.regra || "teto") === "teto" && `Ex.: Reclamações com meta 3 → 3% fica verde e 4% fica vermelho.`}
+                      {novaMetricaRep.regra === "piso" && `Ex.: Nível de serviço com meta 95 → 95% fica verde e 94% fica vermelho.`}
+                      {novaMetricaRep.regra === "complemento" && `Ex.: Envios com atraso máximo de 3% → informe meta 3 e lance 100% de envios realizados no prazo: 97% ou mais fica verde; 96% (4% de atraso) fica vermelho.`}
+                    </p>
                   </div>
 
                   <div className="divide-y divide-slate-800">
                     {canalReputacaoAtual?.metricas.map((m) => (
-                      <div key={m.id} className="py-2.5 flex items-center justify-between text-xs">
-                        <span>{m.nome} (Meta: {m.meta}{m.tipo === "percentual" ? "%" : ""})</span>
-                        <button onClick={() => removerMetricaReputacao(m.id)} className="text-rose-400 cursor-pointer font-bold">🗑️</button>
+                      <div key={m.id} className="py-2.5 flex items-center justify-between text-xs" data-metrica-item={m.id}>
+                        <span>{m.nome} <span className="text-slate-400 font-mono">(Meta: {descreverMeta(m, m.tipo === "percentual")})</span></span>
+                        <span className="flex items-center gap-3">
+                          <button onClick={() => editarMetricaReputacao(m)} data-editar-metrica className="text-indigo-300 cursor-pointer font-bold text-[11px] uppercase">✏️ Editar</button>
+                          <button onClick={() => removerMetricaReputacao(m.id)} className="text-rose-400 cursor-pointer font-bold">🗑️</button>
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -730,13 +781,13 @@ export default function MonitoramentoPage() {
                     const ultimo = historicoVendas[0];
                     const valorAtual = ultimo?.valores?.[metrica.nome];
                     const temValor = valorAtual !== undefined;
-                    const dentroDaMeta = temValor ? (metrica.sentido === "maior_melhor" ? valorAtual >= metrica.meta : valorAtual <= metrica.meta) : true;
+                    const dentroDaMetaVenda = temValor ? (metrica.sentido === "maior_melhor" ? valorAtual >= metrica.meta : valorAtual <= metrica.meta) : true;
 
                     return (
                       <div key={metrica.id} className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl">
                         <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{metrica.nome}</span>
                         <div className="flex items-baseline justify-between mt-2">
-                          <span className={`text-2xl font-black ${!temValor ? "text-slate-600" : dentroDaMeta ? "text-emerald-400" : "text-rose-400"}`}>
+                          <span className={`text-2xl font-black ${!temValor ? "text-slate-600" : dentroDaMetaVenda ? "text-emerald-400" : "text-rose-400"}`}>
                             {temValor ? formatarValorVendas(valorAtual, metrica.tipo) : "--"}
                           </span>
                           <span className="text-[10px] text-slate-500 font-mono">Meta: {formatarValorVendas(metrica.meta, metrica.tipo)}</span>
