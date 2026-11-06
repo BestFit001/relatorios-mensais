@@ -538,6 +538,22 @@ export default function Navbar() {
             </div>
           )}
 
+          {/* COMPRAS */}
+          {temPermissao("/compras") && (
+            <Link
+              href="/compras"
+              title="Compras"
+              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
+                pathname === "/compras"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold"
+                  : "text-slate-400 hover:text-white hover:bg-slate-900/60"
+              }`}
+            >
+              <span className="text-sm flex-shrink-0">🛒</span>
+              {sidebarAberta && <span className="truncate">Compras</span>}
+            </Link>
+          )}
+
           {/* AGENDA */}
           {temPermissao("/agenda") && (
             <Link

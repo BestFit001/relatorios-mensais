@@ -43,6 +43,7 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/checagem-cancelados", nome: "Checagem de Cancelados" },
     { id: "/apresentacao-time", nome: "Apresentação Time" },
   ] },
+  { titulo: "Compras", submenu: false, rotas: [{ id: "/compras", nome: "Compras" }] },
   { titulo: "Agenda", submenu: false, rotas: [{ id: "/agenda", nome: "Agenda" }] },
   { titulo: "Configurações", submenu: true, rotas: [
     { id: "/regras", nome: "Regras Gerais" },
