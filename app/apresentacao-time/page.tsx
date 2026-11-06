@@ -6,9 +6,9 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
-import { SlideFit } from "../components/SlideCanvas";
+import { SlideFit, type EdicaoSlide } from "../components/SlideCanvas";
 import {
-  LAYOUTS, duplicarSlide, modeloReuniaoMensal, normalizarSlides, novoBloco, novoSlide,
+  LAYOUTS, duplicarSlide, modeloReuniaoMensal, normalizarSlides, novoBloco, novoId, novoSlide, posPadrao,
   type Bloco, type LayoutSlide, type Slide,
 } from "../../lib/apresentacao";
 import { lerPptx, mimeDaExtensao, montarSlidesDoPptx, pdfParaUrls, slidesDeImagens } from "../../lib/apresentacaoImport";
@@ -29,6 +29,7 @@ export default function ApresentacaoTimePage() {
   const [slides, setSlides] = useState<Slide[]>([]);
   const [alterado, setAlterado] = useState(false);
   const [idxEdit, setIdxEdit] = useState(0);
+  const [selId, setSelId] = useState<string | null>(null);
   const [idxPres, setIdxPres] = useState(0);
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [aviso, setAviso] = useState<Aviso>(null);
@@ -203,8 +204,34 @@ export default function ApresentacaoTimePage() {
 
   // ------------------------------------------------------------ edição dos slides
   const atual = slides[idxEdit];
+  useEffect(() => { setSelId(null); }, [idxEdit, atualId]);
   const mudar = (fn: (s: Slide[]) => Slide[]) => { setSlides(fn); setAlterado(true); };
   const mudarSlide = (patch: Partial<Slide>) => mudar((s) => s.map((x, i) => (i === idxEdit ? { ...x, ...patch } : x)));
+  const trocarSlide = useCallback((novo: Slide) => { setSlides((s) => s.map((x, i) => (i === idxEdit ? novo : x))); setAlterado(true); }, [idxEdit]);
+  const edicao: EdicaoSlide = { selecionado: selId, onSelecionar: setSelId, onMudar: trocarSlide };
+  const livre = !!atual?.posicoes;
+  const adicionarBloco = (tipo: Bloco["tipo"]) => {
+    const b = novoBloco(tipo);
+    mudarSlide({ blocos: [...atual.blocos, b], ...(livre ? { posicoes: { ...atual.posicoes, [b.id]: posPadrao(tipo, atual.blocos.length) } } : {}) });
+    setSelId(b.id);
+  };
+  const removerBloco = (bi: number) => {
+    const id = atual.blocos[bi].id;
+    let posicoes = atual.posicoes;
+    if (posicoes) { posicoes = { ...posicoes }; delete posicoes[id]; }
+    mudarSlide({ blocos: atual.blocos.filter((_, k) => k !== bi), posicoes });
+  };
+  /** Imagens novas num bloco: no layout livre cada imagem vira o seu próprio elemento (para arrastar separado). */
+  const adicionarUrls = (bi: number, urls: string[]) => {
+    const b = atual.blocos[bi] as Extract<Bloco, { tipo: "imagens" }>;
+    if (!livre) return mudarBloco(bi, { urls: [...b.urls, ...urls] });
+    const blocos = atual.blocos.slice(); const posicoes = { ...atual.posicoes };
+    let resto = urls;
+    if (b.urls.length === 0) { blocos[bi] = { ...b, urls: [urls[0]] }; resto = urls.slice(1); }
+    resto.forEach((u, k) => { const nb: Bloco = { id: novoId(), tipo: "imagens", urls: [u] }; blocos.splice(bi + 1 + k, 0, nb); posicoes[nb.id] = posPadrao("imagens", atual.blocos.length + k); });
+    mudarSlide({ blocos, posicoes });
+  };
+  const voltarAutomatico = () => { if (confirm("Voltar ao layout automático? Os elementos voltam para as posições padrão do slide.")) mudarSlide({ posicoes: undefined }); };
   const mudarBloco = (bi: number, patch: Partial<Bloco>) => mudarSlide({ blocos: atual.blocos.map((b, i) => (i === bi ? ({ ...b, ...patch } as Bloco) : b)) });
 
   const adicionarSlide = (layout: LayoutSlide) => {
@@ -439,9 +466,9 @@ export default function ApresentacaoTimePage() {
 
                 {/* prévia */}
                 <div className="space-y-2">
-                  {atual ? <div className="rounded-xl overflow-hidden border border-slate-700 shadow-xl" data-previa><SlideFit slide={atual} /></div>
+                  {atual ? <div className="rounded-xl overflow-hidden border border-slate-700 shadow-xl" data-previa><SlideFit slide={atual} edicao={atual.layout === "imagem" ? undefined : edicao} /></div>
                     : <div className="bg-slate-900/90 p-10 rounded-2xl border border-slate-800 text-center text-sm text-slate-400">Adicione um slide para começar.</div>}
-                  <p className="text-[11px] text-slate-500 text-center">Slide {atual ? idxEdit + 1 : 0} de {slides.length} · lembre de clicar em Salvar</p>
+                  <p className="text-[11px] text-slate-500 text-center">Slide {atual ? idxEdit + 1 : 0} de {slides.length} · {atual && atual.layout !== "imagem" ? "arraste os itens no slide e puxe o quadradinho do canto para mudar o tamanho · " : ""}lembre de clicar em Salvar</p>
                 </div>
 
                 {/* propriedades */}
@@ -457,13 +484,13 @@ export default function ApresentacaoTimePage() {
                     {atual.layout !== "imagem" && (
                       <div>
                         <label className={rotuloCls}>{atual.layout === "capa" ? "Título" : "Título do slide"}</label>
-                        <input type="text" value={atual.titulo} onChange={(e) => mudarSlide({ titulo: e.target.value })} data-titulo className={campo + " font-bold"} />
+                        <input type="text" value={atual.titulo} onFocus={() => setSelId("titulo")} onChange={(e) => mudarSlide({ titulo: e.target.value })} data-titulo className={campo + " font-bold"} />
                       </div>
                     )}
                     {(atual.layout === "conteudo" || atual.layout === "capa") && (
                       <div>
                         <label className={rotuloCls}>{atual.layout === "capa" ? "Data / subtítulo" : "Subtítulo (ex.: mês de referência)"}</label>
-                        <input type="text" value={atual.subtitulo} onChange={(e) => mudarSlide({ subtitulo: e.target.value })} data-subtitulo className={campo} />
+                        <input type="text" value={atual.subtitulo} onFocus={() => setSelId("subtitulo")} onChange={(e) => mudarSlide({ subtitulo: e.target.value })} data-subtitulo className={campo} />
                       </div>
                     )}
 
@@ -477,19 +504,26 @@ export default function ApresentacaoTimePage() {
                       </div>
                     )}
 
+                    {atual.layout !== "imagem" && (
+                      <div className="flex items-center justify-between gap-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2" data-modo-posicao>
+                        <span className="text-[11px] text-slate-400">{livre ? "Posição livre (você arrastou os itens)" : "Layout automático — arraste qualquer item no slide para posicionar livremente"}</span>
+                        {livre && <button type="button" onClick={voltarAutomatico} data-voltar-automatico className={btnPeq}>↺ Automático</button>}
+                      </div>
+                    )}
+
                     {atual.layout === "conteudo" && (
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-black text-white uppercase tracking-wider">Conteúdo do slide</span>
                         </div>
                         {atual.blocos.map((b, bi) => (
-                          <div key={b.id} className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2" data-bloco={b.tipo}>
+                          <div key={b.id} onClick={() => setSelId(b.id)} className={`bg-slate-950 border rounded-xl p-3 space-y-2 ${selId === b.id ? "border-indigo-500" : "border-slate-800"}`} data-bloco={b.tipo}>
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] font-black text-indigo-300 uppercase">{b.tipo === "metricas" ? "Métricas" : b.tipo === "texto" ? "Texto" : "Imagens"}</span>
                               <div className="flex gap-1">
                                 <button type="button" className={btnPeq} disabled={bi === 0} onClick={() => moverBloco(bi, -1)}>▲</button>
                                 <button type="button" className={btnPeq} disabled={bi === atual.blocos.length - 1} onClick={() => moverBloco(bi, 1)}>▼</button>
-                                <button type="button" className={btnPeq + " !text-rose-300"} onClick={() => mudarSlide({ blocos: atual.blocos.filter((_, k) => k !== bi) })}>✕</button>
+                                <button type="button" className={btnPeq + " !text-rose-300"} onClick={() => removerBloco(bi)}>✕</button>
                               </div>
                             </div>
 
@@ -529,7 +563,7 @@ export default function ApresentacaoTimePage() {
                             {b.tipo === "imagens" && (
                               <div className="space-y-2">
                                 <input type="file" accept="image/*" multiple data-imagens-bloco
-                                  onChange={async (e) => { const arq = Array.from(e.target.files || []); e.target.value = ""; const u = await enviarImagens(arq); if (u.length) mudarBloco(bi, { urls: [...b.urls, ...u] }); }}
+                                  onChange={async (e) => { const arq = Array.from(e.target.files || []); e.target.value = ""; const u = await enviarImagens(arq); if (u.length) adicionarUrls(bi, u); }}
                                   className="block w-full text-[11px] text-slate-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white file:font-bold file:cursor-pointer cursor-pointer" />
                                 <div className="flex flex-wrap gap-2">
                                   {b.urls.map((u, ui) => (
@@ -545,9 +579,9 @@ export default function ApresentacaoTimePage() {
                           </div>
                         ))}
                         <div className="flex flex-wrap gap-1.5">
-                          <button type="button" className={btnPeq} data-add-bloco="metricas" onClick={() => mudarSlide({ blocos: [...atual.blocos, novoBloco("metricas")] })}>＋ Métricas</button>
-                          <button type="button" className={btnPeq} data-add-bloco="texto" onClick={() => mudarSlide({ blocos: [...atual.blocos, novoBloco("texto")] })}>＋ Texto</button>
-                          <button type="button" className={btnPeq} data-add-bloco="imagens" onClick={() => mudarSlide({ blocos: [...atual.blocos, novoBloco("imagens")] })}>＋ Imagens</button>
+                          <button type="button" className={btnPeq} data-add-bloco="metricas" onClick={() => adicionarBloco("metricas")}>＋ Métricas</button>
+                          <button type="button" className={btnPeq} data-add-bloco="texto" onClick={() => adicionarBloco("texto")}>＋ Texto</button>
+                          <button type="button" className={btnPeq} data-add-bloco="imagens" onClick={() => adicionarBloco("imagens")}>＋ Imagens</button>
                         </div>
                       </div>
                     )}
