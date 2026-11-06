@@ -9,7 +9,7 @@ import {
 } from "../../lib/comprasImport";
 import {
   gravarProdutos, gravarEstoque, gravarVendas, registrarUpload, carregarUploads,
-  carregarNomesFiliais, salvarNomesFiliais, type UploadReg,
+  carregarNomesFiliais, salvarNomesFiliais, apagarEstoqueTodo, apagarVendasDoMes, apagarTudo, type UploadReg,
 } from "../../lib/comprasDb";
 
 type SlotId = "estoque_shop9" | "vendas_shop9" | "estoque_tiny_8" | "estoque_tiny_10" | "vendas_tiny";
@@ -96,6 +96,10 @@ export default function UploadCompras({ aoGravar }: { aoGravar: () => void }) {
   const [uploads, setUploads] = useState<UploadReg[]>([]);
   const [nomes, setNomes] = useState<Record<string, string>>({});
   const [nomesMsg, setNomesMsg] = useState("");
+  const [apagando, setApagando] = useState<"" | "estoque" | "mes" | "tudo">("");   // qual apagamento está aguardando confirmação
+  const [confirmacao, setConfirmacao] = useState("");
+  const [apagarMsg, setApagarMsg] = useState<{ ok: boolean; texto: string } | null>(null);
+  const [apagarOcupado, setApagarOcupado] = useState(false);
   const brutos = useRef<Partial<Record<SlotId, any[][]>>>({});
   const analises = useRef<Partial<Record<SlotId, any>>>({});
 
@@ -176,6 +180,22 @@ export default function UploadCompras({ aoGravar }: { aoGravar: () => void }) {
   const campo = "bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none focus:border-indigo-500";
 
   const comum = (id: SlotId, usaPeriodo?: boolean) => ({ s: slots[id], u: ultimo(id, usaPeriodo ? periodo : undefined), periodo, onEscolher: escolher, onEnviar: enviar });
+  const executarApagar = async () => {
+    if (!apagando || confirmacao.trim().toUpperCase() !== "APAGAR") return;
+    setApagarOcupado(true); setApagarMsg(null);
+    try {
+      if (apagando === "estoque") await apagarEstoqueTodo();
+      else if (apagando === "mes") await apagarVendasDoMes(periodo);
+      else await apagarTudo();
+      setApagarMsg({ ok: true, texto: apagando === "estoque" ? "Estoque apagado." : apagando === "mes" ? `Vendas de ${rotuloPeriodo(periodo)} apagadas.` : "Toda a base de compras foi apagada." });
+      setApagando(""); setConfirmacao("");
+      recarregarUploads(); aoGravar();
+    } catch (e: any) {
+      setApagarMsg({ ok: false, texto: "Erro ao apagar: " + (e?.message || e) });
+    }
+    setApagarOcupado(false);
+  };
+
   const filiaisNomes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 
   return (
@@ -238,6 +258,41 @@ export default function UploadCompras({ aoGravar }: { aoGravar: () => void }) {
             } />
         </div>
       </div>
+
+
+      <details className="bg-slate-900/90 rounded-2xl border border-rose-900/50" data-apagar>
+        <summary className="px-5 py-4 text-sm font-black text-rose-300 cursor-pointer">🗑️ Apagar dados (subiu errado?)</summary>
+        <div className="px-5 pb-5 space-y-3">
+          <p className="text-[11px] text-slate-400">
+            Para limpar um envio errado e subir de novo. Não dá para desfazer. Os nomes das filiais não são apagados.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" data-apagar-opcao="estoque" onClick={() => { setApagando("estoque"); setConfirmacao(""); setApagarMsg(null); }}
+              className="px-4 py-2 rounded-xl border border-rose-800 text-rose-300 hover:bg-rose-950/50 text-xs font-black cursor-pointer">Apagar todo o estoque</button>
+            <button type="button" data-apagar-opcao="mes" onClick={() => { setApagando("mes"); setConfirmacao(""); setApagarMsg(null); }}
+              className="px-4 py-2 rounded-xl border border-rose-800 text-rose-300 hover:bg-rose-950/50 text-xs font-black cursor-pointer">Apagar as vendas de {rotuloPeriodo(periodo)} (mês do cartão 2)</button>
+            <button type="button" data-apagar-opcao="tudo" onClick={() => { setApagando("tudo"); setConfirmacao(""); setApagarMsg(null); }}
+              className="px-4 py-2 rounded-xl bg-rose-700 hover:bg-rose-600 text-white text-xs font-black cursor-pointer">Apagar TUDO da base de compras</button>
+          </div>
+          {apagando && (
+            <div className="border border-rose-900/60 bg-rose-950/30 rounded-xl p-3 space-y-2" data-apagar-confirmar>
+              <p className="text-xs font-semibold text-rose-200">
+                {apagando === "estoque" && "Vai apagar o estoque de TODAS as filiais (lojas e e-commerce). As vendas e o cadastro continuam."}
+                {apagando === "mes" && `Vai apagar as vendas de ${rotuloPeriodo(periodo)} (Shop9 e Tiny). Os outros meses continuam.`}
+                {apagando === "tudo" && "Vai apagar estoque, vendas de todos os meses, cadastro das grades e o registro dos envios. A base volta a ficar vazia."}
+                {" "}Digite <strong>APAGAR</strong> para confirmar:
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input value={confirmacao} onChange={(e) => setConfirmacao(e.target.value)} data-apagar-texto placeholder="APAGAR" className={campo + " w-40 uppercase"} />
+                <button type="button" data-apagar-executar disabled={apagarOcupado || confirmacao.trim().toUpperCase() !== "APAGAR"} onClick={executarApagar}
+                  className="px-4 py-2 rounded-xl bg-rose-700 hover:bg-rose-600 text-white text-xs font-black uppercase disabled:opacity-40 cursor-pointer">{apagarOcupado ? "Apagando…" : "Confirmar e apagar"}</button>
+                <button type="button" onClick={() => { setApagando(""); setConfirmacao(""); }} className="text-xs text-slate-400 hover:text-white cursor-pointer">Cancelar</button>
+              </div>
+            </div>
+          )}
+          {apagarMsg && <p data-apagar-msg className={`text-xs font-semibold ${apagarMsg.ok ? "text-emerald-300" : "text-rose-300"}`}>{apagarMsg.texto}</p>}
+        </div>
+      </details>
 
       <details className="bg-slate-900/90 rounded-2xl border border-slate-800" data-nomes-filiais>
         <summary className="px-5 py-4 text-sm font-black text-white cursor-pointer">🏷️ Nomes das filiais (opcional)</summary>

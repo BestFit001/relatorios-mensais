@@ -108,3 +108,33 @@ export async function carregarVendas(periodoInicial: number) {
 }
 export const carregarEstoque = () => buscarTudo("compras_estoque", "grade,filial,estoque");
 export const carregarProdutos = () => buscarTudo("compras_produtos", "grade,codigo,produto,cor,tamanho,genero,marca,classe,familia,fornecedor,custo,pdv_loja,pdv_ec");
+
+// ---------- apagar dados (para corrigir um envio errado) ----------
+/** Apaga em janelas de id (evita estourar o tempo limite do banco em tabelas grandes). `filtro` restringe o que é apagado. */
+async function apagarPorJanelas(tabela: string, filtro?: (q: any) => any): Promise<void> {
+  const aplicar = (q: any) => (filtro ? filtro(q) : q);
+  const { data, error } = await aplicar(supabase.from(tabela).select("id")).order("id", { ascending: false }).limit(1);
+  if (error) throw new Error(`${tabela}: ${error.message}`);
+  if (!data || data.length === 0) return;
+  const maximo = Number(data[0].id), passo = 5000;
+  for (let ini = 0; ini <= maximo; ini += passo) {
+    const { error: e } = await aplicar(supabase.from(tabela).delete().gte("id", ini).lt("id", ini + passo));
+    if (e) throw new Error(`${tabela}: ${e.message}`);
+  }
+}
+
+export const apagarEstoqueTodo = async () => { await apagarPorJanelas("compras_estoque"); };
+
+/** Vendas de um mês (todas as fontes) e o registro dos envios desse mês. */
+export async function apagarVendasDoMes(periodo: number): Promise<void> {
+  await apagarPorJanelas("compras_vendas", (q) => q.eq("periodo", periodo));
+  await apagarPorJanelas("compras_uploads", (q) => q.eq("periodo", periodo));
+}
+
+/** Estoque, vendas de todos os meses, cadastro das grades e registro dos envios. Os nomes das filiais ficam. */
+export async function apagarTudo(): Promise<void> {
+  await apagarPorJanelas("compras_estoque");
+  await apagarPorJanelas("compras_vendas");
+  await apagarPorJanelas("compras_produtos");
+  await apagarPorJanelas("compras_uploads");
+}
