@@ -1,5 +1,6 @@
 "use client";
 import { useState, ChangeEvent, useEffect, useRef } from "react";
+import { extrairIdPedidoDaObservacao } from "../../lib/idPedidoFaturados";
 import * as XLSX from "xlsx";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
@@ -789,19 +790,7 @@ export default function UpdatesPage() {
           if (!row) continue;
           const rawObs = idxId >= 0 && row[idxId] !== undefined ? String(row[idxId]).trim() : '';
           
-          let pedidoId = null;
-
-          const matchAmazon = rawObs.match(/\b\d{3}-\d{7}-\d{7}\b/);
-          const matchMagalu = rawObs.match(/\bLU-[A-Z0-9-]+\b/i);
-          const matchML = rawObs.match(/\b20000\d+\b/);
-          const matchNum = rawObs.match(/\b\d{10,20}\b/);
-          const matchGen = rawObs.match(/\b[A-Z0-9]{8,22}\b/i);
-
-          if (matchAmazon) pedidoId = matchAmazon[0].trim();
-          else if (matchMagalu) pedidoId = matchMagalu[0].trim();
-          else if (matchML) pedidoId = matchML[0].trim();
-          else if (matchNum) pedidoId = matchNum[0].trim();
-          else if (matchGen) pedidoId = matchGen[0].trim();
+          const pedidoId = extrairIdPedidoDaObservacao(rawObs);
 
           const dataFaturamento = paraDataIso(row[idxData]);
 
