@@ -9,7 +9,7 @@ import * as XLSX from "xlsx";
 import { supabase } from "../../lib/supabase";
 import { buscarTudo } from "../../lib/buscarTudo";
 import { indiceDaLetra } from "../../lib/cobertura";
-import { achar, interpretarTermo } from "../../lib/checagemCanceladosLogica";
+import { achar, chaveDoPedido, interpretarTermo } from "../../lib/checagemCanceladosLogica";
 import Navbar from "../components/Navbar";
 
 const CHAVE_FORM = "bestfit_checagem_cancelados_form";   // só lembra as últimas colunas/termo de cada canal (conveniência)
@@ -32,6 +32,8 @@ export default function ChecagemCanceladosPage() {
   const [rotulo, setRotulo] = useState("cancelado");
   const [rotuloEdit, setRotuloEdit] = useState("cancelado");
   const [registros, setRegistros] = useState<any[]>([]);
+  const [faturados, setFaturados] = useState<Map<string, string>>(new Map());   // chave do pedido -> mês de referência
+  const [soFaturados, setSoFaturados] = useState(true);
   const [carregando, setCarregando] = useState(true);
   const [processando, setProcessando] = useState(false);
   const [aviso, setAviso] = useState<{ tipo: "ok" | "erro" | "info"; linhas: string[] } | null>(null);
@@ -44,16 +46,20 @@ export default function ChecagemCanceladosPage() {
   const [busca, setBusca] = useState("");
 
   const carregar = useCallback(async () => {
-    const [regras, cfg, regs] = await Promise.all([
+    const [regras, cfg, regs, fats] = await Promise.all([
       supabase.from("config_regras_canais").select("canal").order("id"),
       supabase.from("checagem_cancelados_config").select("valor").eq("chave", "rotulo").maybeSingle(),
       buscarTudo("checagem_cancelados", "*"),
+      buscarTudo("faturados", "id, id_pedido, mes_referencia"),
     ]);
     const lista = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal))).filter(Boolean);
     setCanais(lista.length ? lista : CANAIS_PADRAO);
     const r = String(cfg.data?.valor ?? "").trim() || "cancelado";
     setRotulo(r); setRotuloEdit(r);
     setRegistros(regs);
+    const mapa = new Map<string, string>();
+    fats.forEach((f: any) => { const k = chaveDoPedido(f.id_pedido); if (k) mapa.set(k, String(f.mes_referencia ?? "")); });
+    setFaturados(mapa);
     setCarregando(false);
   }, []);
 
@@ -128,16 +134,20 @@ export default function ChecagemCanceladosPage() {
   };
 
   // ---- lista / download ----
+  const mesFaturado = useCallback((r: any) => faturados.get(chaveDoPedido(r.id_pedido)), [faturados]);
+  const emComum = useMemo(() => registros.filter((r) => mesFaturado(r) !== undefined).length, [registros, mesFaturado]);
+  const base = useMemo(() => (soFaturados ? registros.filter((r) => mesFaturado(r) !== undefined) : registros), [registros, soFaturados, mesFaturado]);
+
   const porCanal = useMemo(() => {
     const m = new Map<string, number>();
-    registros.forEach((r) => m.set(r.canal, (m.get(r.canal) || 0) + 1));
+    base.forEach((r) => m.set(r.canal, (m.get(r.canal) || 0) + 1));
     return Array.from(m.entries());
-  }, [registros]);
+  }, [base]);
 
   const visiveis = useMemo(() => {
     const t = busca.trim().toLowerCase();
-    return registros.filter((r) => (!filtroCanal || r.canal === filtroCanal) && (!t || String(r.id_pedido).toLowerCase().includes(t) || String(r.status_planilha ?? "").toLowerCase().includes(t)));
-  }, [registros, filtroCanal, busca]);
+    return base.filter((r) => (!filtroCanal || r.canal === filtroCanal) && (!t || String(r.id_pedido).toLowerCase().includes(t) || String(r.status_planilha ?? "").toLowerCase().includes(t)));
+  }, [base, filtroCanal, busca]);
 
   const baixarExcel = () => {
     if (visiveis.length === 0) return;
@@ -145,6 +155,7 @@ export default function ChecagemCanceladosPage() {
       "Canal": r.canal,
       "ID do pedido": String(r.id_pedido),
       "Registro": r.rotulo,
+      "Mês do faturamento": mesFaturado(r) ?? "não faturado",
       "Status na planilha": r.status_planilha ?? "",
       "Palavras procuradas": r.termo ?? "",
       "Arquivo": r.arquivo ?? "",
@@ -153,7 +164,7 @@ export default function ChecagemCanceladosPage() {
     const ws = XLSX.utils.json_to_sheet(dados);
     // o ID vai como texto, para o Excel não transformar em número com notação científica
     dados.forEach((_, i) => { const cel = ws["B" + (i + 2)]; if (cel) { cel.t = "s"; cel.v = String(dados[i]["ID do pedido"]); } });
-    ws["!cols"] = [{ wch: 18 }, { wch: 24 }, { wch: 14 }, { wch: 34 }, { wch: 22 }, { wch: 28 }, { wch: 20 }];
+    ws["!cols"] = [{ wch: 18 }, { wch: 24 }, { wch: 14 }, { wch: 18 }, { wch: 34 }, { wch: 22 }, { wch: 28 }, { wch: 20 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Pedidos");
     const nomeCanal = filtroCanal ? "_" + filtroCanal.replace(/[^a-zA-Z0-9]+/g, "-") : "";
@@ -161,7 +172,7 @@ export default function ChecagemCanceladosPage() {
   };
 
   const limpar = async (soCanal: string) => {
-    const texto = soCanal ? `Apagar os ${porCanal.find(([c]) => c === soCanal)?.[1] ?? 0} pedidos registrados de ${soCanal}?` : `Apagar TODOS os ${registros.length} pedidos registrados?`;
+    const texto = soCanal ? `Apagar os ${registros.filter((r) => r.canal === soCanal).length} pedidos registrados de ${soCanal} (inclusive os que não constam em Faturados)?` : `Apagar TODOS os ${registros.length} pedidos registrados?`;
     if (!confirm(texto)) return;
     const q = supabase.from("checagem_cancelados").delete();
     const { error } = soCanal ? await q.eq("canal", soCanal) : await q.neq("id", 0);
@@ -247,7 +258,15 @@ export default function ChecagemCanceladosPage() {
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-registrados>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-black text-white uppercase tracking-wider">Pedidos registrados <span className="text-slate-400 font-mono" data-total>({registros.length})</span></h2>
+                  <h2 className="text-sm font-black text-white uppercase tracking-wider">Pedidos registrados <span className="text-slate-400 font-mono" data-total>({base.length})</span></h2>
+                  <p className="text-[11px] text-slate-400 mt-1" data-resumo-faturados>
+                    {registros.length} pedido(s) com o status procurado · <strong className="text-emerald-400">{emComum} também constam em Faturados</strong>
+                    {faturados.size === 0 && <span className="text-amber-400"> (a tabela de Faturados está vazia: suba os faturados em Uploads)</span>}
+                  </p>
+                  <label className="flex items-center gap-2 mt-2 text-[11px] font-bold text-slate-300 cursor-pointer w-fit">
+                    <input type="checkbox" checked={soFaturados} onChange={(e) => setSoFaturados(e.target.checked)} data-so-faturados className="accent-indigo-500" />
+                    Mostrar e baixar só os que constam em Faturados
+                  </label>
                   <div className="flex flex-wrap gap-2 mt-2">
                     {porCanal.map(([c, n]) => (
                       <button key={c} type="button" onClick={() => setFiltroCanal(filtroCanal === c ? "" : c)} data-chip-canal={c}
@@ -274,7 +293,7 @@ export default function ChecagemCanceladosPage() {
               <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[480px]">
                 <table className="w-full text-left text-xs whitespace-nowrap" data-tabela>
                   <thead className="bg-slate-950 sticky top-0 text-slate-400 font-bold uppercase text-[10px]">
-                    <tr><th className="p-3">Canal</th><th className="p-3">ID do pedido</th><th className="p-3">Registro</th><th className="p-3">Status na planilha</th><th className="p-3">Palavras</th><th className="p-3">Arquivo</th></tr>
+                    <tr><th className="p-3">Canal</th><th className="p-3">ID do pedido</th><th className="p-3">Registro</th><th className="p-3">Faturado</th><th className="p-3">Status na planilha</th><th className="p-3">Palavras</th><th className="p-3">Arquivo</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
                     {visiveis.slice(0, LIMITE_TELA).map((r) => (
@@ -282,12 +301,13 @@ export default function ChecagemCanceladosPage() {
                         <td className="p-3 font-bold text-white">{r.canal}</td>
                         <td className="p-3 font-mono text-indigo-300">{r.id_pedido}</td>
                         <td className="p-3"><span className="bg-rose-950/60 text-rose-300 border border-rose-900/40 px-2 py-0.5 rounded font-bold">{r.rotulo}</span></td>
+                        <td className="p-3">{mesFaturado(r) !== undefined ? <span className="text-emerald-400 font-bold">✔ {mesFaturado(r)}</span> : <span className="text-slate-500">não</span>}</td>
                         <td className="p-3 text-slate-300">{r.status_planilha}</td>
                         <td className="p-3 text-slate-400">{r.termo}</td>
                         <td className="p-3 text-slate-400">{r.arquivo}</td>
                       </tr>
                     ))}
-                    {visiveis.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">{carregando ? "Carregando…" : "Nenhum pedido para mostrar."}</td></tr>}
+                    {visiveis.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500">{carregando ? "Carregando…" : "Nenhum pedido para mostrar."}</td></tr>}
                   </tbody>
                 </table>
               </div>

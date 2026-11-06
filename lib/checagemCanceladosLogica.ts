@@ -58,3 +58,8 @@ export function achar(linhas: any[][], p: { linhaInicial: number; colPedido: num
   }
   return { achados, lidas, semPedido };
 }
+
+/** Chave para comparar IDs de pedido entre planilhas e a tabela de faturados: sem espaços/traços/aspas, maiúsculas, sem ".0" final. */
+export function chaveDoPedido(valor: unknown): string {
+  return textoDoPedido(valor).replace(/\.0$/, "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+}
