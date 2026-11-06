@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
 const CHAVE_CONFIG_CLIPES = "bestfit_canais_clipes_config";   // mesma chave de antes: a escolha de canais já feita continua valendo
+// "Pasta" = o vídeo já foi salvo na pasta de vídeos. Fica junto dos clipes (mesma coluna clipes_enviados), com uma chave que não é de canal.
+const PASTA = "__pasta";
 const paiDe = (item: any) => item.sku_pai || (String(item.sku || "").length > 5 ? String(item.sku).substring(0, 5) : item.sku);
 
 export default function VideosPage() {
@@ -217,6 +219,9 @@ export default function VideosPage() {
   const marcado = (itens: any[], canal: string) => itens.every((it) => Boolean((it.clipes_enviados || {})[canal]));
   const totalCadastros = unidadesPeriodo.length;
   const produtosComVideo = canaisAtivosClipes.length === 0 ? 0 : unidadesPeriodo.filter((u) => canaisAtivosClipes.every((c) => marcado(u.itens, c))).length;
+  // Vídeo feito = a unidade tem QUALQUER caixa marcada (algum canal ativo ou a Pasta)
+  const caixasDeVideo = [...canaisAtivosClipes, PASTA];
+  const videosFeitos = unidadesPeriodo.filter((u) => u.itens.some((it) => caixasDeVideo.some((c) => Boolean((it.clipes_enviados || {})[c])))).length;
   const totalVideosPostados = unidadesPeriodo.reduce((soma, u) => soma + canaisAtivosClipes.filter((c) => marcado(u.itens, c)).length, 0);
 
   const abaCls = (ativa: boolean) => `px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${ativa ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"}`;
@@ -288,6 +293,7 @@ export default function VideosPage() {
                   <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                     <tr>
                       <th className="p-3">SKU Pai / Título do Produto</th>
+                      <th className="p-3 text-center">Pasta</th>
                       {canaisAtivosClipes.map((canal, cIdx) => <th key={cIdx} className="p-3 text-center">{canal}</th>)}
                       <th className="p-3 text-center">Ações</th>
                     </tr>
@@ -299,6 +305,21 @@ export default function VideosPage() {
                           <tr key={`realizado-${idx}`} data-linha-video={item.sku} className="hover:bg-slate-800/40">
                             <td className="p-3 font-mono">
                               <span className="text-purple-400 font-bold">Pai: {item.sku}</span> — <span className="text-white font-semibold">{item.produto}</span>
+                            </td>
+                            <td className="p-3 text-center">
+                              <input
+                                type="checkbox" checked={item.itensGrupo.every((it: any) => Boolean((it.clipes_enviados || {})[PASTA]))} data-pasta
+                                onChange={async (e) => {
+                                  const checked = e.target.checked;
+                                  for (const alvo of item.itensGrupo) {
+                                    const clipes = alvo.clipes_enviados || {};
+                                    clipes[PASTA] = checked;
+                                    await supabase.from("produtos_novos_cadastrados").update({ clipes_enviados: clipes }).eq("sku", alvo.sku);
+                                  }
+                                  carregarRealizadosDoBanco();
+                                }}
+                                className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                              />
                             </td>
                             {canaisAtivosClipes.map((canal, cIdx) => {
                               const todosMarcadosGrupo = item.itensGrupo.every((it: any) => Boolean((it.clipes_enviados || {})[canal]));
@@ -330,6 +351,11 @@ export default function VideosPage() {
                           <td className="p-3 font-mono">
                             <span className="text-amber-400 font-bold">Pai: {item.sku}</span> — <span className="text-white font-semibold">{item.produto}</span> <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.5 rounded ml-2">Manual</span>
                           </td>
+                          <td className="p-3 text-center">
+                            <input type="checkbox" checked={Boolean((itemManual.clipes_enviados || {})[PASTA])} data-pasta
+                              onChange={(e) => toggleClipeVideoManual(itemManual.sku, PASTA, e.target.checked)}
+                              className="w-4 h-4 accent-emerald-600 rounded cursor-pointer" />
+                          </td>
                           {canaisAtivosClipes.map((canal, cIdx) => (
                             <td key={cIdx} className="p-3 text-center">
                               <input type="checkbox" checked={Boolean((itemManual.clipes_enviados || {})[canal])} data-clipe={canal}
@@ -344,7 +370,7 @@ export default function VideosPage() {
                       );
                     })}
                     {itensAtuaisVideos.length === 0 && (
-                      <tr><td colSpan={canaisAtivosClipes.length + 2} className="p-8 text-center text-slate-500">Nenhum vídeo encontrado para o filtro selecionado.</td></tr>
+                      <tr><td colSpan={canaisAtivosClipes.length + 3} className="p-8 text-center text-slate-500">Nenhum vídeo encontrado para o filtro selecionado.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -379,11 +405,16 @@ export default function VideosPage() {
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Cadastros no Período</span>
                 <p className="text-3xl font-black text-emerald-400 mt-2" data-total-cadastros>{totalCadastros}</p>
                 <span className="text-[10px] text-slate-500 mt-1 block">Cadastrados + incluídos manualmente</span>
+              </div>
+              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
+                <span className="text-xs font-bold text-slate-400 uppercase">Vídeo feito</span>
+                <p className="text-3xl font-black text-amber-400 mt-2" data-videos-feitos>{videosFeitos}</p>
+                <span className="text-[10px] text-slate-500 mt-1 block">Qualquer produto com alguma caixa marcada (canal ou Pasta)</span>
               </div>
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">Produtos com Vídeo</span>
