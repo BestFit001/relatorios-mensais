@@ -388,7 +388,15 @@ export default function ProdutosPage() {
     };
     if (!editandoManualSku) payload.qtdd_ecom = 0;
 
-    const { error } = await supabase.from("produtos_pendentes").upsert([payload], { onConflict: "sku" });
+    let error: { message: string } | null = null;
+    if (editandoManualSku && sku !== editandoManualSku) {
+      // SKU corrigido: atualiza a mesma linha (não cria outra) e recusa se o SKU novo já existe nos pendentes
+      const { data: duplicado } = await supabase.from("produtos_pendentes").select("id").eq("sku", sku).maybeSingle();
+      if (duplicado) { setLoading(false); alert(`Já existe um produto pendente com o SKU ${sku}.`); return; }
+      ({ error } = await supabase.from("produtos_pendentes").update(payload).eq("sku", editandoManualSku));
+    } else {
+      ({ error } = await supabase.from("produtos_pendentes").upsert([payload], { onConflict: "sku" }));
+    }
     if (error) {
       alert("Erro ao salvar: " + error.message);
     } else {
@@ -1151,7 +1159,7 @@ export default function ProdutosPage() {
               <form onSubmit={handleSalvarManual} data-form-manual className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU *</label>
-                  <input type="text" required readOnly={!!editandoManualSku} data-m-sku value={formManual.sku} onChange={(e) => setFormManual({...formManual, sku: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
+                  <input type="text" required data-m-sku value={formManual.sku} onChange={(e) => setFormManual({...formManual, sku: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
                 </div>
                 <div className="col-span-2 md:col-span-3">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nome do Produto *</label>
@@ -1201,7 +1209,7 @@ export default function ProdutosPage() {
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Comprimento (cm)</label>
                   <input type="number" step="0.01" data-m-comprimento value={formManual.comprimento} onChange={(e) => setFormManual({...formManual, comprimento: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white outline-none focus:border-indigo-500" />
                 </div>
-                <p className="col-span-2 md:col-span-4 text-[10px] text-slate-500">Só SKU e Nome são obrigatórios. Se as medidas ficarem em branco, a planilha do Tiny usa as do modelo parecido da aba Padronização e, se não houver, as genéricas (20×20×20 cm).</p>
+                <p className="col-span-2 md:col-span-4 text-[10px] text-slate-500">Só SKU e Nome são obrigatórios. Ao corrigir o SKU, o produto é atualizado (não duplicado) e o SKU Pai é recalculado. Se as medidas ficarem em branco, a planilha do Tiny usa as do modelo parecido da aba Padronização e, se não houver, as genéricas (20×20×20 cm).</p>
                 <div className="col-span-2 md:col-span-4 flex justify-end gap-2 pt-3 border-t border-slate-800">
                   <button type="button" onClick={() => { setModalAberto(false); setEditandoManualSku(null); }} className="bg-slate-800 px-4 py-2 rounded-xl text-white font-bold cursor-pointer">Cancelar</button>
                   <button type="submit" data-m-salvar className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-xl text-white font-bold cursor-pointer">Salvar</button>
