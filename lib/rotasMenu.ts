@@ -40,6 +40,7 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/padronizacao", nome: "Padronização IA" },
     { id: "/dimensoes-peso", nome: "Dimensões e Peso" },
     { id: "/plp", nome: "PLPs (Expedição)" },
+    { id: "/checagem-cancelados", nome: "Checagem de Cancelados" },
   ] },
   { titulo: "Agenda", submenu: false, rotas: [{ id: "/agenda", nome: "Agenda" }] },
   { titulo: "Configurações", submenu: true, rotas: [

@@ -33,7 +33,8 @@ export default function Navbar() {
       pathname.startsWith("/produtos") || 
       pathname.startsWith("/padronizacao") || 
       pathname.startsWith("/dimensoes-peso") || 
-      pathname.startsWith("/plp")
+      pathname.startsWith("/plp") ||
+      pathname.startsWith("/checagem-cancelados")
     ) {
       setMenuExpandido("ferramentas");
     } else if (
@@ -472,13 +473,13 @@ export default function Navbar() {
           )}
 
           {/* FERRAMENTAS */}
-          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/dimensoes-peso") || temPermissao("/plp")) && (
+          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/dimensoes-peso") || temPermissao("/plp") || temPermissao("/checagem-cancelados")) && (
             <div>
               <button
                 onClick={() => toggleSecao("ferramentas")}
                 title="Ferramentas"
                 className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname === "/calculadora" || pathname === "/produtos" || pathname === "/padronizacao" || pathname === "/dimensoes-peso" || pathname === "/plp"
+                  pathname === "/calculadora" || pathname === "/produtos" || pathname === "/padronizacao" || pathname === "/dimensoes-peso" || pathname === "/plp" || pathname === "/checagem-cancelados"
                     ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
                     : "text-slate-400 hover:text-white hover:bg-slate-900/60"
                 }`}
@@ -519,6 +520,11 @@ export default function Navbar() {
                   {temPermissao("/plp") && (
                     <Link href="/plp" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/plp" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
                       PLPs (Expedição)
+                    </Link>
+                  )}
+                  {temPermissao("/checagem-cancelados") && (
+                    <Link href="/checagem-cancelados" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/checagem-cancelados" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
+                      Checagem de Cancelados
                     </Link>
                   )}
                 </div>
