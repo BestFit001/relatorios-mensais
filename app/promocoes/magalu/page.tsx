@@ -104,7 +104,7 @@ export default function PromocoesMagaluPage() {
         const { data } = await supabase
           .from("mapeamento_canais_skus")
           .select("sku")
-          .ilike("canal", "Magazine Luiza")
+          .in("canal", ["Magalu", "Magazine Luiza"])
           .range(from, from + step - 1);
 
         if (data && data.length > 0) {
@@ -335,7 +335,7 @@ export default function PromocoesMagaluPage() {
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magazine Luiza</h1>
+            <h1 className="text-2xl font-black text-white tracking-tight">Gestão de Promoções — Magalu</h1>
             <p className="text-sm font-medium text-slate-400">Precificação robusta com fallback seguro para regras da Magalu</p>
           </div>
           <Navbar />
@@ -512,7 +512,7 @@ export default function PromocoesMagaluPage() {
         ) : (
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden p-6 space-y-4">
             <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Promoções Ativas — Magazine Luiza</h3>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Promoções Ativas — Magalu</h3>
               <input
                 type="text"
                 value={termoBusca}

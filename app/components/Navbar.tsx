@@ -455,7 +455,7 @@ export default function Navbar() {
                   )}
                   {temPermissao("/promocoes/magalu") && (
                     <Link href="/promocoes/magalu" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/promocoes/magalu" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      🔵 Magazine Luiza
+                      🔵 Magalu
                     </Link>
                   )}
                   {temPermissao("/promocoes/shopee") && (

@@ -4,7 +4,29 @@
 const semAcento = (s: any) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 /** "TikTok" = "Tiktok" = "tik tok": compara nomes de canal sem se importar com maiúsculas, acento ou espaço. */
-export const normalizarNomeCanal = (nome: any): string => semAcento(nome).replace(/[^a-z0-9]/g, "");
+export const normalizarNomeCanal = (nome: any): string => {
+  const k = semAcento(nome).replace(/[^a-z0-9]/g, "");
+  return k === "magazineluiza" ? "magalu" : k;   // Magalu e Magazine Luiza são o mesmo canal
+};
+
+/** Nome oficial do canal: "Magazine Luiza" vira "Magalu"; os demais ficam como estão. */
+export const nomeOficialCanal = (nome: any): string => {
+  const t = String(nome ?? "").trim();
+  return normalizarNomeCanal(t) === "magalu" ? "Magalu" : t;
+};
+
+/** Lista de canais sem repetição (ignora maiúsculas, acento e o apelido Magazine Luiza). */
+export function canaisSemRepeticao(lista: any[]): string[] {
+  const vistos = new Set<string>();
+  const out: string[] = [];
+  for (const c of lista) {
+    const nome = nomeOficialCanal(c);
+    const k = normalizarNomeCanal(nome);
+    if (!k || vistos.has(k)) continue;
+    vistos.add(k); out.push(nome);
+  }
+  return out;
+}
 
 /** Mesma normalização de SKU usada em todo o app. */
 export function normalizarSkuVenda(valor: any): string {
@@ -17,15 +39,11 @@ export function normalizarSkuVenda(valor: any): string {
 /** Canais que não têm catálogo/cadastro (ex.: Clube Hebraica, Clube Paineiras): ficam fora do Mapa de Cadastros. */
 export const canalTemCadastro = (nome: any): boolean => !normalizarNomeCanal(nome).startsWith("clube");
 
-// Nome usado nas vendas -> nome usado na lista de canais
-const ALIAS_CANAL: Record<string, string> = { magalu: "magazineluiza" };
-
 /** Descobre a qual canal cadastrado uma venda pertence (null = o canal da venda não existe na lista). */
 export function canalDaVenda(nomeNaVenda: any, canais: string[]): string | null {
   const k = normalizarNomeCanal(nomeNaVenda);
   if (!k) return null;
-  const alvo = ALIAS_CANAL[k] ?? k;
-  return canais.find((c) => normalizarNomeCanal(c) === alvo) ?? canais.find((c) => normalizarNomeCanal(c) === k) ?? null;
+  return canais.find((c) => normalizarNomeCanal(c) === k) ?? null;
 }
 
 export interface VendaMinima { canal: any; sku: any }

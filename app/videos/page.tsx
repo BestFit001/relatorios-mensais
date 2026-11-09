@@ -3,6 +3,7 @@
 // Antes era a sub-aba "Vídeos / Clipes" de Produtos & Vídeos (hoje "Novos Cadastros"); a lógica é a mesma.
 import React, { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import { canaisSemRepeticao } from "../../lib/vendasCanaisLogica";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
@@ -41,8 +42,8 @@ export default function VideosPage() {
   const carregarDadosIniciais = async () => {
     setLoading(true);
     const { data: regrasCanais } = await supabase.from("config_regras_canais").select("canal").order("id");
-    let listaCanais = ["Site", "Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", "Shopee", "Magazine Luiza", "Netshoes", "Centauro", "Amazon", "Shein", "TikTok"];
-    if (regrasCanais && regrasCanais.length > 0) listaCanais = regrasCanais.map((r: any) => r.canal);
+    let listaCanais = ["Site", "Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", "Shopee", "Magalu", "Netshoes", "Centauro", "Amazon", "Shein", "TikTok"];
+    if (regrasCanais && regrasCanais.length > 0) listaCanais = canaisSemRepeticao(regrasCanais.map((r: any) => r.canal));
     setCanaisLista(listaCanais);
 
     const configSalva = localStorage.getItem(CHAVE_CONFIG_CLIPES);

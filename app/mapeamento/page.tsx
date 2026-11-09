@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import { buscarTudo } from "../../lib/buscarTudo";
 import ConfigMapaCadastros from "../components/ConfigMapaCadastros";
-import { canalTemCadastro, normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
+import { canaisSemRepeticao, canalTemCadastro, normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
 
 // ───────────────────────── utilidades ─────────────────────────
 
@@ -121,7 +121,7 @@ export default function MapeamentoPage() {
       if (regras.error) throw new Error(regras.error.message);
 
       // canais sem catálogo (Clube Hebraica, Clube Paineiras…) não entram no Mapa
-      const listaCanais: string[] = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal))).filter(canalTemCadastro);
+      const listaCanais: string[] = canaisSemRepeticao((regras.data || []).map((r: any) => r.canal)).filter(canalTemCadastro);
       // compara o nome do canal sem maiúsculas/acento ("Tiktok" = "TikTok")
       const idxCanal = new Map<string, number>(listaCanais.map((c, i) => [normalizarNomeCanal(c), i]));
 
@@ -171,7 +171,7 @@ export default function MapeamentoPage() {
         buscarTudo("vendas_canais", "canal, sku"),
       ]);
       if (regras.error) throw new Error(regras.error.message);
-      const listaCanais = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal))).filter(canalTemCadastro);
+      const listaCanais = canaisSemRepeticao((regras.data || []).map((r: any) => r.canal)).filter(canalTemCadastro);
       const skusBase = new Set<string>(tiny.map((t: any) => normalizarSkuVenda(t.sku)));
       const r = pendentesDeRegistro({ vendas, canais: listaCanais, presentes: mapas, skusBase });
 

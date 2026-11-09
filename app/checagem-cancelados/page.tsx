@@ -9,13 +9,14 @@ import * as XLSX from "xlsx";
 import { supabase } from "../../lib/supabase";
 import { buscarTudo } from "../../lib/buscarTudo";
 import { indiceDaLetra } from "../../lib/cobertura";
+import { canaisSemRepeticao } from "../../lib/vendasCanaisLogica";
 import { achar, chaveDoPedido, interpretarTermo, textoDoPedido } from "../../lib/checagemCanceladosLogica";
 import { extrairIdPedidoDaObservacao, paraNumeroBR } from "../../lib/idPedidoFaturados";
 import { lerArquivoComoLinhas } from "../../lib/lerArquivo";
 import Navbar from "../components/Navbar";
 
 const CHAVE_FORM = "bestfit_checagem_cancelados_form";   // só lembra as últimas colunas/termo de cada canal (conveniência)
-const CANAIS_PADRAO = ["Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", "Shopee", "Amazon", "Magazine Luiza", "Netshoes", "Centauro", "Shein", "TikTok", "Site"];
+const CANAIS_PADRAO = ["Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", "Shopee", "Amazon", "Magalu", "Netshoes", "Centauro", "Shein", "TikTok", "Site"];
 const LIMITE_TELA = 200;
 
 interface FormCanal { linha: string; colPedido: string; colStatus: string; termo: string }
@@ -63,7 +64,7 @@ export default function ChecagemCanceladosPage() {
       buscarTudo("checagem_cancelados", "*"),
       buscarTudo("faturados", "id, id_pedido, mes_referencia"),
     ]);
-    const lista = Array.from(new Set<string>((regras.data || []).map((r: any) => r.canal))).filter(Boolean);
+    const lista = canaisSemRepeticao((regras.data || []).map((r: any) => r.canal));
     setCanais(lista.length ? lista : CANAIS_PADRAO);
     const r = String(cfg.data?.valor ?? "").trim() || "cancelado";
     setRotulo(r); setRotuloEdit(r);

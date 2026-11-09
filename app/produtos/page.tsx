@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
+import { canaisSemRepeticao } from "../../lib/vendasCanaisLogica";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
@@ -61,9 +62,9 @@ export default function ProdutosPage() {
   const carregarDadosIniciais = async () => {
     setLoading(true);
     const { data: regrasCanais } = await supabase.from("config_regras_canais").select("canal").order("id");
-    let listaCanais = ["Site", "Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", "Shopee", "Magazine Luiza", "Netshoes", "Centauro", "Amazon", "Shein", "TikTok"];
+    let listaCanais = ["Site", "Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", "Shopee", "Magalu", "Netshoes", "Centauro", "Amazon", "Shein", "TikTok"];
     if (regrasCanais && regrasCanais.length > 0) {
-      listaCanais = regrasCanais.map((r: any) => r.canal);
+      listaCanais = canaisSemRepeticao(regrasCanais.map((r: any) => r.canal));
     }
     setCanaisLista(listaCanais);
 
