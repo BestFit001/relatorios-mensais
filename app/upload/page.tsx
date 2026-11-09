@@ -924,6 +924,11 @@ export default function UpdatesPage() {
 
         const idxId = ehWake ? wIdPedido : letraParaIndice(colIdDef);
         const idxSku = ehWake ? wSku : letraParaIndice(colSkuDef);
+        // ML: nas linhas de "Pacote de N produtos" só a linha de cima traz a receita e o Total; as linhas dos itens vêm sem valor,
+        // só com o "Preço unitário de venda do anúncio". Essa coluna é usada para repartir a receita do pacote entre os itens.
+        const idxPrecoUnitAnuncio = isML
+          ? (() => { const k = acharColunaPorCabecalho(json[5], ["preco unitario de venda do anuncio (brl)"]); return k >= 0 ? k : letraParaIndice("AC"); })()
+          : -1;
         const mesesDosPedidos = new Map<string, number>();   // mês (aaaa-mm) da data do pedido -> nº de pedidos com Nota Fiscal
         const idxDescricao = letraParaIndice(regraData?.col_descricao || (isAmazon ? 'K' : (isSite ? 'BE' : 'D'))); 
 
@@ -1015,7 +1020,7 @@ export default function UpdatesPage() {
               }
               if (repasseTotal <= 0) repasseTotal = Math.max(0, pdvPrincipal - (pdvPrincipal * 0.16));
 
-              let subItens = [];
+              let subItens: { skuFinal: string; nome: any; pdvSub: number; qtdSub: number; peso: number; base: number }[] = [];
               let somaPdvSubItens = 0;
 
               for (let j = 1; j <= qtdItensNoPacote; j++) {
@@ -1029,15 +1034,30 @@ export default function UpdatesPage() {
                   const skuFinal = existe ? skuSub : (skuSub || 'sem-sku');
                   const nome = existe ? mapaProdutos.get(skuSub) : 'Produto Carrinho';
                   
+                  const precoUnitAnuncio = idxPrecoUnitAnuncio >= 0 ? parseSmartFloat(subRow[idxPrecoUnitAnuncio]) : 0;
                   somaPdvSubItens += (pdvSub * qtdSub);
-                  subItens.push({ skuFinal, nome, pdvSub, qtdSub });
+                  subItens.push({ skuFinal, nome, pdvSub, qtdSub, peso: pdvSub * qtdSub, base: precoUnitAnuncio * qtdSub });
                 }
+              }
+
+              // Itens sem valor próprio (ML): a receita do pacote (linha de cima) é repartida entre eles pelo preço do anúncio.
+              // Sem isto o item entrava com venda R$ 0 e repasse cheio, e a margem passava de 100%.
+              if (somaPdvSubItens <= 0 && pdvPrincipal > 0 && subItens.length > 0) {
+                const somaBase = subItens.reduce((t, it) => t + it.base, 0);
+                subItens.forEach((it) => {
+                  const parte = somaBase > 0 ? it.base / somaBase : 1 / subItens.length;
+                  it.pdvSub = Number((pdvPrincipal * parte).toFixed(2));
+                  it.peso = it.pdvSub;
+                });
+                const resto = Number((pdvPrincipal - subItens.reduce((t, it) => t + it.pdvSub, 0)).toFixed(2));
+                if (resto !== 0) { subItens[subItens.length - 1].pdvSub = Number((subItens[subItens.length - 1].pdvSub + resto).toFixed(2)); subItens[subItens.length - 1].peso = subItens[subItens.length - 1].pdvSub; }
+                somaPdvSubItens = pdvPrincipal;
               }
 
               for (const item of subItens) {
                 let repasseRateado = 0;
                 if (somaPdvSubItens > 0) {
-                  repasseRateado = repasseTotal * ((item.pdvSub * item.qtdSub) / somaPdvSubItens);
+                  repasseRateado = repasseTotal * (item.peso / somaPdvSubItens);
                 } else {
                   repasseRateado = repasseTotal / qtdItensNoPacote;
                 }
@@ -1084,8 +1104,10 @@ export default function UpdatesPage() {
           if (isFisico && repasseLiquido <= 0) {
             repasseLiquido = precoVenda;
           } else if (repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * quantidade * 1.5)) {
+            // O PDV da linha já é o valor total da linha (todas as unidades): não multiplica pela quantidade de novo.
+            // (Antes, uma venda de 10 unidades sem Total no ML ganhava repasse 10x maior que o próprio valor da venda.)
             const taxaFallback = isAmazon ? 0.14 : 0.16;
-            repasseLiquido = Math.max(0, (precoVenda * quantidade) - ((precoVenda * quantidade) * taxaFallback));
+            repasseLiquido = Math.max(0, precoVenda - (precoVenda * taxaFallback));
           }
 
           novasVendas.push({
