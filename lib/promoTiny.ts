@@ -5,6 +5,8 @@ import { supabase } from "./supabase";
 export interface ConfigPromoTiny { sku: string; estoque: string }
 export const PADRAO_PROMO_TINY: ConfigPromoTiny = { sku: "C", estoque: "F" };
 const CAMPOS = { sku: "promo_tiny_sku", estoque: "promo_tiny_estoque" } as const;
+// Mercado Livre tem uma configuração por conta (ml1, ml2, ml3): promo_tiny_sku_ml1, promo_tiny_estoque_ml1...
+const campoDaConta = (campo: string, conta?: string) => (conta ? `${campo}_${conta}` : campo);
 
 /** "C" -> 2, "AA" -> 26. -1 se não for uma letra de coluna válida. */
 export function indiceColuna(letra: string): number {
@@ -21,26 +23,29 @@ export function letraDaColuna(indice: number): string {
   return s;
 }
 
-export async function carregarConfigPromoTiny(): Promise<ConfigPromoTiny> {
+/** Com `conta`, vale a configuração daquela conta; sem ela (ou sem nada salvo para a conta), a geral; sem nada, C e F. */
+export async function carregarConfigPromoTiny(conta?: string): Promise<ConfigPromoTiny> {
   const cfg = { ...PADRAO_PROMO_TINY };
   try {
-    const { data } = await supabase.from("config_regras_tiny").select("campo, coluna").in("campo", [CAMPOS.sku, CAMPOS.estoque]);
-    for (const r of data || []) {
-      const letra = String(r.coluna ?? "").trim().toUpperCase();
-      if (indiceColuna(letra) < 0) continue;
-      if (r.campo === CAMPOS.sku) cfg.sku = letra;
-      if (r.campo === CAMPOS.estoque) cfg.estoque = letra;
-    }
+    const campos = [CAMPOS.sku, CAMPOS.estoque, ...(conta ? [campoDaConta(CAMPOS.sku, conta), campoDaConta(CAMPOS.estoque, conta)] : [])];
+    const { data } = await supabase.from("config_regras_tiny").select("campo, coluna").in("campo", campos);
+    const valor = (campo: string) => {
+      const r = (data || []).find((x: any) => x.campo === campo);
+      const letra = String(r?.coluna ?? "").trim().toUpperCase();
+      return r && indiceColuna(letra) >= 0 ? letra : "";
+    };
+    cfg.sku = valor(campoDaConta(CAMPOS.sku, conta)) || valor(CAMPOS.sku) || cfg.sku;
+    cfg.estoque = valor(campoDaConta(CAMPOS.estoque, conta)) || valor(CAMPOS.estoque) || cfg.estoque;
   } catch { /* sem banco: usa o padrão C / F */ }
   return cfg;
 }
 
-export async function salvarConfigPromoTiny(cfg: ConfigPromoTiny): Promise<void> {
+export async function salvarConfigPromoTiny(cfg: ConfigPromoTiny, conta?: string): Promise<void> {
   const sku = cfg.sku.trim().toUpperCase(), estoque = cfg.estoque.trim().toUpperCase();
   if (indiceColuna(sku) < 0 || indiceColuna(estoque) < 0) throw new Error("Use só letras de coluna (ex.: C, F, AB).");
   if (sku === estoque) throw new Error("O SKU e o estoque não podem estar na mesma coluna.");
   const { error } = await supabase.from("config_regras_tiny").upsert(
-    [{ campo: CAMPOS.sku, coluna: sku }, { campo: CAMPOS.estoque, coluna: estoque }],
+    [{ campo: campoDaConta(CAMPOS.sku, conta), coluna: sku }, { campo: campoDaConta(CAMPOS.estoque, conta), coluna: estoque }],
     { onConflict: "campo" },
   );
   if (error) throw new Error(error.message);

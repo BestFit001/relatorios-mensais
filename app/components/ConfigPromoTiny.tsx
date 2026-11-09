@@ -10,7 +10,7 @@ import {
  * Sub-aba "Configurações" das Promoções: em que coluna da planilha de estoque do Tiny estão o SKU e o saldo.
  * A mesma configuração vale para Mercado Livre, Magalu, Shopee e TikTok. `onSalvo` avisa a página para reler.
  */
-export default function ConfigPromoTiny({ onSalvo }: { onSalvo?: (cfg: ConfigPromoTiny) => void }) {
+export default function ConfigPromoTiny({ onSalvo, conta }: { onSalvo?: (cfg: ConfigPromoTiny) => void; conta?: { chave: string; rotulo: string } }) {
   const [sku, setSku] = useState(PADRAO_PROMO_TINY.sku);
   const [estoque, setEstoque] = useState(PADRAO_PROMO_TINY.estoque);
   const [salvo, setSalvo] = useState<ConfigPromoTiny>(PADRAO_PROMO_TINY);
@@ -18,9 +18,11 @@ export default function ConfigPromoTiny({ onSalvo }: { onSalvo?: (cfg: ConfigPro
   const [msg, setMsg] = useState<{ ok: boolean; texto: string } | null>(null);
   const [exemplo, setExemplo] = useState<{ nome: string; linhas: any[][]; colunas: number } | null>(null);
 
+  const chaveConta = conta?.chave;
   useEffect(() => {
-    carregarConfigPromoTiny().then((c) => { setSku(c.sku); setEstoque(c.estoque); setSalvo(c); }).finally(() => setCarregando(false));
-  }, []);
+    setCarregando(true); setMsg(null); setExemplo(null);
+    carregarConfigPromoTiny(chaveConta).then((c) => { setSku(c.sku); setEstoque(c.estoque); setSalvo(c); }).finally(() => setCarregando(false));
+  }, [chaveConta]);
 
   const mudou = sku.trim().toUpperCase() !== salvo.sku || estoque.trim().toUpperCase() !== salvo.estoque;
 
@@ -28,9 +30,9 @@ export default function ConfigPromoTiny({ onSalvo }: { onSalvo?: (cfg: ConfigPro
     setMsg(null);
     try {
       const nova = { sku: sku.trim().toUpperCase(), estoque: estoque.trim().toUpperCase() };
-      await salvarConfigPromoTiny(nova);
+      await salvarConfigPromoTiny(nova, chaveConta);
       setSku(nova.sku); setEstoque(nova.estoque); setSalvo(nova);
-      setMsg({ ok: true, texto: `Salvo: SKU na coluna ${nova.sku}, estoque na coluna ${nova.estoque}. Vale para as quatro abas de promoção.` });
+      setMsg({ ok: true, texto: `Salvo: SKU na coluna ${nova.sku}, estoque na coluna ${nova.estoque}. ${conta ? `Vale só para ${conta.rotulo}.` : "Vale para as quatro abas de promoção."}` });
       onSalvo?.(nova);
     } catch (e: any) {
       setMsg({ ok: false, texto: "Não salvei: " + e.message });
@@ -58,10 +60,12 @@ export default function ConfigPromoTiny({ onSalvo }: { onSalvo?: (cfg: ConfigPro
     <div className="space-y-5 max-w-4xl" data-config-promo-tiny>
       <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-5">
         <div>
-          <h2 className="text-sm font-black text-purple-300 uppercase tracking-wider">Planilha de estoque do Tiny</h2>
+          <h2 className="text-sm font-black text-purple-300 uppercase tracking-wider">Planilha de estoque do Tiny{conta ? ` — ${conta.rotulo}` : ""}</h2>
           <p className="text-xs text-slate-400 mt-1">
-            Diga em que coluna da planilha de inventário do Tiny ficam o <b>SKU</b> e o <b>saldo em estoque</b>. A mesma configuração vale para
-            Mercado Livre, Magalu, Shopee e TikTok: só o que tem saldo maior que zero é precificado.
+            Diga em que coluna da planilha de inventário do Tiny ficam o <b>SKU</b> e o <b>saldo em estoque</b>.{" "}
+            {conta
+              ? <>Cada conta do Mercado Livre tem a sua configuração: esta vale só para <b>{conta.rotulo}</b>. Só o que tem saldo maior que zero é precificado.</>
+              : <>A mesma configuração vale para Mercado Livre, Magalu, Shopee e TikTok: só o que tem saldo maior que zero é precificado.</>}
           </p>
         </div>
 

@@ -76,6 +76,14 @@ function parseNumeroBruto(valor: any): number {
   return isNaN(num) ? 0 : num;
 }
 
+// Contas do Mercado Livre: cada uma tem o seu inventário do Tiny (colunas próprias), os seus anúncios e as suas promoções ativas
+const CONTAS_ML = [
+  { chave: "ml1", rotulo: "Mercado Livre 1" },
+  { chave: "ml2", rotulo: "Mercado Livre 2" },
+  { chave: "ml3", rotulo: "Mercado Livre 3" },
+] as const;
+const CHAVE_CONTA_STORAGE = "promo_ml_conta";
+
 const formatarMoeda = (valor: number) =>
   "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -86,6 +94,8 @@ export default function PromocoesMlPage() {
   const [margemAlvo, setMargemAlvo] = useState("20");
   const [arquivoUpload, setArquivoUpload] = useState<File | null>(null);
   // Inventário do Tiny (colunas do SKU e do saldo em Configurações): só entra na precificação o que tem estoque
+  const [contaChave, setContaChave] = useState<string>("ml1");
+  const conta = CONTAS_ML.find((c) => c.chave === contaChave) || CONTAS_ML[0];
   const [cfgTiny, setCfgTiny] = useState<CfgPromoTiny>(PADRAO_PROMO_TINY);
   const [estoqueTinyRaw, setEstoqueTinyRaw] = useState<{ nome: string; linhas: any[][] } | null>(null);
   const estoqueTiny = useMemo(() => {
@@ -108,10 +118,29 @@ export default function PromocoesMlPage() {
       router.push("/login");
       return;
     }
+    try {
+      const salva = localStorage.getItem(CHAVE_CONTA_STORAGE);
+      if (salva && CONTAS_ML.some((c) => c.chave === salva)) setContaChave(salva);
+    } catch { /* sem localStorage: fica na conta 1 */ }
     carregarBasesDoApp();
     carregarPromocoesAtivasSupabase();
-    carregarConfigPromoTiny().then(setCfgTiny);
   }, []);
+
+  // A configuração das colunas do inventário é por conta: recarrega ao trocar de conta
+  useEffect(() => {
+    let ativo = true;
+    carregarConfigPromoTiny(contaChave).then((c) => { if (ativo) setCfgTiny(c); });
+    return () => { ativo = false; };
+  }, [contaChave]);
+
+  const trocarConta = (chave: string) => {
+    if (chave === contaChave) return;
+    const temTrabalho = !!dadosProcessados || !!estoqueTinyRaw;
+    if (temTrabalho && !confirm("Trocar de conta descarta a planilha de campanha e o inventário já carregados. Continuar?")) return;
+    setContaChave(chave);
+    setDadosProcessados(null); setEstoqueTinyRaw(null); setArquivoUpload(null);
+    try { localStorage.setItem(CHAVE_CONTA_STORAGE, chave); } catch { /* ignora */ }
+  };
 
   const carregarBasesDoApp = async () => {
     setLoading(true);
@@ -162,6 +191,7 @@ export default function PromocoesMlPage() {
         const comissaoNum = parsePorcentagem(m.comissao);
         const skuVal = skuValido(m.sku) ? normalizarSku(m.sku) : "";
         const info = {
+          canal: String(m.canal || ""),
           sku: skuVal,
           comissao: comissaoNum,
           peso_real: Number(m.peso_real || 2.0),
@@ -297,7 +327,7 @@ export default function PromocoesMlPage() {
         const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
 
         let anunciosLista = mlRegrasMap.get(mlbKeyNormalizada) || [];
-        let anuncioInfo = anunciosLista.length > 0 ? anunciosLista[0] : null;
+        let anuncioInfo = anunciosLista.length > 0 ? (anunciosLista.find((a: any) => a.canal === conta.rotulo) || anunciosLista[0]) : null;
 
         if (!anuncioInfo) {
           const { data: dbMatch } = await supabase
@@ -309,6 +339,7 @@ export default function PromocoesMlPage() {
           if (dbMatch) {
             const comissaoNum = parsePorcentagem(dbMatch.comissao);
             anuncioInfo = {
+              canal: String(dbMatch.canal || ""),
               sku: skuValido(dbMatch.sku) ? normalizarSku(dbMatch.sku) : "",
               comissao: comissaoNum,
               peso_real: Number(dbMatch.peso_real || 2.0),
@@ -342,8 +373,9 @@ export default function PromocoesMlPage() {
 
         if (!anuncioInfo) {
           statusItem = "INAPTO";
-          errosList.push("MLB não cadastrado na base — Atualizar base");
+          errosList.push(`MLB não cadastrado na base — Atualizar base`);
         } else {
+          if (anuncioInfo.canal && anuncioInfo.canal !== conta.rotulo) errosList.push(`Anúncio cadastrado em ${anuncioInfo.canal}`);
           comissaoVal = Number(anuncioInfo.comissao) || 14;
           pesoReal = Number(anuncioInfo.peso_real || 2.0);
           altura = Number(anuncioInfo.altura || 10);
@@ -400,7 +432,9 @@ export default function PromocoesMlPage() {
       }
 
       setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "precificar" });
-      alert(`✅ Processamento concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+      const deOutraConta = resultados.filter(r => /Anúncio cadastrado em/.test(r.ERRO)).length;
+      alert(`✅ Processamento concluído (${conta.rotulo})! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.` +
+        (deOutraConta > 0 ? `\n\n⚠️ ${deOutraConta} anúncio(s) estão cadastrados em outra conta do Mercado Livre. Confira se escolheu a conta certa.` : ""));
     } catch (err: any) {
       alert("Erro ao processar: " + err.message);
     }
@@ -482,7 +516,7 @@ export default function PromocoesMlPage() {
         const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
 
         let anunciosLista = mlRegrasMap.get(mlbKeyNormalizada) || [];
-        let anuncioInfo = anunciosLista.length > 0 ? anunciosLista[0] : null;
+        let anuncioInfo = anunciosLista.length > 0 ? (anunciosLista.find((a: any) => a.canal === conta.rotulo) || anunciosLista[0]) : null;
 
         if (!anuncioInfo) {
           const { data: dbMatch } = await supabase
@@ -492,7 +526,7 @@ export default function PromocoesMlPage() {
             .maybeSingle();
 
           if (dbMatch) {
-            anuncioInfo = { sku: skuValido(dbMatch.sku) ? normalizarSku(dbMatch.sku) : "" };
+            anuncioInfo = { canal: String(dbMatch.canal || ""), sku: skuValido(dbMatch.sku) ? normalizarSku(dbMatch.sku) : "" };
           }
         }
 
@@ -530,6 +564,7 @@ export default function PromocoesMlPage() {
 
         let lucroLiquido = 0;
         let margemFinal = 0;
+        if (anuncioInfo && anuncioInfo.canal && anuncioInfo.canal !== conta.rotulo) errosList.push(`Anúncio cadastrado em ${anuncioInfo.canal}`);
 
         if (statusItem === "APTO") {
           const impostoTotal = finalPrice * imposto;
@@ -559,7 +594,9 @@ export default function PromocoesMlPage() {
       }
 
       setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "rebate" });
-      alert(`✅ Processamento de Rebate concluído! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.`);
+      const deOutraConta = resultados.filter(r => /Anúncio cadastrado em/.test(r.ERRO)).length;
+      alert(`✅ Processamento de Rebate concluído (${conta.rotulo})! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.` +
+        (deOutraConta > 0 ? `\n\n⚠️ ${deOutraConta} anúncio(s) estão cadastrados em outra conta do Mercado Livre. Confira se escolheu a conta certa.` : ""));
     } catch (err: any) {
       alert("Erro ao processar rebate: " + err.message);
     }
@@ -584,7 +621,8 @@ export default function PromocoesMlPage() {
           mlb: item.MLB,
           sku: item.SKU,
           promocao: item.PROMOTION_NAME,
-          date_validity: item.DATE_VALIDITY
+          date_validity: item.DATE_VALIDITY,
+          canal: conta.rotulo
         }]);
       }
       await carregarPromocoesAtivasSupabase();
@@ -607,13 +645,13 @@ export default function PromocoesMlPage() {
   };
 
   const limparBasePromocoes = async () => {
-    if (!confirm("ATENÇÃO: Deseja apagar TODAS as promoções ativas guardadas na base?")) return;
-    const { error } = await supabase.from("promocoes_ativas_ml").delete().neq("id", 0);
+    if (!confirm(`ATENÇÃO: Deseja apagar TODAS as promoções ativas de ${conta.rotulo} guardadas na base?`)) return;
+    const { error } = await supabase.from("promocoes_ativas_ml").delete().eq("canal", conta.rotulo);
     if (error) {
       alert("Erro ao limpar base: " + error.message);
     } else {
       carregarPromocoesAtivasSupabase();
-      alert("🗑️ Base de promoções ativas limpa com sucesso!");
+      alert(`🗑️ Promoções ativas de ${conta.rotulo} apagadas com sucesso!`);
     }
   };
 
@@ -641,7 +679,9 @@ export default function PromocoesMlPage() {
   const listaItens = dadosProcessados?.itens || [];
   const tipoProcessamento = dadosProcessados?.tipo || "precificar";
 
-  const promocoesFiltradas = promocoesAtivas.filter((p) => 
+  // Promoções ativas da conta escolhida (as sem conta registrada continuam visíveis para não sumirem)
+  const promocoesDaConta = promocoesAtivas.filter((p) => !p.canal || p.canal === conta.rotulo);
+  const promocoesFiltradas = promocoesDaConta.filter((p) => 
     String(p.sku || "").toLowerCase().includes(termoBusca.toLowerCase()) ||
     String(p.mlb || "").toLowerCase().includes(termoBusca.toLowerCase()) ||
     String(p.promocao || "").toLowerCase().includes(termoBusca.toLowerCase())
@@ -657,6 +697,25 @@ export default function PromocoesMlPage() {
             <p className="text-sm font-medium text-slate-400">Validação com recálculo exato de PDV ideal e peso volumétrico</p>
           </div>
           <Navbar />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3" data-conta-ml>
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Conta do Mercado Livre:</span>
+          <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
+            {CONTAS_ML.map((c) => (
+              <button
+                key={c.chave}
+                type="button"
+                onClick={() => trocarConta(c.chave)}
+                className={`px-5 py-2 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+                  contaChave === c.chave ? "bg-amber-500 text-slate-950 shadow-lg" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {c.rotulo.replace("Mercado Livre ", "ML")}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] text-slate-500">{conta.rotulo}: inventário Tiny com SKU na coluna <b className="text-slate-300">{cfgTiny.sku}</b> e saldo na <b className="text-slate-300">{cfgTiny.estoque}</b></span>
         </div>
 
         <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
@@ -682,7 +741,7 @@ export default function PromocoesMlPage() {
               abaAtiva === "ativas" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
             }`}
           >
-            Promoções Ativas ({promocoesAtivas.length})
+            Promoções Ativas ({promocoesDaConta.length})
           </button>
           <button
             onClick={() => setAbaAtiva("config")}
@@ -695,12 +754,13 @@ export default function PromocoesMlPage() {
         </div>
 
         <div className="space-y-6">
-          {abaAtiva === "config" && <ConfigPromoTiny onSalvo={setCfgTiny} />}
+          {abaAtiva === "config" && <ConfigPromoTiny conta={conta} onSalvo={setCfgTiny} />}
           {abaAtiva !== "config" && (
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Campanha (Excel):</label>
               <input
+                key={"camp-" + contaChave}
                 type="file"
                 accept=".xlsx, .xls"
                 onChange={handleFileUpload}
@@ -709,8 +769,9 @@ export default function PromocoesMlPage() {
             </div>
 
             <div data-estoque-tiny>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Inventário do Tiny (SKU col. {cfgTiny.sku}, saldo col. {cfgTiny.estoque}):</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Inventário do Tiny — {conta.rotulo} (SKU col. {cfgTiny.sku}, saldo col. {cfgTiny.estoque}):</label>
               <input
+                key={"est-" + contaChave}
                 type="file"
                 accept=".xlsx, .xls, .csv"
                 onChange={handleEstoqueUpload}
@@ -868,7 +929,7 @@ export default function PromocoesMlPage() {
                     onClick={limparBasePromocoes}
                     className="bg-rose-950/80 hover:bg-rose-900 text-rose-400 border border-rose-900/50 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all"
                   >
-                    🗑️ Limpar Toda a Base
+                    🗑️ Limpar Base de {conta.rotulo}
                   </button>
                 </div>
                 <input
