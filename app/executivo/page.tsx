@@ -404,14 +404,61 @@ export default function PainelExecutivoPage() {
     });
   }, [sales, mesAntFormatos, faturadosMap, canaisOficiais]);
 
-  const { targetDateStr } = useMemo(() => {
+  // "Vendas do dia" = vendas do DIA ANTERIOR (o dia fechado). Independe do mês escolhido no filtro
+  // (no dia 1º o dia anterior cai no mês passado).
+  const ontem = useMemo(() => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    const yyyy = d.getFullYear();
+    const yyyy = String(d.getFullYear());
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
-    return { targetDateStr: `${yyyy}-${mm}-${dd}` };
+    return {
+      iso: `${yyyy}-${mm}-${dd}`,
+      dia: d.getDate(),
+      curto: `${dd}/${mm}`,
+      completo: `${dd}/${mm}/${yyyy}`,
+      mes: { iso: `${yyyy}-${mm}`, barra: `${mm}/${yyyy}`, extenso: `${MESES_MAP[mm] || ''} de ${yyyy}` },
+    };
   }, []);
+
+  // Vendas de ontem por canal.
+  // - Marketplaces/Site: pela data de faturamento (tabela faturados) = ontem; pedidos cancelados ficam de fora.
+  // - Lojas físicas (clubes): a planilha tem uma linha por dia e o upload guarda o número da linha no id
+  //   (CLUBEHEBRAICA-<linha>). A primeira linha de dados é o dia 1, então dia = linha - primeira linha + 1.
+  const vendasOntemPorCanal = useMemo(() => {
+    const mapa = new Map<string, number>();
+    const numeroDaLinha = (id: any) => {
+      const m = String(id ?? '').match(/-(\d+)\s*$/);
+      return m ? parseInt(m[1], 10) : null;
+    };
+    const pedidosCancelados = new Set<string>(
+      (database.cancelados || []).map((c: any) => normalizarPedido(c.id_pedido)).filter(Boolean)
+    );
+    const primeiraLinha = new Map<string, number>();
+    (sales || []).forEach((s: any) => {
+      const canal = canonizarCanal(s.canal);
+      if (!isChannelFisico(canal)) return;
+      const n = numeroDaLinha(s.id_pedido);
+      if (n !== null) primeiraLinha.set(canal, Math.min(primeiraLinha.get(canal) ?? Infinity, n));
+    });
+    (sales || []).forEach((s: any) => {
+      const canal = canonizarCanal(s.canal);
+      if (!canaisOficiais.includes(canal)) return;
+      let doDia = false;
+      if (isChannelFisico(canal)) {
+        if (!mesRefCorresponde(s.mes_referencia, ontem.mes)) return;
+        const n = numeroDaLinha(s.id_pedido);
+        const base = primeiraLinha.get(canal);
+        doDia = n !== null && base !== undefined && n - base + 1 === ontem.dia;
+      } else {
+        const ped = normalizarPedido(s.id_pedido);
+        const fat = faturadosMap.get(ped);
+        doDia = !!fat && fat.data_faturamento === ontem.iso && !pedidosCancelados.has(ped);
+      }
+      if (doDia) mapa.set(canal, (mapa.get(canal) || 0) + parseCurrency(s.preco_venda || s.valor));
+    });
+    return mapa;
+  }, [sales, database.cancelados, faturadosMap, canaisOficiais, ontem]);
 
   const channelAnalytics = useMemo(() => {
     const [refAnoStr, refMesStr] = currentRefMonth.split('-');
@@ -427,9 +474,7 @@ export default function PainelExecutivoPage() {
       const prevChSales = previousMonthSales.filter((s: any) => s.canal === channelName);
       const fisico = isChannelFisico(channelName);
 
-      const vendasDoDia = chSales
-        .filter((s: any) => s.data_faturamento === targetDateStr)
-        .reduce((sum: number, s: any) => sum + s.preco_venda, 0);
+      const vendasDoDia = vendasOntemPorCanal.get(channelName) || 0;
 
       const ruleObj = channelRules.find((r: any) => normalizarTexto(r.canal) === normalizarTexto(channelName)) || {};
       const defaultMetaBruta = fisico ? 56.0 : 48.0;
@@ -562,7 +607,7 @@ export default function PainelExecutivoPage() {
         lucroLiquidoFinal
       };
     });
-  }, [enrichedSales, previousMonthSales, goals, adsMap, channelRules, currentRefMonth, mesRefFormatos, canaisOficiais, activeCancelados, activeDevolucoes, targetDateStr, produtosCustoMap, aliquotaImpostoGlobal]);
+  }, [enrichedSales, previousMonthSales, goals, adsMap, channelRules, currentRefMonth, mesRefFormatos, canaisOficiais, activeCancelados, activeDevolucoes, vendasOntemPorCanal, produtosCustoMap, aliquotaImpostoGlobal]);
 
   const ecommerceChannels = channelAnalytics.filter(c => !c.isFisico);
   const physicalChannels = channelAnalytics.filter(c => c.isFisico);
@@ -687,7 +732,7 @@ export default function PainelExecutivoPage() {
 
       const formatProjText = (val: number) => val >= 0 ? `+${val.toFixed(1)}%` : `${val.toFixed(1)}%`;
 
-      let corpoTexto = `Olá, tudo bem? Segue resumo executivo das vendas das lojas físicas e online do dia ${dataHoje} (${mesRefFormatos.extenso}).\n\n`;
+      let corpoTexto = `Olá, tudo bem? Segue resumo executivo das vendas das lojas físicas e online em ${dataHoje} (${mesRefFormatos.extenso}). A coluna "Vendas Dia Anterior" refere-se a ${ontem.completo}.\n\n`;
       corpoTexto += `Hebraica: R$ ${hebraicaObj.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Projeção: ${formatProjText(hebraicaObj.projecaoVsMeta)})\n`;
       corpoTexto += `Paineiras: R$ ${paineirasObj.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Projeção: ${formatProjText(paineirasObj.projecaoVsMeta)})\n`;
       corpoTexto += `E-commerce: R$ ${totalEcom.faturadoComRedutor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Projeção: ${formatProjText(ecomProjVsMeta)})\n\n`;
@@ -734,7 +779,7 @@ export default function PainelExecutivoPage() {
           <div>
             <h1 className="text-base font-black text-white tracking-tight">Painel Executivo Omnichannel</h1>
             <p className="text-[10px] text-slate-400">
-              Competência ativa: <strong className="text-indigo-400 uppercase">{mesRefFormatos.extenso}</strong> | Data de referência: <span className="font-mono text-slate-300">{new Date().toLocaleDateString('pt-BR')}</span>
+              Competência ativa: <strong className="text-indigo-400 uppercase">{mesRefFormatos.extenso}</strong> | Data de referência: <span className="font-mono text-slate-300">{new Date().toLocaleDateString('pt-BR')}</span> | Vendas do dia anterior: <span className="font-mono text-slate-300">{ontem.completo}</span>
             </p>
           </div>
         </div>
@@ -784,7 +829,7 @@ export default function PainelExecutivoPage() {
             <thead className="bg-slate-950 text-slate-400 uppercase text-[9px] font-bold border-b border-slate-800 tracking-tight">
               <tr>
                 <th className="py-2.5 px-3 border-r border-slate-800 whitespace-nowrap">Canal / Resp.</th>
-                <th className="py-2.5 px-3 text-right whitespace-nowrap">Vendas Dia</th>
+                <th className="py-2.5 px-3 text-right whitespace-nowrap">Vendas Dia Anterior <span className="font-mono text-slate-500">({ontem.curto})</span></th>
                 <th className="py-2.5 px-3 text-right whitespace-nowrap">Total Mês</th>
                 <th className="py-2.5 px-3 text-right whitespace-nowrap">Meta Mês</th>
                 <th className="py-2.5 px-3 text-right whitespace-nowrap">Projeção</th>

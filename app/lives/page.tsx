@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/app/components/Navbar";
 import * as XLSX from "xlsx";
 import { letrasDaFormula, avaliarFormulaLive } from "@/lib/formulaLive";
+import { detectarOrdemData, interpretarDataHora, dataIsoParaBr, type ItemAnalise } from "@/lib/analiseLives";
+import AnaliseDesempenho from "./AnaliseDesempenho";
 
 function colunaParaIndice(letra: string): number {
   let l = letra.trim().toUpperCase();
@@ -91,7 +93,7 @@ export default function RelatorioLivesPage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [subAba, setSubAba] = useState<"dados" | "config">("dados");
+  const [subAba, setSubAba] = useState<"dados" | "analise" | "config">("dados");
   const [modoPainel, setModoPainel] = useState<"detalhado" | "compacto">("detalhado");
 
   // Configurações
@@ -205,6 +207,7 @@ export default function RelatorioLivesPage() {
           variaveis: v.variaveis || {},
           pdv: v.pdv,
           data: v.data_venda,
+          dataHora: v.data_hora || "",
           productName: v.nome_produto
         })));
       }
@@ -327,6 +330,7 @@ export default function RelatorioLivesPage() {
             variaveis,
             pdv: parseNumeroBruto(row[idxPdv]),
             data: String(row[idxData] || "").trim(),
+            dataHora: String(row[idxData] || "").trim(),
             productName: String(row[idxNomeProd] || "Produto Live").trim(),
           });
         }
@@ -360,6 +364,7 @@ export default function RelatorioLivesPage() {
             liquidez: liq,
             percentual_lucro_pdv: pctPdv,
             data_venda: formatarDataCurta(row.data),
+            data_hora: String(row.dataHora || row.data || "").trim(),
             status: row.status
           };
         });
@@ -430,6 +435,9 @@ export default function RelatorioLivesPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  // Ordem das datas "a/b/aaaa" da planilha (mês/dia ou dia/mês), decidida olhando a base inteira
+  const ordemData = detectarOrdemData(dadosBrutos.map((r) => r.dataHora || r.data));
+
   // Processamento e Filtragem Corrigida por Timestamp
   const dadosProcessados = dadosBrutos.map((row) => {
     const skuRaw = row.sku;
@@ -439,6 +447,7 @@ export default function RelatorioLivesPage() {
     const tarifas = Math.max(0, valorPago - repasse);
     const pdv = parseNumeroBruto(row.pdv);
     const dataPagamento = row.data;
+    const dh = interpretarDataHora(row.dataHora || row.data, ordemData);
     const statusVenda = String(row.status || "").trim().toLowerCase();
 
     const custoObj = custosMap.get(skuNorm);
@@ -452,8 +461,9 @@ export default function RelatorioLivesPage() {
 
     const valorPdv = pdv > 0 ? pdv : valorPago;
     const percentualLucroPdv = valorPdv > 0 ? (liquidez / valorPdv) * 100 : 0;
-    const dataCurta = formatarDataCurta(dataPagamento);
-    const timestamp = parseDataParaTimestamp(dataCurta);
+    // data reconhecida (dia/mês ou mês/dia detectado na base inteira); senão cai no jeito antigo
+    const dataCurta = dh ? dataIsoParaBr(dh.iso) : formatarDataCurta(dataPagamento);
+    const timestamp = dh ? new Date(+dh.iso.slice(0, 4), +dh.iso.slice(5, 7) - 1, +dh.iso.slice(8, 10)).getTime() : parseDataParaTimestamp(dataCurta);
 
     return {
       sku: skuRaw,
@@ -469,6 +479,9 @@ export default function RelatorioLivesPage() {
       liquidez,
       percentualLucroPdv,
       data: dataCurta,
+      dataIso: dh ? dh.iso : "",
+      hora: dh ? dh.hora : null,
+      minuto: dh ? dh.minuto : null,
       timestamp,
       status: statusVenda,
     };
@@ -569,6 +582,59 @@ export default function RelatorioLivesPage() {
     );
   }
 
+  const barraFiltros = (
+      <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl flex flex-wrap gap-4 items-end">
+        <div className="flex-1 min-w-[220px]">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Pesquisar por SKU ou Nome do Produto:</label>
+          <input
+            type="text"
+            value={buscaSku}
+            onChange={(e) => { setBuscaSku(e.target.value); setPaginaAtual(1); }}
+            placeholder="Ex: 22652042281 ou Garrafa..."
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-indigo-500"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Filtrar por Mês:</label>
+          <input
+            type="month"
+            value={filtroMes}
+            onChange={(e) => { setFiltroMes(e.target.value); setPaginaAtual(1); }}
+            className="bg-slate-950 border border-indigo-900/60 rounded-xl p-2.5 text-xs text-indigo-300 outline-none font-mono"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Início:</label>
+          <input
+            type="date"
+            value={dataInicio}
+            onChange={(e) => { setDataInicio(e.target.value); setPaginaAtual(1); }}
+            className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none font-mono"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Fim:</label>
+          <input
+            type="date"
+            value={dataFim}
+            onChange={(e) => { setDataFim(e.target.value); setPaginaAtual(1); }}
+            className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none font-mono"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => { setBuscaSku(""); setFiltroMes(""); setDataInicio(""); setDataFim(""); setPaginaAtual(1); }}
+          className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-4 py-2.5 rounded-xl text-xs uppercase cursor-pointer"
+        >
+          Limpar Filtros
+        </button>
+      </div>
+  );
+
   return (
     <div className="min-h-screen bg-[#07090e] p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -590,6 +656,14 @@ export default function RelatorioLivesPage() {
               }`}
             >
               📊 Relatório & Vendas
+            </button>
+            <button
+              onClick={() => setSubAba("analise")}
+              className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+                subAba === "analise" ? "bg-indigo-600 text-white shadow-indigo-950/50" : "bg-slate-950 text-slate-400 border border-slate-800"
+              }`}
+            >
+              📈 Análise de Desempenho
             </button>
             <button
               onClick={() => setSubAba("config")}
@@ -622,6 +696,20 @@ export default function RelatorioLivesPage() {
             </div>
           </div>
         </div>
+
+        {subAba === "analise" && (
+          <div className="space-y-6">
+          {barraFiltros}
+          <AnaliseDesempenho
+            custoLives={custoTotalLivesImportado}
+            itens={dadosProcessados.map((d): ItemAnalise => ({
+              sku: d.sku, nome: d.nomeProduto, valorPago: d.valorPago, tarifas: d.tarifas, repasse: d.repasse,
+              custo: d.custo, imposto: d.imposto, comissaoVendedora: d.comissaoVendedora, liquidez: d.liquidez,
+              dataIso: d.dataIso, hora: d.hora, minuto: d.minuto,
+            }))}
+          />
+          </div>
+        )}
 
         {subAba === "config" && (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800/80 shadow-xl max-w-4xl mx-auto space-y-6">
@@ -844,56 +932,7 @@ export default function RelatorioLivesPage() {
               </div>
             </div>
 
-            <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl flex flex-wrap gap-4 items-end">
-              <div className="flex-1 min-w-[220px]">
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Pesquisar por SKU ou Nome do Produto:</label>
-                <input
-                  type="text"
-                  value={buscaSku}
-                  onChange={(e) => { setBuscaSku(e.target.value); setPaginaAtual(1); }}
-                  placeholder="Ex: 22652042281 ou Garrafa..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Filtrar por Mês:</label>
-                <input
-                  type="month"
-                  value={filtroMes}
-                  onChange={(e) => { setFiltroMes(e.target.value); setPaginaAtual(1); }}
-                  className="bg-slate-950 border border-indigo-900/60 rounded-xl p-2.5 text-xs text-indigo-300 outline-none font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Início:</label>
-                <input
-                  type="date"
-                  value={dataInicio}
-                  onChange={(e) => { setDataInicio(e.target.value); setPaginaAtual(1); }}
-                  className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Fim:</label>
-                <input
-                  type="date"
-                  value={dataFim}
-                  onChange={(e) => { setDataFim(e.target.value); setPaginaAtual(1); }}
-                  className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none font-mono"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => { setBuscaSku(""); setFiltroMes(""); setDataInicio(""); setDataFim(""); setPaginaAtual(1); }}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-4 py-2.5 rounded-xl text-xs uppercase cursor-pointer"
-              >
-                Limpar Filtros
-              </button>
-            </div>
+            {barraFiltros}
 
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 shadow-xl overflow-hidden flex flex-col justify-between">
               <div>
