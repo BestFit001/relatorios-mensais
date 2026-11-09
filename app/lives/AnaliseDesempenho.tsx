@@ -73,7 +73,7 @@ export default function AnaliseDesempenho({ itens, custoLives }: { itens: ItemAn
         <Card titulo="Valor das vendas" valor={moeda(a.total.venda)} sub={`média ${moeda(a.mediaVendaPorDia)} por dia`} />
         <Card titulo="Ticket médio" valor={moeda(ticket(a.total))} sub="valor da venda ÷ itens" cor="text-cyan-400" />
         <Card titulo="Taxas e tarifas" valor={"- " + moeda(a.total.tarifas)} sub={pct(a.total.venda > 0 ? (a.total.tarifas / a.total.venda) * 100 : 0) + " da venda"} cor="text-rose-400" />
-        <Card titulo="Repasse" valor={moeda(a.total.repasse)} />
+        <Card titulo="Repasse" valor={moeda(a.total.repasse)} sub={a.total.rebate > 0 ? `inclui rebate TikTok ${moeda(a.total.rebate)}` : undefined} />
         <Card titulo="Liquidez" valor={moeda(a.total.liquidez)} sub={`margem ${pct(margem)} sobre a venda`} cor="text-emerald-400" />
         <Card titulo="Liquidez após lives" valor={moeda(liquidezAposLives)} sub={`custo das lives ${moeda(custoLives)}`} cor={liquidezAposLives >= 0 ? "text-emerald-400" : "text-rose-400"} />
         <Card titulo="Item que mais vendeu" valor={a.maisVendido ? `${a.maisVendido.itens} un.` : "—"} sub={a.maisVendido ? `${a.maisVendido.sku} · ${a.maisVendido.nome}` : undefined} cor="text-indigo-300" />

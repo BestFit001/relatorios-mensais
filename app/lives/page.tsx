@@ -102,6 +102,7 @@ export default function RelatorioLivesPage() {
   const [colunaStatus, setColunaStatus] = useState("C");
   const [colunaRepasse, setColunaRepasse] = useState("X");
   const [colunaPdv, setColunaPdv] = useState("N");
+  const [colunaRebate, setColunaRebate] = useState("");   // rebate dos pedidos (subsídio do TikTok): vazio = não usa
   const [colunaData, setColunaData] = useState("AD");
   const [colunaCustosLive, setColunaCustosLive] = useState("F");
   const [colunaRoiLive, setColunaRoiLive] = useState("K");
@@ -170,6 +171,7 @@ export default function RelatorioLivesPage() {
           if (cfg.campo === "live_col_status") setColunaStatus(cfg.coluna);
           if (cfg.campo === "live_col_repasse") setColunaRepasse(cfg.coluna);
           if (cfg.campo === "live_col_pdv") setColunaPdv(cfg.coluna);
+          if (cfg.campo === "live_col_rebate") setColunaRebate(String(cfg.coluna || ""));
           if (cfg.campo === "live_col_data") setColunaData(cfg.coluna);
           if (cfg.campo === "live_col_custo_live") setColunaCustosLive(cfg.coluna);
           if (cfg.campo === "live_col_roi_live") setColunaRoiLive(cfg.coluna);
@@ -205,6 +207,7 @@ export default function RelatorioLivesPage() {
           // linhas antigas não têm valor_pago: o "repasse" delas era o valor pago pelo cliente
           valorPago: v.valor_pago !== null && v.valor_pago !== undefined ? Number(v.valor_pago) : Number(v.repasse) || 0,
           variaveis: v.variaveis || {},
+          rebate: Number(v.rebate) || 0,
           pdv: v.pdv,
           data: v.data_venda,
           dataHora: v.data_hora || "",
@@ -235,6 +238,7 @@ export default function RelatorioLivesPage() {
         { campo: "live_col_status", coluna: String(colunaStatus) },
         { campo: "live_col_repasse", coluna: String(colunaRepasse) },
         { campo: "live_col_pdv", coluna: String(colunaPdv) },
+        ...(colunaRebate.trim() ? [{ campo: "live_col_rebate", coluna: colunaRebate.trim().toUpperCase() }] : []),
         { campo: "live_col_data", coluna: String(colunaData) },
         { campo: "live_col_custo_live", coluna: String(colunaCustosLive) },
         { campo: "live_col_roi_live", coluna: String(colunaRoiLive) },
@@ -307,6 +311,7 @@ export default function RelatorioLivesPage() {
         const idxStatus = colunaParaIndice(colunaStatus);
         const idxRepasse = colunaParaIndice(colunaRepasse);
         const idxPdv = colunaParaIndice(colunaPdv);
+        const idxRebate = colunaRebate.trim() ? colunaParaIndice(colunaRebate) : -1;
         const idxData = colunaParaIndice(colunaData);
         const idxNomeProd = colunaParaIndice("I");
 
@@ -328,6 +333,7 @@ export default function RelatorioLivesPage() {
             status: String(row[idxStatus] || "").trim(),
             valorPago: parseNumeroBruto(row[idxRepasse]),
             variaveis,
+            rebate: idxRebate >= 0 ? Math.max(0, parseNumeroBruto(row[idxRebate])) : 0,
             pdv: parseNumeroBruto(row[idxPdv]),
             data: String(row[idxData] || "").trim(),
             dataHora: String(row[idxData] || "").trim(),
@@ -343,8 +349,8 @@ export default function RelatorioLivesPage() {
           const custoUnit = custoObj ? parseNumeroBruto(custoObj.custo_unitario ?? custoObj.custo ?? 0) : 0;
           const nomeProd = custoObj ? (custoObj.produto || custoObj.descricao || row.productName) : row.productName;
           
-          // Repasse = valor pago menos taxas e tarifas, pela fórmula do canal na aba Regras
-          const repasseLinha = repasseDaLinha(row.valorPago, row.variaveis);
+          // Repasse = valor pago menos taxas e tarifas (fórmula do canal na aba Regras) + rebate do pedido (subsídio do TikTok)
+          const repasseLinha = repasseDaLinha(row.valorPago, row.variaveis) + (row.rebate || 0);
           const impVal = row.valorPago * (parseFloat(percentualImposto) / 100 || 0);
           const comVal = row.valorPago * (parseFloat(percentualComissao) / 100 || 0);
           const liq = repasseLinha - custoUnit - impVal - comVal;
@@ -356,6 +362,7 @@ export default function RelatorioLivesPage() {
             nome_produto: nomeProd,
             repasse: repasseLinha,
             valor_pago: row.valorPago,
+            rebate: row.rebate || 0,
             variaveis: row.variaveis,
             pdv: vPdv,
             custo: custoUnit,
@@ -443,8 +450,10 @@ export default function RelatorioLivesPage() {
     const skuRaw = row.sku;
     const skuNorm = normalizarSku(skuRaw);
     const valorPago = parseNumeroBruto(row.valorPago);
-    const repasse = repasseDaLinha(valorPago, row.variaveis || {});   // valor pago - taxas e tarifas (fórmula das Regras)
-    const tarifas = Math.max(0, valorPago - repasse);
+    const repasseSemRebate = repasseDaLinha(valorPago, row.variaveis || {});   // valor pago - taxas e tarifas (fórmula das Regras)
+    const tarifas = Math.max(0, valorPago - repasseSemRebate);
+    const rebate = Math.max(0, Number(row.rebate) || 0);   // subsídio do TikTok: não sai do vendedor, entra no repasse
+    const repasse = repasseSemRebate + rebate;
     const pdv = parseNumeroBruto(row.pdv);
     const dataPagamento = row.data;
     const dh = interpretarDataHora(row.dataHora || row.data, ordemData);
@@ -471,6 +480,7 @@ export default function RelatorioLivesPage() {
       nomeProduto,
       valorPago,
       tarifas,
+      rebate,
       repasse,
       pdv: valorPdv,
       custo: custoUnitario,
@@ -519,6 +529,7 @@ export default function RelatorioLivesPage() {
 
   const totalVenda = dadosProcessados.reduce((acc, cur) => acc + cur.valorPago, 0);
   const totalTarifas = dadosProcessados.reduce((acc, cur) => acc + cur.tarifas, 0);
+  const totalRebate = dadosProcessados.reduce((acc, cur) => acc + cur.rebate, 0);
   const totalRepasse = dadosProcessados.reduce((acc, cur) => acc + cur.repasse, 0);
   const semFormula = !formulaDoCanal();
   const totalCusto = dadosProcessados.reduce((acc, cur) => acc + cur.custo, 0);
@@ -534,7 +545,7 @@ export default function RelatorioLivesPage() {
   const totalPdv = dadosProcessados.reduce((acc, cur) => acc + cur.pdv, 0);
   const mediaLucroPdvGeral = totalPdv > 0 ? (totalLiquidez / totalPdv) * 100 : 0;
 
-  const compactoMap = new Map<string, { sku: string; nome: string; qtd: number; venda: number; tarifas: number; pdv: number; repasse: number; custo: number; comissaoVendedora: number; liquidez: number; percentualLucroPdv: number }>();
+  const compactoMap = new Map<string, { sku: string; nome: string; qtd: number; venda: number; tarifas: number; rebate: number; pdv: number; repasse: number; custo: number; comissaoVendedora: number; liquidez: number; percentualLucroPdv: number }>();
   dadosProcessados.forEach(item => {
     if (!compactoMap.has(item.skuNorm)) {
       compactoMap.set(item.skuNorm, {
@@ -543,6 +554,7 @@ export default function RelatorioLivesPage() {
         qtd: 0,
         venda: 0,
         tarifas: 0,
+        rebate: 0,
         pdv: 0,
         repasse: 0,
         custo: 0,
@@ -555,6 +567,7 @@ export default function RelatorioLivesPage() {
     c.qtd += 1;
     c.venda += item.valorPago;
     c.tarifas += item.tarifas;
+    c.rebate += item.rebate;
     c.pdv += item.pdv;
     c.repasse += item.repasse;
     c.custo += item.custo;
@@ -703,7 +716,7 @@ export default function RelatorioLivesPage() {
           <AnaliseDesempenho
             custoLives={custoTotalLivesImportado}
             itens={dadosProcessados.map((d): ItemAnalise => ({
-              sku: d.sku, nome: d.nomeProduto, valorPago: d.valorPago, tarifas: d.tarifas, repasse: d.repasse,
+              sku: d.sku, nome: d.nomeProduto, valorPago: d.valorPago, tarifas: d.tarifas, rebate: d.rebate, repasse: d.repasse,
               custo: d.custo, imposto: d.imposto, comissaoVendedora: d.comissaoVendedora, liquidez: d.liquidez,
               dataIso: d.dataIso, hora: d.hora, minuto: d.minuto,
             }))}
@@ -776,6 +789,18 @@ export default function RelatorioLivesPage() {
                   onChange={(e) => setColunaPdv(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
                 />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Coluna Rebate dos Pedidos — subsídio do TikTok (Letra, vazio = não usar):</label>
+                <input
+                  type="text"
+                  value={colunaRebate}
+                  onChange={(e) => setColunaRebate(e.target.value)}
+                  placeholder="Ex: Y"
+                  className="w-full bg-slate-900 border border-emerald-700/60 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">É o desconto que o TikTok subsidia e que não sai de você: o valor é somado ao repasse (depois das taxas e tarifas da fórmula). Vale para as próximas planilhas enviadas.</p>
               </div>
 
               <div>
@@ -897,6 +922,12 @@ export default function RelatorioLivesPage() {
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Taxas e Tarifas ({canalRegras})</span>
                 <span className="text-sm font-black font-mono text-rose-400 mt-1 block">- {formatarMoeda(totalTarifas)}</span>
               </div>
+              {(totalRebate > 0 || colunaRebate.trim()) && (
+                <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl" title="Subsídio do TikTok: não é descontado do vendedor e entra no repasse">
+                  <span className="block text-[10px] font-bold text-slate-400 uppercase">Rebate dos Pedidos (TikTok)</span>
+                  <span className="text-sm font-black font-mono text-emerald-400 mt-1 block">+ {formatarMoeda(totalRebate)}</span>
+                </div>
+              )}
               <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Total Repasse</span>
                 <span className="text-sm font-black font-mono text-white mt-1 block">{formatarMoeda(totalRepasse)}</span>
@@ -967,6 +998,7 @@ export default function RelatorioLivesPage() {
                         <th className="p-3">SKU / PRODUTO</th>
                         <th className="p-3 text-right">VENDA</th>
                         <th className="p-3 text-right">TAXAS/TARIFAS</th>
+                        <th className="p-3 text-right">REBATE</th>
                         <th className="p-3 text-right">REPASSE</th>
                         <th className="p-3 text-right">CUSTO</th>
                         <th className="p-3 text-right">COMISSÃO VEND.</th>
@@ -985,6 +1017,7 @@ export default function RelatorioLivesPage() {
                           </td>
                           <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.valorPago)}</td>
                           <td className="p-3 text-right font-mono text-rose-300">- {formatarMoeda(item.tarifas)}</td>
+                          <td className="p-3 text-right font-mono text-emerald-300">+ {formatarMoeda(item.rebate)}</td>
                           <td className="p-3 text-right font-mono font-bold text-white">{formatarMoeda(item.repasse)}</td>
                           <td className="p-3 text-right font-mono text-rose-400">- {formatarMoeda(item.custo)}</td>
                           <td className="p-3 text-right font-mono text-indigo-300">- {formatarMoeda(item.comissaoVendedora)}</td>
@@ -1006,6 +1039,7 @@ export default function RelatorioLivesPage() {
                           </td>
                           <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.venda)}</td>
                           <td className="p-3 text-right font-mono text-rose-300">- {formatarMoeda(item.tarifas)}</td>
+                          <td className="p-3 text-right font-mono text-emerald-300">+ {formatarMoeda(item.rebate)}</td>
                           <td className="p-3 text-right font-mono font-bold text-white">{formatarMoeda(item.repasse)}</td>
                           <td className="p-3 text-right font-mono text-rose-400">- {formatarMoeda(item.custo)}</td>
                           <td className="p-3 text-right font-mono text-indigo-300">- {formatarMoeda(item.comissaoVendedora)}</td>
@@ -1018,7 +1052,7 @@ export default function RelatorioLivesPage() {
 
                       {itensPaginados.length === 0 && (
                         <tr>
-                          <td colSpan={8} className="p-8 text-center text-slate-500">Nenhum registo encontrado com os filtros atuais.</td>
+                          <td colSpan={9} className="p-8 text-center text-slate-500">Nenhum registo encontrado com os filtros atuais.</td>
                         </tr>
                       )}
                     </tbody>

@@ -65,6 +65,7 @@ export interface ItemAnalise {
   nome: string;
   valorPago: number;
   tarifas: number;
+  rebate: number;
   repasse: number;
   custo: number;
   imposto: number;
@@ -79,12 +80,13 @@ export interface Bloco {
   itens: number;
   venda: number;
   tarifas: number;
+  rebate: number;
   repasse: number;
   liquidez: number;
 }
-const vazio = (): Bloco => ({ itens: 0, venda: 0, tarifas: 0, repasse: 0, liquidez: 0 });
+const vazio = (): Bloco => ({ itens: 0, venda: 0, tarifas: 0, rebate: 0, repasse: 0, liquidez: 0 });
 const somar = (b: Bloco, it: ItemAnalise) => {
-  b.itens += 1; b.venda += it.valorPago; b.tarifas += it.tarifas; b.repasse += it.repasse; b.liquidez += it.liquidez;
+  b.itens += 1; b.venda += it.valorPago; b.tarifas += it.tarifas; b.rebate += it.rebate; b.repasse += it.repasse; b.liquidez += it.liquidez;
 };
 export const ticket = (b: { itens: number; venda: number }) => (b.itens > 0 ? b.venda / b.itens : 0);
 
@@ -159,7 +161,7 @@ export function analisarLives(itens: ItemAnalise[]): ResultadoAnalise {
 
   const faixas: FaixaAnalise[] = FAIXAS.map(([nome, de, ate]) => {
     const f: FaixaAnalise = { nome, de, ate, ...vazio() };
-    for (let h = de; h <= ate; h++) { f.itens += horas[h].itens; f.venda += horas[h].venda; f.tarifas += horas[h].tarifas; f.repasse += horas[h].repasse; f.liquidez += horas[h].liquidez; }
+    for (let h = de; h <= ate; h++) { f.itens += horas[h].itens; f.venda += horas[h].venda; f.tarifas += horas[h].tarifas; f.rebate += horas[h].rebate; f.repasse += horas[h].repasse; f.liquidez += horas[h].liquidez; }
     return f;
   });
 
