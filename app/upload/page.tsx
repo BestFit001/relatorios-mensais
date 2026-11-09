@@ -930,7 +930,12 @@ export default function UpdatesPage() {
           ? (() => { const k = acharColunaPorCabecalho(json[5], ["preco unitario de venda do anuncio (brl)"]); return k >= 0 ? k : letraParaIndice("AC"); })()
           : -1;
         const mesesDosPedidos = new Map<string, number>();   // mês (aaaa-mm) da data do pedido -> nº de pedidos com Nota Fiscal
-        const idxDescricao = letraParaIndice(regraData?.col_descricao || (isAmazon ? 'K' : (isSite ? 'BE' : 'D'))); 
+        // Centauro: a coluna D da planilha é a data de criação; o nome do produto está em "NomeProduto" (col. M).
+        // Sem isso a lista de pendentes mostrava a data no lugar do produto e não dava para saber o que era cada venda sem SKU.
+        const idxNomeCentauro = canalNorm.includes("centauro") ? acharColunaPorCabecalho(json[0], ["nomeproduto", "nome do produto"]) : -1;
+        const idxDescricao = !regraData?.col_descricao && idxNomeCentauro >= 0
+          ? idxNomeCentauro
+          : letraParaIndice(regraData?.col_descricao || (isAmazon ? 'K' : (isSite ? 'BE' : (canalNorm.includes("centauro") ? 'M' : 'D'))));
 
         const novasVendas = [];
         let totalImportados = 0;
