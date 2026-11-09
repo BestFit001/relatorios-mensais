@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import { buscarTudo } from "../../lib/buscarTudo";
 import ConfigMapaCadastros from "../components/ConfigMapaCadastros";
+import CanaisDoMapa from "../components/CanaisDoMapa";
 import { canaisSemRepeticao, canalTemCadastro, normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
 
 // ───────────────────────── utilidades ─────────────────────────
@@ -92,11 +93,14 @@ function Barra({ pct, cor }: { pct: number; cor: string }) {
 
 // ───────────────────────── página ─────────────────────────
 
+const CAMPO_OCULTOS = "mapa_canais_ocultos";   // config_regras_tiny: nomes (normalizados) dos canais ocultos, separados por vírgula
+
 export default function MapeamentoPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
   const [canais, setCanais] = useState<string[]>([]);
+  const [ocultos, setOcultos] = useState<Set<string>>(new Set());   // canais ocultos no painel (nome normalizado)
   const [itens, setItens] = useState<ItemCadastro[]>([]);
 
   const [subAba, setSubAba] = useState<"progresso" | "graficos" | "config">("progresso");
@@ -112,13 +116,15 @@ export default function MapeamentoPage() {
     setErro("");
     try {
       // tudo em paralelo; só as colunas necessárias; só o que está presente (presente = true)
-      const [regras, tiny, status, mapas] = await Promise.all([
+      const [regras, tiny, status, mapas, cfgOcultos] = await Promise.all([
         supabase.from("config_regras_canais").select("canal").order("id"),
         buscarTudo("cadastros_base_tiny", "sku, estoque"),
         buscarTudo("status_skus_catalogo", "sku, status"),
         buscarTudo("mapeamento_canais_skus", "canal, sku", (q) => q.eq("presente", true)),
+        supabase.from("config_regras_tiny").select("coluna").eq("campo", CAMPO_OCULTOS).maybeSingle(),
       ]);
       if (regras.error) throw new Error(regras.error.message);
+      setOcultos(new Set(String(cfgOcultos.data?.coluna ?? "").split(",").map((x) => x.trim()).filter(Boolean)));
 
       // canais sem catálogo (Clube Hebraica, Clube Paineiras…) não entram no Mapa
       const listaCanais: string[] = canaisSemRepeticao((regras.data || []).map((r: any) => r.canal)).filter(canalTemCadastro);
@@ -212,6 +218,33 @@ export default function MapeamentoPage() {
   }, [carregar, sincronizarVendas, router]);
 
   // ── universo filtrado + presença por canal: uma única passada ──
+  // posições (no vetor completo `canais`) dos canais que aparecem no painel
+  const visiveis = useMemo(
+    () => canais.map((canal, i) => ({ canal, i })).filter((x) => !ocultos.has(normalizarNomeCanal(x.canal))),
+    [canais, ocultos]
+  );
+
+  const alternarCanal = useCallback(async (canal: string) => {
+    const k = normalizarNomeCanal(canal);
+    const novo = new Set(ocultos);
+    if (novo.has(k)) novo.delete(k); else novo.add(k);
+    setOcultos(novo);   // otimista; volta se não salvar
+    const { error } = await supabase.from("config_regras_tiny").upsert({ campo: CAMPO_OCULTOS, coluna: Array.from(novo).join(",") }, { onConflict: "campo" });
+    if (error) { setOcultos(ocultos); setAvisoSync({ tipo: "erro", texto: "Não consegui salvar os canais ocultos: " + error.message }); }
+  }, [ocultos]);
+
+  const adicionarCanalManual = useCallback(async (nomeDigitado: string): Promise<string | null> => {
+    const nome = nomeDigitado.trim().replace(/\s+/g, " ");
+    if (!nome) return "Digite o nome do canal.";
+    if (nome.length > 40) return "Nome muito longo (máximo 40 caracteres).";
+    if (canais.some((c) => normalizarNomeCanal(c) === normalizarNomeCanal(nome))) return `O canal “${nome}” já existe (a comparação ignora maiúsculas e acentos).`;
+    const { error } = await supabase.from("config_regras_canais").insert({ canal: nome, coluna_sku: "A" });
+    if (error) return "Não consegui criar o canal: " + error.message;
+    await carregar();
+    setAvisoSync({ tipo: "ok", texto: `✅ Canal “${nome}” criado. Suba a planilha dele em Configurações para o painel mostrar o progresso. Para usar nos uploads de vendas e no Dashboard, configure também em Regras Gerais.` });
+    return null;
+  }, [canais, carregar]);
+
   const { filtrados, progresso } = useMemo(() => {
     const lista: ItemCadastro[] = [];
     const contagem = new Array(canais.length).fill(0);
@@ -225,14 +258,14 @@ export default function MapeamentoPage() {
     const total = lista.length;
     return {
       filtrados: lista,
-      progresso: canais.map((canal, c) => ({
+      progresso: visiveis.map(({ canal, i: c }) => ({
         canal,
         cadastrados: contagem[c],
         total,
         percentual: total > 0 ? (contagem[c] / total) * 100 : 0,
       })),
     };
-  }, [itens, canais, filtroStatus, filtroEstoque]);
+  }, [itens, canais, visiveis, filtroStatus, filtroEstoque]);
 
   // ── painel de gráficos: independe dos filtros (mostra os três grupos de uma vez) ──
   const resumoGrupos = useMemo(() => {
@@ -331,6 +364,10 @@ export default function MapeamentoPage() {
           />
         )}
 
+        {subAba !== "config" && !loading && (
+          <CanaisDoMapa canais={canais} ocultos={ocultos} normalizar={normalizarNomeCanal} onAlternar={alternarCanal} onAdicionar={adicionarCanalManual} />
+        )}
+
         {/* ═════════════ SUB-ABA: GRÁFICOS ═════════════ */}
         {subAba === "graficos" && (
           <div data-painel-graficos className="space-y-8">
@@ -392,11 +429,11 @@ export default function MapeamentoPage() {
                       </span>
                     ))}
                   </div>
-                  {canais.length === 0 ? (
-                    <p className="text-sm text-slate-500">Nenhum canal configurado.</p>
+                  {visiveis.length === 0 ? (
+                    <p className="text-sm text-slate-500">{canais.length === 0 ? "Nenhum canal configurado." : "Todos os canais estão ocultos. Mostre algum na faixa “Canais exibidos”."}</p>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                      {canais.map((canal, c) => (
+                      {visiveis.map(({ canal, i: c }) => (
                         <div key={canal} data-canal-grafico={canal} className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3.5">
                           <span className="font-bold text-white text-sm">{canal}</span>
                           {GRUPOS.map((g) => {
@@ -528,7 +565,7 @@ export default function MapeamentoPage() {
                           <th className="p-3.5">SKU</th>
                           <th className="p-3.5 text-center">Status</th>
                           <th className="p-3.5 text-right">Estoque</th>
-                          {canais.map((c) => (
+                          {visiveis.map(({ canal: c }) => (
                             <th key={c} className="p-3.5 text-center">{c}</th>
                           ))}
                         </tr>
@@ -549,7 +586,7 @@ export default function MapeamentoPage() {
                               </span>
                             </td>
                             <td className={`p-3.5 text-right font-bold ${item.estoque > 0 ? "text-indigo-400" : "text-slate-500"}`}>{item.estoque}</td>
-                            {canais.map((c, i) => (
+                            {visiveis.map(({ canal: c, i }) => (
                               <td key={c} className="p-3.5 text-center text-sm">
                                 {item.pres[i] ? <span className="text-emerald-400 font-bold">✅</span> : <span className="text-rose-500/60">❌</span>}
                               </td>
