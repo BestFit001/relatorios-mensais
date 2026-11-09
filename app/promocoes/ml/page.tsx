@@ -1,10 +1,12 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
 import { abaPrincipal } from "../../../lib/lerArquivo";
+import ConfigPromoTiny from "../../components/ConfigPromoTiny";
+import { carregarConfigPromoTiny, lerEstoqueTiny, PADRAO_PROMO_TINY, type ConfigPromoTiny as CfgPromoTiny } from "../../../lib/promoTiny";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -83,12 +85,18 @@ export default function PromocoesMlPage() {
   const [salvandoBanco, setSalvandoBanco] = useState(false);
   const [margemAlvo, setMargemAlvo] = useState("20");
   const [arquivoUpload, setArquivoUpload] = useState<File | null>(null);
-  // Inventário do Tiny (SKU na coluna C, saldo na coluna F): só entra na precificação o que tem estoque
-  const [estoqueTiny, setEstoqueTiny] = useState<{ nome: string; mapa: Map<string, number>; comEstoque: number } | null>(null);
+  // Inventário do Tiny (colunas do SKU e do saldo em Configurações): só entra na precificação o que tem estoque
+  const [cfgTiny, setCfgTiny] = useState<CfgPromoTiny>(PADRAO_PROMO_TINY);
+  const [estoqueTinyRaw, setEstoqueTinyRaw] = useState<{ nome: string; linhas: any[][] } | null>(null);
+  const estoqueTiny = useMemo(() => {
+    if (!estoqueTinyRaw) return null;
+    const lido = lerEstoqueTiny(estoqueTinyRaw.linhas, cfgTiny, normalizarSku);
+    return { nome: estoqueTinyRaw.nome, mapa: lido.mapa, comEstoque: lido.comEstoque, aviso: lido.aviso };
+  }, [estoqueTinyRaw, cfgTiny]);
   const [dadosProcessados, setDadosProcessados] = useState<any>(null);
   const [promocoesAtivas, setPromocoesAtivas] = useState<any[]>([]);
   const [termoBusca, setTermoBusca] = useState("");
-  const [abaAtiva, setAbaAtiva] = useState<"precificar" | "rebate" | "ativas">("precificar");
+  const [abaAtiva, setAbaAtiva] = useState<"precificar" | "rebate" | "ativas" | "config">("precificar");
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [mlRegrasMap, setMlRegrasMap] = useState<Map<string, any[]>>(new Map());
@@ -102,6 +110,7 @@ export default function PromocoesMlPage() {
     }
     carregarBasesDoApp();
     carregarPromocoesAtivasSupabase();
+    carregarConfigPromoTiny().then(setCfgTiny);
   }, []);
 
   const carregarBasesDoApp = async () => {
@@ -203,17 +212,12 @@ export default function PromocoesMlPage() {
       try {
         const wb = XLSX.read(evt.target?.result, { type: "binary" });
         const linhas: any[][] = XLSX.utils.sheet_to_json(abaPrincipal(wb), { header: 1, defval: "" });
-        const mapa = new Map<string, number>();
-        for (const row of linhas) {
-          if (!row || row.length < 6) continue;
-          const sku = normalizarSku(row[2]);   // coluna C
-          if (!sku) continue;
-          mapa.set(sku, (mapa.get(sku) || 0) + parseNumeroBruto(row[5]));   // coluna F; SKU repetido soma
-        }
-        if (mapa.size === 0) { setEstoqueTiny(null); alert("Nenhum SKU foi lido no inventário. Confira se o SKU está na coluna C e o saldo na coluna F."); return; }
-        setEstoqueTiny({ nome: file.name, mapa, comEstoque: Array.from(mapa.values()).filter((v) => v > 0).length });
+        const lido = lerEstoqueTiny(linhas, cfgTiny, normalizarSku);   // SKU repetido soma; colunas vêm de Configurações
+        if (lido.mapa.size === 0) { setEstoqueTinyRaw(null); alert(lido.aviso || "Nenhum SKU foi lido no inventário."); return; }
+        setEstoqueTinyRaw({ nome: file.name, linhas });
+        if (lido.aviso) alert("⚠️ " + lido.aviso);
       } catch (err: any) {
-        setEstoqueTiny(null);
+        setEstoqueTinyRaw(null);
         alert("Erro ao ler o inventário: " + err.message);
       }
     };
@@ -226,7 +230,7 @@ export default function PromocoesMlPage() {
       return;
     }
     if (!estoqueTiny) {
-      alert("Por favor, selecione o Inventário do Tiny (SKU na coluna C, saldo na coluna F): só o que tem estoque é precificado.");
+      alert(`Por favor, selecione o Inventário do Tiny (SKU na coluna ${cfgTiny.sku}, saldo na coluna ${cfgTiny.estoque}): só o que tem estoque é precificado.`);
       return;
     }
 
@@ -409,7 +413,7 @@ export default function PromocoesMlPage() {
       return;
     }
     if (!estoqueTiny) {
-      alert("Por favor, selecione o Inventário do Tiny (SKU na coluna C, saldo na coluna F): só o que tem estoque entra na análise.");
+      alert(`Por favor, selecione o Inventário do Tiny (SKU na coluna ${cfgTiny.sku}, saldo na coluna ${cfgTiny.estoque}): só o que tem estoque entra na análise.`);
       return;
     }
 
@@ -680,9 +684,19 @@ export default function PromocoesMlPage() {
           >
             Promoções Ativas ({promocoesAtivas.length})
           </button>
+          <button
+            onClick={() => setAbaAtiva("config")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              abaAtiva === "config" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            ⚙️ Configurações
+          </button>
         </div>
 
         <div className="space-y-6">
+          {abaAtiva === "config" && <ConfigPromoTiny onSalvo={setCfgTiny} />}
+          {abaAtiva !== "config" && (
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Campanha (Excel):</label>
@@ -695,7 +709,7 @@ export default function PromocoesMlPage() {
             </div>
 
             <div data-estoque-tiny>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Inventário do Tiny (SKU col. C, saldo col. F):</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Inventário do Tiny (SKU col. {cfgTiny.sku}, saldo col. {cfgTiny.estoque}):</label>
               <input
                 type="file"
                 accept=".xlsx, .xls, .csv"
@@ -703,7 +717,9 @@ export default function PromocoesMlPage() {
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
               />
               {estoqueTiny
-                ? <p data-estoque-ok className="mt-1 text-[10px] font-bold text-emerald-400">✓ {estoqueTiny.nome}: {estoqueTiny.mapa.size} SKUs, {estoqueTiny.comEstoque} com estoque</p>
+                ? (estoqueTiny.aviso
+                    ? <p data-estoque-aviso className="mt-1 text-[10px] font-bold text-amber-400">⚠️ {estoqueTiny.aviso}</p>
+                    : <p data-estoque-ok className="mt-1 text-[10px] font-bold text-emerald-400">✓ {estoqueTiny.nome}: {estoqueTiny.mapa.size} SKUs, {estoqueTiny.comEstoque} com estoque (SKU col. {cfgTiny.sku}, saldo col. {cfgTiny.estoque})</p>)
                 : <p className="mt-1 text-[10px] text-amber-400">Obrigatório: só o que tem estoque é precificado.</p>}
             </div>
 
@@ -748,6 +764,7 @@ export default function PromocoesMlPage() {
               </div>
             )}
           </div>
+          )}
 
           {abaAtiva === "precificar" && listaItens.length > 0 && tipoProcessamento === "precificar" && (
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">

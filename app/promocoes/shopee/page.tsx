@@ -4,6 +4,8 @@ import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
+import ConfigPromoTiny from "../../components/ConfigPromoTiny";
+import { carregarConfigPromoTiny, lerEstoqueTiny, PADRAO_PROMO_TINY, type ConfigPromoTiny as CfgPromoTiny } from "../../../lib/promoTiny";
 
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
@@ -38,6 +40,8 @@ export default function PromocoesShopeePage() {
   
   const [margemAlvo, setMargemAlvo] = useState("10");
   const [dadosEstoqueRaw, setDadosEstoqueRaw] = useState<any[][] | null>(null);
+  const [aba, setAba] = useState<"campanha" | "config">("campanha");
+  const [cfgTiny, setCfgTiny] = useState<CfgPromoTiny>(PADRAO_PROMO_TINY);
   const [dadosShopeeRaw, setDadosShopeeRaw] = useState<any[][] | null>(null);
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
 
@@ -51,6 +55,7 @@ export default function PromocoesShopeePage() {
       return;
     }
     carregarBasesIniciais();
+    carregarConfigPromoTiny().then(setCfgTiny);
   }, []);
 
   const carregarBasesIniciais = async () => {
@@ -172,29 +177,15 @@ export default function PromocoesShopeePage() {
 
     setLoading(true);
     try {
-      const estoqueMap = new Map<string, number>();
-      let colSkuEstoque = 2;
-      let colSaldoEstoque = 5;
-
-      if (dadosEstoqueRaw.length > 0) {
-        const cabecalhoEstoque = dadosEstoqueRaw[0].map(c => String(c || "").trim().toLowerCase());
-        const foundSku = cabecalhoEstoque.findIndex(h => h.includes("sku") || h.includes("código"));
-        const foundSaldo = cabecalhoEstoque.findIndex(h => h.includes("saldo") || h.includes("estoque"));
-        if (foundSku !== -1) colSkuEstoque = foundSku;
-        if (foundSaldo !== -1) colSaldoEstoque = foundSaldo;
+      // SKU e saldo nas colunas definidas na aba Configurações (padrão C e F); SKU repetido soma os saldos
+      const lidoEstoque = lerEstoqueTiny(dadosEstoqueRaw, cfgTiny, normalizarSku);
+      if (lidoEstoque.mapa.size === 0) {
+        alert("⚠️ " + (lidoEstoque.aviso || "Nenhum SKU foi lido na planilha de estoque."));
+        setLoading(false);
+        return;
       }
-
-      for (let i = 1; i < dadosEstoqueRaw.length; i++) {
-        const row = dadosEstoqueRaw[i];
-        if (!row || row.length <= Math.max(colSkuEstoque, colSaldoEstoque)) continue;
-
-        const skuEstoque = normalizarSku(row[colSkuEstoque]);
-        const saldoEstoque = parseNumeroBruto(row[colSaldoEstoque]);
-
-        if (skuEstoque) {
-          estoqueMap.set(skuEstoque, saldoEstoque);
-        }
-      }
+      if (lidoEstoque.aviso) alert("⚠️ " + lidoEstoque.aviso);
+      const estoqueMap = lidoEstoque.mapa;
 
       // Cabeçalho da Shopee na linha 3 (índice 2)
       const headerRow = dadosShopeeRaw[2].map(c => String(c || "").trim().toLowerCase());
@@ -336,6 +327,29 @@ export default function PromocoesShopeePage() {
           <Navbar />
         </div>
 
+        <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
+          <button
+            onClick={() => setAba("campanha")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              aba === "campanha" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            Precificar Campanha
+          </button>
+          <button
+            onClick={() => setAba("config")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              aba === "config" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            ⚙️ Configurações
+          </button>
+        </div>
+
+        {aba === "config" ? (
+          <ConfigPromoTiny onSalvo={setCfgTiny} />
+        ) : (
+        <>
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
           <h3 className="text-sm font-bold text-white uppercase tracking-wider">⚙️ Configurações & Uploads (Shopee)</h3>
           
@@ -351,7 +365,7 @@ export default function PromocoesShopeePage() {
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">1. Planilha de Estoque do Tiny (Col. C e F):</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">1. Planilha de Estoque do Tiny (SKU col. {cfgTiny.sku}, saldo col. {cfgTiny.estoque}):</label>
               <input
                 type="file"
                 accept=".xlsx, .xls, .csv"
@@ -439,6 +453,8 @@ export default function PromocoesShopeePage() {
               </div>
             </div>
           </div>
+        )}
+        </>
         )}
 
       </div>

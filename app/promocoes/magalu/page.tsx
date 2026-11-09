@@ -4,6 +4,9 @@ import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
+import { abaPrincipal } from "../../../lib/lerArquivo";
+import ConfigPromoTiny from "../../components/ConfigPromoTiny";
+import { carregarConfigPromoTiny, lerEstoqueTiny, PADRAO_PROMO_TINY, type ConfigPromoTiny as CfgPromoTiny } from "../../../lib/promoTiny";
 
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
@@ -51,7 +54,8 @@ export default function PromocoesMagaluPage() {
   const [dadosProcessados, setDadosProcessados] = useState<any[]>([]);
   const [promocoesAtivas, setPromocoesAtivas] = useState<any[]>([]);
   const [termoBusca, setTermoBusca] = useState("");
-  const [abaAtiva, setAbaAtiva] = useState<"precificar" | "ativas">("precificar");
+  const [abaAtiva, setAbaAtiva] = useState<"precificar" | "ativas" | "config">("precificar");
+  const [cfgTiny, setCfgTiny] = useState<CfgPromoTiny>(PADRAO_PROMO_TINY);
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [skusMagaluBaseSet, setSkusMagaluBaseSet] = useState<Set<string>>(new Set());
@@ -65,6 +69,7 @@ export default function PromocoesMagaluPage() {
     }
     carregarBasesIniciais();
     carregarPromocoesAtivasSupabase();
+    carregarConfigPromoTiny().then(setCfgTiny);
   }, []);
 
   const carregarBasesIniciais = async () => {
@@ -153,8 +158,7 @@ export default function PromocoesMagaluPage() {
         try {
           const bstr = evt.target?.result;
           const wb = XLSX.read(bstr, { type: "binary" });
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+          const rawData: any[][] = XLSX.utils.sheet_to_json(abaPrincipal(wb), { header: 1, defval: "" });
           setDadosEstoqueRaw(rawData);
           alert("✅ Planilha de estoque (Tiny) carregada com sucesso!");
         } catch (err: any) {
@@ -173,18 +177,15 @@ export default function PromocoesMagaluPage() {
 
     setLoading(true);
     try {
-      const estoqueMap = new Map<string, number>();
-      for (let i = 0; i < dadosEstoqueRaw.length; i++) {
-        const row = dadosEstoqueRaw[i];
-        if (!row || row.length < 6) continue;
-
-        const skuEstoque = normalizarSku(row[2]); // Coluna C = Índice 2
-        const saldoEstoque = parseNumeroBruto(row[5]); // Coluna F = Índice 5
-
-        if (skuEstoque) {
-          estoqueMap.set(skuEstoque, saldoEstoque);
-        }
+      // SKU e saldo nas colunas definidas na aba Configurações (padrão C e F); SKU repetido soma os saldos
+      const lidoEstoque = lerEstoqueTiny(dadosEstoqueRaw, cfgTiny, normalizarSku);
+      if (lidoEstoque.mapa.size === 0) {
+        alert("⚠️ " + (lidoEstoque.aviso || "Nenhum SKU foi lido na planilha de estoque."));
+        setLoading(false);
+        return;
       }
+      if (lidoEstoque.aviso) alert("⚠️ " + lidoEstoque.aviso);
+      const estoqueMap = lidoEstoque.mapa;
 
       const margemDesejada = parseFloat(margemAlvo) / 100 || 0.20;
       const imposto = 0.09;
@@ -357,9 +358,19 @@ export default function PromocoesMagaluPage() {
           >
             Promoções Ativas Magalu ({promocoesAtivas.length})
           </button>
+          <button
+            onClick={() => setAbaAtiva("config")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              abaAtiva === "config" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            ⚙️ Configurações
+          </button>
         </div>
 
-        {abaAtiva === "precificar" ? (
+        {abaAtiva === "config" ? (
+          <ConfigPromoTiny onSalvo={setCfgTiny} />
+        ) : abaAtiva === "precificar" ? (
           <div className="space-y-6">
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">⚙️ Configurações da Campanha & Upload de Estoque</h3>
@@ -409,7 +420,7 @@ export default function PromocoesMagaluPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-800 items-end">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Estoque do Tiny (SKU na Col. C, Qtd na Col. F):</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Estoque do Tiny (SKU na Col. {cfgTiny.sku}, Qtd na Col. {cfgTiny.estoque}):</label>
                   <input
                     type="file"
                     accept=".xlsx, .xls, .csv"

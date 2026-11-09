@@ -41,6 +41,20 @@ function letraParaIndice(letra: string): number {
   return Math.max(0, num - 1);
 }
 
+// Procura, na linha de cabeçalho, a coluna cujo título bate (sem acento/maiúscula) com um dos nomes. -1 se não achar.
+function acharColunaPorCabecalho(cabecalho: any[] | undefined, nomes: string[]): number {
+  if (!cabecalho) return -1;
+  const norm = (v: any) => String(v ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+  const alvo = nomes.map(norm);
+  for (let i = 0; i < cabecalho.length; i++) if (alvo.includes(norm(cabecalho[i]))) return i;
+  return -1;
+}
+
+function nomeDoMes(chave: string): string {   // "2026-10" -> "10/2026"
+  const [a, m] = chave.split("-");
+  return `${m}/${a}`;
+}
+
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
   let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
@@ -840,9 +854,24 @@ export default function UpdatesPage() {
 
         // Status (cancelado), Nota Fiscal e Data do pedido configurados para este canal
         const cfgI = cfgImportAtual;
-        const idxStatus = letraParaIndice(cfgI.colStatus);
-        const idxNF = letraParaIndice(cfgI.colNF);
-        const idxDataPed = letraParaIndice(cfgI.colData);
+        let idxStatus = letraParaIndice(cfgI.colStatus);
+        let idxNF = letraParaIndice(cfgI.colNF);
+        let idxDataPed = letraParaIndice(cfgI.colData);
+
+        // Site (Wake): a planilha traz os títulos "Pedido Id", "Situacao - Nome", "Nota Fiscal", "Data", "Produto - SKU".
+        // Eles valem mais que as letras salvas (que podem estar vazias ou antigas): se o título existir, usa a coluna dele.
+        const cabWake = isSite && json.length ? json[0] : undefined;
+        const wIdPedido = acharColunaPorCabecalho(cabWake, ["pedido id"]);
+        const wStatus = acharColunaPorCabecalho(cabWake, ["situacao - nome"]);
+        const wNF = acharColunaPorCabecalho(cabWake, ["nota fiscal"]);
+        const wData = acharColunaPorCabecalho(cabWake, ["data"]);
+        const wSku = acharColunaPorCabecalho(cabWake, ["produto - sku"]);
+        const ehWake = isSite && wIdPedido >= 0 && wNF >= 0 && wSku >= 0;
+        if (ehWake) {
+          if (wStatus >= 0) idxStatus = wStatus;
+          idxNF = wNF;
+          if (wData >= 0) idxDataPed = wData;
+        }
         const textoCancel = textoSemAcento(cfgI.textoCancelado || "cancel");
         const novosFaturados = new Map<string, any>();      // pedidos faturados pela Nota Fiscal da própria planilha (Site)
         const exemplosDescartados: string[] = [];
@@ -893,8 +922,9 @@ export default function UpdatesPage() {
         const colRepasseDef = regraData?.col_repasse || regraData?.col_estado || (isML ? 'T' : '');
         const formulaExcel = regraData?.formula_excel || '';
 
-        const idxId = letraParaIndice(colIdDef);
-        const idxSku = letraParaIndice(colSkuDef);
+        const idxId = ehWake ? wIdPedido : letraParaIndice(colIdDef);
+        const idxSku = ehWake ? wSku : letraParaIndice(colSkuDef);
+        const mesesDosPedidos = new Map<string, number>();   // mês (aaaa-mm) da data do pedido -> nº de pedidos com Nota Fiscal
         const idxDescricao = letraParaIndice(regraData?.col_descricao || (isAmazon ? 'K' : (isSite ? 'BE' : 'D'))); 
 
         const novasVendas = [];
@@ -958,6 +988,7 @@ export default function UpdatesPage() {
             if (!noBanco && comNF) {
               // Faturado pela Nota Fiscal da própria planilha: só entra se a data do pedido estiver no mês escolhido
               const dataIso = idxDataPed >= 0 ? paraDataIso(row[idxDataPed]) : "";
+              if (dataIso) mesesDosPedidos.set(dataIso.slice(0, 7), (mesesDosPedidos.get(dataIso.slice(0, 7)) || 0) + 1);
               if (dataIso && dataIso.slice(0, 7) !== `${anoUpload}-${mesUpload}`) { foraDoMesData++; i++; continue; }
               if (!novosFaturados.has(idFormatado)) novosFaturados.set(idFormatado, { id_pedido: idFormatado, data_faturamento: dataIso || hojeIso, mes_referencia: mesAlvoDash });
             }
@@ -1143,7 +1174,17 @@ export default function UpdatesPage() {
         if (foraDoMesData > 0) linhasMsg.push(`• Fora do mês escolhido (pela data do pedido): ${foraDoMesData}`);
         if (isFisico) linhasMsg.push(`• Linha de total da planilha ignorada: ${ignoradosTotalClube > 0 ? 'sim' : 'não encontrada'}`);
         if (avisoCadastro) linhasMsg.push(avisoCadastro);
-        if (totalImportados === 0) linhasMsg.push(`⚠️ Nada foi importado: confira a coluna do ID do pedido (${colIdDef}) e se os faturados do mês foram subidos antes.`);
+        if (foraDoMesData > 0 && mesesDosPedidos.size > 0) {
+          const lista = Array.from(mesesDosPedidos.entries()).sort().map(([k, n]) => `${nomeDoMes(k)} (${n})`).join(", ");
+          linhasMsg.push(`• Meses encontrados nas datas dos pedidos: ${lista}. O mês escolhido nesta tela é ${nomeDoMes(`${anoUpload}-${mesUpload}`)}. Se a planilha for de outro mês, troque o mês acima e envie de novo.`);
+        }
+        if (totalImportados === 0) {
+          const motivos: string[] = [];
+          if (foraDoMesData > 0) motivos.push(`os pedidos são de outro mês que o escolhido (${foraDoMesData})`);
+          if (ignoradosForaDoMes > 0) motivos.push(`${ignoradosForaDoMes} linha(s) sem faturamento${idxNF >= 0 ? " nem Nota Fiscal" : ""}${isSite && idxNF < 0 ? " — a coluna da Nota Fiscal não foi encontrada: preencha 'Col. Nota Fiscal'" : ""}`);
+          linhasMsg.push(`⚠️ Nada foi importado${motivos.length ? ": " + motivos.join("; ") : ""}. Confira a coluna do ID do pedido (${isSite && ehWake ? "Pedido Id" : colIdDef}) e se os faturados do mês foram subidos antes.`);
+        }
+        if (isSite && ehWake) linhasMsg.push(`• Colunas lidas pelo título da planilha Wake: Pedido Id, Produto - SKU, Nota Fiscal${wStatus >= 0 ? ", Situacao - Nome" : ""}${wData >= 0 ? ", Data" : ""}.`);
         alert(linhasMsg.join("\n"));
         carregarVendasPendentes();
       } catch (err: any) {
@@ -1166,32 +1207,51 @@ export default function UpdatesPage() {
       try {
         const json = await lerArquivoComoLinhas(file);   // qualquer formato: xlsx, xls, csv, txt...
 
-        const idxId = letraParaIndice(colunaIdSite);
-        const idxTarifa = letraParaIndice(colunaTarifaSite);
+        // Gateway (Vindi): os títulos "Número pedido" e "Taxa" valem mais que as letras salvas na tela
+        // (o padrão A/E pegava o Id da transação e o nome do vendedor, e as tarifas saíam zeradas).
+        const cab = json[0] || [];
+        const hId = acharColunaPorCabecalho(cab, ["numero pedido", "numero do pedido", "n pedido", "id do pedido", "pedido id", "pedido"]);
+        const hTarifa = acharColunaPorCabecalho(cab, ["taxa", "tarifa", "taxas", "valor taxa", "valor da taxa"]);
+        const hStatus = acharColunaPorCabecalho(cab, ["status", "situacao"]);
+        const porTitulo = hId >= 0 && hTarifa >= 0;
+        const idxId = porTitulo ? hId : letraParaIndice(colunaIdSite);
+        const idxTarifa = porTitulo ? hTarifa : letraParaIndice(colunaTarifaSite);
+        if (idxId < 0 || idxTarifa < 0) throw new Error("não achei as colunas do pedido e da tarifa. Preencha 'Col ID Pedido' e 'Col Valor Tarifa' com as letras das colunas.");
 
-        const registros = [];
-        let tarifasCanceladas = 0;
+        // Um pedido pode ter mais de uma transação aprovada (ex.: tentou cartão e pagou no Pix): as tarifas somam.
+        const porPedido = new Map<string, number>();
+        let tarifasCanceladas = 0, linhasLidas = 0, tarifasZeradas = 0;
         for (let i = 1; i < json.length; i++) {
           const row = json[i];
           if (!row) continue;
           const idPedido = normalizarIdPedido(row[idxId]);
+          if (!idPedido) continue;
+          linhasLidas++;
+          // Transação cancelada/recusada no gateway (ex.: Vindi "Cancelada") não gera tarifa
+          const statusTxt = textoSemAcento(hStatus >= 0 ? row[hStatus] : "");
+          const recusada = hStatus >= 0
+            ? /^(cancelad|recusad|reprovad|negad|estornad|expirad)/.test(statusTxt)
+            : row.some((c: any) => /^cancelad[ao]$/i.test(String(c ?? "").trim()));
+          if (recusada) { tarifasCanceladas++; continue; }
           const valorTarifa = parseSmartFloat(row[idxTarifa]);
-          // Transação cancelada no gateway (ex.: Vindi "Cancelada") não gera tarifa
-          if (row.some((c: any) => /^cancelad[ao]$/i.test(String(c ?? "").trim()))) { tarifasCanceladas++; continue; }
+          if (!(valorTarifa > 0)) tarifasZeradas++;
+          porPedido.set(idPedido, Number(((porPedido.get(idPedido) || 0) + valorTarifa).toFixed(2)));
+        }
+        const registros = Array.from(porPedido.entries()).map(([id_pedido, valor_tarifa]) => ({ id_pedido, valor_tarifa }));
 
-          if (idPedido) {
-            registros.push({ id_pedido: idPedido, valor_tarifa: valorTarifa });
-          }
+        if (registros.length === 0) throw new Error("nenhuma tarifa válida encontrada na planilha (confira as colunas do pedido e da tarifa). A base atual não foi alterada.");
+        // Se quase tudo veio zerado é coluna errada: não apaga a base que já estava boa
+        if (tarifasZeradas >= registros.length) throw new Error(`todas as tarifas lidas estão zeradas (coluna usada: ${porTitulo ? "título da planilha" : colunaTarifaSite}). Confira a coluna do valor da tarifa. A base atual não foi alterada.`);
+
+        const { error: erroApaga } = await supabase.from('tarifas_site').delete().neq('id', 0);
+        if (erroApaga) throw new Error("não consegui limpar a base antiga: " + erroApaga.message);
+        for (let i = 0; i < registros.length; i += 500) {
+          const { error: erroGrava } = await supabase.from('tarifas_site').upsert(registros.slice(i, i + 500), { onConflict: 'id_pedido' });
+          if (erroGrava) throw new Error("não consegui gravar as tarifas: " + erroGrava.message);
         }
 
-        if (registros.length > 0) {
-          await supabase.from('tarifas_site').delete().neq('id', 0);
-          for (let i = 0; i < registros.length; i += 500) {
-            await supabase.from('tarifas_site').upsert(registros.slice(i, i + 500), { onConflict: 'id_pedido' });
-          }
-        }
-
-        alert(`✅ Tarifas do Site salvas em 'tarifas_site'! Total: ${registros.length} registos.${tarifasCanceladas ? `\n• Transações canceladas ignoradas: ${tarifasCanceladas}` : ""}`);
+        const somaTarifas = registros.reduce((s, r) => s + r.valor_tarifa, 0);
+        alert(`✅ Tarifas do Site salvas em 'tarifas_site'!\n• Pedidos com tarifa: ${registros.length} (soma R$ ${somaTarifas.toFixed(2).replace(".", ",")})\n• Colunas lidas: ${porTitulo ? `pelo título da planilha (${String(cab[idxId]).trim()} / ${String(cab[idxTarifa]).trim()})` : `${colunaIdSite} / ${colunaTarifaSite}`}${tarifasCanceladas ? `\n• Transações canceladas/recusadas ignoradas: ${tarifasCanceladas}` : ""}${tarifasZeradas ? `\n• Pedidos com tarifa zero: ${tarifasZeradas}` : ""}`);
         setLoading(false);
       } catch (err: any) {
         alert("Erro ao importar Tarifas do Site: " + err.message);
@@ -2004,7 +2064,7 @@ export default function UpdatesPage() {
               <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
                 <h3 className="text-sm font-black text-emerald-400 uppercase tracking-wider">Consulta Tarifas Site</h3>
                 <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3">
-                  <p className="text-[10px] text-slate-400">Cruza ID do Pedido com a tarifa para descontar do líquido final.</p>
+                  <p className="text-[10px] text-slate-400">Cruza ID do Pedido com a tarifa para descontar do líquido final. Na planilha da Vindi as colunas são achadas sozinhas pelos títulos <b>Número pedido</b> e <b>Taxa</b>; as letras abaixo só valem se a planilha não tiver esses títulos.</p>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col ID Pedido</label>
