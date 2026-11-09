@@ -9,6 +9,7 @@ import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
 import { buscarTudo } from "@/lib/buscarTudo";
 import { indiceDaLetra, lerEstoque, normalizarSkuEstoque } from "@/lib/cobertura";
+import { abaPrincipal } from "@/lib/lerArquivo";
 import { canalTemCadastro, normalizarNomeCanal } from "@/lib/vendasCanaisLogica";
 
 type Letras = { sku: string; estoque: string; status_sku: string; status_valor: string };
@@ -18,9 +19,10 @@ interface RegraCanal { id: number; canal: string; coluna_sku: string | null }
 const LETRAS_PADRAO: Letras = { sku: "C", estoque: "F", status_sku: "A", status_valor: "B" };
 const soLetras = (v: string) => v.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
 
+/** Lê a aba com os dados (ignora abas ocultas/vazias, como a dropdown_options_hidden das planilhas do ML). */
 async function lerPrimeiraAba(arquivo: File): Promise<any[][]> {
   const wb = XLSX.read(new Uint8Array(await arquivo.arrayBuffer()), { type: "array", cellDates: true, raw: false });
-  return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "" }) as any[][];
+  return XLSX.utils.sheet_to_json(abaPrincipal(wb), { header: 1, defval: "" }) as any[][];
 }
 
 async function gravarEmLotes(tabela: string, registros: any[], opcoes?: { onConflict: string }): Promise<string> {

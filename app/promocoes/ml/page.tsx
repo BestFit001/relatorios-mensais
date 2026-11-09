@@ -4,6 +4,7 @@ import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
+import { abaPrincipal } from "../../../lib/lerArquivo";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -82,6 +83,8 @@ export default function PromocoesMlPage() {
   const [salvandoBanco, setSalvandoBanco] = useState(false);
   const [margemAlvo, setMargemAlvo] = useState("20");
   const [arquivoUpload, setArquivoUpload] = useState<File | null>(null);
+  // Inventário do Tiny (SKU na coluna C, saldo na coluna F): só entra na precificação o que tem estoque
+  const [estoqueTiny, setEstoqueTiny] = useState<{ nome: string; mapa: Map<string, number>; comEstoque: number } | null>(null);
   const [dadosProcessados, setDadosProcessados] = useState<any>(null);
   const [promocoesAtivas, setPromocoesAtivas] = useState<any[]>([]);
   const [termoBusca, setTermoBusca] = useState("");
@@ -192,9 +195,38 @@ export default function PromocoesMlPage() {
     }
   };
 
+  const handleEstoqueUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const wb = XLSX.read(evt.target?.result, { type: "binary" });
+        const linhas: any[][] = XLSX.utils.sheet_to_json(abaPrincipal(wb), { header: 1, defval: "" });
+        const mapa = new Map<string, number>();
+        for (const row of linhas) {
+          if (!row || row.length < 6) continue;
+          const sku = normalizarSku(row[2]);   // coluna C
+          if (!sku) continue;
+          mapa.set(sku, (mapa.get(sku) || 0) + parseNumeroBruto(row[5]));   // coluna F; SKU repetido soma
+        }
+        if (mapa.size === 0) { setEstoqueTiny(null); alert("Nenhum SKU foi lido no inventário. Confira se o SKU está na coluna C e o saldo na coluna F."); return; }
+        setEstoqueTiny({ nome: file.name, mapa, comEstoque: Array.from(mapa.values()).filter((v) => v > 0).length });
+      } catch (err: any) {
+        setEstoqueTiny(null);
+        alert("Erro ao ler o inventário: " + err.message);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const processarPlanilhaCampanha = async () => {
     if (!dadosProcessados || !dadosProcessados.rawData) {
       alert("Por favor, selecione uma planilha de campanha do Mercado Livre.");
+      return;
+    }
+    if (!estoqueTiny) {
+      alert("Por favor, selecione o Inventário do Tiny (SKU na coluna C, saldo na coluna F): só o que tem estoque é precificado.");
       return;
     }
 
@@ -320,6 +352,12 @@ export default function PromocoesMlPage() {
           errosList.push("Custo não encontrado — Atualizar base");
         }
 
+        const saldo = skuKey ? (estoqueTiny.mapa.get(skuKey) ?? 0) : 0;
+        if (skuKey && saldo <= 0) {
+          statusItem = "INAPTO";
+          errosList.push(`Sem estoque (Saldo: ${saldo})`);
+        }
+
         let novoPreco = originalPrice;
         if (statusItem === "APTO") {
           const comissaoDec = comissaoVal > 1 ? comissaoVal / 100 : comissaoVal;
@@ -351,6 +389,7 @@ export default function PromocoesMlPage() {
           ORIGINAL_PRICE: originalPrice,
           FINAL_PRICE: Number(novoPreco.toFixed(2)),
           STATUS: statusItem,
+          SALDO: saldo,
           OBSOLETO: obsoletosSet.has(skuKey) ? "SIM" : "NÃO",
           ERRO: errosList.length > 0 ? errosList.join(" | ") : ""
         });
@@ -367,6 +406,10 @@ export default function PromocoesMlPage() {
   const processarPlanilhaRebate = async () => {
     if (!dadosProcessados || !dadosProcessados.rawData) {
       alert("Por favor, selecione uma planilha de rebate/redução de tarifas do Mercado Livre.");
+      return;
+    }
+    if (!estoqueTiny) {
+      alert("Por favor, selecione o Inventário do Tiny (SKU na coluna C, saldo na coluna F): só o que tem estoque entra na análise.");
       return;
     }
 
@@ -475,6 +518,12 @@ export default function PromocoesMlPage() {
           errosList.push("Preço Final Inválido");
         }
 
+        const saldo = skuKey ? (estoqueTiny.mapa.get(skuKey) ?? 0) : 0;
+        if (skuKey && saldo <= 0) {
+          statusItem = "INAPTO";
+          errosList.push(`Sem estoque (Saldo: ${saldo})`);
+        }
+
         let lucroLiquido = 0;
         let margemFinal = 0;
 
@@ -497,6 +546,7 @@ export default function PromocoesMlPage() {
           DATE_VALIDITY: dateValidity,
           FINAL_PRICE: finalPrice,
           NEW_RECEIVES: newReceives,
+          SALDO: saldo,
           LUCRO: Number(lucroLiquido.toFixed(2)),
           MARGEM: Number(margemFinal.toFixed(1)),
           STATUS: statusItem,
@@ -633,7 +683,7 @@ export default function PromocoesMlPage() {
         </div>
 
         <div className="space-y-6">
-          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de Campanha (Excel):</label>
               <input
@@ -642,6 +692,19 @@ export default function PromocoesMlPage() {
                 onChange={handleFileUpload}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
               />
+            </div>
+
+            <div data-estoque-tiny>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Inventário do Tiny (SKU col. C, saldo col. F):</label>
+              <input
+                type="file"
+                accept=".xlsx, .xls, .csv"
+                onChange={handleEstoqueUpload}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
+              />
+              {estoqueTiny
+                ? <p data-estoque-ok className="mt-1 text-[10px] font-bold text-emerald-400">✓ {estoqueTiny.nome}: {estoqueTiny.mapa.size} SKUs, {estoqueTiny.comEstoque} com estoque</p>
+                : <p className="mt-1 text-[10px] text-amber-400">Obrigatório: só o que tem estoque é precificado.</p>}
             </div>
 
             <div>
@@ -699,6 +762,7 @@ export default function PromocoesMlPage() {
                       <th className="p-3">MLB</th>
                       <th className="p-3">SKU</th>
                       <th className="p-3">Campanha</th>
+                      <th className="p-3 text-right">Saldo</th>
                       <th className="p-3 text-right">Preço Original</th>
                       <th className="p-3 text-right">Novo Preço Sugerido</th>
                       <th className="p-3 text-center">Status</th>
@@ -711,6 +775,7 @@ export default function PromocoesMlPage() {
                         <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
                         <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
                         <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
+                        <td className={`p-3 text-right font-mono ${item.SALDO > 0 ? "text-slate-300" : "text-rose-400"}`}>{item.SALDO}</td>
                         <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.ORIGINAL_PRICE)}</td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.FINAL_PRICE)}</td>
                         <td className="p-3 text-center">
@@ -742,6 +807,7 @@ export default function PromocoesMlPage() {
                       <th className="p-3">Promoção / Campanha</th>
                       <th className="p-3 text-right">Preço Final (PDV)</th>
                       <th className="p-3 text-right text-purple-400">Novo Recebe (Rebate)</th>
+                      <th className="p-3 text-right">Saldo</th>
                       <th className="p-3 text-right">Lucro Líquido</th>
                       <th className="p-3 text-right">Margem Final</th>
                       <th className="p-3 text-center">Status</th>
@@ -756,6 +822,7 @@ export default function PromocoesMlPage() {
                         <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
                         <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.FINAL_PRICE)}</td>
                         <td className="p-3 text-right font-mono text-purple-300 font-bold">{formatarMoeda(item.NEW_RECEIVES)}</td>
+                        <td className={`p-3 text-right font-mono ${item.SALDO > 0 ? "text-slate-300" : "text-rose-400"}`}>{item.SALDO}</td>
                         <td className="p-3 text-right font-mono text-emerald-400 font-bold">{formatarMoeda(item.LUCRO)}</td>
                         <td className={`p-3 text-right font-mono font-bold ${item.MARGEM >= parseFloat(margemAlvo) ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {item.MARGEM}%
