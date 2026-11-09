@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "@/app/components/Navbar";
 import * as XLSX from "xlsx";
+import { letrasDaFormula, avaliarFormulaLive } from "@/lib/formulaLive";
 
 function colunaParaIndice(letra: string): number {
   let l = letra.trim().toUpperCase();
@@ -104,6 +105,11 @@ export default function RelatorioLivesPage() {
   const [colunaRoiLive, setColunaRoiLive] = useState("K");
   const [percentualImposto, setPercentualImposto] = useState("9");
   const [percentualComissao, setPercentualComissao] = useState("14");
+  // Taxas e tarifas: a fórmula vem da aba Regras (canal escolhido). A coluna do valor pago (abaixo) é a base da fórmula;
+  // as outras letras da fórmula (ex.: U2 no TikTok) precisam de uma coluna correspondente na planilha de Lives (vazio = 0).
+  const [canalRegras, setCanalRegras] = useState("TikTok");
+  const [regrasCanais, setRegrasCanais] = useState<{ canal: string; formula: string; colPdv: string }[]>([]);
+  const [mapaExtras, setMapaExtras] = useState<Record<string, string>>({});
 
   // Dados
   const [dadosBrutos, setDadosBrutos] = useState<any[]>([]);
@@ -167,8 +173,16 @@ export default function RelatorioLivesPage() {
           if (cfg.campo === "live_col_roi_live") setColunaRoiLive(cfg.coluna);
           if (cfg.campo === "live_imposto") setPercentualImposto(cfg.coluna);
           if (cfg.campo === "live_comissao") setPercentualComissao(cfg.coluna);
+          if (cfg.campo === "live_canal_regras") setCanalRegras(cfg.coluna);
+          if (String(cfg.campo).startsWith("live_map_")) {
+            const letra = String(cfg.campo).replace("live_map_", "").toUpperCase();
+            setMapaExtras((prev) => ({ ...prev, [letra]: String(cfg.coluna || "").toUpperCase() }));
+          }
         });
       }
+
+      const { data: regrasData } = await supabase.from("config_regras_canais").select("canal, formula_excel, col_pdv");
+      setRegrasCanais((regrasData || []).filter((r: any) => r.canal).map((r: any) => ({ canal: String(r.canal), formula: String(r.formula_excel || "").trim(), colPdv: String(r.col_pdv || "").trim().toUpperCase() })));
 
       let allVendas: any[] = [];
       let vFrom = 0;
@@ -186,7 +200,9 @@ export default function RelatorioLivesPage() {
         setDadosBrutos(allVendas.map(v => ({
           sku: v.sku,
           status: v.status,
-          repasse: v.repasse,
+          // linhas antigas não têm valor_pago: o "repasse" delas era o valor pago pelo cliente
+          valorPago: v.valor_pago !== null && v.valor_pago !== undefined ? Number(v.valor_pago) : Number(v.repasse) || 0,
+          variaveis: v.variaveis || {},
           pdv: v.pdv,
           data: v.data_venda,
           productName: v.nome_produto
@@ -221,6 +237,8 @@ export default function RelatorioLivesPage() {
         { campo: "live_col_roi_live", coluna: String(colunaRoiLive) },
         { campo: "live_imposto", coluna: String(percentualImposto) },
         { campo: "live_comissao", coluna: String(percentualComissao) },
+        { campo: "live_canal_regras", coluna: String(canalRegras) },
+        ...Object.entries(mapaExtras).filter(([, col]) => String(col || "").trim()).map(([letra, col]) => ({ campo: `live_map_${letra}`, coluna: String(col).trim().toUpperCase() })),
       ];
 
       for (const c of configs) {
@@ -251,6 +269,23 @@ export default function RelatorioLivesPage() {
     setLoading(false);
   };
 
+  // Fórmula de taxas e tarifas do canal escolhido (aba Regras) e a letra que representa o preço nela
+  const formulaDoCanal = () => regrasCanais.find((r) => r.canal === canalRegras)?.formula || "";
+  const letraDoPreco = () => {
+    // o preço é a coluna de PDV da regra do canal (ex.: R no TikTok); as demais letras da fórmula são colunas extras
+    const regra = regrasCanais.find((r) => r.canal === canalRegras);
+    if (regra && /^[A-Z]{1,2}$/.test(regra.colPdv)) return regra.colPdv;
+    const m = formulaDoCanal().match(/\b([A-Za-z]{1,2})\d*\b/);
+    return m ? m[1].toUpperCase() : "";
+  };
+  const repasseDaLinha = (valorPago: number, variaveis: Record<string, number> = {}) => {
+    const f = formulaDoCanal();
+    if (!f) return valorPago;   // canal sem fórmula nas Regras: sem desconto de taxas (a tela avisa)
+    const preco = letraDoPreco();
+    const r = avaliarFormulaLive(f, (l) => (l === preco ? valorPago : Number(variaveis[l]) || 0), valorPago, 1);
+    return r === null ? valorPago : r;
+  };
+
   const handleFileUploadVendas = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -272,15 +307,24 @@ export default function RelatorioLivesPage() {
         const idxData = colunaParaIndice(colunaData);
         const idxNomeProd = colunaParaIndice("I");
 
-        const novasLinhas = [];
+        const formulaCanal = formulaDoCanal();
+        const letrasExtras = letrasDaFormula(formulaCanal).filter((l) => l !== letraDoPreco());
+        const novasLinhas: any[] = [];
         for (let i = startRow; i < rawData.length; i++) {
           const row = rawData[i];
           if (!row || row.length === 0) continue;
 
+          const variaveis: Record<string, number> = {};
+          letrasExtras.forEach((l) => {
+            const col = String(mapaExtras[l] || "").trim();
+            variaveis[l] = col ? parseNumeroBruto(row[colunaParaIndice(col)]) : 0;
+          });
+
           novasLinhas.push({
             sku: String(row[idxSku] || "").trim(),
             status: String(row[idxStatus] || "").trim(),
-            repasse: parseNumeroBruto(row[idxRepasse]),
+            valorPago: parseNumeroBruto(row[idxRepasse]),
+            variaveis,
             pdv: parseNumeroBruto(row[idxPdv]),
             data: String(row[idxData] || "").trim(),
             productName: String(row[idxNomeProd] || "Produto Live").trim(),
@@ -295,16 +339,20 @@ export default function RelatorioLivesPage() {
           const custoUnit = custoObj ? parseNumeroBruto(custoObj.custo_unitario ?? custoObj.custo ?? 0) : 0;
           const nomeProd = custoObj ? (custoObj.produto || custoObj.descricao || row.productName) : row.productName;
           
-          const impVal = row.repasse * (parseFloat(percentualImposto) / 100 || 0);
-          const comVal = row.repasse * (parseFloat(percentualComissao) / 100 || 0);
-          const liq = row.repasse - custoUnit - impVal - comVal;
-          const vPdv = row.pdv > 0 ? row.pdv : row.repasse;
+          // Repasse = valor pago menos taxas e tarifas, pela fórmula do canal na aba Regras
+          const repasseLinha = repasseDaLinha(row.valorPago, row.variaveis);
+          const impVal = row.valorPago * (parseFloat(percentualImposto) / 100 || 0);
+          const comVal = row.valorPago * (parseFloat(percentualComissao) / 100 || 0);
+          const liq = repasseLinha - custoUnit - impVal - comVal;
+          const vPdv = row.pdv > 0 ? row.pdv : row.valorPago;
           const pctPdv = vPdv > 0 ? (liq / vPdv) * 100 : 0;
 
           return {
             sku: row.sku,
             nome_produto: nomeProd,
-            repasse: row.repasse,
+            repasse: repasseLinha,
+            valor_pago: row.valorPago,
+            variaveis: row.variaveis,
             pdv: vPdv,
             custo: custoUnit,
             imposto: impVal,
@@ -386,7 +434,9 @@ export default function RelatorioLivesPage() {
   const dadosProcessados = dadosBrutos.map((row) => {
     const skuRaw = row.sku;
     const skuNorm = normalizarSku(skuRaw);
-    const repasse = parseNumeroBruto(row.repasse);
+    const valorPago = parseNumeroBruto(row.valorPago);
+    const repasse = repasseDaLinha(valorPago, row.variaveis || {});   // valor pago - taxas e tarifas (fórmula das Regras)
+    const tarifas = Math.max(0, valorPago - repasse);
     const pdv = parseNumeroBruto(row.pdv);
     const dataPagamento = row.data;
     const statusVenda = String(row.status || "").trim().toLowerCase();
@@ -395,11 +445,12 @@ export default function RelatorioLivesPage() {
     const custoUnitario = custoObj ? parseNumeroBruto(custoObj.custo_unitario ?? custoObj.custo ?? 0) : 0;
     const nomeProduto = custoObj ? (custoObj.produto || custoObj.descricao || "Produto Cadastrado") : (row.productName || "Produto Desconhecido");
 
-    const impostoVal = repasse * (parseFloat(percentualImposto) / 100 || 0);
-    const comissaoVendedoraVal = repasse * (parseFloat(percentualComissao) / 100 || 0);
+    // imposto e comissão incidem sobre o valor da venda (o que o cliente pagou), como no dashboard
+    const impostoVal = valorPago * (parseFloat(percentualImposto) / 100 || 0);
+    const comissaoVendedoraVal = valorPago * (parseFloat(percentualComissao) / 100 || 0);
     const liquidez = repasse - custoUnitario - impostoVal - comissaoVendedoraVal;
 
-    const valorPdv = pdv > 0 ? pdv : repasse;
+    const valorPdv = pdv > 0 ? pdv : valorPago;
     const percentualLucroPdv = valorPdv > 0 ? (liquidez / valorPdv) * 100 : 0;
     const dataCurta = formatarDataCurta(dataPagamento);
     const timestamp = parseDataParaTimestamp(dataCurta);
@@ -408,6 +459,8 @@ export default function RelatorioLivesPage() {
       sku: skuRaw,
       skuNorm,
       nomeProduto,
+      valorPago,
+      tarifas,
       repasse,
       pdv: valorPdv,
       custo: custoUnitario,
@@ -451,7 +504,10 @@ export default function RelatorioLivesPage() {
     return true;
   });
 
+  const totalVenda = dadosProcessados.reduce((acc, cur) => acc + cur.valorPago, 0);
+  const totalTarifas = dadosProcessados.reduce((acc, cur) => acc + cur.tarifas, 0);
   const totalRepasse = dadosProcessados.reduce((acc, cur) => acc + cur.repasse, 0);
+  const semFormula = !formulaDoCanal();
   const totalCusto = dadosProcessados.reduce((acc, cur) => acc + cur.custo, 0);
   const totalImposto = dadosProcessados.reduce((acc, cur) => acc + cur.imposto, 0);
   const totalComissaoVendedora = dadosProcessados.reduce((acc, cur) => acc + cur.comissaoVendedora, 0);
@@ -461,17 +517,20 @@ export default function RelatorioLivesPage() {
 
   const totalLiquidez = dadosProcessados.reduce((acc, cur) => acc + cur.liquidez, 0) - custoTotalLivesImportado;
   
-  const mediaLucroPdvGeral = dadosProcessados.length > 0 
-    ? dadosProcessados.reduce((acc, cur) => acc + cur.percentualLucroPdv, 0) / dadosProcessados.length 
-    : 0;
+  // % de lucro sobre o PDV, ponderado pelo valor (soma da liquidez / soma do PDV)
+  const totalPdv = dadosProcessados.reduce((acc, cur) => acc + cur.pdv, 0);
+  const mediaLucroPdvGeral = totalPdv > 0 ? (totalLiquidez / totalPdv) * 100 : 0;
 
-  const compactoMap = new Map<string, { sku: string; nome: string; qtd: number; repasse: number; custo: number; comissaoVendedora: number; liquidez: number; percentualLucroPdv: number }>();
+  const compactoMap = new Map<string, { sku: string; nome: string; qtd: number; venda: number; tarifas: number; pdv: number; repasse: number; custo: number; comissaoVendedora: number; liquidez: number; percentualLucroPdv: number }>();
   dadosProcessados.forEach(item => {
     if (!compactoMap.has(item.skuNorm)) {
       compactoMap.set(item.skuNorm, {
         sku: item.sku,
         nome: item.nomeProduto,
         qtd: 0,
+        venda: 0,
+        tarifas: 0,
+        pdv: 0,
         repasse: 0,
         custo: 0,
         comissaoVendedora: 0,
@@ -481,6 +540,9 @@ export default function RelatorioLivesPage() {
     }
     const c = compactoMap.get(item.skuNorm)!;
     c.qtd += 1;
+    c.venda += item.valorPago;
+    c.tarifas += item.tarifas;
+    c.pdv += item.pdv;
     c.repasse += item.repasse;
     c.custo += item.custo;
     c.comissaoVendedora += item.comissaoVendedora;
@@ -489,7 +551,7 @@ export default function RelatorioLivesPage() {
 
   const dadosCompactos = Array.from(compactoMap.values()).map(item => ({
     ...item,
-    percentualLucroPdv: item.repasse > 0 ? (item.liquidez / item.repasse) * 100 : 0
+    percentualLucroPdv: item.pdv > 0 ? (item.liquidez / item.pdv) * 100 : 0
   })).sort((a, b) => b.qtd - a.qtd);
 
   const itensAtivos = modoPainel === "detalhado" ? dadosProcessados : dadosCompactos;
@@ -609,7 +671,7 @@ export default function RelatorioLivesPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Valor de Repasse (Letra):</label>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Valor da Venda — preço pago após desconto (Letra):</label>
                 <input
                   type="text"
                   value={colunaRepasse}
@@ -681,6 +743,43 @@ export default function RelatorioLivesPage() {
               </div>
             </div>
 
+            <div className="bg-slate-950 p-6 rounded-xl border border-amber-800/50 space-y-4">
+              <div>
+                <h3 className="text-xs font-black text-amber-300 uppercase tracking-wider">Taxas e tarifas (fórmula da aba Regras)</h3>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  O repasse de cada venda é calculado aplicando a fórmula do canal escolhido sobre o valor da venda (coluna acima). Imposto e comissão incidem sobre o valor da venda.
+                </p>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Canal das Regras usado nas lives:</label>
+                <select
+                  value={canalRegras}
+                  onChange={(e) => setCanalRegras(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-bold"
+                >
+                  {Array.from(new Set(["TikTok", ...regrasCanais.map((r) => r.canal)])).map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              {formulaDoCanal() ? (
+                <p className="text-[11px] text-slate-300">Fórmula: <span className="font-mono text-amber-300">{formulaDoCanal()}</span> — a letra <b className="font-mono">{letraDoPreco()}</b> é o valor da venda.</p>
+              ) : (
+                <p className="text-[11px] text-rose-400 font-bold">⚠️ Este canal não tem fórmula cadastrada na aba Regras: o repasse ficará igual ao valor pago.</p>
+              )}
+              {letrasDaFormula(formulaDoCanal()).filter((l) => l !== letraDoPreco()).map((l) => (
+                <div key={l}>
+                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Coluna da planilha de lives para a variável {l} da fórmula (vazio = 0):</label>
+                  <input
+                    type="text"
+                    value={mapaExtras[l] || ""}
+                    onChange={(e) => setMapaExtras({ ...mapaExtras, [l]: e.target.value })}
+                    className="w-32 bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
+                  />
+                </div>
+              ))}
+            </div>
+
             <div className="flex justify-end">
               <button
                 type="button"
@@ -696,38 +795,52 @@ export default function RelatorioLivesPage() {
         {subAba === "dados" && (
           <div className="space-y-6">
             
-            <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
-              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
+            {semFormula && (
+              <div className="bg-amber-950/40 border border-amber-700/60 text-amber-300 text-xs font-bold rounded-xl p-3">
+                ⚠️ O canal "{canalRegras}" não tem fórmula de apuração na aba Regras: o repasse está igual ao valor pago (sem descontar taxas e tarifas). Escolha o canal em Configurações Live.
+              </div>
+            )}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase">Valor das Vendas</span>
+                <span className="text-sm font-black font-mono text-white mt-1 block">{formatarMoeda(totalVenda)}</span>
+              </div>
+              <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase">Taxas e Tarifas ({canalRegras})</span>
+                <span className="text-sm font-black font-mono text-rose-400 mt-1 block">- {formatarMoeda(totalTarifas)}</span>
+              </div>
+              <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Total Repasse</span>
                 <span className="text-sm font-black font-mono text-white mt-1 block">{formatarMoeda(totalRepasse)}</span>
               </div>
-              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
+              <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Custo Total (CMV)</span>
                 <span className="text-sm font-black font-mono text-rose-400 mt-1 block">- {formatarMoeda(totalCusto)}</span>
               </div>
-              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
+              <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Impostos ({percentualImposto}%)</span>
                 <span className="text-sm font-black font-mono text-amber-400 mt-1 block">- {formatarMoeda(totalImposto)}</span>
               </div>
-              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
-                <span className="block text-[10px] font-bold text-slate-400 uppercase">Comissão Vend.</span>
+              <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase">Comissão Vend. ({percentualComissao}%)</span>
                 <span className="text-sm font-black font-mono text-indigo-400 mt-1 block">- {formatarMoeda(totalComissaoVendedora)}</span>
               </div>
-              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
+              <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">Custo de Lives</span>
                 <span className="text-sm font-black font-mono text-cyan-400 mt-1 block">- {formatarMoeda(custoTotalLivesImportado)}</span>
               </div>
-              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
+              <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">ROI Médio</span>
                 <span className="text-sm font-black font-mono text-indigo-300 mt-1 block">{roiMedioImportado.toFixed(2)}x</span>
               </div>
-              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
-                <span className="block text-[10px] font-bold text-slate-400 uppercase">Liquidez Líquida</span>
+              <div className="bg-emerald-950/40 border-emerald-800/60 p-3.5 rounded-2xl border shadow-xl" title="Repasse - CMV - Impostos - Comissão - Custo de lives">
+                <span className="block text-[10px] font-bold text-emerald-300 uppercase">Liquidez</span>
                 <span className="text-sm font-black font-mono text-emerald-400 mt-1 block">{formatarMoeda(totalLiquidez)}</span>
+                <span className="block text-[9px] text-slate-500 mt-0.5">após custo das lives</span>
               </div>
-              <div className="bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800/80 shadow-xl">
+              <div className="bg-slate-900/90 border-slate-800/80 p-3.5 rounded-2xl border shadow-xl">
                 <span className="block text-[10px] font-bold text-slate-400 uppercase">% Lucro sobre PDV</span>
-                <span className="text-sm font-black font-mono text-cyan-400 mt-1 block">{(mediaLucroPdvGeral).toFixed(2)}%</span>
+                <span className="text-sm font-black font-mono text-cyan-400 mt-1 block">{mediaLucroPdvGeral.toFixed(2)}%</span>
               </div>
             </div>
 
@@ -813,6 +926,8 @@ export default function RelatorioLivesPage() {
                       <tr>
                         <th className="p-3">{modoPainel === "detalhado" ? "DATA" : "QUANTIDADE"}</th>
                         <th className="p-3">SKU / PRODUTO</th>
+                        <th className="p-3 text-right">VENDA</th>
+                        <th className="p-3 text-right">TAXAS/TARIFAS</th>
                         <th className="p-3 text-right">REPASSE</th>
                         <th className="p-3 text-right">CUSTO</th>
                         <th className="p-3 text-right">COMISSÃO VEND.</th>
@@ -829,6 +944,8 @@ export default function RelatorioLivesPage() {
                             <span className="font-mono text-indigo-400 block">{item.sku}</span>
                             <span className="text-slate-300 font-medium truncate block max-w-[280px]">{item.nomeProduto}</span>
                           </td>
+                          <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.valorPago)}</td>
+                          <td className="p-3 text-right font-mono text-rose-300">- {formatarMoeda(item.tarifas)}</td>
                           <td className="p-3 text-right font-mono font-bold text-white">{formatarMoeda(item.repasse)}</td>
                           <td className="p-3 text-right font-mono text-rose-400">- {formatarMoeda(item.custo)}</td>
                           <td className="p-3 text-right font-mono text-indigo-300">- {formatarMoeda(item.comissaoVendedora)}</td>
@@ -848,6 +965,8 @@ export default function RelatorioLivesPage() {
                             <span className="font-mono text-indigo-400 block">{item.sku}</span>
                             <span className="text-slate-300 font-medium truncate block max-w-[280px]">{item.nome}</span>
                           </td>
+                          <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.venda)}</td>
+                          <td className="p-3 text-right font-mono text-rose-300">- {formatarMoeda(item.tarifas)}</td>
                           <td className="p-3 text-right font-mono font-bold text-white">{formatarMoeda(item.repasse)}</td>
                           <td className="p-3 text-right font-mono text-rose-400">- {formatarMoeda(item.custo)}</td>
                           <td className="p-3 text-right font-mono text-indigo-300">- {formatarMoeda(item.comissaoVendedora)}</td>
@@ -860,7 +979,7 @@ export default function RelatorioLivesPage() {
 
                       {itensPaginados.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-slate-500">Nenhum registo encontrado com os filtros atuais.</td>
+                          <td colSpan={8} className="p-8 text-center text-slate-500">Nenhum registo encontrado com os filtros atuais.</td>
                         </tr>
                       )}
                     </tbody>
