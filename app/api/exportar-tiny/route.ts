@@ -71,7 +71,7 @@ interface ConteudoPai {
   modeloSemIA?: boolean;
   /** por que a IA não foi aproveitada (mostrado no aviso final) */
   motivoIA?: string;
-  /** qual IA respondeu ("Gemini" ou "Groq"); vazio quando nenhuma foi usada */
+  /** qual IA respondeu ("Claude", "Gemini" ou "Groq"); vazio quando nenhuma foi usada */
   provedorIA?: string;
   /** a IA principal falhou, mas a reserva respondeu: o que aconteceu com a principal */
   avisoIA?: string;
@@ -340,7 +340,7 @@ export async function POST(req: Request) {
 
     const { data: padroesOficiais } = await supabase.from("padroes_anuncios").select("*");
 
-    // IAs configuradas no Vercel (GEMINI_API_KEY e/ou GROQ_API_KEY): se uma falhar, a outra assume
+    // IAs configuradas no Vercel (ANTHROPIC_API_KEY, GEMINI_API_KEY e/ou GROQ_API_KEY): se uma falhar, a outra assume
     const provedores = provedoresConfigurados();
 
     // grupos por pai (mantém a ordem)

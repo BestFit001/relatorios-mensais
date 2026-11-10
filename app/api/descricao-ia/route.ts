@@ -66,7 +66,7 @@ export async function POST(req: Request) {
       .order("id", { ascending: false })
       .limit(6);
 
-    // Gemini e/ou Groq (o que tiver chave no Vercel): se um falhar, o outro assume
+    // Claude, Gemini e/ou Groq (o que tiver chave no Vercel): se um falhar, o próximo assume
     const provedores = provedoresConfigurados();
     let respostaIA = "";
     let provedorUsado: string | null = null;
@@ -96,7 +96,7 @@ export async function POST(req: Request) {
         ? `[MODO TREINAMENTO]: O usuário aplicou a seguinte instrução de refinamento: "${prompt}". Atualize a diretriz para este produto aplicando rigorosamente esta melhoria.`
         : `Gere a descrição otimizada para este produto utilizando a fusão perfeita entre os Padrões Oficiais e as Correções Recentes do chat, garantindo uma copy de alta conversão e alinhada ao Tiny.`;
 
-      // com imagem só o Gemini consegue ler; sem imagem, qualquer um dos dois
+      // com imagem só o Claude e o Gemini conseguem ler; sem imagem, qualquer um
       const res = await gerarTexto(provedores, `${contextoAcumulado}\n${infoProduto}\n\n${instrucaoFinal}\n\n${INSTRUCAO_FORMATO_DESCRICAO}`, {
         prazoFinal: Date.now() + 50000,
         imagem: imagemBase64 ? { base64: imagemBase64, mimeType: mimeType || "image/jpeg" } : undefined,
@@ -133,7 +133,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       sucesso: true,
       resposta: limparDescricao(respostaIA),
-      ia: provedorUsado,                 // "Gemini", "Groq" ou null (texto padrão)
+      ia: provedorUsado,                 // "Claude", "Gemini", "Groq" ou null (texto padrão)
       avisoIA: falhasIA || undefined,    // por que uma IA falhou (mesmo quando a outra respondeu)
     });
   } catch (error: any) {

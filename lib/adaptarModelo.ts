@@ -119,7 +119,7 @@ export function lerRespostaAdaptacao(texto: any, totalModelos: number): Resposta
   };
 }
 
-/** Traduz um erro da chamada à IA (Gemini ou Groq) em uma frase que o usuário entende e diz se vale tentar de novo. Nunca inclui a chave. */
+/** Traduz um erro da chamada à IA (Claude, Gemini ou Groq) em uma frase que o usuário entende e diz se vale tentar de novo. Nunca inclui a chave. */
 export function analisarErroIA(e: any, nome = "Gemini", variavel = "GEMINI_API_KEY"): { motivo: string; transitorio: boolean; status: number } {
   const bruto = String(e?.message ?? e ?? "");
   let msg = bruto;
@@ -136,7 +136,7 @@ export function analisarErroIA(e: any, nome = "Gemini", variavel = "GEMINI_API_K
   return { motivo: `falha ao falar com o ${nome}: ${msg || "erro desconhecido"}`, transitorio: true, status };
 }
 
-export const MOTIVO_SEM_CHAVE = "nenhuma IA está configurada no Vercel (faltam GEMINI_API_KEY e GROQ_API_KEY)";
+export const MOTIVO_SEM_CHAVE = "nenhuma IA está configurada no Vercel (falta ANTHROPIC_API_KEY, GEMINI_API_KEY ou GROQ_API_KEY)";
 
 export function motivoRespostaInvalida(texto: any, nome = "Gemini"): string {
   const t = String(texto ?? "").replace(/\s+/g, " ").trim();

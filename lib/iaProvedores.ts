@@ -1,12 +1,14 @@
 // Camada de IA com reserva (somente servidor): tenta um provedor e, se ele falhar, demorar ou responder fora do formato,
-// tenta o outro. Hoje: Gemini (GEMINI_API_KEY) e Groq (GROQ_API_KEY). Basta ter UMA das chaves configuradas.
+// tenta o próximo. Hoje: Claude (ANTHROPIC_API_KEY), Gemini (GEMINI_API_KEY) e Groq (GROQ_API_KEY).
+// Basta ter UMA das chaves configuradas. Ordem padrão: Claude, Gemini, Groq (só entram os que têm chave).
 //
 // Variáveis de ambiente (Vercel):
+//   ANTHROPIC_API_KEY                chave da API do Claude (console.anthropic.com)
 //   GEMINI_API_KEY / GOOGLE_API_KEY  chave do Gemini
 //   GROQ_API_KEY                     chave do Groq
-//   IA_PRIMARIA                      "gemini" (padrão) ou "groq": quem é tentado primeiro
-//   GEMINI_MODEL, GROQ_MODEL         trocam o modelo sem mexer no código (padrões abaixo)
-//   GROQ_BASE_URL                    só para testes (padrão https://api.groq.com/openai/v1)
+//   IA_PRIMARIA                      "claude", "gemini" ou "groq": quem é tentado primeiro (padrão: claude, se tiver chave)
+//   ANTHROPIC_MODEL, GEMINI_MODEL, GROQ_MODEL   trocam o modelo sem mexer no código (padrões abaixo)
+//   ANTHROPIC_BASE_URL, GROQ_BASE_URL           só para testes
 
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { analisarErroIA, motivoRespostaInvalida } from "./adaptarModelo";
@@ -21,7 +23,7 @@ export interface OpcoesGerar {
 }
 
 export interface ProvedorIA {
-  id: "gemini" | "groq";
+  id: "claude" | "gemini" | "groq";
   nome: string;
   variavel: string;
   aceitaImagem: boolean;
@@ -42,6 +44,50 @@ function comTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
     const t = setTimeout(() => reject(new Error(`IA sem resposta em ${Math.round(ms / 1000)}s`)), ms);
     p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
   });
+}
+
+/**
+ * Claude (API de mensagens da Anthropic, via fetch: sem SDK). Lê imagem e segue instrução de formato; para JSON pede
+ * "somente JSON" no system prompt (os leitores de resposta do app já toleram cerca ```json e texto em volta).
+ * Modelo padrão: claude-sonnet-5-5 (equilíbrio entre qualidade e velocidade). Para respostas mais baratas/rápidas,
+ * ANTHROPIC_MODEL=claude-haiku-5-5; para mais capricho, claude-opus-5-5.
+ */
+function criarClaude(apiKey: string): ProvedorIA {
+  const base = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/+$/, "");
+  const modelo = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+  return {
+    id: "claude", nome: "Claude", variavel: "ANTHROPIC_API_KEY", aceitaImagem: true,
+    async gerar(prompt, o) {
+      const inicio = Date.now();
+      const restante = Math.max(o.limiteMs, 1000);
+      const conteudo: any[] = [];
+      if (o.imagem) conteudo.push({ type: "image", source: { type: "base64", media_type: o.imagem.mimeType || "image/jpeg", data: o.imagem.base64 } });
+      conteudo.push({ type: "text", text: prompt });
+      const corpo: any = { model: modelo, max_tokens: o.maxTokens ?? 4096, messages: [{ role: "user", content: conteudo }] };
+      if (o.json) corpo.system = "Responda SOMENTE com um objeto JSON válido, sem texto antes ou depois e sem cercas de código.";
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), restante);
+      try {
+        const res = await fetch(`${base}/v1/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify(corpo),
+          signal: ctrl.signal,
+        });
+        const bruto = await res.text();
+        if (!res.ok) throw Object.assign(new Error(bruto || `HTTP ${res.status}`), { status: res.status });
+        let j: any;
+        try { j = JSON.parse(bruto); } catch { throw new Error("resposta que não é JSON: " + bruto.slice(0, 100)); }
+        console.log(`IA Claude (${modelo}): resposta em ${Date.now() - inicio} ms`);
+        return (Array.isArray(j?.content) ? j.content : []).filter((b: any) => b?.type === "text").map((b: any) => String(b.text ?? "")).join("");
+      } catch (e: any) {
+        if (e?.name === "AbortError") throw new Error(`IA sem resposta em ${Math.round(restante / 1000)}s`);
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
 }
 
 function criarGemini(apiKey: string): ProvedorIA {
@@ -165,11 +211,14 @@ function criarGroq(apiKey: string): ProvedorIA {
 /** Provedores com chave configurada, na ordem em que serão tentados (IA_PRIMARIA decide quem vai primeiro). */
 export function provedoresConfigurados(): ProvedorIA[] {
   const lista: ProvedorIA[] = [];
+  const claude = process.env.ANTHROPIC_API_KEY;
   const gemini = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   const groq = process.env.GROQ_API_KEY;
+  if (claude) lista.push(criarClaude(claude));
   if (gemini) lista.push(criarGemini(gemini));
   if (groq) lista.push(criarGroq(groq));
-  if ((process.env.IA_PRIMARIA || "").toLowerCase() === "groq") lista.sort((a, b) => (a.id === "groq" ? -1 : b.id === "groq" ? 1 : 0));
+  const primaria = (process.env.IA_PRIMARIA || "").toLowerCase();
+  if (primaria === "claude" || primaria === "gemini" || primaria === "groq") lista.sort((a, b) => (a.id === primaria ? -1 : b.id === primaria ? 1 : 0));
   return lista;
 }
 
