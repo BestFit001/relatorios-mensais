@@ -14,6 +14,10 @@ export interface LinhaABC {
   qtd: number; revenue: number; pctRepresentatividade: number; pctAcumulada: number; curva: string;
   /** lucro real do período (repasse − custo − extras − devoluções) e se falta custo cadastrado */
   lucro: number; semCusto: boolean;
+  /** mesmos números só com as vendas dentro do preço praticado do canal (sem carrinhos / preços fora do padrão) */
+  lucroPadrao: number; receitaPadrao: number; qtdPadrao: number;
+  foraPadrao: { vendas: number; unidades: number; valor: number };
+  precosPraticados: { preco: number; unidades: number }[];
 }
 
 const POR_PAGINA = 100;
@@ -95,6 +99,7 @@ export default function CoberturaEstoque({
   const [filtroCurva, setFiltroCurva] = useState("TODAS");
   const [filtroRetorno, setFiltroRetorno] = useState("TODOS");
   const [ordem, setOrdem] = useState<"FAT" | "QTD" | "QTD_ASC" | "VALOR" | "PDV" | "COBERTURA" | "MARGEM" | "MARGEM_ASC" | "LIQUIDEZ" | "LIQUIDEZ_ASC">("FAT");
+  const [ignorarCarrinho, setIgnorarCarrinho] = useState(true);   // margem/liquidez só com o preço praticado no canal
   const [margemMin, setMargemMin] = useState("");
   const [margemMax, setMargemMax] = useState("");
   const [filtroCusto, setFiltroCusto] = useState<"TODOS" | "COM" | "SEM">("TODOS");
@@ -165,8 +170,12 @@ export default function CoberturaEstoque({
     const temCadastro = estoque.has(l.skuNorm);
     const est = estoque.get(l.skuNorm) ?? 0;
     const c = calcularCobertura({ vendas: l.qtd, dias, estoque: est, curva: l.curva, titulo: l.titulo });
-    return { ...l, estoque: est, temCadastro, ...c, retorno: retornos[l.skuNorm] || "", margem: margemPercentual(l.lucro, l.revenue, l.semCusto) };
-  }), [linhas, estoque, retornos, dias]);
+    const usaPadrao = ignorarCarrinho && l.qtdPadrao > 0;
+    const lucroUsado = usaPadrao ? l.lucroPadrao : l.lucro, receitaUsada = usaPadrao ? l.receitaPadrao : l.revenue;
+    // liquidez em R$: lucro por unidade do preço praticado × todas as unidades vendidas (sem carrinho = igual ao lucro real)
+    const liquidez = usaPadrao ? (l.lucroPadrao / l.qtdPadrao) * l.qtd : l.lucro;
+    return { ...l, estoque: est, temCadastro, ...c, retorno: retornos[l.skuNorm] || "", lucroUsado, receitaUsada, liquidez, margem: margemPercentual(lucroUsado, receitaUsada, l.semCusto) };
+  }), [linhas, estoque, retornos, dias, ignorarCarrinho]);
 
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -188,8 +197,8 @@ export default function CoberturaEstoque({
     else if (ordem === "VALOR") r = [...r].sort((a, b) => b.revenue - a.revenue);
     else if (ordem === "PDV") r = [...r].sort((a, b) => pdvUn(b) - pdvUn(a) || b.revenue - a.revenue);
     else if (ordem === "MARGEM") r = [...r].sort((a, b) => (b.margem ?? -Infinity) - (a.margem ?? -Infinity) || b.revenue - a.revenue);   // sem custo vai para o fim
-    else if (ordem === "LIQUIDEZ") r = [...r].sort((a, b) => (b.semCusto ? -Infinity : b.lucro) - (a.semCusto ? -Infinity : a.lucro) || b.revenue - a.revenue);
-    else if (ordem === "LIQUIDEZ_ASC") r = [...r].sort((a, b) => (a.semCusto ? Infinity : a.lucro) - (b.semCusto ? Infinity : b.lucro) || b.revenue - a.revenue);
+    else if (ordem === "LIQUIDEZ") r = [...r].sort((a, b) => (b.semCusto ? -Infinity : b.liquidez) - (a.semCusto ? -Infinity : a.liquidez) || b.revenue - a.revenue);
+    else if (ordem === "LIQUIDEZ_ASC") r = [...r].sort((a, b) => (a.semCusto ? Infinity : a.liquidez) - (b.semCusto ? Infinity : b.liquidez) || b.revenue - a.revenue);
     else if (ordem === "MARGEM_ASC") r = [...r].sort((a, b) => (a.margem ?? Infinity) - (b.margem ?? Infinity) || b.revenue - a.revenue);
     return r;
   }, [dados, filtroStatus, filtroCurva, filtroRetorno, ordem, busca, margemMin, margemMax, filtroCusto]);
@@ -204,10 +213,11 @@ export default function CoberturaEstoque({
     const valor = filtradas.reduce((a, d) => a + d.revenue, 0);
     // margem média ponderada (lucro ÷ faturamento) só dos SKUs com custo cadastrado
     const comCusto = filtradas.filter((d) => !d.semCusto);
-    const lucroCC = comCusto.reduce((a, d) => a + d.lucro, 0), receitaCC = comCusto.reduce((a, d) => a + d.revenue, 0);
+    const lucroUsadoCC = comCusto.reduce((a, d) => a + d.lucroUsado, 0), receitaCC = comCusto.reduce((a, d) => a + d.receitaUsada, 0);
+    const lucroCC = comCusto.reduce((a, d) => a + d.liquidez, 0);
     return {
       vendas, valor, ticket: vendas > 0 ? valor / vendas : 0,
-      margem: receitaCC > 0 ? (lucroCC / receitaCC) * 100 : null as number | null, lucroCC, semCustoQtd: filtradas.length - comCusto.length,
+      margem: receitaCC > 0 ? (lucroUsadoCC / receitaCC) * 100 : null as number | null, lucroCC, semCustoQtd: filtradas.length - comCusto.length,
       sugestoes: dados.filter((d) => d.status === STATUS_SUGESTAO).length,
       validar: dados.filter((d) => d.status === STATUS_VALIDAR).length,
       semCadastro: dados.filter((d) => !d.temCadastro).length,
@@ -294,6 +304,12 @@ export default function CoberturaEstoque({
     c === "A" ? "bg-indigo-950 text-indigo-400 border border-indigo-700/50" :
     c === "B" ? "bg-emerald-950 text-emerald-400 border border-emerald-700/50" : "bg-slate-800 text-slate-400 border border-slate-700";
 
+  const textoMargem = (d: { lucro: number; qtd: number; qtdPadrao: number; lucroPadrao: number; receitaPadrao: number; foraPadrao: { vendas: number; unidades: number; valor: number }; precosPraticados: { preco: number; unidades: number }[] }) => {
+    if (!ignorarCarrinho || d.foraPadrao.vendas === 0) return `Lucro real no período: R$ ${brl(d.lucro)} (R$ ${brl(d.qtd > 0 ? d.lucro / d.qtd : 0)} por unidade)`;
+    const precos = d.precosPraticados.map((p) => `R$ ${brl(p.preco)} (${p.unidades} un.)`).join(", ");
+    return `Só o preço praticado no canal${precos ? `: ${precos}` : ""}. Desconsiderada(s) ${d.foraPadrao.vendas} venda(s) fora do padrão (${d.foraPadrao.unidades} un., R$ ${brl(d.foraPadrao.valor)}), provável carrinho.`;
+  };
+
   const celula = (id: string, d: (typeof dados)[number]) => {
     switch (id) {
       case "codigo": return <td key={id} data-col="codigo" className="py-2 px-3 font-mono text-indigo-300 whitespace-nowrap">{d.sku}</td>;
@@ -305,14 +321,14 @@ export default function CoberturaEstoque({
       case "classificacao": return <td key={id} data-col="classificacao" className="py-2 px-3 text-center"><span className={`px-2 py-0.5 rounded-md text-[10px] font-black ${corCurva(d.curva)}`}>{d.curva}</span></td>;
       case "margem": return (
         <td key={id} data-col="margem" className={`py-2 px-3 text-right whitespace-nowrap font-bold ${d.margem === null ? "text-slate-600" : d.margem < 0 ? "text-rose-400" : d.margem < 15 ? "text-amber-300" : "text-emerald-400"}`}
-          title={d.semCusto ? "Sem custo cadastrado: margem não calculada" : `Lucro real no período: R$ ${brl(d.lucro)} (R$ ${brl(d.qtd > 0 ? d.lucro / d.qtd : 0)} por unidade)`}>
-          {d.margem === null ? "—" : `${n1(d.margem)}%`}
+          title={d.semCusto ? "Sem custo cadastrado: margem não calculada" : textoMargem(d)}>
+          {d.margem === null ? "—" : `${n1(d.margem)}%`}{ignorarCarrinho && d.foraPadrao.vendas > 0 && d.margem !== null && <span className="text-slate-400" data-fora-padrao> *</span>}
         </td>
       );
       case "liquidez": return (
-        <td key={id} data-col="liquidez" className={`py-2 px-3 text-right font-mono whitespace-nowrap font-bold ${d.semCusto ? "text-slate-600" : d.lucro < 0 ? "text-rose-400" : "text-emerald-400"}`}
-          title={d.semCusto ? "Sem custo cadastrado: liquidez não calculada" : `Lucro real no período (repasse − custo − extras − devoluções). Por unidade: R$ ${brl(d.qtd > 0 ? d.lucro / d.qtd : 0)}`}>
-          {d.semCusto ? "—" : `R$ ${brl(d.lucro)}`}
+        <td key={id} data-col="liquidez" className={`py-2 px-3 text-right font-mono whitespace-nowrap font-bold ${d.semCusto ? "text-slate-600" : d.liquidez < 0 ? "text-rose-400" : "text-emerald-400"}`}
+          title={d.semCusto ? "Sem custo cadastrado: liquidez não calculada" : `Lucro por unidade: R$ ${brl(d.qtd > 0 ? d.liquidez / d.qtd : 0)} × ${d.qtd} un. (repasse − custo − extras − devoluções)${ignorarCarrinho && d.foraPadrao.vendas > 0 ? " — calculado pelo preço praticado, sem as vendas fora do padrão" : ""}`}>
+          {d.semCusto ? "—" : `R$ ${brl(d.liquidez)}`}
         </td>
       );
       case "media_diaria": return <td key={id} data-col="media_diaria" className="py-2 px-3 text-right text-slate-300">{n2(d.mediaDiaria)}</td>;
@@ -361,7 +377,7 @@ export default function CoberturaEstoque({
             <span className="text-[10px] font-bold text-slate-400 uppercase">Margem média vendida</span>
             <h3 className={`text-xl font-black ${totais.margem === null ? "text-slate-500" : totais.margem < 0 ? "text-rose-400" : "text-emerald-400"}`} data-total-margem>{totais.margem === null ? "—" : `${n1(totais.margem)}%`}</h3>
             {!oculta("liquidez") && <p className={`text-xs font-black ${totais.lucroCC < 0 ? "text-rose-400" : "text-emerald-400"}`} data-total-liquidez>Liquidez: R$ {brl(totais.lucroCC)}</p>}
-            <p className="text-[9px] text-slate-500">{totais.semCustoQtd > 0 ? `${totais.semCustoQtd} SKU(s) sem custo fora da conta` : "lucro real ÷ faturamento"}</p>
+            <p className="text-[9px] text-slate-500">{totais.semCustoQtd > 0 ? `${totais.semCustoQtd} SKU(s) sem custo fora da conta` : ignorarCarrinho ? "só preço praticado no canal" : "lucro real ÷ faturamento"}</p>
           </div>
         )}
         <div className="bg-slate-900/90 p-4 rounded-2xl border border-rose-500/30"><span className="text-[10px] font-bold text-rose-400 uppercase">Sugestão de compra</span><h3 className="text-xl font-black text-rose-400" data-total-sugestoes>{totais.sugestoes} SKUs</h3></div>
@@ -376,6 +392,12 @@ export default function CoberturaEstoque({
           className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black cursor-pointer">
           📦 {painel ? "Fechar" : "Subir estoque do Tiny"}
         </button>
+        {!oculta("margem") && (
+          <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-[11px] font-bold text-slate-200 cursor-pointer" title="Considera na margem e na liquidez só os preços que se repetem em cada canal. Vendas isoladas muito acima ou abaixo (carrinhos) ficam de fora.">
+            <input type="checkbox" checked={ignorarCarrinho} onChange={(e) => setIgnorarCarrinho(e.target.checked)} data-ignorar-carrinho className="accent-indigo-500" />
+            Ignorar carrinhos / preço fora do padrão
+          </label>
+        )}
         <button type="button" onClick={() => setOcultando((o) => !o)} data-ocultar-informacoes aria-pressed={ocultando}
           className={`px-4 py-2 rounded-xl text-xs font-black cursor-pointer border ${ocultando ? "bg-amber-500/20 border-amber-500/60 text-amber-300" : "bg-slate-950 border-slate-700 text-slate-200 hover:bg-slate-800"}`}>
           {ocultando ? "👁️ Mostrar informações" : "🙈 Ocultar informações"}

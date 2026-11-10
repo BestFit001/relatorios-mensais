@@ -8,6 +8,7 @@ import Navbar from "./components/Navbar";
 import { avaliarFormulaPorUnidade } from "../lib/formulaRepasse";
 import { diasDoPeriodo } from "../lib/cobertura";
 import CoberturaEstoque from "./components/CoberturaEstoque";
+import { padraoDePreco } from "@/lib/padraoPreco";
 import ConfigCobertura from "./components/ConfigCobertura";
 
 // Função para equiparar SKUs com formatos diferentes entre canais, custos e devoluções
@@ -338,6 +339,19 @@ export default function CurvaABCPage() {
       return m;
     };
 
+    // Preço praticado por canal+SKU: vendas fora do padrão (carrinho) saem do cálculo de margem da Cobertura de Estoque
+    const porCanalSku = new Map<string, any[]>();
+    atual.forEach((l) => { const k = `${normalizarTexto(l.canal)}|${l.skuNorm}`; (porCanalSku.get(k) || porCanalSku.set(k, []).get(k)!).push(l); });
+    const padraoPorSku: Record<string, { qtdK: number; receitaK: number; repasseK: number; extraK: number; fora: { vendas: number; unidades: number; valor: number }; precos: { preco: number; unidades: number }[] }> = {};
+    porCanalSku.forEach((ls) => {
+      const sk = ls[0].skuNorm;
+      const p = padraoPorSku[sk] || (padraoPorSku[sk] = { qtdK: 0, receitaK: 0, repasseK: 0, extraK: 0, fora: { vendas: 0, unidades: 0, valor: 0 }, precos: [] });
+      const r = padraoDePreco(ls.map((l) => ({ preco: l.preco, qtd: l.qtd })));
+      ls.forEach((l, i) => { if (r.manter[i]) { p.qtdK += l.qtd; p.receitaK += l.preco; p.repasseK += l.repasse; p.extraK += l.extra; } });
+      p.fora.vendas += r.descartadas; p.fora.unidades += r.unidadesDescartadas; p.fora.valor += r.valorDescartado;
+      r.precosPraticados.forEach((x) => p.precos.push({ preco: x.preco, unidades: x.unidades }));
+    });
+
     // Curva ABC calculada sobre todo o período/canal (a letra não muda com marca ou pesquisa)
     const skuStats = agrupar(atual);
     const totalPeriodo = Object.values(skuStats).reduce((a: number, s: any) => a + s.revenue, 0);
@@ -352,6 +366,14 @@ export default function CurvaABCPage() {
         ticketUn: s.qtd > 0 ? s.revenue / s.qtd : 0,
         ticketPedido: pedidos > 0 ? s.revenue / pedidos : 0,
         lucroTotal: s.repasse - cmvTotal - s.extra - dev.valor,
+        ...(() => {
+          const pd = padraoPorSku[s.skuNorm];
+          const devK = s.qtd > 0 ? dev.valor * (pd.qtdK / s.qtd) : 0;
+          return {
+            lucroPadrao: pd.repasseK - info.custo * pd.qtdK - pd.extraK - devK, receitaPadrao: pd.receitaK, qtdPadrao: pd.qtdK,
+            foraPadrao: pd.fora, precosPraticados: pd.precos.sort((a, b) => b.unidades - a.unidades).slice(0, 4),
+          };
+        })(),
         qtdDevolvida: dev.qtd, valorDevolvido: dev.valor,
         taxaDevolucao: s.qtd > 0 ? (dev.qtd / s.qtd) * 100 : 0,
         pctRepresentatividade: totalPeriodo > 0 ? (s.revenue / totalPeriodo) * 100 : 0,
@@ -718,6 +740,7 @@ export default function CurvaABCPage() {
               sku: String(s.sku ?? ""), skuNorm: s.skuNorm, titulo: s.titulo, marca: s.marca,
               qtd: s.qtd, revenue: s.revenue, pctRepresentatividade: s.pctRepresentatividade, pctAcumulada: s.pctAcumulada, curva: s.curva,
               lucro: s.lucroTotal, semCusto: !!s.semCusto,
+              lucroPadrao: s.lucroPadrao, receitaPadrao: s.receitaPadrao, qtdPadrao: s.qtdPadrao, foraPadrao: s.foraPadrao, precosPraticados: s.precosPraticados,
             }))}
             dias={diasPeriodo}
             periodo={dateFilter === "MES_REF" && mesRef ? mesRef : dateFilter === "PERSONALIZADO" ? `${customStartDate || "?"} a ${customEndDate || "?"}` : ({ HOJE: "hoje", SEMANA: "últimos 7 dias", QUINZENA: "últimos 15 dias", MES: "últimos 30 dias", TUDO: "todo o histórico" } as Record<string, string>)[dateFilter] || dateFilter}
