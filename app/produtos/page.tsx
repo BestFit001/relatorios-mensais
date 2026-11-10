@@ -12,31 +12,28 @@ import CadastrosCanais from "../components/CadastrosCanais";
 import Paginacao from "../components/Paginacao";
 import * as XLSX from "xlsx";
 
-const KPI_CORES = {
-  amber: { icone: "bg-amber-950/60 border-amber-800/40", barra: "bg-amber-500" },
-  indigo: { icone: "bg-indigo-950/60 border-indigo-800/40", barra: "bg-indigo-500" },
-  purple: { icone: "bg-purple-950/60 border-purple-800/40", barra: "bg-purple-500" },
-  emerald: { icone: "bg-emerald-950/60 border-emerald-800/40", barra: "bg-emerald-500" },
-} as const;
+const KPI_BARRA = { amber: "bg-amber-500", indigo: "bg-indigo-500", purple: "bg-purple-500", emerald: "bg-emerald-500" } as const;
 
-/** Cartão de indicador do topo: clicável, com número grande e (opcional) barra de progresso. */
+/** Célula de indicador do topo (clicável): número, título e, se houver, uma barra de progresso fininha. */
 function Kpi({ icone, titulo, valor, detalhe, cor, barra, onClick, dataKpi }: {
-  icone: string; titulo: string; valor: number; detalhe: string; cor: keyof typeof KPI_CORES; barra?: number; onClick?: () => void; dataKpi: string;
+  icone: string; titulo: string; valor: number; detalhe: string; cor: keyof typeof KPI_BARRA; barra?: number; onClick?: () => void; dataKpi: string;
 }) {
   return (
     <button
       onClick={onClick}
       data-kpi={dataKpi}
-      className="text-left bg-slate-900/90 border border-slate-800 hover:border-slate-600 rounded-2xl p-4 flex items-center gap-4 shadow-xl transition cursor-pointer"
+      className="text-left px-4 py-2.5 flex items-center gap-3 hover:bg-slate-800/40 transition cursor-pointer"
     >
-      <span className={`w-12 h-12 shrink-0 rounded-xl border flex items-center justify-center text-2xl ${KPI_CORES[cor].icone}`} aria-hidden>{icone}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">{titulo}</span>
-        <span className="block text-3xl font-black text-white leading-tight tabular-nums" data-kpi-valor>{valor}</span>
+      <span className="text-xl shrink-0" aria-hidden>{icone}</span>
+      <span className="min-w-0 flex-1 leading-tight">
+        <span className="flex items-baseline gap-2">
+          <span className="text-xl font-black text-white tabular-nums" data-kpi-valor>{valor}</span>
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400 truncate">{titulo}</span>
+        </span>
         <span className="block text-[11px] text-slate-500 truncate">{detalhe}</span>
         {barra !== undefined && (
-          <span className="block mt-1.5 h-1.5 rounded-full bg-slate-800 overflow-hidden">
-            <span className={`block h-full rounded-full transition-all duration-500 ${KPI_CORES[cor].barra}`} style={{ width: `${Math.min(100, Math.max(0, barra))}%` }} />
+          <span className="block mt-1 h-1 rounded-full bg-slate-800 overflow-hidden">
+            <span className={`block h-full rounded-full transition-all duration-500 ${KPI_BARRA[cor]}`} style={{ width: `${Math.min(100, Math.max(0, barra))}%` }} />
           </span>
         )}
       </span>
@@ -763,7 +760,7 @@ export default function ProdutosPage() {
           {toast.texto}
         </div>
       )}
-      <div className="max-w-[98%] mx-auto space-y-6">
+      <div className="max-w-[98%] mx-auto space-y-4">
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -774,14 +771,14 @@ export default function ProdutosPage() {
         </div>
 
         {/* indicadores */}
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4" data-kpis>
+        <div className="bg-slate-900/80 border border-slate-800 rounded-xl grid grid-cols-2 xl:grid-cols-4 divide-slate-800 xl:divide-x overflow-hidden" data-kpis>
           <Kpi dataKpi="pendentes" icone="📝" cor="amber" titulo="Pendentes de cadastro" valor={dadosPendentes.length} detalhe={`${nPaisPendentes} produto(s) pai aguardando`} onClick={() => setSubAba("pendentes")} />
           <Kpi dataKpi="cadastrados" icone="📦" cor="indigo" titulo="Cadastrados" valor={cadastrosRealizados.length} detalhe={`${gruposCadastrados.size} produto(s) pai · ${canaisAtivos.length} canais`} onClick={() => setSubAba("canais")} />
           <Kpi dataKpi="faltam" icone="🛒" cor="purple" titulo="Faltam canais" valor={nGruposFaltam} detalhe="produtos com cadastro incompleto nos canais" onClick={() => setSubAba("canais")} />
           <Kpi dataKpi="concluidos" icone="✅" cor="emerald" titulo="100% nos canais" valor={nGruposOk} detalhe={`${pctGruposOk}% dos produtos cadastrados`} barra={pctGruposOk} onClick={() => setSubAba("canais")} />
         </div>
 
-        <div className="flex flex-wrap justify-between items-center gap-4 bg-slate-900 p-3 rounded-2xl border border-slate-800">
+        <div className="flex flex-wrap justify-between items-center gap-3 bg-slate-900/80 p-2 rounded-xl border border-slate-800">
           <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 flex-wrap gap-1" role="tablist">
             {([
               ["pendentes", `📝 Pendentes (${dadosPendentes.length})`],
@@ -796,7 +793,7 @@ export default function ProdutosPage() {
                 aria-selected={subAba === id}
                 data-subaba={id}
                 onClick={() => setSubAba(id)}
-                className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${subAba === id ? "bg-purple-600 text-white shadow" : "text-slate-400 hover:text-white"}`}
+                className={`px-3.5 py-1.5 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${subAba === id ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"}`}
               >
                 {rotulo}
               </button>
@@ -810,7 +807,7 @@ export default function ProdutosPage() {
                 onClick={() => atualizarTudo(true)}
                 data-atualizar
                 title="Recarregar pendentes, cadastrados e a detecção automática de canais"
-                className="px-3 py-2 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 text-xs font-bold cursor-pointer"
+                className="px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 text-xs font-bold cursor-pointer"
               >
                 ↻ Atualizar
               </button>
@@ -819,33 +816,30 @@ export default function ProdutosPage() {
                 value={pesquisaGlobal}
                 onChange={(e) => setPesquisaGlobal(e.target.value)}
                 placeholder="🔍 Pesquisar SKU, Pai, Nome..."
-                className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white outline-none w-80"
+                className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white outline-none w-72"
               />
             </div>
           )}
         </div>
 
         {subAba === "pendentes" && (
-          <div className="space-y-4" data-aba-pendentes>
-            <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-white">Produtos a cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Importe a planilha ou insira à mão, marque os produtos e baixe a planilha do Tiny ou cadastre direto.</p>
-              </div>
+          <div className="space-y-3" data-aba-pendentes>
+            <div className="flex justify-between items-center flex-wrap gap-3">
+              <p className="text-xs text-slate-400">Importe a planilha ou insira à mão, marque os produtos e baixe a planilha do Tiny ou cadastre direto.</p>
               <div className="flex gap-2 flex-wrap items-center">
-                <label className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow cursor-pointer">
+                <label className="bg-purple-600 hover:bg-purple-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer">
                   📤 Importar planilha
                   <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadPendentes} className="hidden" data-upload-pendentes />
                 </label>
-                <button onClick={abrirManualNovo} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer">+ Manual</button>
+                <button onClick={abrirManualNovo} className="border border-indigo-500/60 text-indigo-300 hover:bg-indigo-950/40 px-3.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer">+ Manual</button>
                 {dadosPendentes.length > 0 && (
-                  <button onClick={limparTodosPendentes} className="bg-rose-950 hover:bg-rose-900 text-rose-300 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer">🗑️ Limpar todos</button>
+                  <button onClick={limparTodosPendentes} className="border border-rose-700/60 text-rose-300 hover:bg-rose-950/40 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer">🗑️ Limpar todos</button>
                 )}
               </div>
             </div>
 
             {dadosPendentes.length > 0 && (
-              <div className={`sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-2.5 shadow-lg ${skusSelecionados.length > 0 ? "bg-slate-900 border-purple-600/60" : "bg-slate-900/90 border-slate-800"}`} data-barra-selecao-pendentes>
+              <div className={`sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-2 ${skusSelecionados.length > 0 ? "bg-slate-900 border-purple-600/60" : "bg-slate-900/80 border-slate-800"}`} data-barra-selecao-pendentes>
                 <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"
@@ -884,12 +878,12 @@ export default function ProdutosPage() {
                 <p className="text-xs text-slate-500">{termo ? "Ajuste a busca." : "Importe uma planilha ou use “+ Manual” para começar."}</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {gruposPendVisiveis.map(({ pai, itens }) => {
                   const qtdSel = itens.filter((i: any) => skusSelecionados.includes(i.sku)).length;
                   return (
-                    <article key={pai} data-grupo-pendente={pai} className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden">
-                      <header className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-900/60 border-b border-slate-800">
+                    <article key={pai} data-grupo-pendente={pai} className="bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden">
+                      <header className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 border-b border-slate-800">
                         <div className="flex items-center gap-3 min-w-0">
                           <input
                             type="checkbox"
@@ -898,48 +892,47 @@ export default function ProdutosPage() {
                             checked={qtdSel === itens.length}
                             ref={(el) => { if (el) el.indeterminate = qtdSel > 0 && qtdSel < itens.length; }}
                             onChange={(e) => toggleGrupoPend(itens, e.target.checked)}
-                            className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                            className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
                           />
-                          <span className="font-mono text-xs font-black text-purple-300 bg-purple-950/60 border border-purple-800/50 px-2 py-0.5 rounded-md">{pai}</span>
+                          <span className="font-mono text-[11px] font-black text-purple-300 bg-purple-950/50 px-1.5 py-0.5 rounded">{pai}</span>
                           <div className="min-w-0">
-                            <h3 className="text-sm font-bold text-white truncate max-w-[34rem]" title={itens[0]?.produto}>{itens[0]?.produto || "Produto sem nome"}</h3>
-                            <p className="text-[11px] text-slate-500">{itens.length} variaç{itens.length === 1 ? "ão" : "ões"} · {itens[0]?.marca || "—"}</p>
+                            <h3 className="text-[13px] font-semibold text-white truncate max-w-[34rem]" title={itens[0]?.produto}>{itens[0]?.produto || "Produto sem nome"} <span className="text-[11px] font-normal text-slate-500">· {itens.length} var. · {itens[0]?.marca || "—"}</span></h3>
                           </div>
                         </div>
                         <button
                           onClick={() => cadastrarLista(itens, `Cadastrar o produto ${pai} com ${itens.length} variação(ões)?`)}
                           data-cadastrar-grupo={pai}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow cursor-pointer"
+                          className="border border-emerald-600/70 text-emerald-300 hover:bg-emerald-950/40 px-3 py-1 rounded-lg text-xs font-bold cursor-pointer"
                         >
                           🚀 Cadastrar produto ({itens.length})
                         </button>
                       </header>
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs whitespace-nowrap">
-                          <thead className="text-slate-400 font-bold uppercase text-[10px]">
-                            <tr className="border-b border-slate-900">
-                              <th className="p-2.5 w-8" />
-                              <th className="p-2.5">SKU</th>
-                              <th className="p-2.5">Cor</th>
-                              <th className="p-2.5">Tam</th>
-                              <th className="p-2.5">EAN</th>
-                              <th className="p-2.5">NCM / CEST</th>
-                              <th className="p-2.5">Medidas A×L×C (cm)</th>
-                              <th className="p-2.5 text-center">Qtd Ecom</th>
-                              <th className="p-2.5 text-right">Custo</th>
-                              <th className="p-2.5 text-right">PDV</th>
-                              <th className="p-2.5 text-right">Ações</th>
+                          <thead className="text-slate-500 font-bold uppercase text-[10px]">
+                            <tr className="border-b border-slate-800">
+                              <th className="px-2.5 py-1.5 w-8" />
+                              <th className="px-2.5 py-1.5">SKU</th>
+                              <th className="px-2.5 py-1.5">Cor</th>
+                              <th className="px-2.5 py-1.5">Tam</th>
+                              <th className="px-2.5 py-1.5">EAN</th>
+                              <th className="px-2.5 py-1.5">NCM / CEST</th>
+                              <th className="px-2.5 py-1.5">Medidas A×L×C (cm)</th>
+                              <th className="px-2.5 py-1.5 text-center">Qtd Ecom</th>
+                              <th className="px-2.5 py-1.5 text-right">Custo</th>
+                              <th className="px-2.5 py-1.5 text-right">PDV</th>
+                              <th className="px-2.5 py-1.5 text-right">Ações</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-900/70">
+                          <tbody className="divide-y divide-slate-800/70">
                             {itens.map((item: any) => {
                               const vende = canaisDoSku(item.sku, canaisAtivos, presenca);
                               return (
                                 <tr key={item.sku} className={skusSelecionados.includes(item.sku) ? "bg-purple-950/20" : "hover:bg-slate-900/40"}>
-                                  <td className="p-2.5 text-center">
+                                  <td className="px-2.5 py-1.5 text-center">
                                     <input type="checkbox" checked={skusSelecionados.includes(item.sku)} onChange={() => toggleSelecionarSku(item.sku)} className="w-4 h-4 accent-purple-600 rounded cursor-pointer" />
                                   </td>
-                                  <td className="p-2.5 font-mono font-bold text-indigo-300">
+                                  <td className="px-2.5 py-1.5 font-mono font-bold text-indigo-300">
                                     {item.sku}
                                     {vende.length > 0 && (
                                       <span data-ja-vende title={`Este SKU já aparece no Mapa de Cadastros/vendas em: ${vende.join(", ")}`} className="ml-2 align-middle text-[9px] font-bold uppercase bg-amber-950/50 text-amber-300 border border-amber-700/40 px-1.5 py-0.5 rounded">
@@ -947,19 +940,19 @@ export default function ProdutosPage() {
                                       </span>
                                     )}
                                   </td>
-                                  <td className="p-2.5 text-slate-300">{item.cor || "—"}</td>
-                                  <td className="p-2.5 text-slate-300">{item.tamanho || "—"}</td>
-                                  <td className="p-2.5 text-slate-400 font-mono">{item.ean || "—"}</td>
-                                  <td className="p-2.5 text-slate-400 font-mono">{item.ncm || "—"}{item.cest ? <span className="text-slate-600"> / {item.cest}</span> : null}</td>
-                                  <td className="p-2.5 text-slate-300 font-mono" data-medidas>{(item.altura || item.largura || item.comprimento) ? `${item.altura ?? "—"}×${item.largura ?? "—"}×${item.comprimento ?? "—"}` : "—"}</td>
-                                  <td className="p-2.5 text-center text-slate-300">{item.qtdd_ecom ?? 0}</td>
-                                  <td className="p-2.5 text-right font-mono text-rose-400">R$ {Number(item.custo || 0).toFixed(2)}</td>
-                                  <td className="p-2.5 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda || 0).toFixed(2)}</td>
-                                  <td className="p-2.5">
+                                  <td className="px-2.5 py-1.5 text-slate-300">{item.cor || "—"}</td>
+                                  <td className="px-2.5 py-1.5 text-slate-300">{item.tamanho || "—"}</td>
+                                  <td className="px-2.5 py-1.5 text-slate-400 font-mono">{item.ean || "—"}</td>
+                                  <td className="px-2.5 py-1.5 text-slate-400 font-mono">{item.ncm || "—"}{item.cest ? <span className="text-slate-600"> / {item.cest}</span> : null}</td>
+                                  <td className="px-2.5 py-1.5 text-slate-300 font-mono" data-medidas>{(item.altura || item.largura || item.comprimento) ? `${item.altura ?? "—"}×${item.largura ?? "—"}×${item.comprimento ?? "—"}` : "—"}</td>
+                                  <td className="px-2.5 py-1.5 text-center text-slate-300">{item.qtdd_ecom ?? 0}</td>
+                                  <td className="px-2.5 py-1.5 text-right font-mono text-rose-400">R$ {Number(item.custo || 0).toFixed(2)}</td>
+                                  <td className="px-2.5 py-1.5 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda || 0).toFixed(2)}</td>
+                                  <td className="px-2.5 py-1.5">
                                     <div className="flex items-center justify-end gap-1.5">
-                                      <button onClick={() => abrirManualEdicao(item)} data-editar-pendente className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-1 rounded text-xs font-bold cursor-pointer" title="Editar produto">✏️</button>
-                                      <button onClick={() => enviarParaRealizados(item)} data-cadastrar-sku={item.sku} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold cursor-pointer">Cadastrar</button>
-                                      <button onClick={() => excluirPendenteIndividual(item.sku)} className="bg-rose-950 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded text-xs font-bold cursor-pointer">Excluir</button>
+                                      <button onClick={() => abrirManualEdicao(item)} data-editar-pendente className="text-slate-400 hover:text-white hover:bg-slate-800 px-1.5 py-1 rounded text-xs cursor-pointer" title="Editar produto">✏️</button>
+                                      <button onClick={() => enviarParaRealizados(item)} data-cadastrar-sku={item.sku} className="border border-emerald-600/70 text-emerald-300 hover:bg-emerald-950/40 px-2.5 py-0.5 rounded text-xs font-bold cursor-pointer">Cadastrar</button>
+                                      <button onClick={() => excluirPendenteIndividual(item.sku)} className="text-slate-500 hover:text-rose-300 hover:bg-rose-950/40 px-1.5 py-1 rounded text-xs cursor-pointer">Excluir</button>
                                     </div>
                                   </td>
                                 </tr>

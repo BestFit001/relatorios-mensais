@@ -197,58 +197,45 @@ export default function CadastrosCanais({ cadastros, setCadastros, canais, prese
   ];
 
   return (
-    <div className="space-y-4" ref={topo} data-aba-canais>
-      {/* filtros */}
-      <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1" role="tablist" aria-label="Situação do cadastro">
-            {pills.map((p) => (
-              <button
-                key={p.id}
-                role="tab"
-                aria-selected={filtroStatus === p.id}
-                data-filtro-status={p.id}
-                onClick={() => setFiltroStatus(p.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-2 ${filtroStatus === p.id ? "bg-purple-600 text-white shadow" : "text-slate-400 hover:text-white"}`}
-              >
-                {p.rotulo}
-                <span className={`px-1.5 rounded-full text-[10px] ${filtroStatus === p.id ? "bg-white/25" : "bg-slate-800 text-slate-300"}`} data-contagem={p.id}>{p.n}</span>
-              </button>
-            ))}
-          </div>
-          <label className="flex items-center gap-2 text-xs text-slate-400">
-            Falta cadastrar em
-            <select
-              value={filtroCanal}
-              data-filtro-canal
-              onChange={(e) => setFiltroCanal(e.target.value)}
-              className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer"
+    <div className="space-y-3" ref={topo} data-aba-canais>
+      {/* uma barra só: situação, canal e ações em lote */}
+      <div className="bg-slate-900/80 rounded-xl border border-slate-800 px-3 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 gap-0.5" role="tablist" aria-label="Situação do cadastro">
+          {pills.map((p) => (
+            <button
+              key={p.id}
+              role="tab"
+              aria-selected={filtroStatus === p.id}
+              data-filtro-status={p.id}
+              onClick={() => setFiltroStatus(p.id)}
+              className={`px-3 py-1 rounded-md text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${filtroStatus === p.id ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"}`}
             >
-              <option value="todos">Qualquer canal</option>
-              {canais.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </label>
+              {p.rotulo}
+              <span className={`px-1.5 rounded-full text-[10px] ${filtroStatus === p.id ? "bg-white/25" : "bg-slate-800 text-slate-300"}`} data-contagem={p.id}>{p.n}</span>
+            </button>
+          ))}
         </div>
-        <p className="text-[11px] leading-relaxed text-slate-500" data-dica-canais>
-          💡 Clique no canal assim que cadastrar o produto lá: ele sai da lista e só ficam os que faltam.
-          Canais em que algum SKU filho já aparece no Mapa de Cadastros ou nas vendas são marcados sozinhos (selo <b className="text-emerald-400">auto</b>).
-          {canaisOcultos > 0 && <> {canaisOcultos} canal(is) oculto(s) no Mapa de Cadastros não entram na conta.</>}
-        </p>
-      </div>
-
-      {/* seleção + ações em lote */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 rounded-2xl px-4 py-2.5" data-barra-selecao-canais>
-        <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-          <input
-            type="checkbox"
-            data-selecionar-todos-canais
-            checked={skusVisiveis.length > 0 && selecionados.length === skusVisiveis.length}
-            onChange={(e) => toggleTodos(e.target.checked)}
-            className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
-          />
-          Selecionar todos os SKUs desta página
+        <label className="flex items-center gap-2 text-xs text-slate-400">
+          Falta em
+          <select
+            value={filtroCanal}
+            data-filtro-canal
+            onChange={(e) => setFiltroCanal(e.target.value)}
+            className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white outline-none cursor-pointer"
+          >
+            <option value="todos">Qualquer canal</option>
+            {canais.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
         </label>
-        <div className="flex flex-wrap items-center gap-2">
+        <span
+          data-dica-canais
+          className="text-xs text-slate-500 cursor-help"
+          title={`Clique no canal assim que cadastrar o produto lá: ele sai da lista e só ficam os que faltam.\nCanais em que algum SKU filho já aparece no Mapa de Cadastros ou nas vendas são marcados sozinhos (selo "auto").${canaisOcultos > 0 ? `\n${canaisOcultos} canal(is) oculto(s) no Mapa de Cadastros não entram na conta.` : ""}`}
+        >
+          ⓘ Como funciona
+        </span>
+
+        <div className="ml-auto flex flex-wrap items-center gap-2" data-barra-selecao-canais>
           <span className="text-[11px] text-slate-400" data-qtd-selecionados-canais>
             {selecionados.length > 0 ? `${selecionados.length} SKU(s) selecionado(s)` : "Marque itens para excluir ou recadastrar"}
           </span>
@@ -257,7 +244,7 @@ export default function CadastrosCanais({ cadastros, setCadastros, canais, prese
             disabled={selecionados.length === 0 || ocupado}
             data-recadastrar-canais
             title="Devolve os SKUs marcados para a aba Pendentes, para editar e cadastrar de novo"
-            className="bg-amber-600 hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
+            className="border border-amber-600/60 text-amber-300 hover:bg-amber-950/40 disabled:opacity-30 disabled:cursor-not-allowed px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer"
           >
             🔁 Recadastrar ({selecionados.length})
           </button>
@@ -265,44 +252,60 @@ export default function CadastrosCanais({ cadastros, setCadastros, canais, prese
             onClick={excluirSelecionados}
             disabled={selecionados.length === 0 || ocupado}
             data-excluir-canais
-            className="bg-rose-950/80 hover:bg-rose-900 disabled:opacity-30 disabled:cursor-not-allowed text-rose-300 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
+            className="border border-rose-700/60 text-rose-300 hover:bg-rose-950/40 disabled:opacity-30 disabled:cursor-not-allowed px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer"
           >
             🗑️ Excluir ({selecionados.length})
           </button>
         </div>
       </div>
 
-      <Paginacao total={filtrados.length} pagina={pg.pagina} tamanho={tamanho} onPagina={irParaPagina} onTamanho={setTamanho} rotulo="produtos (SKU pai)" />
+      <Paginacao
+        total={filtrados.length}
+        pagina={pg.pagina}
+        tamanho={tamanho}
+        onPagina={irParaPagina}
+        onTamanho={setTamanho}
+        rotulo="produtos"
+        inicio={
+          <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              data-selecionar-todos-canais
+              checked={skusVisiveis.length > 0 && selecionados.length === skusVisiveis.length}
+              onChange={(e) => toggleTodos(e.target.checked)}
+              className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
+            />
+            Selecionar esta página
+          </label>
+        }
+      />
 
-      {/* grupos */}
-      <div className="space-y-3">
-        {visiveis.length === 0 && (
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-10 text-center space-y-1" data-vazio-canais>
-            <p className="text-3xl">{filtroStatus === "faltam" && !q && filtroCanal === "todos" ? "🎉" : "🔎"}</p>
-            <p className="text-sm font-bold text-slate-200">
-              {filtroStatus === "faltam" && !q && filtroCanal === "todos" ? "Tudo cadastrado nos canais" : "Nenhum produto com esses filtros"}
-            </p>
-            <p className="text-xs text-slate-500">
-              {filtroStatus === "faltam" && !q && filtroCanal === "todos" ? "Não há produto com canal faltando." : "Ajuste a busca ou os filtros acima."}
-            </p>
-          </div>
-        )}
-
-        {visiveis.map(({ pai, itens, st }) => {
-          const expandido = Boolean(expandidos[pai]);
-          const qtdSel = itens.filter((i: any) => sel.includes(i.sku)).length;
-          const nome = itens[0]?.produto || "Produto sem nome";
-          const data = new Date(itens[0]?.data_cadastro || Date.now()).toLocaleDateString("pt-BR");
-          const barra = st.completo ? "bg-emerald-500" : st.pct >= 50 ? "bg-indigo-500" : "bg-amber-500";
-          return (
-            <article
-              key={pai}
-              data-grupo-canais={pai}
-              data-grupo-completo={st.completo ? "1" : "0"}
-              className={`bg-slate-950 rounded-2xl border p-4 space-y-3 transition-colors ${st.completo ? "border-emerald-700/50" : "border-slate-800"}`}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex items-start gap-3 min-w-0">
+      {/* lista: uma linha por produto */}
+      {visiveis.length === 0 ? (
+        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-10 text-center space-y-1" data-vazio-canais>
+          <p className="text-3xl">{filtroStatus === "faltam" && !q && filtroCanal === "todos" ? "🎉" : "🔎"}</p>
+          <p className="text-sm font-bold text-slate-200">
+            {filtroStatus === "faltam" && !q && filtroCanal === "todos" ? "Tudo cadastrado nos canais" : "Nenhum produto com esses filtros"}
+          </p>
+          <p className="text-xs text-slate-500">
+            {filtroStatus === "faltam" && !q && filtroCanal === "todos" ? "Não há produto com canal faltando." : "Ajuste a busca ou os filtros acima."}
+          </p>
+        </div>
+      ) : (
+        <div className="bg-slate-900/60 border border-slate-800 rounded-xl divide-y divide-slate-800 overflow-hidden">
+          {visiveis.map(({ pai, itens, st }) => {
+            const expandido = Boolean(expandidos[pai]);
+            const qtdSel = itens.filter((i: any) => sel.includes(i.sku)).length;
+            const nome = itens[0]?.produto || "Produto sem nome";
+            const data = new Date(itens[0]?.data_cadastro || Date.now()).toLocaleDateString("pt-BR");
+            return (
+              <article
+                key={pai}
+                data-grupo-canais={pai}
+                data-grupo-completo={st.completo ? "1" : "0"}
+                className={`px-3 py-2.5 space-y-2 ${st.completo ? "bg-emerald-950/10" : ""}`}
+              >
+                <div className="flex items-center gap-3">
                   <input
                     type="checkbox"
                     data-selecionar-grupo={pai}
@@ -310,136 +313,135 @@ export default function CadastrosCanais({ cadastros, setCadastros, canais, prese
                     checked={qtdSel === itens.length}
                     ref={(el) => { if (el) el.indeterminate = qtdSel > 0 && qtdSel < itens.length; }}
                     onChange={(e) => toggleGrupo(itens, e.target.checked)}
-                    className="w-4 h-4 mt-1 accent-purple-600 rounded cursor-pointer"
+                    className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer shrink-0"
                   />
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-xs font-black text-purple-300 bg-purple-950/60 border border-purple-800/50 px-2 py-0.5 rounded-md">{pai}</span>
-                      <h3 className="text-sm font-bold text-white truncate max-w-[34rem]" title={nome}>{nome}</h3>
-                    </div>
-                    <p className="text-[11px] text-slate-500 mt-0.5">{itens.length} variaç{itens.length === 1 ? "ão" : "ões"} · cadastrado em {data}</p>
+                  <span className="font-mono text-[11px] font-black text-purple-300 bg-purple-950/50 px-1.5 py-0.5 rounded shrink-0">{pai}</span>
+                  <div className="min-w-0 flex-1 flex items-baseline gap-2">
+                    <h3 className="text-[13px] font-semibold text-white truncate" title={nome}>{nome}</h3>
+                    <span className="text-[11px] text-slate-500 whitespace-nowrap hidden sm:inline">{itens.length} var. · {data}</span>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0" data-progresso-grupo={pai}>
+                    <div className="w-20 h-1.5 rounded-full bg-slate-800 overflow-hidden hidden md:block">
+                      <div className={`h-full rounded-full transition-all duration-500 ${st.completo ? "bg-emerald-500" : "bg-purple-500"}`} style={{ width: `${st.pct}%` }} />
+                    </div>
+                    <span className="text-[11px] tabular-nums text-slate-400 whitespace-nowrap">{st.feitos.length}/{st.total} canais · {st.pct}%</span>
+                  </div>
                   <button
                     onClick={() => setExpandidos((e) => ({ ...e, [pai]: !e[pai] }))}
                     data-detalhes-grupo={pai}
                     aria-expanded={expandido}
-                    className="px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 text-[11px] font-bold cursor-pointer"
+                    title={expandido ? "Ocultar detalhes" : "Ver variações e onde já está cadastrado"}
+                    className="px-2 py-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 text-[11px] font-bold cursor-pointer whitespace-nowrap"
                   >
-                    {expandido ? "Ocultar detalhes ▲" : "Ver detalhes ▼"}
+                    {expandido ? "Detalhes ▴" : "Detalhes ▾"}
                   </button>
                   <button
                     onClick={() => excluirGrupo(pai, itens)}
-                    className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
+                    title="Excluir o grupo inteiro"
+                    aria-label={`Excluir o grupo ${pai}`}
+                    className="px-1.5 py-1 rounded-md text-slate-500 hover:text-rose-300 hover:bg-rose-950/40 text-xs cursor-pointer"
                   >
-                    🗑️ Excluir grupo
+                    🗑️
                   </button>
                 </div>
-              </div>
 
-              {/* progresso */}
-              <div className="flex items-center gap-3" data-progresso-grupo={pai}>
-                <div className="flex-1 h-2 rounded-full bg-slate-800 overflow-hidden">
-                  <div className={`h-full rounded-full transition-all duration-500 ${barra}`} style={{ width: `${st.pct}%` }} />
-                </div>
-                <span className="text-[11px] font-bold text-slate-300 tabular-nums whitespace-nowrap">{st.feitos.length}/{st.total} canais · {st.pct}%</span>
-              </div>
-
-              {/* o que falta */}
-              {st.completo ? (
-                <p className="text-xs font-bold text-emerald-400" data-concluido-grupo>✓ Cadastrado em todos os {st.total} canais</p>
-              ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 mr-1">Falta cadastrar em</span>
-                  {st.faltam.map((c) => (
-                    <button
-                      key={c.canal}
-                      data-chip-falta={c.canal}
-                      onClick={() => marcar(pai, [c.canal], true)}
-                      title={`Clique quando cadastrar em ${c.canal}`}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-500/40 bg-amber-950/30 text-amber-300 text-xs font-bold hover:bg-amber-900/40 hover:border-amber-400 transition cursor-pointer"
-                    >
-                      <span className="w-3.5 h-3.5 rounded border border-amber-400/70 inline-block" aria-hidden />
-                      {c.canal}
-                    </button>
-                  ))}
-                  {st.faltam.length > 1 && (
-                    <button
-                      data-marcar-todos-canais={pai}
-                      onClick={() => { if (confirm(`Marcar ${st.faltam.length} canal(is) como cadastrados para o pai ${pai}?`)) marcar(pai, st.faltam.map((c) => c.canal), true); }}
-                      className="px-2.5 py-1.5 rounded-full text-[11px] font-bold text-slate-400 hover:text-white underline-offset-2 hover:underline cursor-pointer"
-                    >
-                      Marcar todos
-                    </button>
+                {/* o que falta */}
+                <div className="flex flex-wrap items-center gap-1.5 pl-[1.65rem]">
+                  {st.completo ? (
+                    <p className="text-xs font-semibold text-emerald-400" data-concluido-grupo>✓ Cadastrado em todos os {st.total} canais</p>
+                  ) : (
+                    <>
+                      <span className="text-[11px] text-slate-500 mr-1">Falta:</span>
+                      {st.faltam.map((c) => (
+                        <button
+                          key={c.canal}
+                          data-chip-falta={c.canal}
+                          onClick={() => marcar(pai, [c.canal], true)}
+                          title={`Clique quando cadastrar em ${c.canal}`}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-slate-600 text-slate-300 text-[11px] font-semibold hover:border-purple-400 hover:text-white hover:bg-purple-950/30 transition cursor-pointer"
+                        >
+                          <span className="w-3 h-3 rounded-[3px] border border-slate-500 inline-block" aria-hidden />
+                          {c.canal}
+                        </button>
+                      ))}
+                      {st.faltam.length > 1 && (
+                        <button
+                          data-marcar-todos-canais={pai}
+                          onClick={() => { if (confirm(`Marcar ${st.faltam.length} canal(is) como cadastrados para o pai ${pai}?`)) marcar(pai, st.faltam.map((c) => c.canal), true); }}
+                          className="px-2 py-0.5 rounded-full text-[11px] font-semibold text-slate-500 hover:text-white underline-offset-2 hover:underline cursor-pointer"
+                        >
+                          marcar todos
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
-              )}
 
-              {/* detalhes: variações + onde já está cadastrado */}
-              {expandido && (
-                <div className="grid md:grid-cols-2 gap-5 pt-3 border-t border-slate-900" data-detalhes-aberto={pai}>
-                  <div className="space-y-1.5">
-                    <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-500">Variações ({itens.length})</h4>
-                    <ul className="space-y-1">
-                      {itens.map((item: any) => (
-                        <li key={item.sku}>
-                          <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer rounded-lg px-2 py-1 hover:bg-slate-900">
-                            <input
-                              type="checkbox"
-                              data-selecionar-sku={item.sku}
-                              checked={sel.includes(item.sku)}
-                              onChange={() => toggleSku(item.sku)}
-                              className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
-                            />
-                            <span className="font-mono font-bold text-indigo-300">{item.sku}</span>
-                            <span className="text-slate-500">Cor: {item.cor || "—"} · Tam: {item.tamanho || "—"}</span>
-                          </label>
-                        </li>
-                      ))}
-                    </ul>
+                {/* detalhes: variações + onde já está cadastrado */}
+                {expandido && (
+                  <div className="grid md:grid-cols-2 gap-5 pt-2 pl-[1.65rem]" data-detalhes-aberto={pai}>
+                    <div className="space-y-1">
+                      <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-500">Variações ({itens.length})</h4>
+                      <ul>
+                        {itens.map((item: any) => (
+                          <li key={item.sku}>
+                            <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer rounded-md px-1.5 py-0.5 hover:bg-slate-800/60">
+                              <input
+                                type="checkbox"
+                                data-selecionar-sku={item.sku}
+                                checked={sel.includes(item.sku)}
+                                onChange={() => toggleSku(item.sku)}
+                                className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
+                              />
+                              <span className="font-mono font-bold text-indigo-300">{item.sku}</span>
+                              <span className="text-slate-500">Cor: {item.cor || "—"} · Tam: {item.tamanho || "—"}</span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-500">Já cadastrado em ({st.feitos.length})</h4>
+                      {st.feitos.length === 0 ? (
+                        <p className="text-xs text-slate-500">Ainda em nenhum canal.</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {st.feitos.map((c) =>
+                            c.origem === "auto" ? (
+                              <span
+                                key={c.canal}
+                                data-chip-feito={c.canal}
+                                data-origem="auto"
+                                title={`Detectado automaticamente (Mapa de Cadastros ou vendas): ${c.skusAuto.join(", ")}`}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-emerald-700/50 bg-emerald-950/30 text-emerald-300 text-[11px] font-semibold"
+                              >
+                                ✓ {c.canal} <em className="not-italic text-[9px] uppercase tracking-wide bg-emerald-900/60 px-1.5 rounded">auto</em>
+                              </span>
+                            ) : (
+                              <button
+                                key={c.canal}
+                                data-chip-feito={c.canal}
+                                data-origem="manual"
+                                onClick={() => marcar(pai, [c.canal], false)}
+                                title="Clique para desfazer (voltar para 'falta')"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-emerald-700/50 bg-emerald-950/30 text-emerald-300 text-[11px] font-semibold hover:border-rose-500 hover:text-rose-300 transition cursor-pointer"
+                              >
+                                ✓ {c.canal} <span aria-hidden className="text-[10px] opacity-60">✕</span>
+                              </button>
+                            )
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-500">Já cadastrado em ({st.feitos.length})</h4>
-                    {st.feitos.length === 0 ? (
-                      <p className="text-xs text-slate-500">Ainda em nenhum canal.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {st.feitos.map((c) =>
-                          c.origem === "auto" ? (
-                            <span
-                              key={c.canal}
-                              data-chip-feito={c.canal}
-                              data-origem="auto"
-                              title={`Detectado automaticamente (Mapa de Cadastros ou vendas): ${c.skusAuto.join(", ")}`}
-                              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-emerald-600/40 bg-emerald-950/40 text-emerald-300 text-xs font-bold"
-                            >
-                              ✓ {c.canal} <em className="not-italic text-[9px] uppercase tracking-wide bg-emerald-900/60 px-1.5 rounded">auto</em>
-                            </span>
-                          ) : (
-                            <button
-                              key={c.canal}
-                              data-chip-feito={c.canal}
-                              data-origem="manual"
-                              onClick={() => marcar(pai, [c.canal], false)}
-                              title="Clique para desfazer (voltar para 'falta cadastrar')"
-                              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-emerald-600/40 bg-emerald-950/40 text-emerald-300 text-xs font-bold hover:border-rose-500 hover:text-rose-300 transition cursor-pointer"
-                            >
-                              ✓ {c.canal} <span aria-hidden className="text-[10px] opacity-60">✕</span>
-                            </button>
-                          )
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </article>
-          );
-        })}
-      </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
 
-      <Paginacao total={filtrados.length} pagina={pg.pagina} tamanho={tamanho} onPagina={irParaPagina} onTamanho={setTamanho} rotulo="produtos (SKU pai)" />
+      <Paginacao total={filtrados.length} pagina={pg.pagina} tamanho={tamanho} onPagina={irParaPagina} onTamanho={setTamanho} rotulo="produtos" />
     </div>
   );
 }
