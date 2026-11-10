@@ -717,6 +717,7 @@ export default function CurvaABCPage() {
             linhas={skusCobertura.map((s: any) => ({
               sku: String(s.sku ?? ""), skuNorm: s.skuNorm, titulo: s.titulo, marca: s.marca,
               qtd: s.qtd, revenue: s.revenue, pctRepresentatividade: s.pctRepresentatividade, pctAcumulada: s.pctAcumulada, curva: s.curva,
+              lucro: s.lucroTotal, semCusto: !!s.semCusto,
             }))}
             dias={diasPeriodo}
             periodo={dateFilter === "MES_REF" && mesRef ? mesRef : dateFilter === "PERSONALIZADO" ? `${customStartDate || "?"} a ${customEndDate || "?"}` : ({ HOJE: "hoje", SEMANA: "últimos 7 dias", QUINZENA: "últimos 15 dias", MES: "últimos 30 dias", TUDO: "todo o histórico" } as Record<string, string>)[dateFilter] || dateFilter}

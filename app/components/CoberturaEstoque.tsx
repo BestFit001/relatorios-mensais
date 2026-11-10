@@ -6,12 +6,14 @@ import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
 import {
   COLUNAS_COBERTURA, OPCOES_RETORNO, TODOS_STATUS, STATUS_SUGESTAO, STATUS_VALIDAR,
-  calcularCobertura, normalizarSkuEstoque, corCoberturaDias, corCoberturaMeses, indiceDaLetra, lerEstoque, rotulosDasColunas,
+  calcularCobertura, margemPercentual, normalizarSkuEstoque, corCoberturaDias, corCoberturaMeses, indiceDaLetra, lerEstoque, rotulosDasColunas,
 } from "@/lib/cobertura";
 
 export interface LinhaABC {
   sku: string; skuNorm: string; titulo: string; marca: string;
   qtd: number; revenue: number; pctRepresentatividade: number; pctAcumulada: number; curva: string;
+  /** lucro real do período (repasse − custo − extras − devoluções) e se falta custo cadastrado */
+  lucro: number; semCusto: boolean;
 }
 
 const POR_PAGINA = 100;
@@ -92,7 +94,10 @@ export default function CoberturaEstoque({
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroCurva, setFiltroCurva] = useState("TODAS");
   const [filtroRetorno, setFiltroRetorno] = useState("TODOS");
-  const [ordem, setOrdem] = useState<"FAT" | "QTD" | "QTD_ASC" | "VALOR" | "PDV" | "COBERTURA">("FAT");
+  const [ordem, setOrdem] = useState<"FAT" | "QTD" | "QTD_ASC" | "VALOR" | "PDV" | "COBERTURA" | "MARGEM" | "MARGEM_ASC">("FAT");
+  const [margemMin, setMargemMin] = useState("");
+  const [margemMax, setMargemMax] = useState("");
+  const [filtroCusto, setFiltroCusto] = useState<"TODOS" | "COM" | "SEM">("TODOS");
   const [busca, setBusca] = useState("");
   const [pagina, setPagina] = useState(1);
 
@@ -160,13 +165,18 @@ export default function CoberturaEstoque({
     const temCadastro = estoque.has(l.skuNorm);
     const est = estoque.get(l.skuNorm) ?? 0;
     const c = calcularCobertura({ vendas: l.qtd, dias, estoque: est, curva: l.curva, titulo: l.titulo });
-    return { ...l, estoque: est, temCadastro, ...c, retorno: retornos[l.skuNorm] || "" };
+    return { ...l, estoque: est, temCadastro, ...c, retorno: retornos[l.skuNorm] || "", margem: margemPercentual(l.lucro, l.revenue, l.semCusto) };
   }), [linhas, estoque, retornos, dias]);
 
   const filtradas = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     const termoNorm = normalizarSkuEstoque(busca);
+    const lerNum = (t: string) => { const n = parseFloat(t.replace(",", ".")); return t.trim() !== "" && Number.isFinite(n) ? n : null; };
+    const mMin = lerNum(margemMin), mMax = lerNum(margemMax);
     let r = dados.filter((d) =>
+      (mMin === null || (d.margem !== null && d.margem >= mMin)) &&
+      (mMax === null || (d.margem !== null && d.margem <= mMax)) &&
+      (filtroCusto === "TODOS" || (filtroCusto === "SEM" ? d.semCusto : !d.semCusto)) &&
       (!termo || d.sku.toLowerCase().includes(termo) || (!!termoNorm && d.skuNorm.includes(termoNorm)) || d.titulo.toLowerCase().includes(termo)) &&
       (filtroStatus === "TODOS" || d.status === filtroStatus) &&
       (filtroCurva === "TODAS" || d.curva === filtroCurva) &&
@@ -177,10 +187,12 @@ export default function CoberturaEstoque({
     else if (ordem === "QTD_ASC") r = [...r].sort((a, b) => a.qtd - b.qtd || a.revenue - b.revenue);
     else if (ordem === "VALOR") r = [...r].sort((a, b) => b.revenue - a.revenue);
     else if (ordem === "PDV") r = [...r].sort((a, b) => pdvUn(b) - pdvUn(a) || b.revenue - a.revenue);
+    else if (ordem === "MARGEM") r = [...r].sort((a, b) => (b.margem ?? -Infinity) - (a.margem ?? -Infinity) || b.revenue - a.revenue);   // sem custo vai para o fim
+    else if (ordem === "MARGEM_ASC") r = [...r].sort((a, b) => (a.margem ?? Infinity) - (b.margem ?? Infinity) || b.revenue - a.revenue);
     return r;
-  }, [dados, filtroStatus, filtroCurva, filtroRetorno, ordem, busca]);
+  }, [dados, filtroStatus, filtroCurva, filtroRetorno, ordem, busca, margemMin, margemMax, filtroCusto]);
 
-  useEffect(() => { setPagina(1); }, [filtroStatus, filtroCurva, filtroRetorno, ordem, busca, linhas, dias]);
+  useEffect(() => { setPagina(1); }, [filtroStatus, filtroCurva, filtroRetorno, ordem, busca, margemMin, margemMax, filtroCusto, linhas, dias]);
   const totalPaginas = Math.max(1, Math.ceil(filtradas.length / POR_PAGINA));
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = filtradas.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
@@ -188,8 +200,12 @@ export default function CoberturaEstoque({
   const totais = useMemo(() => {
     const vendas = filtradas.reduce((a, d) => a + d.qtd, 0);
     const valor = filtradas.reduce((a, d) => a + d.revenue, 0);
+    // margem média ponderada (lucro ÷ faturamento) só dos SKUs com custo cadastrado
+    const comCusto = filtradas.filter((d) => !d.semCusto);
+    const lucroCC = comCusto.reduce((a, d) => a + d.lucro, 0), receitaCC = comCusto.reduce((a, d) => a + d.revenue, 0);
     return {
       vendas, valor, ticket: vendas > 0 ? valor / vendas : 0,
+      margem: receitaCC > 0 ? (lucroCC / receitaCC) * 100 : null as number | null, lucroCC, semCustoQtd: filtradas.length - comCusto.length,
       sugestoes: dados.filter((d) => d.status === STATUS_SUGESTAO).length,
       validar: dados.filter((d) => d.status === STATUS_VALIDAR).length,
       semCadastro: dados.filter((d) => !d.temCadastro).length,
@@ -285,6 +301,12 @@ export default function CoberturaEstoque({
       case "pct_individual": return <td key={id} data-col="pct_individual" className="py-2 px-3 text-right text-slate-300">{n2(d.pctRepresentatividade)}%</td>;
       case "pct_acumulado": return <td key={id} data-col="pct_acumulado" className="py-2 px-3 text-right text-slate-300">{n2(d.pctAcumulada)}%</td>;
       case "classificacao": return <td key={id} data-col="classificacao" className="py-2 px-3 text-center"><span className={`px-2 py-0.5 rounded-md text-[10px] font-black ${corCurva(d.curva)}`}>{d.curva}</span></td>;
+      case "margem": return (
+        <td key={id} data-col="margem" className={`py-2 px-3 text-right whitespace-nowrap font-bold ${d.margem === null ? "text-slate-600" : d.margem < 0 ? "text-rose-400" : d.margem < 15 ? "text-amber-300" : "text-emerald-400"}`}
+          title={d.semCusto ? "Sem custo cadastrado: margem não calculada" : `Lucro real no período: R$ ${brl(d.lucro)} (R$ ${brl(d.qtd > 0 ? d.lucro / d.qtd : 0)} por unidade)`}>
+          {d.margem === null ? "—" : `${n1(d.margem)}%`}
+        </td>
+      );
       case "media_diaria": return <td key={id} data-col="media_diaria" className="py-2 px-3 text-right text-slate-300">{n2(d.mediaDiaria)}</td>;
       case "estoque": return <td key={id} data-col="estoque" className={`py-2 px-3 text-right font-bold ${d.temCadastro ? "text-slate-100" : "text-slate-600"}`} title={d.temCadastro ? "" : "SKU não encontrado na base do Tiny"}>{d.estoque}</td>;
       case "cobertura_dias": return (
@@ -304,7 +326,7 @@ export default function CoberturaEstoque({
     }
   };
 
-  const cabecalhoAlinhado = (id: string) => (["vendas", "valor", "pct_individual", "pct_acumulado", "media_diaria", "estoque", "cobertura_dias", "cobertura_meses"].includes(id) ? "text-right" : id === "classificacao" ? "text-center" : "text-left");
+  const cabecalhoAlinhado = (id: string) => (["vendas", "valor", "margem", "pct_individual", "pct_acumulado", "media_diaria", "estoque", "cobertura_dias", "cobertura_meses"].includes(id) ? "text-right" : id === "classificacao" ? "text-center" : "text-left");
 
   return (
     <div className="space-y-5" data-cobertura>
@@ -316,7 +338,7 @@ export default function CoberturaEstoque({
       )}
 
       {/* RESUMO (some junto com as colunas Vendas/Valor quando elas estão ocultas) */}
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3" data-cobertura-resumo>
+      <div className="grid grid-cols-2 lg:grid-cols-7 gap-3" data-cobertura-resumo>
         {!oculta("vendas") && (
           <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800"><span className="text-[10px] font-bold text-slate-400 uppercase">Vendas (un.)</span><h3 className="text-xl font-black text-white" data-total-vendas>{totais.vendas}</h3></div>
         )}
@@ -325,6 +347,13 @@ export default function CoberturaEstoque({
         )}
         {!oculta("valor") && !oculta("vendas") && (
           <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800"><span className="text-[10px] font-bold text-slate-400 uppercase">Ticket médio</span><h3 className="text-xl font-black text-white" data-total-ticket>R$ {brl(totais.ticket)}</h3></div>
+        )}
+        {!oculta("margem") && (
+          <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800" data-resumo-margem>
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Margem média vendida</span>
+            <h3 className={`text-xl font-black ${totais.margem === null ? "text-slate-500" : totais.margem < 0 ? "text-rose-400" : "text-emerald-400"}`} data-total-margem>{totais.margem === null ? "—" : `${n1(totais.margem)}%`}</h3>
+            <p className="text-[9px] text-slate-500">{totais.semCustoQtd > 0 ? `${totais.semCustoQtd} SKU(s) sem custo fora da conta` : "lucro real ÷ faturamento"}</p>
+          </div>
         )}
         <div className="bg-slate-900/90 p-4 rounded-2xl border border-rose-500/30"><span className="text-[10px] font-bold text-rose-400 uppercase">Sugestão de compra</span><h3 className="text-xl font-black text-rose-400" data-total-sugestoes>{totais.sugestoes} SKUs</h3></div>
         <div className="bg-slate-900/90 p-4 rounded-2xl border border-amber-500/30"><span className="text-[10px] font-bold text-amber-300 uppercase">Validar (não é curva A)</span><h3 className="text-xl font-black text-amber-300">{totais.validar} SKUs</h3></div>
@@ -367,6 +396,20 @@ export default function CoberturaEstoque({
           <select value={filtroRetorno} onChange={(e) => setFiltroRetorno(e.target.value)} data-filtro-retorno className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-200 outline-none cursor-pointer">
             <option value="TODOS">Retorno: todos</option><option value="SEM">Sem retorno</option><option value="COM">Com retorno</option>
           </select>
+          {!oculta("margem") && (
+            <div className="flex gap-1.5 items-center bg-slate-950 border border-slate-700 rounded-xl px-2 py-1.5" data-filtro-margem title="Filtra pela margem média vendida do SKU no período. SKUs sem custo cadastrado ficam de fora quando há mínimo ou máximo.">
+              <span className="text-[11px] text-slate-400 font-bold">Margem</span>
+              <input type="text" inputMode="decimal" value={margemMin} onChange={(e) => setMargemMin(e.target.value)} placeholder="mín %" data-margem-min className="bg-transparent text-slate-200 font-bold text-xs outline-none w-14 border-b border-slate-700" />
+              <span className="text-slate-500 text-xs">a</span>
+              <input type="text" inputMode="decimal" value={margemMax} onChange={(e) => setMargemMax(e.target.value)} placeholder="máx %" data-margem-max className="bg-transparent text-slate-200 font-bold text-xs outline-none w-14 border-b border-slate-700" />
+              {(margemMin || margemMax) && <button type="button" onClick={() => { setMargemMin(""); setMargemMax(""); }} title="Limpar margem" className="text-slate-500 hover:text-slate-200 text-xs cursor-pointer">✕</button>}
+            </div>
+          )}
+          {!oculta("margem") && (
+            <select value={filtroCusto} onChange={(e) => setFiltroCusto(e.target.value as any)} data-filtro-custo className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-200 outline-none cursor-pointer">
+              <option value="TODOS">Custo: todos</option><option value="COM">Com custo cadastrado</option><option value="SEM">Sem custo cadastrado</option>
+            </select>
+          )}
           <select value={ordem} onChange={(e) => setOrdem(e.target.value as any)} data-ordem className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-200 outline-none cursor-pointer">
             <option value="FAT">Ordem: faturamento (Curva ABC)</option>
             <option value="QTD">Ordem: mais vendidos (unidades)</option>
@@ -374,6 +417,8 @@ export default function CoberturaEstoque({
             <option value="VALOR">Ordem: maior valor vendido (R$)</option>
             <option value="PDV">Ordem: maior PDV (preço médio por unidade)</option>
             <option value="COBERTURA">Ordem: menor cobertura primeiro</option>
+            <option value="MARGEM">Ordem: maior margem</option>
+            <option value="MARGEM_ASC">Ordem: menor margem</option>
           </select>
         </div>
       </div>

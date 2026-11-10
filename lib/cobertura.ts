@@ -32,6 +32,7 @@ export const COLUNAS_COBERTURA: { id: string; nome: string }[] = [
   { id: "pct_individual", nome: "% Individual" },
   { id: "pct_acumulado", nome: "% Acumulado" },
   { id: "classificacao", nome: "Classificação" },
+  { id: "margem", nome: "Margem média vendida" },
   { id: "media_diaria", nome: "Média Diária Vendas" },
   { id: "estoque", nome: "Estoque Atual Total - GERAL" },
   { id: "cobertura_dias", nome: "Cobertura (dias)" },
@@ -77,6 +78,15 @@ export function calcularCobertura(e: EntradaCobertura): SaidaCobertura {
     ? (roupao ? STATUS_OK_ROUPAO : STATUS_OK)
     : (e.curva === "A" ? STATUS_SUGESTAO : STATUS_VALIDAR);
   return { mediaDiaria, coberturaDias, coberturaMeses, status };
+}
+
+/**
+ * Margem média efetivamente vendida de um SKU no período: lucro real ÷ faturamento (média ponderada, não média de percentuais).
+ * Lucro real = repasse − custo (CMV) − extras − devoluções. Sem custo cadastrado a margem ficaria inflada: devolve null.
+ */
+export function margemPercentual(lucro: number, receita: number, semCusto: boolean): number | null {
+  if (semCusto || !(receita > 0)) return null;
+  return (lucro / receita) * 100;
 }
 
 /** Semáforo de "Cobertura (dias)" da planilha: <30 vermelho, 30–59 amarelo, ≥60 verde. */
