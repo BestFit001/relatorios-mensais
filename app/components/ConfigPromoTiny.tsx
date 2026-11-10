@@ -32,7 +32,7 @@ export default function ConfigPromoTiny({ onSalvo, conta }: { onSalvo?: (cfg: Co
       const nova = { sku: sku.trim().toUpperCase(), estoque: estoque.trim().toUpperCase() };
       await salvarConfigPromoTiny(nova, chaveConta);
       setSku(nova.sku); setEstoque(nova.estoque); setSalvo(nova);
-      setMsg({ ok: true, texto: `Salvo: SKU na coluna ${nova.sku}, estoque na coluna ${nova.estoque}. ${conta ? `Vale só para ${conta.rotulo}.` : "Vale para as quatro abas de promoção."}` });
+      setMsg({ ok: true, texto: `Salvo: SKU na coluna ${nova.sku}, estoque na coluna ${nova.estoque}. ${conta ? `Vale para ${conta.rotulo}.` : "Vale para as quatro abas de promoção."}` });
       onSalvo?.(nova);
     } catch (e: any) {
       setMsg({ ok: false, texto: "Não salvei: " + e.message });
@@ -64,7 +64,7 @@ export default function ConfigPromoTiny({ onSalvo, conta }: { onSalvo?: (cfg: Co
           <p className="text-xs text-slate-400 mt-1">
             Diga em que coluna da planilha de inventário do Tiny ficam o <b>SKU</b> e o <b>saldo em estoque</b>.{" "}
             {conta
-              ? <>Cada conta do Mercado Livre tem a sua configuração: esta vale só para <b>{conta.rotulo}</b>. Só o que tem saldo maior que zero é precificado.</>
+              ? <>É a mesma planilha de estoque para todas as contas, então esta configuração vale para <b>{conta.rotulo}</b>. Só o que tem saldo maior que zero é precificado.</>
               : <>A mesma configuração vale para Mercado Livre, Magalu, Shopee e TikTok: só o que tem saldo maior que zero é precificado.</>}
           </p>
         </div>

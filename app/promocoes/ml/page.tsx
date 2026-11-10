@@ -6,7 +6,9 @@ import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
 import { abaPrincipal } from "../../../lib/lerArquivo";
 import ConfigPromoTiny from "../../components/ConfigPromoTiny";
-import { carregarConfigPromoTiny, lerEstoqueTiny, PADRAO_PROMO_TINY, type ConfigPromoTiny as CfgPromoTiny } from "../../../lib/promoTiny";
+import { carregarConfigPromoTiny, indiceColuna, lerEstoqueTiny, PADRAO_PROMO_TINY, type ConfigPromoTiny as CfgPromoTiny } from "../../../lib/promoTiny";
+import { lerValidadesDaPlanilha, validadeEmTexto, type Validade } from "../../../lib/validadePromo";
+import { resumoSkusPromocionados, type PromoValidade, type MarcaPromovido } from "../../../lib/foraPromocao";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -83,6 +85,10 @@ const CONTAS_ML = [
   { chave: "ml3", rotulo: "Mercado Livre 3" },
 ] as const;
 const CHAVE_CONTA_STORAGE = "promo_ml_conta";
+// O inventário do Tiny é a mesma planilha para as três contas: uma só configuração de colunas
+const ESCOPO_CFG_ML = { chave: "ml", rotulo: "todas as contas do Mercado Livre (ML1, ML2 e ML3)" };
+const CAMPO_COL_VALIDADE = "promo_ml_date_validity_col";   // config_regras_tiny: letra da coluna DATE_VALIDITY (vazio = achar pelo título)
+const hojeSP = () => new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
 
 const formatarMoeda = (valor: number) =>
   "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -106,7 +112,12 @@ export default function PromocoesMlPage() {
   const [dadosProcessados, setDadosProcessados] = useState<any>(null);
   const [promocoesAtivas, setPromocoesAtivas] = useState<any[]>([]);
   const [termoBusca, setTermoBusca] = useState("");
-  const [abaAtiva, setAbaAtiva] = useState<"precificar" | "rebate" | "ativas" | "config">("precificar");
+  const [abaAtiva, setAbaAtiva] = useState<"precificar" | "rebate" | "ativas" | "skus" | "config">("precificar");
+  const [colValidade, setColValidade] = useState("");            // letra configurada da coluna DATE_VALIDITY ("" = pelo título)
+  const [validadeManual, setValidadeManual] = useState({ inicio: "", fim: "" });   // vale para anúncios cuja validade a planilha não trouxe
+  const [validades, setValidades] = useState<PromoValidade[]>([]);
+  const [marcas, setMarcas] = useState<MarcaPromovido[]>([]);
+  const [anunciosBase, setAnunciosBase] = useState<{ mlb: string; sku: string | null; canal: string }[]>([]);
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [mlRegrasMap, setMlRegrasMap] = useState<Map<string, any[]>>(new Map());
@@ -124,14 +135,27 @@ export default function PromocoesMlPage() {
     } catch { /* sem localStorage: fica na conta 1 */ }
     carregarBasesDoApp();
     carregarPromocoesAtivasSupabase();
+    carregarValidades();
+    carregarConfigPromoTiny(ESCOPO_CFG_ML.chave).then(setCfgTiny);   // uma configuração só, vale para as três contas
+    supabase.from("config_regras_tiny").select("coluna").eq("campo", CAMPO_COL_VALIDADE).maybeSingle().then(({ data }) => {
+      const l = String(data?.coluna ?? "").trim().toUpperCase();
+      if (l && indiceColuna(l) >= 0) setColValidade(l);
+    });
   }, []);
 
-  // A configuração das colunas do inventário é por conta: recarrega ao trocar de conta
-  useEffect(() => {
-    let ativo = true;
-    carregarConfigPromoTiny(contaChave).then((c) => { if (ativo) setCfgTiny(c); });
-    return () => { ativo = false; };
-  }, [contaChave]);
+  // Validade das promoções (uma linha por anúncio x promoção) e anúncios marcados como "já promovi"
+  const carregarValidades = async () => {
+    const todas: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from("promocoes_validade_ml").select("*").order("id").range(from, from + 999);
+      if (error || !data) break;
+      todas.push(...data);
+      if (data.length < 1000) break;
+    }
+    setValidades(todas as PromoValidade[]);
+    const { data: m } = await supabase.from("promocoes_ml_marcados").select("mlb, conta, marcado_em");
+    setMarcas((m || []) as MarcaPromovido[]);
+  };
 
   const trocarConta = (chave: string) => {
     if (chave === contaChave) return;
@@ -205,6 +229,7 @@ export default function PromocoesMlPage() {
         }
       });
       setMlRegrasMap(mlMap);
+      setAnunciosBase(allMlRegras.map((m: any) => ({ mlb: String(m.mlb || "").trim().toUpperCase(), sku: m.sku ?? null, canal: String(m.canal || "") })));
     } catch (e) {
       console.error("Erro ao carregar bases:", e);
     }
@@ -287,12 +312,16 @@ export default function PromocoesMlPage() {
       const idxOriginalPrice = getColIndex(["ORIGINAL_PRICE", "PREÇO ORIGINAL"]);
       const idxPromotionName = getColIndex(["PROMOTION_NAME", "PROMOÇÃO", "NOME DA PROMOÇÃO", "PROMO_NAME"]);
       const idxDateValidity = getColIndex(["DATE_VALIDITY", "VIGÊNCIA", "PERÍODO", "DATE"]);
+      const idxColValidade = colValidade && indiceColuna(colValidade) >= 0 ? indiceColuna(colValidade) : idxDateValidity;   // coluna escolhida em Configurações ou achada pelo título
 
       if (idxItemId === -1 || idxOriginalPrice === -1) {
         alert("Erro: Não foi possível localizar as colunas 'ITEM_ID' e 'ORIGINAL_PRICE' na planilha.");
         setLoading(false);
         return;
       }
+
+      const validadesLidas = lerValidadesDaPlanilha(rawData, idxItemId, idxColValidade);
+      const validadeDaLinha = (i: number): Validade | null => validadesLidas.porLinha.get(i) || validadesLidas.rodape;
 
       const mapSkuPorMlb = new Map<string, string>();
       for (let i = 1; i < rawData.length; i++) {
@@ -324,7 +353,8 @@ export default function PromocoesMlPage() {
         let skuRaw = idxSku !== -1 ? normalizarSku(r[idxSku]) : "";
         let originalPrice = Number(r[idxOriginalPrice] || 0);
         const promoName = idxPromotionName !== -1 ? (r[idxPromotionName] || "Campanha Geral") : "Campanha Geral";
-        const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
+        const validade = validadeDaLinha(i);
+        const dateValidity = validade ? validadeEmTexto(validade) : (idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado");
 
         let anunciosLista = mlRegrasMap.get(mlbKeyNormalizada) || [];
         let anuncioInfo = anunciosLista.length > 0 ? (anunciosLista.find((a: any) => a.canal === conta.rotulo) || anunciosLista[0]) : null;
@@ -422,6 +452,7 @@ export default function PromocoesMlPage() {
           SKU: skuKey,
           PROMOTION_NAME: promoName,
           DATE_VALIDITY: dateValidity,
+          VALIDADE: validade,
           ORIGINAL_PRICE: originalPrice,
           FINAL_PRICE: Number(novoPreco.toFixed(2)),
           STATUS: statusItem,
@@ -431,7 +462,7 @@ export default function PromocoesMlPage() {
         });
       }
 
-      setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "precificar" });
+      setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "precificar", validadeInfo: { rodape: validadesLidas.rodape, origemRodape: validadesLidas.origemRodape, comPropria: validadesLidas.porLinha.size } });
       const deOutraConta = resultados.filter(r => /Anúncio cadastrado em/.test(r.ERRO)).length;
       alert(`✅ Processamento concluído (${conta.rotulo})! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.` +
         (deOutraConta > 0 ? `\n\n⚠️ ${deOutraConta} anúncio(s) estão cadastrados em outra conta do Mercado Livre. Confira se escolheu a conta certa.` : ""));
@@ -475,12 +506,16 @@ export default function PromocoesMlPage() {
       const idxNewReceives = getColIndex(["NEW_RECEIVES", "VOCÊ RECEBE", "MELI_AMOUNT", "REDUÇÃO NAS SUAS TARIFAS DE VENDA"]);
       const idxPromotionName = getColIndex(["PROMOTION_NAME", "PROMOÇÃO", "NOME DA PROMOÇÃO", "PROMO_NAME"]);
       const idxDateValidity = getColIndex(["DATE_VALIDITY", "VIGÊNCIA", "PERÍODO", "DATE"]);
+      const idxColValidade = colValidade && indiceColuna(colValidade) >= 0 ? indiceColuna(colValidade) : idxDateValidity;   // coluna escolhida em Configurações ou achada pelo título
 
       if (idxItemId === -1 || idxFinalPrice === -1) {
         alert("Erro: Não foi possível localizar as colunas 'ITEM_ID' e 'FINAL_PRICE' na planilha de rebate.");
         setLoading(false);
         return;
       }
+
+      const validadesLidas = lerValidadesDaPlanilha(rawData, idxItemId, idxColValidade);
+      const validadeDaLinha = (i: number): Validade | null => validadesLidas.porLinha.get(i) || validadesLidas.rodape;
 
       const mapSkuPorMlb = new Map<string, string>();
       for (let i = 1; i < rawData.length; i++) {
@@ -513,7 +548,8 @@ export default function PromocoesMlPage() {
         const finalPrice = Number(r[idxFinalPrice] || 0);
         const newReceives = idxNewReceives !== -1 ? parseNumeroBruto(r[idxNewReceives]) : 0;
         const promoName = idxPromotionName !== -1 ? (r[idxPromotionName] || "Com redução de tarifas") : "Com redução de tarifas";
-        const dateValidity = idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado";
+        const validade = validadeDaLinha(i);
+        const dateValidity = validade ? validadeEmTexto(validade) : (idxDateValidity !== -1 ? (r[idxDateValidity] || "Indeterminado") : "Indeterminado");
 
         let anunciosLista = mlRegrasMap.get(mlbKeyNormalizada) || [];
         let anuncioInfo = anunciosLista.length > 0 ? (anunciosLista.find((a: any) => a.canal === conta.rotulo) || anunciosLista[0]) : null;
@@ -583,6 +619,7 @@ export default function PromocoesMlPage() {
           SKU: skuKey,
           PROMOTION_NAME: promoName,
           DATE_VALIDITY: dateValidity,
+          VALIDADE: validade,
           FINAL_PRICE: finalPrice,
           NEW_RECEIVES: newReceives,
           SALDO: saldo,
@@ -593,7 +630,7 @@ export default function PromocoesMlPage() {
         });
       }
 
-      setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "rebate" });
+      setDadosProcessados({ rawData, sheetName, itens: resultados, tipo: "rebate", validadeInfo: { rodape: validadesLidas.rodape, origemRodape: validadesLidas.origemRodape, comPropria: validadesLidas.porLinha.size } });
       const deOutraConta = resultados.filter(r => /Anúncio cadastrado em/.test(r.ERRO)).length;
       alert(`✅ Processamento de Rebate concluído (${conta.rotulo})! ${resultados.filter(r => r.STATUS === "APTO").length} itens aptos e ${resultados.filter(r => r.STATUS === "INAPTO").length} inaptos.` +
         (deOutraConta > 0 ? `\n\n⚠️ ${deOutraConta} anúncio(s) estão cadastrados em outra conta do Mercado Livre. Confira se escolheu a conta certa.` : ""));
@@ -626,7 +663,33 @@ export default function PromocoesMlPage() {
         }]);
       }
       await carregarPromocoesAtivasSupabase();
-      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso na base de Promoções Ativas!`);
+
+      // Duração da campanha (DATE_VALIDITY) de cada anúncio: um MLB pode ter várias promoções, todas ficam registradas
+      const fimManual = /^\d{4}-\d{2}-\d{2}$/.test(validadeManual.fim) ? validadeManual.fim : "";
+      const iniManual = /^\d{4}-\d{2}-\d{2}$/.test(validadeManual.inicio) ? validadeManual.inicio : null;
+      const linhasValidade = new Map<string, any>();
+      let semValidade = 0;
+      for (const item of itensAptos) {
+        const v: Validade | null = item.VALIDADE || (fimManual ? { inicio: iniManual, fim: fimManual } : null);
+        if (!v) { semValidade++; continue; }
+        const promocao = String(item.PROMOTION_NAME ?? "");
+        linhasValidade.set(`${item.MLB}|${promocao}|${v.fim}`, {
+          conta: conta.rotulo, mlb: item.MLB, sku: item.SKU, promocao, data_inicio: v.inicio, data_fim: v.fim,
+          validade_texto: validadeEmTexto(v), arquivo: arquivoUpload?.name ?? null,
+        });
+      }
+      let msgValidade = "";
+      if (linhasValidade.size > 0) {
+        const lote = Array.from(linhasValidade.values());
+        for (let i = 0; i < lote.length; i += 300) {
+          const { error } = await supabase.from("promocoes_validade_ml").upsert(lote.slice(i, i + 300), { onConflict: "conta,mlb,promocao,data_fim" });
+          if (error) throw new Error("Promoções salvas, mas não consegui registrar a validade: " + error.message);
+        }
+        await carregarValidades();
+        msgValidade = `\n📅 Validade registrada para ${linhasValidade.size} anúncio(s).`;
+      }
+      if (semValidade > 0) msgValidade += `\n⚠️ ${semValidade} anúncio(s) ficaram SEM validade (a planilha não trouxe DATE_VALIDITY). Preencha o fim da campanha no quadro "Validade da campanha" e salve de novo.`;
+      alert(`🚀 ${itensAptos.length} promoções salvas com sucesso na base de Promoções Ativas!` + msgValidade);
       setAbaAtiva("ativas");
     } catch (err: any) {
       alert("Erro ao salvar no banco: " + err.message);
@@ -715,7 +778,7 @@ export default function PromocoesMlPage() {
               </button>
             ))}
           </div>
-          <span className="text-[11px] text-slate-500">{conta.rotulo}: inventário Tiny com SKU na coluna <b className="text-slate-300">{cfgTiny.sku}</b> e saldo na <b className="text-slate-300">{cfgTiny.estoque}</b></span>
+          <span className="text-[11px] text-slate-500">Inventário Tiny (igual para as 3 contas): SKU na coluna <b className="text-slate-300">{cfgTiny.sku}</b> e saldo na <b className="text-slate-300">{cfgTiny.estoque}</b></span>
         </div>
 
         <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-fit">
@@ -744,6 +807,15 @@ export default function PromocoesMlPage() {
             Promoções Ativas ({promocoesDaConta.length})
           </button>
           <button
+            data-aba-skus
+            onClick={() => setAbaAtiva("skus")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
+              abaAtiva === "skus" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            SKUs Ativos x Promocionados
+          </button>
+          <button
             onClick={() => setAbaAtiva("config")}
             className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${
               abaAtiva === "config" ? "bg-purple-600 text-white shadow-lg" : "text-slate-400 hover:text-white"
@@ -754,7 +826,29 @@ export default function PromocoesMlPage() {
         </div>
 
         <div className="space-y-6">
-          {abaAtiva === "config" && <ConfigPromoTiny conta={conta} onSalvo={setCfgTiny} />}
+          {abaAtiva === "config" && (<>
+            <ConfigPromoTiny conta={ESCOPO_CFG_ML} onSalvo={setCfgTiny} />
+            <div className="max-w-4xl bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-3" data-config-validade>
+              <h2 className="text-sm font-black text-amber-300 uppercase tracking-wider">Validade da campanha (DATE_VALIDITY)</h2>
+              <p className="text-xs text-slate-400">Em que coluna da planilha de campanha está o DATE_VALIDITY. Deixe vazio para o sistema achar pelo título da coluna. O valor pode estar em cada linha ou só no rodapé (abaixo dos anúncios): os dois casos são lidos.</p>
+              <div className="flex flex-wrap items-end gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coluna (letra, opcional)</label>
+                  <input data-cfg-col-validade value={colValidade} maxLength={3} onChange={(e) => setColValidade(e.target.value.toUpperCase())} placeholder="auto" className="w-20 bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-center font-mono font-bold text-white uppercase outline-none focus:border-amber-500" />
+                </div>
+                <button
+                  type="button" data-salvar-col-validade
+                  onClick={async () => {
+                    const l = colValidade.trim().toUpperCase();
+                    if (l && indiceColuna(l) < 0) { alert("Use só a letra da coluna (ex.: K, AB) ou deixe vazio."); return; }
+                    const { error } = await supabase.from("config_regras_tiny").upsert({ campo: CAMPO_COL_VALIDADE, coluna: l }, { onConflict: "campo" });
+                    if (error) alert("Não salvei: " + error.message); else { setColValidade(l); alert(l ? `Salvo: DATE_VALIDITY na coluna ${l}.` : "Salvo: o sistema vai achar a coluna DATE_VALIDITY pelo título."); }
+                  }}
+                  className="px-5 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-black uppercase tracking-wide shadow"
+                >Salvar</button>
+              </div>
+            </div>
+          </>)}
           {abaAtiva !== "config" && (
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
             <div>
@@ -769,7 +863,7 @@ export default function PromocoesMlPage() {
             </div>
 
             <div data-estoque-tiny>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Inventário do Tiny — {conta.rotulo} (SKU col. {cfgTiny.sku}, saldo col. {cfgTiny.estoque}):</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Inventário do Tiny (SKU col. {cfgTiny.sku}, saldo col. {cfgTiny.estoque}):</label>
               <input
                 key={"est-" + contaChave}
                 type="file"
@@ -827,6 +921,31 @@ export default function PromocoesMlPage() {
           </div>
           )}
 
+          {abaAtiva !== "config" && abaAtiva !== "skus" && listaItens.length > 0 && (() => {
+            const info = dadosProcessados?.validadeInfo;
+            const semPropria = listaItens.filter((r: any) => !r.VALIDADE).length;
+            return (
+              <div data-quadro-validade className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 shadow-xl space-y-2">
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                  <h3 className="text-xs font-black text-amber-300 uppercase tracking-wider">📅 Validade da campanha (DATE_VALIDITY)</h3>
+                  {info?.rodape
+                    ? <span data-validade-lida className="text-xs font-bold text-emerald-400">✓ Lida no {info.origemRodape}: {validadeEmTexto(info.rodape)}</span>
+                    : info?.comPropria > 0
+                      ? <span data-validade-lida className="text-xs font-bold text-emerald-400">✓ Lida na coluna DATE_VALIDITY de {info.comPropria} anúncio(s)</span>
+                      : <span data-validade-lida className="text-xs font-bold text-amber-400">⚠️ Não encontrei a validade na planilha. Informe o fim da campanha ao lado.</span>}
+                  {semPropria > 0 && (
+                    <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                      <span>{info?.rodape ? "Corrigir/ajustar:" : "Para os anúncios sem validade:"}</span>
+                      <label className="flex items-center gap-1">início <input type="date" data-validade-inicio value={validadeManual.inicio} onChange={(e) => setValidadeManual((v) => ({ ...v, inicio: e.target.value }))} className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white outline-none" /></label>
+                      <label className="flex items-center gap-1">fim <input type="date" data-validade-fim value={validadeManual.fim} onChange={(e) => setValidadeManual((v) => ({ ...v, fim: e.target.value }))} className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white outline-none" /></label>
+                    </div>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500">Ao clicar em “Salvar na Base Ativa”, a validade fica registrada para cada anúncio apto (MLB, SKU e duração). Quando a promoção vence e o anúncio não está em outra campanha, ele aparece no Início em “Itens fora de promoção”. Só o que o rodapé/coluna da planilha traz é usado; o campo “fim” serve de reserva.</p>
+              </div>
+            );
+          })()}
+
           {abaAtiva === "precificar" && listaItens.length > 0 && tipoProcessamento === "precificar" && (
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
               <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex justify-between items-center">
@@ -840,6 +959,7 @@ export default function PromocoesMlPage() {
                       <th className="p-3">MLB</th>
                       <th className="p-3">SKU</th>
                       <th className="p-3">Campanha</th>
+                      <th className="p-3">Validade</th>
                       <th className="p-3 text-right">Saldo</th>
                       <th className="p-3 text-right">Preço Original</th>
                       <th className="p-3 text-right">Novo Preço Sugerido</th>
@@ -853,6 +973,7 @@ export default function PromocoesMlPage() {
                         <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
                         <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
                         <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
+                        <td className="p-3 font-mono text-amber-400 whitespace-nowrap">{item.VALIDADE ? validadeEmTexto(item.VALIDADE) : "—"}</td>
                         <td className={`p-3 text-right font-mono ${item.SALDO > 0 ? "text-slate-300" : "text-rose-400"}`}>{item.SALDO}</td>
                         <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.ORIGINAL_PRICE)}</td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.FINAL_PRICE)}</td>
@@ -883,6 +1004,7 @@ export default function PromocoesMlPage() {
                       <th className="p-3">MLB</th>
                       <th className="p-3">SKU</th>
                       <th className="p-3">Promoção / Campanha</th>
+                      <th className="p-3">Validade</th>
                       <th className="p-3 text-right">Preço Final (PDV)</th>
                       <th className="p-3 text-right text-purple-400">Novo Recebe (Rebate)</th>
                       <th className="p-3 text-right">Saldo</th>
@@ -898,6 +1020,7 @@ export default function PromocoesMlPage() {
                         <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
                         <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
                         <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
+                        <td className="p-3 font-mono text-amber-400 whitespace-nowrap">{item.VALIDADE ? validadeEmTexto(item.VALIDADE) : "—"}</td>
                         <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.FINAL_PRICE)}</td>
                         <td className="p-3 text-right font-mono text-purple-300 font-bold">{formatarMoeda(item.NEW_RECEIVES)}</td>
                         <td className={`p-3 text-right font-mono ${item.SALDO > 0 ? "text-slate-300" : "text-rose-400"}`}>{item.SALDO}</td>
@@ -916,6 +1039,54 @@ export default function PromocoesMlPage() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {abaAtiva === "skus" && (
+            <div data-painel-skus className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
+              <div>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Quantidade de SKUs ativos e promocionados</h3>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  <b className="text-slate-300">SKU ativo</b> = SKU com anúncio na base de anúncios da conta. <b className="text-slate-300">Promocionado</b> = anúncio com campanha vigente hoje ({hojeSP().split("-").reverse().join("/")}), segundo a validade registrada ao salvar as promoções, ou marcado como “já promovi” no Início.
+                </p>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-slate-800">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="p-3.5">Conta</th>
+                      <th className="p-3.5 text-right">Anúncios (MLB)</th>
+                      <th className="p-3.5 text-right">SKUs ativos</th>
+                      <th className="p-3.5 text-right text-emerald-400">SKUs promocionados</th>
+                      <th className="p-3.5 text-right">% promocionado</th>
+                      <th className="p-3.5 text-right text-amber-400">SKUs sem promoção</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+                    {[...CONTAS_ML.map((c) => ({ chave: c.chave, rotulo: c.rotulo })), { chave: "todas", rotulo: "Todas as contas" }].map((c) => {
+                      const doEscopo = (x: { canal?: string | null; conta?: string | null }) => c.chave === "todas" || (x.canal ?? x.conta) === c.rotulo;
+                      const r = resumoSkusPromocionados(
+                        anunciosBase.filter((a) => doEscopo(a)),
+                        validades.filter((v) => doEscopo(v)),
+                        marcas.filter((m) => c.chave === "todas" || !m.conta || m.conta === c.rotulo),
+                        hojeSP(), normalizarSku,
+                      );
+                      const total = c.chave === "todas";
+                      return (
+                        <tr key={c.chave} data-linha-skus={c.chave} className={total ? "bg-slate-900 font-black" : "hover:bg-slate-800/40"}>
+                          <td className="p-3.5 text-white font-bold">{c.rotulo}</td>
+                          <td className="p-3.5 text-right font-mono text-slate-300">{r.anuncios}</td>
+                          <td className="p-3.5 text-right font-mono text-slate-200" data-skus-ativos>{r.skusAtivos}</td>
+                          <td className="p-3.5 text-right font-mono text-emerald-400" data-skus-promo>{r.skusPromocionados}</td>
+                          <td className="p-3.5 text-right font-mono text-slate-200">{r.percentual.toFixed(1).replace(".", ",")}%</td>
+                          <td className="p-3.5 text-right font-mono text-amber-400">{r.skusSemPromocao}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {validades.length === 0 && <p className="text-[11px] text-amber-400">Ainda não há validades registradas: elas passam a existir quando você salva promoções na base (aba Precificar Campanha ou Rebate).</p>}
             </div>
           )}
 

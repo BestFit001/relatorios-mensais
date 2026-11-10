@@ -9,6 +9,7 @@ import {
   textoAntecedencia, hhmm, diferencaDias, DIAS_SEMANA, inicioCiclo, ocorreNoDia, addDias, diaDaSemana, type Conclusao,
 } from "../../lib/tarefas";
 import { registrarPush, temAssinaturaAtiva, suportaPush } from "../../lib/push";
+import { foraDePromocao, type PromoValidade, type MarcaPromovido } from "../../lib/foraPromocao";
 
 // ---------------------------------------------------------------------------------------------
 // Tela inicial: canais de cada analista (números do Dashboard), notificações e tarefas do administrador
@@ -39,7 +40,7 @@ async function buscarTudo(tabela: string): Promise<any[]> {
   return todas;
 }
 
-type Notificacao = { id: string; tipo: "full" | "devolucao" | "tarefa"; nivel: "critico" | "atencao" | "info"; titulo: string; detalhe: string; canal?: string };
+type Notificacao = { id: string; tipo: "full" | "devolucao" | "tarefa" | "promocao"; nivel: "critico" | "atencao" | "info"; titulo: string; detalhe: string; canal?: string };
 
 export default function InicioPage() {
   const router = useRouter();
@@ -68,7 +69,14 @@ export default function InicioPage() {
   const [aba, setAba] = useState<"andamento" | "concluidas" | "todos">("andamento");
   const [pagina, setPagina] = useState(1);
   const [filtroResp, setFiltroResp] = useState("TODOS");
-  const [filtroNotif, setFiltroNotif] = useState<"todas" | "full" | "devolucao" | "tarefa">("todas");
+  const [filtroNotif, setFiltroNotif] = useState<"todas" | "full" | "devolucao" | "tarefa" | "promocao">("todas");
+  // Itens fora de promoção (Mercado Livre): validade das promoções registrada ao salvar as campanhas + marcações "já promovi"
+  const [validadesMl, setValidadesMl] = useState<PromoValidade[]>([]);
+  const [marcasMl, setMarcasMl] = useState<(MarcaPromovido & { id?: number })[]>([]);
+  const [buscaPromo, setBuscaPromo] = useState("");
+  const [qtdPromoVisivel, setQtdPromoVisivel] = useState(100);
+  const [verMarcados, setVerMarcados] = useState(false);
+  const [erroPromo, setErroPromo] = useState("");
   const tarefaVazia = {
     titulo: "", descricao: "", prioridade: "Média",
     tipo: "prazo" as "prazo" | "ciclica",
@@ -104,6 +112,20 @@ export default function InicioPage() {
     carregarTudo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const carregarPromoMl = async () => {
+    const vs: any[] = [];
+    for (let de = 0; ; de += 1000) {
+      const { data, error } = await supabase.from("promocoes_validade_ml").select("id, conta, mlb, sku, promocao, data_inicio, data_fim").order("id").range(de, de + 999);
+      if (error || !data) { if (error) setErroPromo(error.message); break; }
+      vs.push(...data);
+      if (data.length < 1000) break;
+    }
+    setValidadesMl(vs as PromoValidade[]);
+    const { data: m } = await supabase.from("promocoes_ml_marcados").select("id, mlb, conta, marcado_em");
+    setMarcasMl((m || []) as any[]);
+  };
+  useEffect(() => { carregarPromoMl(); }, []);
 
   const carregarTudo = async () => {
     setCarregando(true);
@@ -405,9 +427,36 @@ export default function InicioPage() {
     await carregarHome();
   };
 
+  // ---- Itens fora de promoção: promoção vencida e sem outra campanha (só das contas que o usuário enxerga)
+  const foraPromo = useMemo(
+    () => foraDePromocao(validadesMl.filter((v) => nomesVisiveis.has(norm(v.conta))), marcasMl, hoje),
+    [validadesMl, marcasMl, nomesVisiveis, hoje],
+  );
+  const foraPromoFiltrado = useMemo(() => {
+    const t = norm(buscaPromo);
+    return t ? foraPromo.filter((i) => norm(i.mlb).includes(t) || norm(i.sku).includes(t) || norm(i.ultimaPromocao).includes(t)) : foraPromo;
+  }, [foraPromo, buscaPromo]);
+  const marcadosVisiveis = useMemo(() => marcasMl.filter((m) => !m.conta || nomesVisiveis.has(norm(m.conta))), [marcasMl, nomesVisiveis]);
+
+  const marcarPromovido = async (item: { mlb: string; conta: string }) => {
+    const { error } = await supabase.from("promocoes_ml_marcados").upsert({ mlb: item.mlb, conta: item.conta, marcado_em: new Date().toISOString(), marcado_por: usuario?.email || null }, { onConflict: "mlb" });
+    if (error) { setErroPromo("Não consegui marcar: " + error.message); return; }
+    await carregarPromoMl();
+  };
+  const desmarcarPromovido = async (mlb: string) => {
+    const { error } = await supabase.from("promocoes_ml_marcados").delete().eq("mlb", mlb);
+    if (error) { setErroPromo("Não consegui desfazer: " + error.message); return; }
+    await carregarPromoMl();
+  };
+
   // ---- Notificações
   const notificacoes: Notificacao[] = useMemo(() => {
     const lista: Notificacao[] = [];
+
+    // Anúncios do Mercado Livre fora de promoção: um aviso-resumo (a lista por MLB fica na aba "Itens fora de promoção")
+    if (foraPromo.length > 0) {
+      lista.push({ id: "promo-fora", tipo: "promocao", nivel: "atencao", titulo: `${foraPromo.length} anúncio(s) do Mercado Livre fora de promoção`, detalhe: "A promoção venceu e eles não estão em outra campanha. Veja a lista na aba “Itens fora de promoção”." });
+    }
 
     // Estoque no Full (armazenagem): do mais urgente para o menos
     saldoFull
@@ -455,14 +504,14 @@ export default function InicioPage() {
     });
     return lista;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saldoFull, lancFull, lancPropria, nomesVisiveis, mesBarra, minhasTarefas, conclusoes, hoje, hojeInfo.hora, isAdmin, emailRef]);
+  }, [saldoFull, lancFull, lancPropria, nomesVisiveis, mesBarra, minhasTarefas, conclusoes, hoje, hojeInfo.hora, isAdmin, emailRef, foraPromo]);
 
   const notifFiltradas = notificacoes.filter((n) => filtroNotif === "todas" || n.tipo === filtroNotif);
   const contar = (tipo: string) => notificacoes.filter((n) => n.tipo === tipo).length;
 
   // ---------------------------------------------------------------------------------------------
   const corNivel = (nivel: string) => (nivel === "critico" ? "border-rose-800/60 bg-rose-950/30 text-rose-200" : nivel === "atencao" ? "border-amber-800/60 bg-amber-950/20 text-amber-200" : "border-slate-700 bg-slate-900 text-slate-200");
-  const iconeTipo = (tipo: string) => (tipo === "full" ? "📦" : tipo === "devolucao" ? "↩️" : "📝");
+  const iconeTipo = (tipo: string) => (tipo === "full" ? "📦" : tipo === "devolucao" ? "↩️" : tipo === "promocao" ? "🏷️" : "📝");
   const corPrioridade = (p: string) => (p === "Alta" ? "bg-rose-950/60 text-rose-300 border-rose-800/50" : p === "Baixa" ? "bg-slate-800 text-slate-300 border-slate-700" : "bg-amber-950/50 text-amber-300 border-amber-800/50");
 
   // ---- Calendário do mês: resumo em cada dia; clicando no dia abre a lista completa
@@ -866,10 +915,49 @@ export default function InicioPage() {
           <div className="xl:col-span-2 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
             <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider mb-3">🔔 Notificações</h2>
             <div className="flex flex-wrap gap-2 mb-4">
-              {([["todas", "Todas", notificacoes.length], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["tarefa", "📝 Tarefas", contar("tarefa")]] as const).map(([k, nome, n]) => (
-                <button key={k} onClick={() => setFiltroNotif(k)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer ${filtroNotif === k ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>{nome} ({n})</button>
+              {([["todas", "Todas", notificacoes.length], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["tarefa", "📝 Tarefas", contar("tarefa")], ["promocao", "🏷️ Itens fora de promoção", foraPromo.length]] as const).map(([k, nome, n]) => (
+                <button key={k} data-notif-aba={k} onClick={() => setFiltroNotif(k)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer ${filtroNotif === k ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>{nome} ({n})</button>
               ))}
             </div>
+            {filtroNotif === "promocao" ? (
+              <div data-painel-fora-promocao className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input value={buscaPromo} onChange={(e) => { setBuscaPromo(e.target.value); setQtdPromoVisivel(100); }} placeholder="Buscar MLB, SKU ou promoção…" className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white outline-none w-64" />
+                  <span className="text-[11px] text-slate-400">{foraPromoFiltrado.length} anúncio(s) fora de promoção</span>
+                  {marcadosVisiveis.length > 0 && (
+                    <button type="button" data-ver-marcados onClick={() => setVerMarcados((v) => !v)} className="text-[11px] text-slate-400 underline hover:text-white cursor-pointer">{verMarcados ? "ocultar marcados" : `ver ${marcadosVisiveis.length} marcado(s) como promovido`}</button>
+                  )}
+                </div>
+                {erroPromo && <p className="text-[11px] text-rose-400 font-bold">⚠️ {erroPromo}</p>}
+                <div className="space-y-1.5 max-h-[30rem] overflow-y-auto pr-1">
+                  {foraPromoFiltrado.length === 0 && <p className="text-xs text-emerald-400 font-bold">✅ Nenhum anúncio fora de promoção.</p>}
+                  {foraPromoFiltrado.slice(0, qtdPromoVisivel).map((i) => (
+                    <label key={i.mlb} data-item-fora={i.mlb} className="flex items-start gap-3 border border-amber-800/50 bg-amber-950/20 rounded-xl p-3 cursor-pointer hover:bg-amber-950/30">
+                      <input type="checkbox" data-marcar-promovido={i.mlb} checked={false} onChange={() => marcarPromovido(i)} className="mt-0.5 accent-emerald-500 w-4 h-4 cursor-pointer" title="Marque se já colocou este anúncio em promoção fora da planilha" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-amber-200"><span className="font-mono text-indigo-300">{i.mlb}</span>{i.sku ? <> · <span className="font-mono text-slate-200">{i.sku}</span></> : null}</div>
+                        <div className="text-[11px] text-slate-400">{i.conta} · “{i.ultimaPromocao || "sem nome"}” terminou em {dataBR(i.fimEm)} ({i.diasFora === 1 ? "há 1 dia" : `há ${i.diasFora} dias`})</div>
+                      </div>
+                    </label>
+                  ))}
+                  {foraPromoFiltrado.length > qtdPromoVisivel && (
+                    <button type="button" onClick={() => setQtdPromoVisivel((q) => q + 100)} className="w-full text-[11px] font-bold text-slate-300 border border-slate-700 rounded-lg py-2 hover:text-white cursor-pointer">Mostrar mais ({foraPromoFiltrado.length - qtdPromoVisivel} restantes)</button>
+                  )}
+                </div>
+                {verMarcados && (
+                  <div data-lista-marcados className="space-y-1 border-t border-slate-800 pt-3">
+                    <p className="text-[10px] text-slate-500 font-bold uppercase">Marcados como “já promovi”</p>
+                    {marcadosVisiveis.map((m) => (
+                      <div key={m.mlb} className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span><span className="font-mono text-indigo-300">{m.mlb}</span> · {dataBR(m.marcado_em)}</span>
+                        <button type="button" onClick={() => desmarcarPromovido(m.mlb)} className="underline hover:text-white cursor-pointer">desfazer</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[10px] text-slate-500">O anúncio entra aqui quando a última promoção registrada vence e ele não está em outra campanha. Sai sozinho quando você salva uma nova promoção dele no módulo Promoções, ou ao marcar a caixinha (promovido fora da planilha).</p>
+              </div>
+            ) : (
             <div className="space-y-2 max-h-[34rem] overflow-y-auto pr-1">
               {carregando ? <p className="text-xs text-slate-500">Carregando…</p> : notifFiltradas.length === 0 ? (
                 <p className="text-xs text-emerald-400 font-bold">✅ Nada pendente por aqui.</p>
@@ -880,6 +968,7 @@ export default function InicioPage() {
                 </div>
               ))}
             </div>
+            )}
             <p className="text-[10px] text-slate-500 mt-3">Devolução: avisa a partir de {DEV_ATENCAO}% (crítico a partir de {DEV_CRITICO}%), com no mínimo {DEV_AMOSTRA_MIN} vendas, usando as análises salvas na aba Fulfillment. Full: prazos configurados por canal na aba Regras.</p>
           </div>
 

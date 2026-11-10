@@ -5,7 +5,7 @@ import { supabase } from "./supabase";
 export interface ConfigPromoTiny { sku: string; estoque: string }
 export const PADRAO_PROMO_TINY: ConfigPromoTiny = { sku: "C", estoque: "F" };
 const CAMPOS = { sku: "promo_tiny_sku", estoque: "promo_tiny_estoque" } as const;
-// Mercado Livre tem uma configuração por conta (ml1, ml2, ml3): promo_tiny_sku_ml1, promo_tiny_estoque_ml1...
+// Mercado Livre tem uma configuração própria, única para as contas ML1, ML2 e ML3 (escopo "ml"): promo_tiny_sku_ml, promo_tiny_estoque_ml
 const campoDaConta = (campo: string, conta?: string) => (conta ? `${campo}_${conta}` : campo);
 
 /** "C" -> 2, "AA" -> 26. -1 se não for uma letra de coluna válida. */
@@ -23,7 +23,7 @@ export function letraDaColuna(indice: number): string {
   return s;
 }
 
-/** Com `conta`, vale a configuração daquela conta; sem ela (ou sem nada salvo para a conta), a geral; sem nada, C e F. */
+/** Com `conta` (escopo, ex.: "ml"), vale a configuração dele; sem ela (ou sem nada salvo para a conta), a geral; sem nada, C e F. */
 export async function carregarConfigPromoTiny(conta?: string): Promise<ConfigPromoTiny> {
   const cfg = { ...PADRAO_PROMO_TINY };
   try {
