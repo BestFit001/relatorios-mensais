@@ -1,10 +1,48 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "../../lib/supabase";
-import { canaisSemRepeticao } from "../../lib/vendasCanaisLogica";
+import { buscarTudo } from "../../lib/buscarTudo";
+import { canaisSemRepeticao, normalizarNomeCanal } from "../../lib/vendasCanaisLogica";
+import {
+  agruparPorPai, paiDoItem, statusDoGrupo, canaisDoSku, montarPresenca, paginar, variantesDeSku, emLotes, type Presenca,
+} from "../../lib/cadastroCanais";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
+import CadastrosCanais from "../components/CadastrosCanais";
+import Paginacao from "../components/Paginacao";
 import * as XLSX from "xlsx";
+
+const KPI_CORES = {
+  amber: { icone: "bg-amber-950/60 border-amber-800/40", barra: "bg-amber-500" },
+  indigo: { icone: "bg-indigo-950/60 border-indigo-800/40", barra: "bg-indigo-500" },
+  purple: { icone: "bg-purple-950/60 border-purple-800/40", barra: "bg-purple-500" },
+  emerald: { icone: "bg-emerald-950/60 border-emerald-800/40", barra: "bg-emerald-500" },
+} as const;
+
+/** Cartão de indicador do topo: clicável, com número grande e (opcional) barra de progresso. */
+function Kpi({ icone, titulo, valor, detalhe, cor, barra, onClick, dataKpi }: {
+  icone: string; titulo: string; valor: number; detalhe: string; cor: keyof typeof KPI_CORES; barra?: number; onClick?: () => void; dataKpi: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      data-kpi={dataKpi}
+      className="text-left bg-slate-900/90 border border-slate-800 hover:border-slate-600 rounded-2xl p-4 flex items-center gap-4 shadow-xl transition cursor-pointer"
+    >
+      <span className={`w-12 h-12 shrink-0 rounded-xl border flex items-center justify-center text-2xl ${KPI_CORES[cor].icone}`} aria-hidden>{icone}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">{titulo}</span>
+        <span className="block text-3xl font-black text-white leading-tight tabular-nums" data-kpi-valor>{valor}</span>
+        <span className="block text-[11px] text-slate-500 truncate">{detalhe}</span>
+        {barra !== undefined && (
+          <span className="block mt-1.5 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+            <span className={`block h-full rounded-full transition-all duration-500 ${KPI_CORES[cor].barra}`} style={{ width: `${Math.min(100, Math.max(0, barra))}%` }} />
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
 
 export default function ProdutosPage() {
   const router = useRouter();
@@ -16,17 +54,25 @@ export default function ProdutosPage() {
   const [canaisLista, setCanaisLista] = useState<string[]>([]);
 
   const [pesquisaGlobal, setPesquisaGlobal] = useState("");
-  const [itensPorPagina, setItemsPorPagina] = useState(10);
-  const [filtroStatusRealizados, setFiltroStatusRealizados] = useState<"todos" | "completos" | "parciais">("todos");
-  const [filtroCanalEspecifico, setFiltroCanalEspecifico] = useState<string>("todos");
 
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
-  const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
-  // Seleção própria da sub-aba Canais (SKUs já cadastrados), para Excluir / Recadastrar
-  const [canaisSel, setCanaisSel] = useState<string[]>([]);
+  const [paginaPend, setPaginaPend] = useState(1);
+  const [tamanhoPend, setTamanhoPend] = useState(10);
+
+  // Em quais canais cada SKU já está (Mapa de Cadastros + vendas) e canais que o Mapa oculta
+  const [presenca, setPresenca] = useState<Presenca>(new Map());
+  const [canaisOcultos, setCanaisOcultos] = useState<Set<string>>(new Set());
+  const [toast, setToast] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ultimaAtualizacao = useRef(0);
+  const avisar = (tipo: "ok" | "erro", texto: string) => {
+    setToast({ tipo, texto });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), tipo === "erro" ? 9000 : 5000);
+  };
 
   // Estados para a IA de Descrições
   const [modoIA, setModoIA] = useState<"gerar" | "treinar">("gerar");
@@ -61,8 +107,63 @@ export default function ProdutosPage() {
     carregarDadosIniciais();
   }, []);
 
+  // Quem sobe a planilha do Mapa de Cadastros (ou as vendas) em outra aba: ao voltar para esta, o app relê tudo sozinho
+  const chaveSkus = useMemo(() => [...dadosPendentes, ...cadastrosRealizados].map((i) => String(i.sku)).sort().join("|"), [dadosPendentes, cadastrosRealizados]);
+  const chaveRef = useRef("");
+  chaveRef.current = chaveSkus;
+  useEffect(() => {
+    const aoVoltar = () => {
+      if (document.visibilityState !== "visible" || Date.now() - ultimaAtualizacao.current < 20000) return;
+      atualizarTudo(false);
+    };
+    document.addEventListener("visibilitychange", aoVoltar);
+    window.addEventListener("focus", aoVoltar);
+    return () => { document.removeEventListener("visibilitychange", aoVoltar); window.removeEventListener("focus", aoVoltar); };
+  }, []);
+  // sempre que o conjunto de SKUs muda (importação, cadastro, recadastro...), refaz a detecção dos canais
+  useEffect(() => {
+    if (!chaveSkus) { setPresenca(new Map()); return; }
+    const t = setTimeout(() => carregarPresenca(chaveSkus.split("|")), 250);
+    return () => clearTimeout(t);
+  }, [chaveSkus]);
+
+  const carregarOcultos = async () => {
+    try {
+      const { data } = await supabase.from("config_regras_tiny").select("coluna").eq("campo", "mapa_canais_ocultos").maybeSingle();
+      setCanaisOcultos(new Set(String(data?.coluna ?? "").split(",").map((x) => x.trim()).filter(Boolean)));
+    } catch { /* sem a configuração, nenhum canal fica oculto */ }
+  };
+
+  // Um canal conta como cadastrado para o SKU quando ele está no Mapa de Cadastros (mapeamento_canais_skus) ou já vendeu no canal (vendas_canais)
+  const carregarPresenca = async (skus: string[]) => {
+    try {
+      const todas = Array.from(new Set(skus.flatMap(variantesDeSku)));
+      const linhas: { canal: any; sku: any }[] = [];
+      for (const lote of emLotes(todas, 150)) {
+        const [mapa, vendas] = await Promise.all([
+          buscarTudo("mapeamento_canais_skus", "canal, sku", (q) => q.eq("presente", true).in("sku", lote)),
+          buscarTudo("vendas_canais", "canal, sku", (q) => q.in("sku", lote)),
+        ]);
+        linhas.push(...mapa, ...vendas);
+      }
+      setPresenca(montarPresenca(linhas));
+    } catch (e) {
+      console.error("Não consegui checar o Mapa de Cadastros/vendas:", e);   // sem isso, valem só as marcações feitas à mão
+    }
+  };
+
+  const atualizarTudo = async (avisarFim: boolean) => {
+    ultimaAtualizacao.current = Date.now();
+    setLoading(true);
+    await Promise.all([carregarOcultos(), carregarPendentesDoBanco(), carregarRealizadosDoBanco()]);
+    await carregarPresenca(chaveRef.current ? chaveRef.current.split("|") : []);
+    setLoading(false);
+    if (avisarFim) avisar("ok", "Tudo atualizado.");
+  };
+
   const carregarDadosIniciais = async () => {
     setLoading(true);
+    ultimaAtualizacao.current = Date.now();
     const { data: regrasCanais } = await supabase.from("config_regras_canais").select("canal").order("id");
     let listaCanais = ["Site", "Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", "Shopee", "Magalu", "Netshoes", "Centauro", "Amazon", "Shein", "TikTok"];
     if (regrasCanais && regrasCanais.length > 0) {
@@ -70,6 +171,7 @@ export default function ProdutosPage() {
     }
     setCanaisLista(listaCanais);
 
+    await carregarOcultos();
     await carregarPendentesDoBanco();
     await carregarRealizadosDoBanco();
     setLoading(false);
@@ -485,23 +587,6 @@ export default function ProdutosPage() {
     carregarPendentesDoBanco();
   };
 
-  const excluirRealizadoGrupo = async (paiKey: string, itensDoGrupo: any[]) => {
-    if (!confirm(`ATENÇÃO: Deseja excluir o grupo Pai ${paiKey} e todas as suas variações da aba de Canais?`)) return;
-    setLoading(true);
-    try {
-      const skusParaExcluir = itensDoGrupo.map(i => i.sku);
-      await supabase.from("produtos_novos_cadastrados").delete().eq("sku_pai", paiKey);
-      for (const s of skusParaExcluir) {
-        await supabase.from("produtos_novos_cadastrados").delete().eq("sku", s);
-      }
-      await carregarRealizadosDoBanco();
-      alert(`🗑️ Grupo Pai ${paiKey} excluído com sucesso!`);
-    } catch (err: any) {
-      alert("Erro: " + err.message);
-    }
-    setLoading(false);
-  };
-
   const limparTodosPendentes = async () => {
     if (!confirm("Deseja apagar TODOS os produtos pendentes?")) return;
     await supabase.from("produtos_pendentes").delete().neq("id", 0);
@@ -548,14 +633,19 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
-  const cadastrarSelecionados = async () => {
-    if (skusSelecionados.length === 0) return;
-    if (!confirm(`Deseja cadastrar os ${skusSelecionados.length} produtos selecionados de uma vez?`)) return;
+  const cadastrarSelecionados = () =>
+    cadastrarLista(
+      dadosPendentes.filter(p => skusSelecionados.includes(p.sku)),
+      `Deseja cadastrar os ${skusSelecionados.length} produtos selecionados de uma vez?`
+    );
+
+  // cadastra uma lista de pendentes (um produto pai inteiro ou a seleção); o fluxo de cada SKU é o mesmo do botão "Cadastrar"
+  const cadastrarLista = async (itensParaCadastrar: any[], pergunta: string) => {
+    if (itensParaCadastrar.length === 0) return;
+    if (!confirm(pergunta)) return;
 
     setLoading(true);
     try {
-      const itensParaCadastrar = dadosPendentes.filter(p => skusSelecionados.includes(p.sku));
-
       for (const item of itensParaCadastrar) {
         await supabase.from("produtos_novos_cadastrados").upsert([{
           sku: item.sku,
@@ -584,10 +674,11 @@ export default function ProdutosPage() {
         await supabase.from("tabela_custos_skus").upsert({ sku: item.sku, produto: item.produto, marca: item.marca || "BEST FIT", custo_unitario: Number(item.custo || 0) }, { onConflict: "sku" });
       }
 
-      setSkusSelecionados([]);
+      const feitos = itensParaCadastrar.map(i => i.sku as string);
+      setSkusSelecionados(prev => prev.filter(s => !feitos.includes(s)));
       await carregarPendentesDoBanco();
       await carregarRealizadosDoBanco();
-      alert(`✅ ${itensParaCadastrar.length} produtos cadastrados com sucesso em massa!`);
+      alert(`✅ ${itensParaCadastrar.length} produto(s) cadastrado(s) com sucesso!`);
     } catch (err: any) {
       alert("Erro ao cadastrar em massa: " + err.message);
     }
@@ -610,155 +701,31 @@ export default function ProdutosPage() {
     }
   };
 
-  const toggleCanalPai = async (paiKey: string, canal: string, checked: boolean) => {
-    try {
-      const atualizados = [...cadastrosRealizados];
-      const alvos = atualizados.filter(i => (i.sku_pai || i.sku.substring(0, 5)) === paiKey);
+  // ---------- Pendentes: busca, agrupamento por pai e paginação ----------
+  const termo = pesquisaGlobal.trim().toLowerCase();
+  const combinaBusca = (item: any) =>
+    !termo || [item.sku, item.produto, item.sku_pai, item.marca, item.cor, item.tamanho, item.ncm, item.ean].some((v) => String(v ?? "").toLowerCase().includes(termo));
+  const pendentesFiltrados = dadosPendentes.filter(combinaBusca);
+  const gruposPend = Array.from(agruparPorPai(pendentesFiltrados).entries()).map(([pai, itens]) => ({ pai, itens }));
+  const pgPend = paginar(gruposPend.length, paginaPend, tamanhoPend);
+  const gruposPendVisiveis = gruposPend.slice(pgPend.inicio, pgPend.fim);
+  useEffect(() => { setPaginaPend(1); }, [pesquisaGlobal, tamanhoPend]);
 
-      for (const alvo of alvos) {
-        const canais = alvo.canais_enviados || {};
-        canais[canal] = checked;
-        alvo.canais_enviados = canais;
-
-        await supabase.from("produtos_novos_cadastrados").update({ canais_enviados: canais }).eq("sku", alvo.sku);
-      }
-      setCadastrosRealizados(atualizados);
-    } catch (err) {
-      console.error(err);
-    }
+  const toggleGrupoPend = (itens: any[], marcar: boolean) => {
+    const skus = itens.map((i) => i.sku as string);
+    setSkusSelecionados((prev) => (marcar ? Array.from(new Set([...prev, ...skus])) : prev.filter((s) => !skus.includes(s))));
   };
 
-  const agruparPorPai = (lista: any[]) => {
-    const grupos: { [pai: string]: any[] } = {};
-    lista.forEach(item => {
-      const pai = item.sku_pai || (item.sku.length > 5 ? item.sku.substring(0, 5) : item.sku);
-      if (!grupos[pai]) grupos[pai] = [];
-      grupos[pai].push(item);
-    });
-    return grupos;
-  };
-
-  const filtrarLista = (lista: any[]) => {
-    return lista.filter(item => {
-      const matchPesquisa = 
-        String(item.sku || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.produto || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.sku_pai || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.marca || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.cor || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.tamanho || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.ncm || "").toLowerCase().includes(pesquisaGlobal.toLowerCase()) ||
-        String(item.ean || "").toLowerCase().includes(pesquisaGlobal.toLowerCase());
-      
-      if (!matchPesquisa) return false;
-
-      if (subAba === "canais") {
-        const canais = item.canais_enviados || {};
-        const totalCanais = canaisLista.length;
-        const marcados = canaisLista.filter(c => canais[c]).length;
-        const isCompleto = totalCanais > 0 && marcados === totalCanais;
-
-        if (filtroStatusRealizados === "completos" && !isCompleto) return false;
-        if (filtroStatusRealizados === "parciais" && (isCompleto || marcados === 0)) return false;
-
-        if (filtroCanalEspecifico !== "todos" && !canais[filtroCanalEspecifico]) return false;
-      }
-
-      return true;
-    });
-  };
-
-  const pendentesFiltrados = filtrarLista(dadosPendentes);
-  const realizadosFiltrados = filtrarLista(cadastrosRealizados);
-  const gruposRealizados = agruparPorPai(realizadosFiltrados);
-  const chavesGrupos = Object.keys(gruposRealizados);
-
-  const toggleExpandirGrupo = (pai: string) => {
-    setGruposExpandidos(prev => ({ ...prev, [pai]: !prev[pai] }));
-  };
-
-  // ---- Sub-aba Canais: selecionar SKUs para Excluir / Recadastrar ----
-  // As ações valem só para o que está na tela (grupos exibidos na página atual), para nunca mexer em item escondido por filtro ou paginação.
-  const skusVisiveisCanais = chavesGrupos.slice(0, itensPorPagina).flatMap(p => gruposRealizados[p].map((i: any) => i.sku as string));
-  const selecionadosCanais = canaisSel.filter(s => skusVisiveisCanais.includes(s));
-  const noLotes = <T,>(lista: T[], tam = 100) => Array.from({ length: Math.ceil(lista.length / tam) }, (_, i) => lista.slice(i * tam, (i + 1) * tam));
-
-  const toggleSkuCanais = (sku: string) =>
-    setCanaisSel(prev => (prev.includes(sku) ? prev.filter(s => s !== sku) : [...prev, sku]));
-
-  const toggleGrupoCanais = (itens: any[], marcar: boolean) => {
-    const skus = itens.map(i => i.sku as string);
-    setCanaisSel(prev => (marcar ? Array.from(new Set([...prev, ...skus])) : prev.filter(s => !skus.includes(s))));
-  };
-
-  const toggleTodosCanais = (marcar: boolean) =>
-    setCanaisSel(prev => (marcar ? Array.from(new Set([...prev, ...skusVisiveisCanais])) : prev.filter(s => !skusVisiveisCanais.includes(s))));
-
-  const excluirSelecionadosCanais = async () => {
-    const skus = selecionadosCanais;
-    if (skus.length === 0) return;
-    if (!confirm(`Excluir ${skus.length} SKU(s) da aba de Canais?\n\nEles somem daqui junto com as marcações de canais e de clipes. (O custo e o cadastro-base do SKU não são apagados.)`)) return;
-    setLoading(true);
-    try {
-      for (const lote of noLotes(skus)) {
-        const { error } = await supabase.from("produtos_novos_cadastrados").delete().in("sku", lote);
-        if (error) throw error;
-      }
-      setCanaisSel(prev => prev.filter(s => !skus.includes(s)));
-      await carregarRealizadosDoBanco();
-      alert(`🗑️ ${skus.length} SKU(s) excluído(s) da aba de Canais.`);
-    } catch (err: any) {
-      await carregarRealizadosDoBanco();
-      alert("Erro ao excluir: " + err.message);
-    }
-    setLoading(false);
-  };
-
-  // Devolve os SKUs para os Pendentes (com todos os dados, para editar e cadastrar de novo) e tira da aba de Canais.
-  const recadastrarSelecionadosCanais = async () => {
-    const skus = selecionadosCanais;
-    if (skus.length === 0) return;
-    if (!confirm(`Recadastrar ${skus.length} SKU(s)?\n\nEles voltam para a aba Pendentes (você pode editar e cadastrar de novo) e saem de Canais. As marcações de canais e de clipes deles são zeradas.`)) return;
-    setLoading(true);
-    try {
-      const itens = cadastrosRealizados.filter(i => skus.includes(i.sku));
-      const registros = itens.map((i: any) => ({
-        sku: i.sku,
-        sku_pai: i.sku_pai || (i.sku.length > 5 ? i.sku.substring(0, 5) : i.sku),
-        produto: i.produto,
-        marca: i.marca,
-        cor: i.cor,
-        tamanho: i.tamanho,
-        ncm: i.ncm ?? null,
-        cest: i.cest ?? null,
-        ean: i.ean ?? null,
-        custo: i.custo,
-        preco_venda: i.preco_venda,
-        qtdd_ecom: i.qtdd_ecom ?? 0,
-        altura: i.altura ?? null,
-        largura: i.largura ?? null,
-        comprimento: i.comprimento ?? null,
-      }));
-      // primeiro grava nos Pendentes; só depois tira de Canais (se algo falhar, nada se perde)
-      for (const lote of noLotes(registros)) {
-        const { error } = await supabase.from("produtos_pendentes").upsert(lote, { onConflict: "sku" });
-        if (error) throw error;
-      }
-      for (const lote of noLotes(itens.map((i: any) => i.sku as string))) {
-        const { error } = await supabase.from("produtos_novos_cadastrados").delete().in("sku", lote);
-        if (error) throw error;
-      }
-      setCanaisSel(prev => prev.filter(s => !skus.includes(s)));
-      await carregarPendentesDoBanco();
-      await carregarRealizadosDoBanco();
-      alert(`🔁 ${registros.length} SKU(s) voltaram para Pendentes. É só editar (✏️) e clicar em Cadastrar de novo.`);
-    } catch (err: any) {
-      await carregarPendentesDoBanco();
-      await carregarRealizadosDoBanco();
-      alert("Erro ao recadastrar: " + err.message);
-    }
-    setLoading(false);
-  };
+  // ---------- Indicadores do topo ----------
+  const canaisAtivos = canaisLista.filter((c) => !canaisOcultos.has(normalizarNomeCanal(c)));
+  const canaisOcultosEmUso = canaisLista.length - canaisAtivos.length;
+  const gruposCadastrados = agruparPorPai(cadastrosRealizados);
+  let nGruposOk = 0;
+  gruposCadastrados.forEach((itens) => { if (statusDoGrupo(itens, canaisAtivos, presenca).completo) nGruposOk++; });
+  const nGruposFaltam = gruposCadastrados.size - nGruposOk;
+  const pctGruposOk = gruposCadastrados.size ? Math.round((nGruposOk / gruposCadastrados.size) * 100) : 0;
+  const nPaisPendentes = new Set(dadosPendentes.map((i) => paiDoItem(i))).size;
+  const recarregarListas = async () => { await carregarPendentesDoBanco(); await carregarRealizadosDoBanco(); };
 
   const realizadosFiltradosPorPeriodo = cadastrosRealizados.filter(item => {
     if (!dataInicio && !dataFim) return true;
@@ -769,66 +736,84 @@ export default function ProdutosPage() {
   });
 
   const totalSkusRealizados = realizadosFiltradosPorPeriodo.length;
+  const paisNoPeriodo = new Set(realizadosFiltradosPorPeriodo.map((i) => paiDoItem(i))).size;
+  const mesesGrafico = (() => {
+    const m = new Map<string, { skus: number; pais: Set<string> }>();
+    for (const i of realizadosFiltradosPorPeriodo) {
+      const d = new Date(i.data_cadastro || Date.now());
+      const chave = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const g = m.get(chave) || { skus: 0, pais: new Set<string>() };
+      g.skus++; g.pais.add(paiDoItem(i)); m.set(chave, g);
+    }
+    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-12)
+      .map(([mes, g]) => ({ mes, rotulo: `${mes.slice(5)}/${mes.slice(0, 4)}`, skus: g.skus, pais: g.pais.size }));
+  })();
+  const maiorMes = Math.max(1, ...mesesGrafico.map((x) => x.skus));
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
+      {loading && <div className="fixed top-0 left-0 right-0 h-1 bg-purple-500 animate-pulse z-50" data-carregando />}
+      {toast && (
+        <div
+          role="status"
+          data-toast={toast.tipo}
+          onClick={() => setToast(null)}
+          className={`fixed bottom-6 right-6 z-50 max-w-sm rounded-xl border px-4 py-3 text-sm font-bold shadow-2xl cursor-pointer ${toast.tipo === "ok" ? "bg-emerald-950 border-emerald-700 text-emerald-200" : "bg-rose-950 border-rose-700 text-rose-200"}`}
+        >
+          {toast.texto}
+        </div>
+      )}
       <div className="max-w-[98%] mx-auto space-y-6">
-        
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Novos Cadastros</h1>
-            <p className="text-sm font-medium text-slate-400">Produtos pendentes, cadastros realizados por canal, descrições com IA e produção por período</p>
+            <p className="text-sm font-medium text-slate-400">Do produto pendente ao cadastro em cada canal, num só lugar</p>
           </div>
           <Navbar />
         </div>
 
+        {/* indicadores */}
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4" data-kpis>
+          <Kpi dataKpi="pendentes" icone="📝" cor="amber" titulo="Pendentes de cadastro" valor={dadosPendentes.length} detalhe={`${nPaisPendentes} produto(s) pai aguardando`} onClick={() => setSubAba("pendentes")} />
+          <Kpi dataKpi="cadastrados" icone="📦" cor="indigo" titulo="Cadastrados" valor={cadastrosRealizados.length} detalhe={`${gruposCadastrados.size} produto(s) pai · ${canaisAtivos.length} canais`} onClick={() => setSubAba("canais")} />
+          <Kpi dataKpi="faltam" icone="🛒" cor="purple" titulo="Faltam canais" valor={nGruposFaltam} detalhe="produtos com cadastro incompleto nos canais" onClick={() => setSubAba("canais")} />
+          <Kpi dataKpi="concluidos" icone="✅" cor="emerald" titulo="100% nos canais" valor={nGruposOk} detalhe={`${pctGruposOk}% dos produtos cadastrados`} barra={pctGruposOk} onClick={() => setSubAba("canais")} />
+        </div>
+
         <div className="flex flex-wrap justify-between items-center gap-4 bg-slate-900 p-3 rounded-2xl border border-slate-800">
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 flex-wrap gap-1">
-            <button
-              onClick={() => setSubAba("pendentes")}
-              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
-                subAba === "pendentes" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              Pendentes ({dadosPendentes.length})
-            </button>
-            <button
-              onClick={() => setSubAba("canais")}
-              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
-                subAba === "canais" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              🛒 Canais ({cadastrosRealizados.length})
-            </button>
-            <button
-              onClick={() => setSubAba("periodo")}
-              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
-                subAba === "periodo" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              Período & Gráficos
-            </button>
-            <button
-              onClick={() => setSubAba("descricoes")}
-              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
-                subAba === "descricoes" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              ✨ Descrições IA
-            </button>
-            <button
-              onClick={() => setSubAba("config")}
-              className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${
-                subAba === "config" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              ⚙️ Configurações
-            </button>
+          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 flex-wrap gap-1" role="tablist">
+            {([
+              ["pendentes", `📝 Pendentes (${dadosPendentes.length})`],
+              ["canais", `🛒 Canais (${cadastrosRealizados.length})`],
+              ["periodo", "📊 Período & Gráficos"],
+              ["descricoes", "✨ Descrições IA"],
+              ["config", "⚙️ Configurações"],
+            ] as [typeof subAba, string][]).map(([id, rotulo]) => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={subAba === id}
+                data-subaba={id}
+                onClick={() => setSubAba(id)}
+                className={`px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${subAba === id ? "bg-purple-600 text-white shadow" : "text-slate-400 hover:text-white"}`}
+              >
+                {rotulo}
+              </button>
+            ))}
           </div>
 
           {/* Oculta a pesquisa global na aba de descrições */}
           {subAba !== "descricoes" && (
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => atualizarTudo(true)}
+                data-atualizar
+                title="Recarregar pendentes, cadastrados e a detecção automática de canais"
+                className="px-3 py-2 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 text-xs font-bold cursor-pointer"
+              >
+                ↻ Atualizar
+              </button>
               <input
                 type="text"
                 value={pesquisaGlobal}
@@ -841,273 +826,171 @@ export default function ProdutosPage() {
         </div>
 
         {subAba === "pendentes" && (
-          <div className="space-y-6">
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-4">
+          <div className="space-y-4" data-aba-pendentes>
+            <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 shadow-xl flex justify-between items-center flex-wrap gap-3">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase">Upload de Planilha de Produtos a Cadastrar</h3>
-                <p className="text-xs text-slate-400 mt-1">Selecione os produtos abaixo e baixe a planilha pronta para o Tiny ou cadastre em massa.</p>
+                <h3 className="text-sm font-bold text-white">Produtos a cadastrar</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Importe a planilha ou insira à mão, marque os produtos e baixe a planilha do Tiny ou cadastre direto.</p>
               </div>
               <div className="flex gap-2 flex-wrap items-center">
-                {skusSelecionados.length > 0 && (
-                  <>
-                    <button
-                      onClick={baixarPlanilhaTinySelecionados}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg cursor-pointer flex items-center gap-1.5"
-                    >
-                      📥 Baixar Planilha Tiny ({skusSelecionados.length})
-                    </button>
-                    <button
-                      onClick={cadastrarSelecionados}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg cursor-pointer"
-                    >
-                      🚀 Cadastrar Selecionados ({skusSelecionados.length})
-                    </button>
-                  </>
-                )}
-                <input
-                  type="file"
-                  accept=".xlsx, .xls, .csv"
-                  onChange={handleUploadPendentes}
-                  className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-4 file:py-1 file:px-3 file:rounded-lg file:bg-purple-600 file:text-white cursor-pointer"
-                />
-                {dadosPendentes.length > 0 && (
-                  <button onClick={limparTodosPendentes} className="bg-rose-950 hover:bg-rose-900 text-rose-300 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer">🗑️ Limpar Todos</button>
-                )}
+                <label className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow cursor-pointer">
+                  📤 Importar planilha
+                  <input type="file" accept=".xlsx, .xls, .csv" onChange={handleUploadPendentes} className="hidden" data-upload-pendentes />
+                </label>
                 <button onClick={abrirManualNovo} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer">+ Manual</button>
+                {dadosPendentes.length > 0 && (
+                  <button onClick={limparTodosPendentes} className="bg-rose-950 hover:bg-rose-900 text-rose-300 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer">🗑️ Limpar todos</button>
+                )}
               </div>
             </div>
 
-            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden p-6">
-              <div className="overflow-x-auto max-h-[550px]">
-                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead className="bg-slate-950 sticky top-0 text-slate-400 font-bold uppercase text-[10px] z-10">
-                    <tr>
-                      <th className="p-3 text-center w-10">
-                        <input
-                          type="checkbox"
-                          checked={pendentesFiltrados.length > 0 && skusSelecionados.length === pendentesFiltrados.length}
-                          onChange={toggleSelecionarTodos}
-                          className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
-                        />
-                      </th>
-                      <th className="p-3">SKU / Pai</th>
-                      <th className="p-3">Nome do Produto</th>
-                      <th className="p-3">Cor</th>
-                      <th className="p-3">Tam</th>
-                      <th className="p-3">NCM</th>
-                      <th className="p-3">CEST</th>
-                      <th className="p-3">EAN</th>
-                      <th className="p-3">Medidas A×L×C (cm)</th>
-                      <th className="p-3">Marca</th>
-                      <th className="p-3 text-center">Qtd Ecom</th>
-                      <th className="p-3 text-right">Custo</th>
-                      <th className="p-3 text-right">Preço Venda</th>
-                      <th className="p-3 text-center sticky right-0 bg-slate-950 shadow-l">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                    {pendentesFiltrados.map((item, idx) => (
-                      <tr key={idx} className="hover:bg-slate-800/40">
-                        <td className="p-3 text-center">
+            {dadosPendentes.length > 0 && (
+              <div className={`sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-2.5 shadow-lg ${skusSelecionados.length > 0 ? "bg-slate-900 border-purple-600/60" : "bg-slate-900/90 border-slate-800"}`} data-barra-selecao-pendentes>
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    data-selecionar-todos-pendentes
+                    checked={pendentesFiltrados.length > 0 && skusSelecionados.length === pendentesFiltrados.length}
+                    onChange={toggleSelecionarTodos}
+                    className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                  />
+                  Selecionar todos os {pendentesFiltrados.length} SKU(s){termo ? " da busca" : ""}
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] text-slate-400" data-qtd-selecionados-pendentes>
+                    {skusSelecionados.length > 0 ? `${skusSelecionados.length} selecionado(s)` : "Marque os produtos para baixar a planilha ou cadastrar"}
+                  </span>
+                  {skusSelecionados.length > 0 && (
+                    <>
+                      <button onClick={baixarPlanilhaTinySelecionados} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold shadow cursor-pointer flex items-center gap-1.5">
+                        📥 Baixar Planilha Tiny ({skusSelecionados.length})
+                      </button>
+                      <button onClick={cadastrarSelecionados} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold shadow cursor-pointer">
+                        🚀 Cadastrar Selecionados ({skusSelecionados.length})
+                      </button>
+                      <button onClick={() => setSkusSelecionados([])} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white cursor-pointer">Limpar seleção</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <Paginacao total={gruposPend.length} pagina={pgPend.pagina} tamanho={tamanhoPend} onPagina={setPaginaPend} onTamanho={setTamanhoPend} rotulo="produtos (SKU pai)" opcoes={[10, 20, 50]} />
+
+            {gruposPend.length === 0 ? (
+              <div className="bg-slate-900/90 border border-dashed border-slate-700 rounded-2xl p-12 text-center space-y-1" data-vazio-pendentes>
+                <p className="text-4xl">{termo ? "🔎" : "📭"}</p>
+                <p className="text-sm font-bold text-slate-200">{termo ? "Nenhum produto pendente encontrado" : "Nenhum produto pendente"}</p>
+                <p className="text-xs text-slate-500">{termo ? "Ajuste a busca." : "Importe uma planilha ou use “+ Manual” para começar."}</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {gruposPendVisiveis.map(({ pai, itens }) => {
+                  const qtdSel = itens.filter((i: any) => skusSelecionados.includes(i.sku)).length;
+                  return (
+                    <article key={pai} data-grupo-pendente={pai} className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden">
+                      <header className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-900/60 border-b border-slate-800">
+                        <div className="flex items-center gap-3 min-w-0">
                           <input
                             type="checkbox"
-                            checked={skusSelecionados.includes(item.sku)}
-                            onChange={() => toggleSelecionarSku(item.sku)}
+                            data-selecionar-grupo-pendente={pai}
+                            title="Marcar todas as variações deste pai"
+                            checked={qtdSel === itens.length}
+                            ref={(el) => { if (el) el.indeterminate = qtdSel > 0 && qtdSel < itens.length; }}
+                            onChange={(e) => toggleGrupoPend(itens, e.target.checked)}
                             className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
                           />
-                        </td>
-                        <td className="p-3 font-mono">
-                          <span className="text-purple-400 font-bold">Pai: {item.sku_pai}</span><br/>
-                          <span className="text-indigo-300">Var: {item.sku}</span>
-                        </td>
-                        <td className="p-3 text-white">{item.produto}</td>
-                        <td className="p-3 text-slate-300">{item.cor || "—"}</td>
-                        <td className="p-3 text-slate-300">{item.tamanho || "—"}</td>
-                        <td className="p-3 text-slate-300 font-mono">{item.ncm || "—"}</td>
-                        <td className="p-3 text-slate-300 font-mono">{item.cest || "—"}</td>
-                        <td className="p-3 text-slate-300 font-mono">{item.ean || "—"}</td>
-                        <td className="p-3 text-slate-300 font-mono" data-medidas>{(item.altura || item.largura || item.comprimento) ? `${item.altura ?? "—"}×${item.largura ?? "—"}×${item.comprimento ?? "—"}` : "—"}</td>
-                        <td className="p-3 text-slate-300">{item.marca || "—"}</td>
-                        <td className="p-3 text-center text-slate-300">{item.qtdd_ecom}</td>
-                        <td className="p-3 text-right font-mono text-rose-400">R$ {Number(item.custo).toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda).toFixed(2)}</td>
-                        <td className="p-3 text-center sticky right-0 bg-slate-950 shadow-l flex items-center justify-center gap-2">
-                          <button onClick={() => abrirManualEdicao(item)} data-editar-pendente className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-1 rounded text-xs font-bold cursor-pointer" title="Editar produto">✏️</button>
-                          <button onClick={() => enviarParaRealizados(item)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold cursor-pointer">Cadastrar</button>
-                          <button onClick={() => excluirPendenteIndividual(item.sku)} className="bg-rose-950 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded text-xs font-bold cursor-pointer">Excluir</button>
-                        </td>
-                      </tr>
-                    ))}
-                    {pendentesFiltrados.length === 0 && (
-                      <tr>
-                        <td colSpan={14} className="p-8 text-center text-slate-500">Nenhum produto pendente encontrado.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                          <span className="font-mono text-xs font-black text-purple-300 bg-purple-950/60 border border-purple-800/50 px-2 py-0.5 rounded-md">{pai}</span>
+                          <div className="min-w-0">
+                            <h3 className="text-sm font-bold text-white truncate max-w-[34rem]" title={itens[0]?.produto}>{itens[0]?.produto || "Produto sem nome"}</h3>
+                            <p className="text-[11px] text-slate-500">{itens.length} variaç{itens.length === 1 ? "ão" : "ões"} · {itens[0]?.marca || "—"}</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => cadastrarLista(itens, `Cadastrar o produto ${pai} com ${itens.length} variação(ões)?`)}
+                          data-cadastrar-grupo={pai}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold shadow cursor-pointer"
+                        >
+                          🚀 Cadastrar produto ({itens.length})
+                        </button>
+                      </header>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs whitespace-nowrap">
+                          <thead className="text-slate-400 font-bold uppercase text-[10px]">
+                            <tr className="border-b border-slate-900">
+                              <th className="p-2.5 w-8" />
+                              <th className="p-2.5">SKU</th>
+                              <th className="p-2.5">Cor</th>
+                              <th className="p-2.5">Tam</th>
+                              <th className="p-2.5">EAN</th>
+                              <th className="p-2.5">NCM / CEST</th>
+                              <th className="p-2.5">Medidas A×L×C (cm)</th>
+                              <th className="p-2.5 text-center">Qtd Ecom</th>
+                              <th className="p-2.5 text-right">Custo</th>
+                              <th className="p-2.5 text-right">PDV</th>
+                              <th className="p-2.5 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-900/70">
+                            {itens.map((item: any) => {
+                              const vende = canaisDoSku(item.sku, canaisAtivos, presenca);
+                              return (
+                                <tr key={item.sku} className={skusSelecionados.includes(item.sku) ? "bg-purple-950/20" : "hover:bg-slate-900/40"}>
+                                  <td className="p-2.5 text-center">
+                                    <input type="checkbox" checked={skusSelecionados.includes(item.sku)} onChange={() => toggleSelecionarSku(item.sku)} className="w-4 h-4 accent-purple-600 rounded cursor-pointer" />
+                                  </td>
+                                  <td className="p-2.5 font-mono font-bold text-indigo-300">
+                                    {item.sku}
+                                    {vende.length > 0 && (
+                                      <span data-ja-vende title={`Este SKU já aparece no Mapa de Cadastros/vendas em: ${vende.join(", ")}`} className="ml-2 align-middle text-[9px] font-bold uppercase bg-amber-950/50 text-amber-300 border border-amber-700/40 px-1.5 py-0.5 rounded">
+                                        já vende em {vende.length} canal(is)
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5 text-slate-300">{item.cor || "—"}</td>
+                                  <td className="p-2.5 text-slate-300">{item.tamanho || "—"}</td>
+                                  <td className="p-2.5 text-slate-400 font-mono">{item.ean || "—"}</td>
+                                  <td className="p-2.5 text-slate-400 font-mono">{item.ncm || "—"}{item.cest ? <span className="text-slate-600"> / {item.cest}</span> : null}</td>
+                                  <td className="p-2.5 text-slate-300 font-mono" data-medidas>{(item.altura || item.largura || item.comprimento) ? `${item.altura ?? "—"}×${item.largura ?? "—"}×${item.comprimento ?? "—"}` : "—"}</td>
+                                  <td className="p-2.5 text-center text-slate-300">{item.qtdd_ecom ?? 0}</td>
+                                  <td className="p-2.5 text-right font-mono text-rose-400">R$ {Number(item.custo || 0).toFixed(2)}</td>
+                                  <td className="p-2.5 text-right font-mono text-emerald-400">R$ {Number(item.preco_venda || 0).toFixed(2)}</td>
+                                  <td className="p-2.5">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button onClick={() => abrirManualEdicao(item)} data-editar-pendente className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-1 rounded text-xs font-bold cursor-pointer" title="Editar produto">✏️</button>
+                                      <button onClick={() => enviarParaRealizados(item)} data-cadastrar-sku={item.sku} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold cursor-pointer">Cadastrar</button>
+                                      <button onClick={() => excluirPendenteIndividual(item.sku)} className="bg-rose-950 hover:bg-rose-900 text-rose-400 px-2 py-1 rounded text-xs font-bold cursor-pointer">Excluir</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
-            </div>
+            )}
+
+            <Paginacao total={gruposPend.length} pagina={pgPend.pagina} tamanho={tamanhoPend} onPagina={setPaginaPend} onTamanho={setTamanhoPend} rotulo="produtos (SKU pai)" opcoes={[10, 20, 50]} />
           </div>
         )}
 
         {subAba === "canais" && (
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
-            <div className="flex flex-wrap justify-between items-center gap-4 border-b border-slate-800 pb-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-xs font-bold text-slate-400 uppercase">Filtros:</span>
-                <select value={filtroStatusRealizados} onChange={(e) => setFiltroStatusRealizados(e.target.value as any)} className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer">
-                  <option value="todos">Todos os Status</option>
-                  <option value="completos">100% Concluídos</option>
-                  <option value="parciais">Parcialmente Concluídos</option>
-                </select>
-                <select value={filtroCanalEspecifico} onChange={(e) => setFiltroCanalEspecifico(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer">
-                  <option value="todos">Todos os Canais</option>
-                  {canaisLista.map((c, i) => <option key={i} value={c}>{c}</option>)}
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-slate-400">Exibir por página:</span>
-                <select value={itensPorPagina} onChange={(e) => setItemsPorPagina(Number(e.target.value))} className="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1 text-white outline-none cursor-pointer">
-                  <option value={5}>5 grupos</option>
-                  <option value={10}>10 grupos</option>
-                  <option value={20}>20 grupos</option>
-                  <option value={50}>50 grupos</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5" data-barra-selecao-canais>
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  data-selecionar-todos-canais
-                  checked={skusVisiveisCanais.length > 0 && selecionadosCanais.length === skusVisiveisCanais.length}
-                  onChange={(e) => toggleTodosCanais(e.target.checked)}
-                  className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
-                />
-                Selecionar todos os SKUs exibidos
-              </label>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-slate-400" data-qtd-selecionados-canais>
-                  {selecionadosCanais.length > 0 ? `${selecionadosCanais.length} SKU(s) selecionado(s)` : "Marque os itens para excluir ou recadastrar"}
-                </span>
-                <button
-                  onClick={recadastrarSelecionadosCanais}
-                  disabled={selecionadosCanais.length === 0 || loading}
-                  data-recadastrar-canais
-                  title="Devolve os SKUs marcados para a aba Pendentes, para editar e cadastrar de novo"
-                  className="bg-amber-600 hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
-                >
-                  🔁 Recadastrar ({selecionadosCanais.length})
-                </button>
-                <button
-                  onClick={excluirSelecionadosCanais}
-                  disabled={selecionadosCanais.length === 0 || loading}
-                  data-excluir-canais
-                  className="bg-rose-950/80 hover:bg-rose-900 disabled:opacity-30 disabled:cursor-not-allowed text-rose-300 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
-                >
-                  🗑️ Excluir ({selecionadosCanais.length})
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-6">
-              {chavesGrupos.slice(0, itensPorPagina).map((paiKey, gIdx) => {
-                const itensDoGrupo = gruposRealizados[paiKey];
-                const expandido = Boolean(gruposExpandidos[paiKey]);
-                const qtdMarcadosGrupo = itensDoGrupo.filter((i: any) => canaisSel.includes(i.sku)).length;
-
-                return (
-                  <div key={gIdx} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3" data-grupo-canais={paiKey}>
-                    <div className="flex justify-between items-center border-b border-slate-900 pb-2">
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          data-selecionar-grupo={paiKey}
-                          title="Marcar todas as variações deste pai"
-                          checked={qtdMarcadosGrupo === itensDoGrupo.length}
-                          ref={(el) => { if (el) el.indeterminate = qtdMarcadosGrupo > 0 && qtdMarcadosGrupo < itensDoGrupo.length; }}
-                          onChange={(e) => toggleGrupoCanais(itensDoGrupo, e.target.checked)}
-                          className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
-                        />
-                        <button
-                          onClick={() => toggleExpandirGrupo(paiKey)}
-                          className="flex items-center gap-2 text-xs font-mono font-black text-purple-400 uppercase cursor-pointer hover:text-purple-300"
-                        >
-                          <span className={`transform transition-transform ${expandido ? "rotate-180" : ""}`}>▼</span>
-                          SKU PAI: {paiKey} ({itensDoGrupo.length} variações)
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <span className="text-[10px] text-slate-500">Cadastrado em: {new Date(itensDoGrupo[0].data_cadastro || Date.now()).toLocaleDateString("pt-BR")}</span>
-                        <button
-                          onClick={() => excluirRealizadoGrupo(paiKey, itensDoGrupo)}
-                          className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer"
-                        >
-                          🗑️ Excluir Grupo
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead>
-                          <tr className="text-[10px] text-slate-400 uppercase border-b border-slate-900">
-                            <th className="p-2">SKU / Produto</th>
-                            {canaisLista.map((canal, cIdx) => (
-                              <th key={cIdx} className="p-2 text-center text-[9px]">{canal}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-900/50">
-                          <tr className="bg-purple-950/20 font-bold">
-                            <td className="p-2 text-purple-300 font-mono">Pai: {paiKey}</td>
-                            {canaisLista.map((canal, cIdx) => {
-                              const todosMarcados = itensDoGrupo.every(i => (i.canais_enviados || {})[canal]);
-
-                              return (
-                                <td key={cIdx} className="p-2 text-center">
-                                  <div className="flex flex-col items-center gap-1">
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-[9px] text-slate-400 w-10 text-right">Cad:</span>
-                                      <input
-                                        type="checkbox"
-                                        checked={todosMarcados}
-                                        onChange={(e) => toggleCanalPai(paiKey, canal, e.target.checked)}
-                                        className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
-                                      />
-                                    </div>
-                                  </div>
-                                </td>
-                              );
-                            })}
-                          </tr>
-
-                          {expandido && itensDoGrupo.map((item, vIdx) => (
-                            <tr key={vIdx} className="bg-slate-900/20 text-slate-400">
-                              <td className="p-2 pl-6" colSpan={1 + canaisLista.length}>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    data-selecionar-sku={item.sku}
-                                    checked={canaisSel.includes(item.sku)}
-                                    onChange={() => toggleSkuCanais(item.sku)}
-                                    className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
-                                  />
-                                  <span><span className="font-mono text-indigo-300 font-bold">↳ {item.sku}</span> — {item.produto} (Cor: {item.cor || "—"}, Tam: {item.tamanho || "—"})</span>
-                                </label>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <CadastrosCanais
+            cadastros={cadastrosRealizados}
+            setCadastros={setCadastrosRealizados}
+            canais={canaisAtivos}
+            presenca={presenca}
+            pesquisa={pesquisaGlobal}
+            canaisOcultos={canaisOcultosEmUso}
+            recarregar={recarregarListas}
+            avisar={avisar}
+            ocupado={loading}
+            setOcupado={setLoading}
+          />
         )}
 
         {subAba === "descricoes" && (
@@ -1285,16 +1168,41 @@ export default function ProdutosPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
-                <span className="text-xs font-bold text-slate-400 uppercase">Cadastros Realizados</span>
-                <p className="text-3xl font-black text-emerald-400 mt-2">{totalSkusRealizados}</p>
+                <span className="text-xs font-bold text-slate-400 uppercase">SKUs cadastrados</span>
+                <p className="text-3xl font-black text-emerald-400 mt-2" data-total-cadastrados>{totalSkusRealizados}</p>
+                <span className="text-[10px] text-slate-500 mt-1 block">{paisNoPeriodo} produto(s) pai</span>
               </div>
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
-                <span className="text-xs font-bold text-slate-400 uppercase">Produtos Pendentes</span>
+                <span className="text-xs font-bold text-slate-400 uppercase">Produtos pendentes</span>
                 <p className="text-3xl font-black text-amber-400 mt-2">{dadosPendentes.length}</p>
                 <span className="text-[10px] text-slate-500 mt-1 block">Faltam cadastrar</span>
               </div>
+              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
+                <span className="text-xs font-bold text-slate-400 uppercase">Concluídos nos canais</span>
+                <p className="text-3xl font-black text-purple-400 mt-2">{pctGruposOk}%</p>
+                <span className="text-[10px] text-slate-500 mt-1 block">{nGruposOk} de {gruposCadastrados.size} produtos</span>
+              </div>
+            </div>
+
+            <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-3" data-grafico-meses>
+              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">SKUs cadastrados por mês</h4>
+              {mesesGrafico.length === 0 ? (
+                <p className="text-xs text-slate-500">Nenhum cadastro no período.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {mesesGrafico.map((m) => (
+                    <li key={m.mes} className="flex items-center gap-3 text-xs" data-mes={m.mes}>
+                      <span className="w-16 text-slate-400 font-mono">{m.rotulo}</span>
+                      <div className="flex-1 h-5 rounded-md bg-slate-900 overflow-hidden">
+                        <div className="h-full rounded-md bg-gradient-to-r from-purple-600 to-indigo-500" style={{ width: `${Math.max(4, (m.skus / maiorMes) * 100)}%` }} />
+                      </div>
+                      <span className="w-32 text-right text-slate-300 tabular-nums"><b className="text-white">{m.skus}</b> SKU · {m.pais} pai</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         )}
