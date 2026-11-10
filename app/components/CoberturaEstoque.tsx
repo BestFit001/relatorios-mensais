@@ -94,7 +94,7 @@ export default function CoberturaEstoque({
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroCurva, setFiltroCurva] = useState("TODAS");
   const [filtroRetorno, setFiltroRetorno] = useState("TODOS");
-  const [ordem, setOrdem] = useState<"FAT" | "QTD" | "QTD_ASC" | "VALOR" | "PDV" | "COBERTURA" | "MARGEM" | "MARGEM_ASC">("FAT");
+  const [ordem, setOrdem] = useState<"FAT" | "QTD" | "QTD_ASC" | "VALOR" | "PDV" | "COBERTURA" | "MARGEM" | "MARGEM_ASC" | "LIQUIDEZ" | "LIQUIDEZ_ASC">("FAT");
   const [margemMin, setMargemMin] = useState("");
   const [margemMax, setMargemMax] = useState("");
   const [filtroCusto, setFiltroCusto] = useState<"TODOS" | "COM" | "SEM">("TODOS");
@@ -188,6 +188,8 @@ export default function CoberturaEstoque({
     else if (ordem === "VALOR") r = [...r].sort((a, b) => b.revenue - a.revenue);
     else if (ordem === "PDV") r = [...r].sort((a, b) => pdvUn(b) - pdvUn(a) || b.revenue - a.revenue);
     else if (ordem === "MARGEM") r = [...r].sort((a, b) => (b.margem ?? -Infinity) - (a.margem ?? -Infinity) || b.revenue - a.revenue);   // sem custo vai para o fim
+    else if (ordem === "LIQUIDEZ") r = [...r].sort((a, b) => (b.semCusto ? -Infinity : b.lucro) - (a.semCusto ? -Infinity : a.lucro) || b.revenue - a.revenue);
+    else if (ordem === "LIQUIDEZ_ASC") r = [...r].sort((a, b) => (a.semCusto ? Infinity : a.lucro) - (b.semCusto ? Infinity : b.lucro) || b.revenue - a.revenue);
     else if (ordem === "MARGEM_ASC") r = [...r].sort((a, b) => (a.margem ?? Infinity) - (b.margem ?? Infinity) || b.revenue - a.revenue);
     return r;
   }, [dados, filtroStatus, filtroCurva, filtroRetorno, ordem, busca, margemMin, margemMax, filtroCusto]);
@@ -307,6 +309,12 @@ export default function CoberturaEstoque({
           {d.margem === null ? "—" : `${n1(d.margem)}%`}
         </td>
       );
+      case "liquidez": return (
+        <td key={id} data-col="liquidez" className={`py-2 px-3 text-right font-mono whitespace-nowrap font-bold ${d.semCusto ? "text-slate-600" : d.lucro < 0 ? "text-rose-400" : "text-emerald-400"}`}
+          title={d.semCusto ? "Sem custo cadastrado: liquidez não calculada" : `Lucro real no período (repasse − custo − extras − devoluções). Por unidade: R$ ${brl(d.qtd > 0 ? d.lucro / d.qtd : 0)}`}>
+          {d.semCusto ? "—" : `R$ ${brl(d.lucro)}`}
+        </td>
+      );
       case "media_diaria": return <td key={id} data-col="media_diaria" className="py-2 px-3 text-right text-slate-300">{n2(d.mediaDiaria)}</td>;
       case "estoque": return <td key={id} data-col="estoque" className={`py-2 px-3 text-right font-bold ${d.temCadastro ? "text-slate-100" : "text-slate-600"}`} title={d.temCadastro ? "" : "SKU não encontrado na base do Tiny"}>{d.estoque}</td>;
       case "cobertura_dias": return (
@@ -326,7 +334,7 @@ export default function CoberturaEstoque({
     }
   };
 
-  const cabecalhoAlinhado = (id: string) => (["vendas", "valor", "margem", "pct_individual", "pct_acumulado", "media_diaria", "estoque", "cobertura_dias", "cobertura_meses"].includes(id) ? "text-right" : id === "classificacao" ? "text-center" : "text-left");
+  const cabecalhoAlinhado = (id: string) => (["vendas", "valor", "margem", "liquidez", "pct_individual", "pct_acumulado", "media_diaria", "estoque", "cobertura_dias", "cobertura_meses"].includes(id) ? "text-right" : id === "classificacao" ? "text-center" : "text-left");
 
   return (
     <div className="space-y-5" data-cobertura>
@@ -352,6 +360,7 @@ export default function CoberturaEstoque({
           <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800" data-resumo-margem>
             <span className="text-[10px] font-bold text-slate-400 uppercase">Margem média vendida</span>
             <h3 className={`text-xl font-black ${totais.margem === null ? "text-slate-500" : totais.margem < 0 ? "text-rose-400" : "text-emerald-400"}`} data-total-margem>{totais.margem === null ? "—" : `${n1(totais.margem)}%`}</h3>
+            {!oculta("liquidez") && <p className={`text-xs font-black ${totais.lucroCC < 0 ? "text-rose-400" : "text-emerald-400"}`} data-total-liquidez>Liquidez: R$ {brl(totais.lucroCC)}</p>}
             <p className="text-[9px] text-slate-500">{totais.semCustoQtd > 0 ? `${totais.semCustoQtd} SKU(s) sem custo fora da conta` : "lucro real ÷ faturamento"}</p>
           </div>
         )}
@@ -419,6 +428,8 @@ export default function CoberturaEstoque({
             <option value="COBERTURA">Ordem: menor cobertura primeiro</option>
             <option value="MARGEM">Ordem: maior margem</option>
             <option value="MARGEM_ASC">Ordem: menor margem</option>
+            <option value="LIQUIDEZ">Ordem: maior liquidez (R$)</option>
+            <option value="LIQUIDEZ_ASC">Ordem: menor liquidez (R$)</option>
           </select>
         </div>
       </div>

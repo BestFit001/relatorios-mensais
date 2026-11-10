@@ -33,6 +33,7 @@ export const COLUNAS_COBERTURA: { id: string; nome: string }[] = [
   { id: "pct_acumulado", nome: "% Acumulado" },
   { id: "classificacao", nome: "Classificação" },
   { id: "margem", nome: "Margem média vendida" },
+  { id: "liquidez", nome: "Liquidez (R$)" },
   { id: "media_diaria", nome: "Média Diária Vendas" },
   { id: "estoque", nome: "Estoque Atual Total - GERAL" },
   { id: "cobertura_dias", nome: "Cobertura (dias)" },
