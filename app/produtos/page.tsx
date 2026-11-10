@@ -25,6 +25,8 @@ export default function ProdutosPage() {
 
   const [gruposExpandidos, setGruposExpandidos] = useState<{ [pai: string]: boolean }>({});
   const [skusSelecionados, setSkusSelecionados] = useState<string[]>([]);
+  // Seleção própria da sub-aba Canais (SKUs já cadastrados), para Excluir / Recadastrar
+  const [canaisSel, setCanaisSel] = useState<string[]>([]);
 
   // Estados para a IA de Descrições
   const [modoIA, setModoIA] = useState<"gerar" | "treinar">("gerar");
@@ -522,6 +524,10 @@ export default function ProdutosPage() {
         altura: item.altura ?? null,
         largura: item.largura ?? null,
         comprimento: item.comprimento ?? null,
+        ncm: item.ncm ?? null,
+        cest: item.cest ?? null,
+        ean: item.ean ?? null,
+        qtdd_ecom: item.qtdd_ecom ?? 0,
         data_cadastro: new Date().toISOString(),
         canais_enviados: {},
         clipes_enviados: {}
@@ -563,6 +569,10 @@ export default function ProdutosPage() {
           altura: item.altura ?? null,
           largura: item.largura ?? null,
           comprimento: item.comprimento ?? null,
+          ncm: item.ncm ?? null,
+          cest: item.cest ?? null,
+          ean: item.ean ?? null,
+          qtdd_ecom: item.qtdd_ecom ?? 0,
           data_cadastro: new Date().toISOString(),
           canais_enviados: {},
           clipes_enviados: {}
@@ -665,6 +675,89 @@ export default function ProdutosPage() {
 
   const toggleExpandirGrupo = (pai: string) => {
     setGruposExpandidos(prev => ({ ...prev, [pai]: !prev[pai] }));
+  };
+
+  // ---- Sub-aba Canais: selecionar SKUs para Excluir / Recadastrar ----
+  // As ações valem só para o que está na tela (grupos exibidos na página atual), para nunca mexer em item escondido por filtro ou paginação.
+  const skusVisiveisCanais = chavesGrupos.slice(0, itensPorPagina).flatMap(p => gruposRealizados[p].map((i: any) => i.sku as string));
+  const selecionadosCanais = canaisSel.filter(s => skusVisiveisCanais.includes(s));
+  const noLotes = <T,>(lista: T[], tam = 100) => Array.from({ length: Math.ceil(lista.length / tam) }, (_, i) => lista.slice(i * tam, (i + 1) * tam));
+
+  const toggleSkuCanais = (sku: string) =>
+    setCanaisSel(prev => (prev.includes(sku) ? prev.filter(s => s !== sku) : [...prev, sku]));
+
+  const toggleGrupoCanais = (itens: any[], marcar: boolean) => {
+    const skus = itens.map(i => i.sku as string);
+    setCanaisSel(prev => (marcar ? Array.from(new Set([...prev, ...skus])) : prev.filter(s => !skus.includes(s))));
+  };
+
+  const toggleTodosCanais = (marcar: boolean) =>
+    setCanaisSel(prev => (marcar ? Array.from(new Set([...prev, ...skusVisiveisCanais])) : prev.filter(s => !skusVisiveisCanais.includes(s))));
+
+  const excluirSelecionadosCanais = async () => {
+    const skus = selecionadosCanais;
+    if (skus.length === 0) return;
+    if (!confirm(`Excluir ${skus.length} SKU(s) da aba de Canais?\n\nEles somem daqui junto com as marcações de canais e de clipes. (O custo e o cadastro-base do SKU não são apagados.)`)) return;
+    setLoading(true);
+    try {
+      for (const lote of noLotes(skus)) {
+        const { error } = await supabase.from("produtos_novos_cadastrados").delete().in("sku", lote);
+        if (error) throw error;
+      }
+      setCanaisSel(prev => prev.filter(s => !skus.includes(s)));
+      await carregarRealizadosDoBanco();
+      alert(`🗑️ ${skus.length} SKU(s) excluído(s) da aba de Canais.`);
+    } catch (err: any) {
+      await carregarRealizadosDoBanco();
+      alert("Erro ao excluir: " + err.message);
+    }
+    setLoading(false);
+  };
+
+  // Devolve os SKUs para os Pendentes (com todos os dados, para editar e cadastrar de novo) e tira da aba de Canais.
+  const recadastrarSelecionadosCanais = async () => {
+    const skus = selecionadosCanais;
+    if (skus.length === 0) return;
+    if (!confirm(`Recadastrar ${skus.length} SKU(s)?\n\nEles voltam para a aba Pendentes (você pode editar e cadastrar de novo) e saem de Canais. As marcações de canais e de clipes deles são zeradas.`)) return;
+    setLoading(true);
+    try {
+      const itens = cadastrosRealizados.filter(i => skus.includes(i.sku));
+      const registros = itens.map((i: any) => ({
+        sku: i.sku,
+        sku_pai: i.sku_pai || (i.sku.length > 5 ? i.sku.substring(0, 5) : i.sku),
+        produto: i.produto,
+        marca: i.marca,
+        cor: i.cor,
+        tamanho: i.tamanho,
+        ncm: i.ncm ?? null,
+        cest: i.cest ?? null,
+        ean: i.ean ?? null,
+        custo: i.custo,
+        preco_venda: i.preco_venda,
+        qtdd_ecom: i.qtdd_ecom ?? 0,
+        altura: i.altura ?? null,
+        largura: i.largura ?? null,
+        comprimento: i.comprimento ?? null,
+      }));
+      // primeiro grava nos Pendentes; só depois tira de Canais (se algo falhar, nada se perde)
+      for (const lote of noLotes(registros)) {
+        const { error } = await supabase.from("produtos_pendentes").upsert(lote, { onConflict: "sku" });
+        if (error) throw error;
+      }
+      for (const lote of noLotes(itens.map((i: any) => i.sku as string))) {
+        const { error } = await supabase.from("produtos_novos_cadastrados").delete().in("sku", lote);
+        if (error) throw error;
+      }
+      setCanaisSel(prev => prev.filter(s => !skus.includes(s)));
+      await carregarPendentesDoBanco();
+      await carregarRealizadosDoBanco();
+      alert(`🔁 ${registros.length} SKU(s) voltaram para Pendentes. É só editar (✏️) e clicar em Cadastrar de novo.`);
+    } catch (err: any) {
+      await carregarPendentesDoBanco();
+      await carregarRealizadosDoBanco();
+      alert("Erro ao recadastrar: " + err.message);
+    }
+    setLoading(false);
   };
 
   const realizadosFiltradosPorPeriodo = cadastrosRealizados.filter(item => {
@@ -884,21 +977,68 @@ export default function ProdutosPage() {
               </div>
             </div>
 
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5" data-barra-selecao-canais>
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  data-selecionar-todos-canais
+                  checked={skusVisiveisCanais.length > 0 && selecionadosCanais.length === skusVisiveisCanais.length}
+                  onChange={(e) => toggleTodosCanais(e.target.checked)}
+                  className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                />
+                Selecionar todos os SKUs exibidos
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-400" data-qtd-selecionados-canais>
+                  {selecionadosCanais.length > 0 ? `${selecionadosCanais.length} SKU(s) selecionado(s)` : "Marque os itens para excluir ou recadastrar"}
+                </span>
+                <button
+                  onClick={recadastrarSelecionadosCanais}
+                  disabled={selecionadosCanais.length === 0 || loading}
+                  data-recadastrar-canais
+                  title="Devolve os SKUs marcados para a aba Pendentes, para editar e cadastrar de novo"
+                  className="bg-amber-600 hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
+                >
+                  🔁 Recadastrar ({selecionadosCanais.length})
+                </button>
+                <button
+                  onClick={excluirSelecionadosCanais}
+                  disabled={selecionadosCanais.length === 0 || loading}
+                  data-excluir-canais
+                  className="bg-rose-950/80 hover:bg-rose-900 disabled:opacity-30 disabled:cursor-not-allowed text-rose-300 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
+                >
+                  🗑️ Excluir ({selecionadosCanais.length})
+                </button>
+              </div>
+            </div>
+
             <div className="space-y-6">
               {chavesGrupos.slice(0, itensPorPagina).map((paiKey, gIdx) => {
                 const itensDoGrupo = gruposRealizados[paiKey];
                 const expandido = Boolean(gruposExpandidos[paiKey]);
+                const qtdMarcadosGrupo = itensDoGrupo.filter((i: any) => canaisSel.includes(i.sku)).length;
 
                 return (
-                  <div key={gIdx} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+                  <div key={gIdx} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3" data-grupo-canais={paiKey}>
                     <div className="flex justify-between items-center border-b border-slate-900 pb-2">
-                      <button
-                        onClick={() => toggleExpandirGrupo(paiKey)}
-                        className="flex items-center gap-2 text-xs font-mono font-black text-purple-400 uppercase cursor-pointer hover:text-purple-300"
-                      >
-                        <span className={`transform transition-transform ${expandido ? "rotate-180" : ""}`}>▼</span>
-                        SKU PAI: {paiKey} ({itensDoGrupo.length} variações)
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          data-selecionar-grupo={paiKey}
+                          title="Marcar todas as variações deste pai"
+                          checked={qtdMarcadosGrupo === itensDoGrupo.length}
+                          ref={(el) => { if (el) el.indeterminate = qtdMarcadosGrupo > 0 && qtdMarcadosGrupo < itensDoGrupo.length; }}
+                          onChange={(e) => toggleGrupoCanais(itensDoGrupo, e.target.checked)}
+                          className="w-4 h-4 accent-purple-600 rounded cursor-pointer"
+                        />
+                        <button
+                          onClick={() => toggleExpandirGrupo(paiKey)}
+                          className="flex items-center gap-2 text-xs font-mono font-black text-purple-400 uppercase cursor-pointer hover:text-purple-300"
+                        >
+                          <span className={`transform transition-transform ${expandido ? "rotate-180" : ""}`}>▼</span>
+                          SKU PAI: {paiKey} ({itensDoGrupo.length} variações)
+                        </button>
+                      </div>
                       <div className="flex items-center gap-4">
                         <span className="text-[10px] text-slate-500">Cadastrado em: {new Date(itensDoGrupo[0].data_cadastro || Date.now()).toLocaleDateString("pt-BR")}</span>
                         <button
@@ -947,7 +1087,16 @@ export default function ProdutosPage() {
                           {expandido && itensDoGrupo.map((item, vIdx) => (
                             <tr key={vIdx} className="bg-slate-900/20 text-slate-400">
                               <td className="p-2 pl-6" colSpan={1 + canaisLista.length}>
-                                <span className="font-mono text-indigo-300 font-bold">↳ {item.sku}</span> — {item.produto} (Cor: {item.cor || "—"}, Tam: {item.tamanho || "—"})
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    data-selecionar-sku={item.sku}
+                                    checked={canaisSel.includes(item.sku)}
+                                    onChange={() => toggleSkuCanais(item.sku)}
+                                    className="w-3.5 h-3.5 accent-purple-600 rounded cursor-pointer"
+                                  />
+                                  <span><span className="font-mono text-indigo-300 font-bold">↳ {item.sku}</span> — {item.produto} (Cor: {item.cor || "—"}, Tam: {item.tamanho || "—"})</span>
+                                </label>
                               </td>
                             </tr>
                           ))}
