@@ -4,21 +4,24 @@ import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import ConcorrentesPainel from "../components/ConcorrentesPainel";
 import PesquisaImagem from "../components/concorrentes/PesquisaImagem";
+import BuscaFotos from "../components/concorrentes/BuscaFotos";
 import AnaliseMercadoPainel from "../components/AnaliseMercadoPainel";
 
-type Aba = "mercadolivre" | "shopee" | "amazon" | "pesquisa-imagem" | "analise-mercado";
+type Aba = "mercadolivre" | "shopee" | "amazon" | "pesquisa-imagem" | "buscar-fotos" | "analise-mercado";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "mercadolivre", rotulo: "🛒 Mercado Livre" },
   { id: "shopee", rotulo: "🧡 Shopee" },
   { id: "amazon", rotulo: "📦 Amazon" },
   { id: "pesquisa-imagem", rotulo: "🔎 Pesquisa de preços" },
+  { id: "buscar-fotos", rotulo: "📷 Buscar fotos" },
   { id: "analise-mercado", rotulo: "📊 Análise de mercado" },
 ];
 const DESCRICAO: Record<Aba, string> = {
   mercadolivre: "Acompanhe todo dia o preço e as vendas dos anúncios do Mercado Livre e veja as palavras-chave que os concorrentes mais usam.",
   shopee: "Acompanhe os preços e as vendas dos produtos da Shopee: o seu navegador lê a página e o painel guarda o histórico.",
   amazon: "Acompanhe os preços, as compras do mês e o Mais vendidos da Amazon: o seu navegador lê a página e o painel guarda o histórico.",
-  "pesquisa-imagem": "Informe o SKU, o seu PDV e a foto do produto: veja o preço do item em cada canal que o Google encontrar e quanto você lucraria.",
+  "pesquisa-imagem": "Informe o SKU, o seu PDV e as palavras da busca: veja o preço do item em cada canal que o Google Shopping encontrar e quanto você lucraria.",
+  "buscar-fotos": "Envie uma foto de referência: o Google Cloud Vision acha o produto na internet e você baixa as fotos de maior resolução.",
   "analise-mercado": "Compare preços da concorrência e descubra o custo ideal ou o preço de venda indicado, com as regras de cada canal.",
 };
 
@@ -63,6 +66,7 @@ export default function ConcorrentesPage() {
 
         {usuario !== null && (
           aba === "pesquisa-imagem" ? <PesquisaImagem />
+            : aba === "buscar-fotos" ? <BuscaFotos usuario={usuario} />
             : aba === "analise-mercado" ? <AnaliseMercadoPainel usuario={usuario} />
               : <ConcorrentesPainel key={aba} canal={aba} />
         )}

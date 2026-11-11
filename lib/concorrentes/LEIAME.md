@@ -94,3 +94,11 @@ O Mercado Livre não divulga a venda diária de terceiros: só o total acumulado
 
 ## Vídeos "Com problemas" → Correções (fora do monitor, mas relacionado ao Início)
 Veja `lib/videoCorrecoes.ts` e a migration `20261111180000_video_correcoes.sql`: tabelas `video_correcoes` (um registro por envio) e `video_correcoes_canais` (um por canal que não estava marcado). O produto some de Vídeos enquanto a correção está `aberta`.
+
+## Buscar fotos (Google Cloud Vision)
+Aba **📷 Buscar fotos** de `/concorrentes`. Código em `lib/fotos/` e `app/api/fotos/{buscar,baixar}`.
+- A foto de referência é reduzida no navegador (até 1600 px, JPEG) e enviada a `POST /api/fotos/buscar`, que chama o Vision `WEB_DETECTION` (1 uso da cota por busca) e devolve as imagens **iguais / parciais / parecidas**.
+- O servidor lê só o começo de cada imagem (128 KB) para descobrir largura e altura (`lib/fotos/imagem.ts`), descarta ícones (< 100 px), HTML e links quebrados, e ordena da maior resolução para a menor.
+- `POST /api/fotos/baixar` entrega o arquivo original (o navegador não consegue por CORS); o ZIP é montado no navegador (JSZip).
+- **Segurança (as URLs vêm da internet):** só https público, porta 443, sem usuário/senha; o DNS é conferido na hora de conectar e cada redirecionamento é refeito (`lib/fotos/seguranca.ts`); mesma origem obrigatória; limite de 15 MB. `FOTOS_PERMITIR_REDE_LOCAL` e `GOOGLE_VISION_URL` só valem fora da Vercel (testes).
+- **Custo:** `GOOGLE_VISION_API_KEY` (Vercel) é obrigatória. Cada busca é registrada em `fotos_buscas`; o limite mensal padrão é 950 (`FOTOS_LIMITE_MES`) para ficar abaixo dos 1.000 gratuitos. Erros do Google não contam.
