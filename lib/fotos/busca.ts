@@ -1,6 +1,7 @@
 // Mede cada foto (lendo só o começo do arquivo) e ordena pela resolução.
 import { dimensoes, type TipoImagem } from "./imagem";
 import { fetchSeguro, urlPermitida, type RespostaSegura } from "./seguranca";
+import { chaveFamilia } from "./paginas";
 import type { Candidato, OrigemFoto } from "./tipos";
 
 export interface FotoAchada {
@@ -8,7 +9,7 @@ export interface FotoAchada {
   origem: OrigemFoto; pagina: string | null; titulo: string | null; dominio: string;
 }
 export interface BuscaResposta {
-  fotos: FotoAchada[]; termo: string; candidatos: number; paginasLidas: number; paginasTotal: number;
+  fotos: FotoAchada[]; termo: string; candidatos: number; paginasLidas: number; paginasTotal: number; semLink: number;
 }
 
 type Baixar = (url: string) => Promise<RespostaSegura>;
@@ -37,5 +38,8 @@ export async function medirTodas(cands: Candidato[], baixar: Baixar = baixarCabe
   // a mesma foto costuma aparecer em lojas diferentes: mesma resolução e mesmo tamanho em bytes = repetida
   const unicas = new Map<string, FotoAchada>();
   for (const f of saida) { const k = f.bytes ? `${f.largura}x${f.altura}:${f.bytes}` : `url:${f.url}`; if (!unicas.has(k)) unicas.set(k, f); }
-  return Array.from(unicas.values()).sort((a, b) => b.pixels - a.pixels);
+  // a mesma foto em vários tamanhos (…-640-0 e …-480-0): fica só a maior
+  const familias = new Map<string, FotoAchada>();
+  for (const f of unicas.values()) { const k = chaveFamilia(f.url); const atual = familias.get(k); if (!atual || f.pixels > atual.pixels) familias.set(k, f); }
+  return Array.from(familias.values()).sort((a, b) => b.pixels - a.pixels);
 }

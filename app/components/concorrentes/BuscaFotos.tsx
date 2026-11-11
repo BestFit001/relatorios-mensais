@@ -9,7 +9,7 @@ interface Foto {
   url: string; largura: number; altura: number; pixels: number; tipo: "jpeg" | "png" | "gif" | "webp"; bytes: number | null;
   origem: "busca"; pagina: string | null; titulo: string | null; dominio: string;
 }
-interface Resultado { fotos: Foto[]; termo: string; candidatos: number; paginasLidas: number; paginasTotal: number }
+interface Resultado { fotos: Foto[]; termo: string; candidatos: number; paginasLidas: number; paginasTotal: number; semLink: number }
 
 const kb = (b: number | null) => (b == null ? "" : b >= 1_048_576 ? `${(b / 1_048_576).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB` : `${Math.round(b / 1024)} KB`);
 const ext = (t: Foto["tipo"]) => (t === "jpeg" ? "jpg" : t);
@@ -123,9 +123,9 @@ export default function BuscaFotos({ usuario: _usuario }: { usuario: string }) {
               <button data-acao="copiar-favorito" onClick={copiarFavorito} className="text-[11px] underline text-slate-300 hover:text-white cursor-pointer">não consegui arrastar</button>
               <span className="text-slate-500"> (é o mesmo favorito da Pesquisa de preços: arraste para a barra de favoritos uma vez só)</span>
             </li>
-            <li>Cole o texto aqui e importe:</li>
+            <li>Cole o texto aqui e importe. <span className="text-slate-500">Se o Google mostrar poucas lojas com link direto, cole também os endereços das páginas do produto (um por linha): o painel abre cada uma e pega as fotos.</span></li>
           </ol>
-          <textarea data-campo="fotos-texto" value={textoImport} onChange={(e) => setTextoImport(e.target.value)} placeholder="Cole aqui o texto que o favorito copiou no Google" className={`${campo} w-full h-20 font-mono text-[11px]`} />
+          <textarea data-campo="fotos-texto" value={textoImport} onChange={(e) => setTextoImport(e.target.value)} placeholder="Cole aqui o texto que o favorito copiou no Google — ou endereços de lojas (https://…), um por linha" className={`${campo} w-full h-20 font-mono text-[11px]`} />
           <div className="flex flex-wrap items-center gap-3">
             <button data-acao="fotos-importar" disabled={!textoImport.trim() || importando} onClick={importar} className={`${botao} bg-emerald-700 hover:bg-emerald-600 text-white`}>{importando ? "Abrindo as lojas e medindo as fotos… (até 1 min)" : "Importar fotos"}</button>
             <span className="text-[11px] text-slate-500">O EAN acha o produto certo; sem EAN o Google mostra produtos parecidos. Só entram resultados com preço (aba Shopping/Produtos).</span>
@@ -141,6 +141,7 @@ export default function BuscaFotos({ usuario: _usuario }: { usuario: string }) {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-slate-400" data-fotos-resumo>
               <b className="text-slate-200">{visiveis.length}</b> de {res.fotos.length} foto(s) · {res.paginasLidas} de {res.paginasTotal} página(s) de loja abertas
+              {res.semLink > 0 && <span className="text-amber-300" data-fotos-sem-link> · {res.semLink} resultado(s) do Google sem link direto da loja (não dá para abrir)</span>}
               {res.termo && <> · busca: <b className="text-slate-200">{res.termo}</b></>}
             </div>
             <div className="flex flex-wrap items-center gap-2">

@@ -30,14 +30,27 @@ export function paginasDeLoja(resultados: { url: string | null; host: string | n
   return saida;
 }
 
-export async function importarFotos(texto: unknown, lerPagina: LerPagina = lerPaginaPadrao, medir = medirTodas): Promise<BuscaResposta> {
-  if (typeof texto !== "string" || !texto.trim()) throw new ErroValidacao("Cole o texto que o favorito copiou no Google.");
-  if (texto.length > 2_000_000) throw new ErroValidacao("Texto grande demais.");
-  let payload: unknown; try { payload = JSON.parse(texto); } catch { throw new ErroValidacao("O texto colado não está completo. Use o botão Copiar do favorito e cole tudo."); }
+/** Aceita o texto do favorito (Google) ou uma lista de endereços de loja, um por linha. */
+function lerEntrada(texto: string): { paginas: { url: string; titulo: string }[]; termo: string; semLink: number } {
+  const t = texto.trim();
+  if (!t.startsWith("{") && !t.startsWith("[")) {
+    const links = (t.match(/https:\/\/[^\s"'<>]+/g) || []).map((u) => u.replace(/[),.;]+$/, ""));
+    const paginas = paginasDeLoja(links.map((url) => { let host: string | null = null; try { host = new URL(url).hostname; } catch { /* inválido */ } return { url, host, titulo: "" }; }));
+    if (!paginas.length) throw new ErroValidacao("Não achei endereços https de loja no texto. Cole um endereço por linha (https://…) ou o texto do favorito.");
+    return { paginas, termo: "", semLink: 0 };
+  }
+  let payload: unknown; try { payload = JSON.parse(t); } catch { throw new ErroValidacao("O texto colado não está completo. Use o botão Copiar do favorito e cole tudo."); }
   if ((payload as any)?.tipo !== "pesquisa") throw new ErroValidacao("Esse texto não é de uma pesquisa do Google. Abra o Google (aba Shopping/Produtos, com preços), clique no favorito e cole o texto dele.");
   const pesquisa = sanitizarPesquisa(payload);
   const paginas = paginasDeLoja(pesquisa.resultados);
-  if (!paginas.length) throw new ErroValidacao("Nenhum resultado tem link de loja (só páginas do próprio Google). Abra a aba Shopping/Produtos do Google e leia de novo.");
+  if (!paginas.length) throw new ErroValidacao(`Nenhum dos ${pesquisa.resultados.length} resultados tem link direto da loja (todos apontam para páginas do Google). Cole aqui os endereços das lojas, um por linha.`);
+  return { paginas, termo: pesquisa.termo || "", semLink: pesquisa.resultados.length - paginas.length };
+}
+
+export async function importarFotos(texto: unknown, lerPagina: LerPagina = lerPaginaPadrao, medir = medirTodas): Promise<BuscaResposta> {
+  if (typeof texto !== "string" || !texto.trim()) throw new ErroValidacao("Cole o texto que o favorito copiou no Google (ou endereços de lojas, um por linha).");
+  if (texto.length > 2_000_000) throw new ErroValidacao("Texto grande demais.");
+  const { paginas, termo, semLink } = lerEntrada(texto);
 
   // abre as páginas das lojas (poucas por vez, com prazo)
   const prazo = Date.now() + 22_000; let proxima = 0; let lidas = 0;
@@ -58,5 +71,5 @@ export async function importarFotos(texto: unknown, lerPagina: LerPagina = lerPa
   for (const p of porPagina) for (const img of p.imagens) { for (const v of variantesMaiores(img)) nova(v, p.pagina, p.titulo); nova(img, p.pagina, p.titulo); }
 
   const fotos = candidatos.length ? await medir(candidatos) : [];
-  return { fotos, termo: pesquisa.termo || "", candidatos: candidatos.length, paginasLidas: lidas, paginasTotal: paginas.length };
+  return { fotos, termo, candidatos: candidatos.length, paginasLidas: lidas, paginasTotal: paginas.length, semLink };
 }

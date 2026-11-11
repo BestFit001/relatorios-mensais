@@ -32,6 +32,11 @@ function imagensDoLD(no: any, saida: unknown[], produto = false, fundo = 0) {
   for (const k of Object.keys(no)) if (k === "@graph" || k === "mainEntity" || k === "itemListElement" || k === "hasVariant" || k === "item") imagensDoLD(no[k], saida, ehProduto, fundo + 1);
 }
 
+/** Logotipo, ícone, banner e afins: a imagem de compartilhamento de muita loja é o logo, não o produto. */
+export function ehLogo(url: string): boolean {
+  try { return /(^|[\/_.-])(logo|logotipo|favicon|sprite|icon|icone|placeholder|banner|avatar|selo)([\/_.-]|\d|$)/i.test(new URL(url).pathname); } catch { return false; }
+}
+
 /** Fotos da página, da mais confiável para a menos: dados do produto, versões ampliadas da loja, imagem de compartilhamento. */
 export function extrairImagensDaPagina(html: string, base: string, max = 10): string[] {
   const achadas: unknown[] = [];
@@ -56,7 +61,7 @@ export function extrairImagensDaPagina(html: string, base: string, max = 10): st
   for (const m of html.matchAll(/<link\b[^>]*>/gi)) { const a = atributos(m[0]); if ((a.rel || "").toLowerCase() === "image_src" && a.href) achadas.push(a.href); }
 
   const vistos = new Set<string>(); const saida: string[] = [];
-  for (const bruto of achadas) { const u = absoluto(bruto, base); if (u && !vistos.has(u)) { vistos.add(u); saida.push(u); if (saida.length >= max) break; } }
+  for (const bruto of achadas) { const u = absoluto(bruto, base); if (u && !ehLogo(u) && !vistos.has(u)) { vistos.add(u); saida.push(u); if (saida.length >= max) break; } }
   return saida;
 }
 
@@ -76,7 +81,28 @@ export function variantesMaiores(url: string): string[] {
   }
   // Shopee: .../file/<id>_tn -> .../file/<id>
   if (/susercontent\.com$/.test(u.hostname) && /_tn$/.test(caminho)) v.push(`${u.origin}${caminho.replace(/_tn$/, "")}`);
+  // Nuvemshop / Tiendanube: .../foto-640-0.webp -> .../foto-1024-1024.webp e .../foto-1920-1920.webp
+  if (/(^|\.)(mitiendanube\.com|nuvemshop\.com\.br|lojavirtualnuvem\.com\.br)$/.test(u.hostname)) {
+    const m = caminho.match(/^(.*)-\d{2,4}-\d{1,4}(\.[a-z]+)$/i);
+    if (m) for (const t of ["1920-1920", "1024-1024"]) { const c = `${m[1]}-${t}${m[2]}`; if (c !== caminho) v.push(`${u.origin}${c}`); }
+  }
   // Magalu: .../280x210/... -> .../1500x1500/...
   if (/mlcdn\.com\.br$/.test(u.hostname)) { const g = caminho.replace(/^\/\d{2,4}x\d{2,4}\//, "/1500x1500/"); if (g !== caminho) v.push(`${u.origin}${g}`); }
   return v;
+}
+
+/** Chave da "família" de uma foto: a mesma imagem em tamanhos diferentes (…-640-0, …-480-0, ._AC_SX679_, -F/-O, 280x210) cai na mesma chave. */
+export function chaveFamilia(url: string): string {
+  try {
+    const u = new URL(url);
+    const p = u.pathname.toLowerCase()
+      .replace(/\._[^/]*_(\.[a-z0-9]+)$/, "$1")
+      .replace(/\/\d{2,4}x\d{2,4}\//, "/")
+      .replace(/[-_]?\d{2,4}x\d{2,4}(?=\.[a-z0-9]+$)/, "")
+      .replace(/[-_]\d{2,4}[-_]\d{1,4}(?=\.[a-z0-9]+$)/, "")
+      .replace(/-[a-z](?=\.(jpg|jpeg|webp|png)$)/, "")
+      .replace(/_tn$/, "")
+      .replace(/\.[a-z0-9]+$/, "");
+    return `${u.hostname}${p}`;
+  } catch { return url; }
 }

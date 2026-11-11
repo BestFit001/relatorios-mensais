@@ -103,6 +103,8 @@ Aba **📷 Buscar fotos** de `/concorrentes`. Código em `lib/fotos/` e `app/api
 4. `lib/fotos/busca.ts` lê só o começo de cada imagem (128 KB, `Range`) para saber largura e altura, descarta ícones (< 100 px), HTML e links quebrados, tira repetidas (mesmas dimensões e bytes) e ordena da maior resolução para a menor.
 5. `POST /api/fotos/baixar` entrega o arquivo original (o navegador não consegue por CORS); o ZIP é montado no navegador (JSZip).
 - **Segurança (as URLs vêm da internet):** só https público, porta 443, sem usuário/senha; o DNS é conferido na hora de conectar e cada redirecionamento é refeito (`lib/fotos/seguranca.ts`); mesma origem obrigatória; limite de 15 MB por foto. `FOTOS_PERMITIR_REDE_LOCAL` só vale fora da Vercel (testes).
+- **Entrada alternativa:** o campo também aceita endereços de loja (https), um por linha, sem passar pelo Google. O painel avisa quantos resultados do Google vieram sem link direto da loja (apontam para a página do produto no Google ou são anúncios com redirecionamento; o servidor não abre esses, para não gerar cliques em anúncios).
+- **Duplicadas:** a mesma foto em tamanhos diferentes (`-640-0`/`-480-0`, `._AC_…_`, `-F`/`-O`) fica só a maior (`chaveFamilia`); logotipos/ícones/banners (`ehLogo`) são descartados; Nuvemshop também tem variantes maiores testadas.
 - **Limites:** lojas que bloqueiam acesso de servidor (Amazon, Mercado Livre e Shopee costumam bloquear) não entregam a foto; o painel mostra “X de Y páginas abertas”. As miniaturas do Google são pequenas e não são usadas. A tabela `fotos_buscas` (contador do Vision) foi removida.
 
 ## EAN
