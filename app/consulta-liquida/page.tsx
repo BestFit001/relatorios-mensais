@@ -11,7 +11,7 @@ import { buscarTudo } from "../../lib/buscarTudo";
 import { indiceDaLetra } from "../../lib/cobertura";
 import { canaisSemRepeticao } from "../../lib/vendasCanaisLogica";
 import { lerArquivoComoLinhas } from "../../lib/lerArquivo";
-import { IMPOSTO_PADRAO_PCT, consultar, indexarBase, indexarCustos, porProduto, totalizar, type ResultadoLinha, type StatusConsulta } from "../../lib/consultaLiquidaLogica";
+import { IMPOSTO_PADRAO_PCT, consultar, indexarBase, indexarCustos, porProduto, totalizar, type LinhaIgnoradaStatus, type ResultadoLinha, type StatusConsulta } from "../../lib/consultaLiquidaLogica";
 import Navbar from "../components/Navbar";
 
 const CHAVE_FORM = "bestfit_consulta_liquida_form";   // só lembra as últimas colunas (conveniência)
@@ -20,8 +20,8 @@ const LIMITE_TELA = 300;
 const brl = (n: number | null) => (n == null ? "—" : n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 const pct = (n: number | null) => (n == null ? "—" : `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`);
 
-interface Form { linha: string; colPedido: string; colPdv: string; colRepasse: string; imposto: string }
-const FORM_VAZIO: Form = { linha: "2", colPedido: "A", colPdv: "B", colRepasse: "C", imposto: String(IMPOSTO_PADRAO_PCT) };
+interface Form { linha: string; colPedido: string; colPdv: string; colRepasse: string; imposto: string; colStatus: string; ignorar: string }
+const FORM_VAZIO: Form = { linha: "2", colPedido: "A", colPdv: "B", colRepasse: "C", imposto: String(IMPOSTO_PADRAO_PCT), colStatus: "", ignorar: "" };
 
 const ROTULO: Record<StatusConsulta, string> = { ok: "Calculado", sem_pedido: "Pedido não encontrado", sem_custo: "SKU sem custo", sem_valor: "PDV/repasse inválido", somado: "Vários repasses somados" };
 const COR: Record<StatusConsulta, string> = { ok: "text-emerald-400", somado: "text-sky-300", sem_pedido: "text-rose-400", sem_custo: "text-amber-400", sem_valor: "text-amber-400" };
@@ -35,6 +35,7 @@ export default function ConsultaLiquidaPage() {
   const [aviso, setAviso] = useState<{ tipo: "ok" | "erro" | "info"; linhas: string[] } | null>(null);
   const [resultados, setResultados] = useState<ResultadoLinha[]>([]);
   const [arquivo, setArquivo] = useState("");
+  const [ignoradosStatus, setIgnoradosStatus] = useState<LinhaIgnoradaStatus[]>([]);
   const [visao, setVisao] = useState<"pedido" | "produto">("pedido");
   const [filtro, setFiltro] = useState<"todos" | StatusConsulta | "pendentes">("todos");
   const [impostoUsado, setImpostoUsado] = useState(IMPOSTO_PADRAO_PCT);
@@ -58,12 +59,16 @@ export default function ConsultaLiquidaPage() {
     const iPdv = usaPdvPlanilha ? indiceDaLetra(form.colPdv) : -1;
     const linhaInicial = parseInt(form.linha, 10);
     const imposto = Number(String(form.imposto).replace(",", "."));
+    const usaStatus = form.colStatus.trim() !== "";
+    const iStatus = usaStatus ? indiceDaLetra(form.colStatus) : -1;
     if (iPed < 0 || iRep < 0 || (usaPdvPlanilha && iPdv < 0)) return setAviso({ tipo: "erro", linhas: ["Informe as letras das colunas do ID do pedido e do repasse (ex.: A, C). A do PDV é opcional."] });
     if (new Set([iPed, iRep, ...(usaPdvPlanilha ? [iPdv] : [])]).size < (usaPdvPlanilha ? 3 : 2)) return setAviso({ tipo: "erro", linhas: ["As colunas precisam ser diferentes."] });
+    if (usaStatus && iStatus < 0) return setAviso({ tipo: "erro", linhas: ["Coluna do status inválida: use só a letra (ex.: N)."] });
+    if (!usaStatus && form.ignorar.trim()) return setAviso({ tipo: "erro", linhas: ["Você escreveu o que ignorar, mas não informou a coluna do status."] });
     if (!(linhaInicial >= 1)) return setAviso({ tipo: "erro", linhas: ["A linha inicial deve ser 1 ou mais (use 2 se a primeira linha for o cabeçalho)."] });
     if (!(imposto >= 0 && imposto < 100)) return setAviso({ tipo: "erro", linhas: ["Informe o imposto entre 0 e 99,9%."] });
 
-    setProcessando(true); setAviso(null); setResultados([]);
+    setProcessando(true); setAviso(null); setResultados([]); setIgnoradosStatus([]);
     try { localStorage.setItem(CHAVE_FORM, JSON.stringify(form)); } catch { /* sem localStorage: só não lembra */ }
     try {
       const linhas = await lerArquivoComoLinhas(f);
@@ -71,12 +76,14 @@ export default function ConsultaLiquidaPage() {
         buscarTudo("vendas_canais", "id_pedido,canal,sku,quantidade,preco_venda", (q) => (canal === "__todos" ? q : q.eq("canal", canal))),
         buscarTudo("tabela_custos_skus", "sku,custo_unitario,produto,marca"),
       ]);
-      const { resultados: rs, ignoradas } = consultar(linhas, { linhaInicial, colPedido: iPed, colPdv: iPdv, colRepasse: iRep, impostoPct: imposto }, indexarBase(vendas as any[]), indexarCustos(custos as any[]));
-      setResultados(rs); setArquivo(f.name); setImpostoUsado(imposto); setFiltro("todos"); setVisao("pedido");
+      const { resultados: rs, ignoradas, ignoradasStatus } = consultar(linhas, { linhaInicial, colPedido: iPed, colPdv: iPdv, colRepasse: iRep, impostoPct: imposto, colStatus: iStatus, ignorarStatus: form.ignorar }, indexarBase(vendas as any[]), indexarCustos(custos as any[]));
+      setResultados(rs); setIgnoradosStatus(ignoradasStatus); setArquivo(f.name); setImpostoUsado(imposto); setFiltro("todos"); setVisao("pedido");
       const t = totalizar(rs);
       const linhasAviso = [`${f.name}: ${rs.length} pedido(s) lido(s) — ${t.calculadas} calculado(s)${t.semPedido ? `, ${t.semPedido} não encontrado(s) na base` : ""}${t.semCusto ? `, ${t.semCusto} com SKU sem custo` : ""}${t.semValor ? `, ${t.semValor} com PDV/repasse inválido` : ""}.`];
       if (rs.length === 0) linhasAviso.push(`Nenhuma linha a partir da linha ${linhaInicial}. Confira a linha inicial e as colunas.`);
       if (t.semPedido > 0 && t.semPedido === rs.length) linhasAviso.push(`Nenhum pedido foi achado na base de ${canal === "__todos" ? "todos os canais" : canal}. Confira o canal e se a coluna ${form.colPedido.toUpperCase()} é mesmo o ID do pedido (e se as vendas desse canal já foram enviadas em Uploads Base).`);
+      if (ignoradasStatus.length) linhasAviso.push(`${ignoradasStatus.length} linha(s) ignorada(s) pelo status “${form.ignorar.trim()}” (coluna ${form.colStatus.trim().toUpperCase()}): não entram na conta nem nos totais. Elas estão na aba “Ignorados pelo status” do Excel.`);
+      if (usaStatus && form.ignorar.trim() && ignoradasStatus.length === 0) linhasAviso.push(`Nenhuma linha tinha “${form.ignorar.trim()}” na coluna ${form.colStatus.trim().toUpperCase()}. Confira se é a coluna certa.`);
       if (ignoradas) linhasAviso.push(`${ignoradas} linha(s) ignorada(s) (em branco, cabeçalho ou observações do relatório).`);
       setAviso({ tipo: t.calculadas > 0 ? "ok" : "info", linhas: linhasAviso });
     } catch (e: any) {
@@ -109,6 +116,7 @@ export default function ConsultaLiquidaPage() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dados), "Por pedido");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(prod), "Por produto");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itens), "Itens dos pedidos");
+    if (ignoradosStatus.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ignoradosStatus.map((x) => ({ "Linha da planilha": x.linha, "ID do pedido": x.idPedido, "Status": x.status }))), "Ignorados pelo status");
     XLSX.writeFile(wb, `consulta_liquida_${canal.replace(/[^a-zA-Z0-9]+/g, "-")}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
@@ -180,16 +188,36 @@ export default function ConsultaLiquidaPage() {
               {processando && <p className="text-xs text-slate-400 mt-2">Lendo a planilha e consultando a base…</p>}
             </div>
           </div>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. do status (opcional)</label>
+              <input type="text" maxLength={3} value={form.colStatus} onChange={(e) => setForm({ ...form, colStatus: e.target.value.toUpperCase() })} data-col-status placeholder="ex.: N" className={campo + " font-mono text-center font-bold"} />
+            </div>
+            <div className="col-span-2 md:col-span-5">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ignorar linhas cujo status contenha</label>
+              <input type="text" value={form.ignorar} onChange={(e) => setForm({ ...form, ignorar: e.target.value })} data-ignorar placeholder="ex.: cancelado   ou   cancelado; devolvido" className={campo} />
+              <p className="text-[10px] text-slate-500 mt-1">Ignora maiúsculas e acentos. “cancelado” já pega “Pedido cancelado”. Use <b className="text-slate-300">;</b> para mais de um termo. Essas linhas não entram na conta nem nos totais.</p>
+            </div>
+          </div>
           <p className="text-[10px] text-slate-500 max-w-4xl">Pedido de carrinho (o mesmo ID em várias linhas da planilha, uma por item): os repasses de todas as linhas são somados e os custos de todos os SKUs da venda entram (custo × quantidade de cada um). O PDV da planilha não entra na conta (se informado, só avisa quando difere do cadastrado). IDs grandes (como os do TikTok) precisam estar como texto na planilha: se o Excel os tiver virado número com “E+17”, os últimos dígitos já foram perdidos e o pedido não será achado.</p>
         </div>
 
-        {resultados.length > 0 && (
+        {(resultados.length > 0 || ignoradosStatus.length > 0) && (
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-resultado>
             <div className="grid grid-cols-2 md:grid-cols-6 divide-x divide-slate-800 rounded-xl border border-slate-800" data-totais>
               {[["Pedidos calculados", `${totais.calculadas} de ${totais.linhas}`], ["PDV", brl(totais.pdv)], ["Repasse", brl(totais.repasse)], ["Custo dos SKUs", brl(totais.custo)], [`Imposto (${impostoUsado}%)`, brl(totais.imposto)], ["Líquido", `${brl(totais.liquido)}${totais.margemPct != null ? ` · ${pct(totais.margemPct)}` : ""}`]].map(([t, v]) => (
                 <div key={t} className="px-4 py-2"><p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{t}</p><p data-total={t} className="text-base font-black text-white">{v}</p></div>
               ))}
             </div>
+            {ignoradosStatus.length > 0 && (
+              <details data-ignorados className="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-2 text-xs text-slate-400">
+                <summary className="cursor-pointer font-bold text-slate-300">{ignoradosStatus.length} linha(s) ignorada(s) pelo status</summary>
+                <ul className="mt-2 space-y-0.5 max-h-48 overflow-y-auto">
+                  {ignoradosStatus.slice(0, 200).map((x) => <li key={x.linha} className="font-mono">linha {x.linha} · {x.idPedido} · {x.status || "—"}</li>)}
+                  {ignoradosStatus.length > 200 && <li>… e mais {ignoradosStatus.length - 200} (todas na aba “Ignorados pelo status” do Excel)</li>}
+                </ul>
+              </details>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex rounded-xl border border-slate-700 overflow-hidden text-xs font-black uppercase tracking-wider">
                 {(["pedido", "produto"] as const).map((v) => (
@@ -234,7 +262,7 @@ export default function ConsultaLiquidaPage() {
                       <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{brl(r.imposto)}</td>
                       <td data-liquido className={`py-2 pr-3 text-right font-black whitespace-nowrap ${r.liquido == null ? "text-slate-500" : r.liquido < 0 ? "text-rose-400" : "text-emerald-400"}`}>{brl(r.liquido)}</td>
                       <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{pct(r.margemPct)}</td>
-                      <td className={`py-2 font-bold ${COR[r.status]}`} title={r.detalhe}>{ROTULO[r.status]}{r.detalhe && r.status !== "ok" ? <span className="block text-[10px] font-normal text-slate-500">{r.detalhe}</span> : null}</td>
+                      <td className={`py-2 font-bold ${COR[r.status]}`} title={r.detalhe}>{ROTULO[r.status]}{r.detalhe ? <span className="block text-[10px] font-normal text-slate-500">{r.detalhe}</span> : null}</td>
                     </tr>
                   ))}
                 </tbody>

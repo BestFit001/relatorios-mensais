@@ -1,6 +1,6 @@
 // Ferramentas > Consulta líquida (aba provisória): pedido + PDV + repasse da planilha -> líquido depois do custo do SKU e do imposto.
 // Só contas (sem rede nem banco), para poder testar.
-import { chaveDoPedido, textoDoPedido } from "./checagemCanceladosLogica";
+import { chaveDoPedido, interpretarTermo, statusContem, textoDoPedido } from "./checagemCanceladosLogica";
 import { paraNumeroBR } from "./idPedidoFaturados";
 
 export const IMPOSTO_PADRAO_PCT = 9;
@@ -17,7 +17,15 @@ export const chaveSku = (v: unknown): string => {
 };
 
 /** colPdv = -1: a planilha não tem PDV (ou não interessa); o PDV usado é sempre o da venda cadastrada na base. */
-export interface ConfigConsulta { linhaInicial: number; colPedido: number; colPdv: number; colRepasse: number; impostoPct: number }
+export interface ConfigConsulta {
+  linhaInicial: number; colPedido: number; colPdv: number; colRepasse: number; impostoPct: number;
+  /** Coluna do status do pedido na planilha (-1/omitida: não há). Linhas cujo status contém algum dos termos de `ignorarStatus` não entram na consulta. */
+  colStatus?: number;
+  /** Mesmas regras da Checagem de Cancelados: sem acento/maiúscula; "cancelado" acha "Pedido cancelado"; ";" separa alternativas ("cancelado; devolvido"). */
+  ignorarStatus?: string;
+}
+
+export interface LinhaIgnoradaStatus { linha: number; idPedido: string; status: string }
 
 export type StatusConsulta = "ok" | "sem_pedido" | "sem_custo" | "sem_valor" | "somado";
 
@@ -73,18 +81,28 @@ export function indexarCustos(custos: CustoSku[]): Map<string, InfoCusto> {
   return m;
 }
 
-export function consultar(linhas: any[][], cfg: ConfigConsulta, base: Map<string, LinhaBase[]>, custos: Map<string, InfoCusto>): { resultados: ResultadoLinha[]; ignoradas: number } {
+export function consultar(linhas: any[][], cfg: ConfigConsulta, base: Map<string, LinhaBase[]>, custos: Map<string, InfoCusto>): { resultados: ResultadoLinha[]; ignoradas: number; ignoradasStatus: LinhaIgnoradaStatus[] } {
   // 1) Lê a planilha e junta as linhas do mesmo pedido: carrinho vem com um repasse por item, e o pedido vale a soma deles.
   interface Grupo { chave: string; idPedido: string; linhas: number[]; repasses: Array<number | null>; pdvs: Array<number | null> }
   const grupos: Grupo[] = [];
   const porChave = new Map<string, Grupo>();
   let ignoradas = 0;
+  const ignoradasStatus: LinhaIgnoradaStatus[] = [];
+  const ignoradasPorPedido = new Map<string, number>();
+  const termos = interpretarTermo(cfg.ignorarStatus ?? "");
+  const usaStatus = (cfg.colStatus ?? -1) >= 0 && termos.length > 0;
   for (let i = Math.max(0, cfg.linhaInicial - 1); i < linhas.length; i++) {
     const l = linhas[i] || [];
     const idPedido = textoDoPedido(l[cfg.colPedido]);
     const pdvPlanilha = cfg.colPdv >= 0 ? paraNumeroBR(l[cfg.colPdv]) : null;
     const repasse = paraNumeroBR(l[cfg.colRepasse]);
     const chave = chaveDoPedido(idPedido);
+    // status que o usuário mandou ignorar (cancelados, por exemplo): a linha some da consulta e dos totais
+    if (usaStatus && idPedido && statusContem(l[cfg.colStatus as number], termos)) {
+      ignoradasStatus.push({ linha: i + 1, idPedido, status: String(l[cfg.colStatus as number] ?? "").trim() });
+      if (chave) ignoradasPorPedido.set(chave, (ignoradasPorPedido.get(chave) || 0) + 1);
+      continue;
+    }
     // linha em branco, ou cabeçalho/observação do relatório (sem repasse e sem pedido correspondente na base)
     if (!(chave && base.get(chave)) && repasse == null && (!idPedido || pdvPlanilha == null)) { ignoradas++; continue; }
     let g = chave ? porChave.get(chave) : undefined;
@@ -101,6 +119,7 @@ export function consultar(linhas: any[][], cfg: ConfigConsulta, base: Map<string
     const pdvsValidos = g.pdvs.filter((x): x is number => x != null);
     const pdvPlanilha = pdvsValidos.length ? dinheiro(pdvsValidos.reduce((a, b) => a + b, 0)) : null;
     const idPedido = g.idPedido;
+    const ignoradasDoPedido = ignoradasPorPedido.get(g.chave) || 0;
     const itensBase = g.chave ? base.get(g.chave) : undefined;
     const r: ResultadoLinha = { linha: g.linhas[0], linhasPlanilha: g.linhas, idPedido, pdv: null, pdvPlanilha, repasse, skus: [], canal: null, custo: null, imposto: null, liquido: null, margemPct: null, status: "ok", detalhe: "" };
     const notas: string[] = [];
@@ -108,6 +127,8 @@ export function consultar(linhas: any[][], cfg: ConfigConsulta, base: Map<string
       notas.push(`Pedido em ${g.linhas.length} linhas da planilha (${g.linhas.join(", ")}): repasses somados${validos.length > 1 ? ` (${validos.map(fmt).join(" + ")} = ${fmt(repasse as number)})` : ""}.`);
       if (validos.length < g.repasses.length) notas.push(`${g.repasses.length - validos.length} linha(s) sem repasse válido ficaram fora da soma.`);
     }
+
+    if (ignoradasDoPedido > 0) notas.push(`${ignoradasDoPedido} linha(s) deste pedido foi(ram) ignorada(s) pelo status; o custo considera todos os itens da venda cadastrada.`);
 
     if (!g.chave) { r.status = "sem_pedido"; r.detalhe = "Linha sem ID de pedido."; resultados.push(r); continue; }
     if (!itensBase) { r.status = "sem_pedido"; r.detalhe = ["Pedido não encontrado na base de vendas.", ...notas].join(" "); resultados.push(r); continue; }
@@ -151,7 +172,7 @@ export function consultar(linhas: any[][], cfg: ConfigConsulta, base: Map<string
     r.detalhe = notas.join(" ");
     resultados.push(r);
   }
-  return { resultados, ignoradas };
+  return { resultados, ignoradas, ignoradasStatus };
 }
 
 export interface TotaisConsulta { linhas: number; calculadas: number; semPedido: number; semCusto: number; semValor: number; pdv: number; repasse: number; custo: number; imposto: number; liquido: number; margemPct: number | null }
