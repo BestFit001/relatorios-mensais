@@ -51,7 +51,8 @@ export default function Navbar() {
       pathname.startsWith("/devolucoes") || 
       pathname.startsWith("/full") || 
       pathname.startsWith("/lives") ||
-      pathname.startsWith("/analise-mercado")
+      pathname.startsWith("/analise-mercado") ||
+      pathname.startsWith("/concorrentes")
     ) {
       setMenuExpandido("relatorios");
     }
@@ -354,13 +355,13 @@ export default function Navbar() {
           )}
 
           {/* RELATÓRIOS E OPERAÇÃO */}
-          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/lives") || temPermissao("/videos") || temPermissao("/analise-mercado")) && (
+          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/lives") || temPermissao("/videos") || temPermissao("/analise-mercado") || temPermissao("/concorrentes")) && (
             <div>
               <button
                 onClick={() => toggleSecao("relatorios")}
                 title="Relatórios"
                 className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname === "/" || pathname === "/mapeamento" || pathname === "/ads" || pathname === "/devolucoes" || pathname === "/full" || pathname === "/lives" || pathname === "/videos" || pathname === "/analise-mercado"
+                  pathname === "/" || pathname === "/mapeamento" || pathname === "/ads" || pathname === "/devolucoes" || pathname === "/full" || pathname === "/lives" || pathname === "/videos" || pathname === "/analise-mercado" || pathname === "/concorrentes"
                     ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
                     : "text-slate-400 hover:text-white hover:bg-slate-900/60"
                 }`}
@@ -416,6 +417,11 @@ export default function Navbar() {
                   {temPermissao("/analise-mercado") && (
                     <Link href="/analise-mercado" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/analise-mercado" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
                       Análise de mercado
+                    </Link>
+                  )}
+                  {temPermissao("/concorrentes") && (
+                    <Link href="/concorrentes" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/concorrentes" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
+                      Monitor de concorrentes
                     </Link>
                   )}
                 </div>

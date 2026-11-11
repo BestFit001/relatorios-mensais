@@ -27,6 +27,7 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/lives", nome: "Lives" },
     { id: "/videos", nome: "Vídeos" },
     { id: "/analise-mercado", nome: "Análise de mercado" },
+    { id: "/concorrentes", nome: "Monitor de concorrentes" },
   ] },
   { titulo: "Promoções", submenu: true, rotas: [
     { id: "/promocoes/ml", nome: "Mercado Livre" },
