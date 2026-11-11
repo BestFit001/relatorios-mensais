@@ -42,7 +42,7 @@ export const FAVORITO_JS = String.raw`(async function () {
       var titulo = texto(a) || limpa(a.getAttribute("title")) || texto(el.querySelector("h2,h3"));
       if (!titulo) return;
       var vend = texto(el.querySelector(".poly-component__seller, .ui-search-official-store-label")).replace(/^(vendido\s+)?por\s+/i, "");
-      var item = { mlb_id: id, titulo: titulo, vendedor: vend || null, url: href, imagem: imagem(el), preco: preco(el), vendas_texto: vendas(el.textContent) };
+      var item = { mlb_id: id, titulo: titulo, vendedor: vend || null, marca: texto(el.querySelector(".poly-component__brand")) || null, url: href, imagem: imagem(el), preco: preco(el), vendas_texto: vendas(el.textContent) };
       var ja = mapa[id];
       if (ja) { for (var k in item) { if (ja[k] == null && item[k] != null) ja[k] = item[k]; } }
       else { mapa[id] = item; lista.push(item); }
@@ -80,8 +80,10 @@ export const FAVORITO_JS = String.raw`(async function () {
       var imgLd = Array.isArray(ld.image) ? ld.image[0] : ld.image;
       var og = document.querySelector('meta[property="og:image"]');
       var vend1 = texto(document.querySelector(".ui-pdp-seller__header__title, .ui-pdp-seller__link-trigger-button")).replace(/^(vendido\s+)?por\s+/i, "");
+      var marca1 = limpa(typeof ld.brand === "object" && ld.brand ? ld.brand.name : ld.brand);
+      if (!marca1) { Array.prototype.forEach.call(document.querySelectorAll("tr"), function (tr) { var th = tr.querySelector("th"), td = tr.querySelector("td"); if (!marca1 && th && td && /^marca$/i.test(texto(th))) marca1 = texto(td); }); }
       payload = { v: 1, tipo: "anuncio", pagina_url: location.href, coletado_em: new Date().toISOString(), anuncios: [{
-        mlb_id: idMLB(location.href), titulo: titulo, vendedor: vend1 || null, url: location.href,
+        mlb_id: idMLB(location.href), titulo: titulo, vendedor: vend1 || null, marca: marca1 || null, url: location.href,
         imagem: imgLd || (og && og.content) || null, preco: isFinite(pr) ? pr : null,
         vendas_texto: vendas(texto(document.querySelector(".ui-pdp-subtitle")) || texto(document.querySelector(".ui-pdp-header")))
       }] };

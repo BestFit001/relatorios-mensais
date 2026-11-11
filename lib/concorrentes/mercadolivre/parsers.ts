@@ -3,6 +3,7 @@
 import * as cheerio from "cheerio";
 import type { AnuncioRaspado } from "../tipos";
 import { parsePreco, parseVendidos } from "../calculos";
+import { separarMarcaVendedor } from "../marca";
 import { idDoAnuncio, imagemSegura, urlAnuncioSegura } from "./url";
 
 export class ErroBloqueio extends Error {}
@@ -45,6 +46,11 @@ function vendedorDe(el: cheerio.Cheerio<any>): string | null {
   return v || null;
 }
 
+/** Marca e vendedor do cartão: a marca pode ter o seu próprio elemento ou vir junto do vendedor ("MARCA por VENDEDOR"). */
+function marcaEVendedorDe(el: cheerio.Cheerio<any>): { marca: string | null; vendedor: string | null } {
+  return separarMarcaVendedor(limpar(el.find(".poly-component__brand").first().text()) || null, vendedorDe(el));
+}
+
 /** Cards da página de listagem. */
 export function parseListagem(html: string): { nome: string | null; anuncios: AnuncioRaspado[] } {
   const $ = cheerio.load(html);
@@ -62,9 +68,10 @@ export function parseListagem(html: string): { nome: string | null; anuncios: An
     const titulo = limpar(link.text()) || limpar(el.find("h2, h3").first().text()) || limpar(link.attr("title"));
     if (!titulo) return;
     const vendas = parseVendidos(el.text());
+    const mv = marcaEVendedorDe(el);
     const novo: AnuncioRaspado = {
       mlb_id, titulo, url_anuncio: url,
-      vendedor: vendedorDe(el),
+      vendedor: mv.vendedor, marca: mv.marca,
       url_imagem: imagemDe(el),
       preco: precoDe($, el),
       total_vendas: vendas?.total ?? null,
@@ -76,6 +83,7 @@ export function parseListagem(html: string): { nome: string | null; anuncios: An
       ...antigo,
       titulo: antigo.titulo || novo.titulo,
       vendedor: antigo.vendedor ?? novo.vendedor,
+      marca: antigo.marca ?? novo.marca,
       url_imagem: antigo.url_imagem ?? novo.url_imagem,
       preco: antigo.preco ?? novo.preco,
       total_vendas: antigo.total_vendas ?? novo.total_vendas,
@@ -125,6 +133,16 @@ export function parseAnuncio(html: string, urlPagina: string): AnuncioRaspado | 
     || limpar($(".ui-pdp-seller__header__title, .ui-pdp-seller__link-trigger-button, a[href*='/perfil/']").first().text())
     || null;
 
+  // marca: JSON-LD (brand como texto ou {name}) ou a linha "Marca" da ficha técnica
+  const marcaLd = typeof produto?.brand === "object" ? produto.brand?.name : produto?.brand;
+  let marca = limpar(typeof marcaLd === "string" ? marcaLd : "");
+  if (!marca) {
+    $("tr").each((_, tr) => {
+      if (marca) return;
+      if (/^marca$/i.test(limpar($(tr).find("th").first().text()))) marca = limpar($(tr).find("td").first().text());
+    });
+  }
+
   const imgLd = Array.isArray(produto?.image) ? produto.image[0] : produto?.image;
   const imagem = imagemSegura(imgLd) || imagemSegura($('meta[property="og:image"]').attr("content"));
 
@@ -138,6 +156,7 @@ export function parseAnuncio(html: string, urlPagina: string): AnuncioRaspado | 
   return {
     mlb_id, titulo,
     vendedor: vendedor ? vendedor.replace(/^(vendido\s+)?por\s+/i, "").trim() || null : null,
+    marca: marca ? marca.slice(0, 80) : null,
     url_anuncio: urlAnuncioSegura(urlPagina) || urlPagina,
     url_imagem: imagem, preco,
     total_vendas: vendas?.total ?? null,

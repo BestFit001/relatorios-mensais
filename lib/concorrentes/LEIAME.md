@@ -8,7 +8,8 @@ Tela  /concorrentes  (app/components/ConcorrentesPainel.tsx)
  ├─ lê direto do Supabase (chave anon, só SELECT — RLS ligada nas 3 tabelas)
  └─ escreve via /api/concorrentes/*  (chave service_role, confere Origin = mesmo site)
         categorias  POST cadastra e raspa 2 páginas | PATCH pausa/retoma
-        anuncios    POST adiciona avulso por link   | PATCH desativa/reativa
+        anuncios    POST adiciona avulso por link   | PATCH desativa/reativa e/ou marca favorito
+        comparativos POST marca "igual ao meu" (link + SKU) | PATCH meu preço | DELETE
         capturar    POST = "Atualizar agora" (mesma captura do cron, em lotes)
         diagnostico POST testa API/HTML do ML a partir da Vercel
 
@@ -21,6 +22,10 @@ lib/concorrentes/
   mercadolivre/      url (validação/SSRF), parsers (HTML), fontes (API + HTML + proxy), index (conector)
   captura.ts         cadastrar categoria, avulso, captura diária (vendas_no_dia)
   calculos.ts        vendas_no_dia, "N vendidos", datas de SP
+  historico.ts       mudanças de preço, média de vendas/dia (estimativa), resumo de preço (sobre o histórico de um anúncio)
+  marca.ts           "MARCA por VENDEDOR" -> marca e vendedor
+  comparativo.ts     meu anúncio × concorrente: tarifas aproximadas e lucro líquido com o meu custo (usa lib/analiseMercado.ts)
+  comparativos.ts    gravação do comparativo e atualização do meu preço (também pela importação)
   palavrasChave.ts   stopwords + Top 20
   servidor.ts        service_role, CRON_SECRET, checagem de origem
 ```
@@ -32,6 +37,15 @@ O Mercado Livre costuma barrar IPs de servidor, e proxies que passam por ele sã
 3. Cole no painel e clique em Importar (`/api/concorrentes/importar`). A rota valida tudo (só links do ML, imagens https, limites).
 Repetir no dia seguinte grava a captura do dia e calcula `vendas_no_dia`. Com `ML_ESTRATEGIA=manual` o servidor não busca nada (o cron e "Atualizar agora" ficam inativos).
 O total de vendas só vem se a listagem do ML mostrar "N vendidos" no cartão; senão fica "—" (use o favorito na página do anúncio para os que importam).
+
+## Sub-abas da tela
+- **Anúncios**: tabela por categoria, ★ favorito, marca, total em faixa (“+5.000”), média/dia estimada, selo ▼/▲ de mudança de preço (30 dias).
+- **Mudanças de preço**: cada vez que o preço de uma captura difere do da captura anterior (período 7/30/90 dias, só quedas/altas, só favoritos). Só enxerga os dias em que houve captura.
+- **Favoritos**: anúncios com ★ de todas as categorias (preço atual, mín–máx, evolução, total, média/dia).
+- **Comparativo** (⚖️ no anúncio do concorrente): link do meu anúncio + SKU. Se o MLB está em `ml_anuncios_regras`, SKU, conta (1/2) e Clássico/Premium vêm de lá. Mostra os dois preços, comissão, tarifa fixa, frete estimado, imposto de 9%, o MEU custo (`tabela_custos_skus`, ou o custo digitado) e o lucro líquido/margem de cada lado. O meu preço é digitado, lido pelo favorito na página do meu anúncio, ou atualizado sozinho quando uma importação traz o mesmo MLB.
+
+## Vendas do dia: o que dá para medir
+O Mercado Livre não divulga a venda diária de terceiros: só o total acumulado, em faixas a partir de certo volume (`ultimo_aproximado`/`vendas_aproximado` marcam isso). “Vendas do dia” só sai do zero quando a faixa muda; a **média/dia** (total da última captura − da primeira, ÷ dias; mínimo 7 dias, janela de 90) é uma estimativa cujo erro máximo é uma faixa ÷ dias.
 
 ## Variáveis de ambiente (Vercel)
 | Variável | Obrigatória | Para quê |

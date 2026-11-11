@@ -1,4 +1,4 @@
-import { adicionarAnuncioAvulso, definirAtivo } from "../../../../lib/concorrentes/captura";
+import { adicionarAnuncioAvulso, definirAtivo, definirFavorito } from "../../../../lib/concorrentes/captura";
 import { ehUuid, executar, supabaseServidor } from "../../../../lib/concorrentes/servidor";
 import { ErroValidacao } from "../../../../lib/concorrentes/tipos";
 
@@ -15,11 +15,14 @@ export async function POST(req: Request) {
   });
 }
 
-/** Desativa (ou reativa) um anúncio: o histórico é mantido. Corpo: { id, ativo } */
+/** Desativa/reativa um anúncio (o histórico é mantido) e/ou marca como favorito. Corpo: { id, ativo? , favorito? } */
 export async function PATCH(req: Request) {
   return executar(req, async (c) => {
-    if (!ehUuid(c.id) || typeof c.ativo !== "boolean") throw new ErroValidacao("Pedido inválido.");
-    await definirAtivo(supabaseServidor(), c.id, c.ativo);
+    const temAtivo = typeof c.ativo === "boolean", temFavorito = typeof c.favorito === "boolean";
+    if (!ehUuid(c.id) || (!temAtivo && !temFavorito)) throw new ErroValidacao("Pedido inválido.");
+    const db = supabaseServidor();
+    if (temAtivo) await definirAtivo(db, c.id, c.ativo);
+    if (temFavorito) await definirFavorito(db, c.id, c.favorito);
     return { ok: true };
   });
 }

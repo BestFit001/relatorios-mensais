@@ -5,36 +5,36 @@ import { buscarTudo } from "../../lib/buscarTudo";
 import { CANAIS, nomeDoCanal } from "../../lib/concorrentes/canais";
 import { rankingPalavrasChave } from "../../lib/concorrentes/palavrasChave";
 import { favoritoHref } from "../../lib/concorrentes/favorito";
+import { hojeSP } from "../../lib/concorrentes/calculos";
+import { diasAtras, mediaVendasPorDia, mudancasDePreco, type Ponto } from "../../lib/concorrentes/historico";
 import Paginacao from "./Paginacao";
+import {
+  JANELA_HISTORICO_DIAS, COLUNAS_ANUNCIO, botao, brl, campo, caixa, chamar, dataBR, lerAnuncio, lerComparativo, lerHistorico, num, pct, totalVendido,
+  type AcoesAnuncio, type Anuncio, type Categoria, type Comparativo,
+} from "./concorrentes/comum";
+import Estrela from "./concorrentes/Estrela";
+import MudancasPreco from "./concorrentes/MudancasPreco";
+import Favoritos from "./concorrentes/Favoritos";
+import ComparativoForm from "./concorrentes/ComparativoForm";
+import ComparativoLista, { type ComparativoComAnuncio } from "./concorrentes/ComparativoLista";
 
-interface Categoria { id: string; nome: string; canal: string; url_origem: string; ativo: boolean; criado_em: string; ultima_raspagem: string | null }
-interface Anuncio {
-  id: string; categoria_id: string; mlb_id: string; titulo: string; vendedor: string | null; url_anuncio: string; url_imagem: string | null;
-  ativo: boolean; manual: boolean; ultimo_preco: number | null; ultimo_total_vendas: number | null; ultimas_vendas_dia: number | null; ultima_captura: string | null;
-}
 type Ordem = "vendas_dia" | "total" | "preco" | "titulo";
-
-const COLUNAS = "id,categoria_id,mlb_id,titulo,vendedor,url_anuncio,url_imagem,ativo,manual,ultimo_preco,ultimo_total_vendas,ultimas_vendas_dia,ultima_captura";
-const brl = (v: number | null) => (v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
-const num = (v: number | null) => (v == null ? "—" : v.toLocaleString("pt-BR"));
-const dataBR = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
-
-/** Chama as rotas /api/concorrentes/*; devolve o JSON ou lança Error com a mensagem do servidor. */
-async function chamar<T = any>(rota: string, metodo: "POST" | "PATCH", corpo: unknown): Promise<T> {
-  const r = await fetch(`/api/concorrentes/${rota}`, { method: metodo, headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j?.erro || `Erro ${r.status}`);
-  return j as T;
-}
-
-const caixa = "rounded-2xl border border-slate-800 bg-slate-900/60";
-const campo = "min-w-0 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-indigo-500 placeholder:text-slate-600";
-const botao = "px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
+type Vista = "anuncios" | "mudancas" | "favoritos" | "comparativo";
 
 export default function ConcorrentesPainel() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [categoriaId, setCategoriaId] = useState<string | null>(null);
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
+  const [vista, setVista] = useState<Vista>("anuncios");
+  const [historico, setHistorico] = useState<Record<string, Ponto[]>>({});
+  const [carregandoHist, setCarregandoHist] = useState(false);
+  const [favoritos, setFavoritos] = useState<Anuncio[]>([]);
+  const [carregandoFav, setCarregandoFav] = useState(true);
+  const [comparativos, setComparativos] = useState<ComparativoComAnuncio[]>([]);
+  const [carregandoComp, setCarregandoComp] = useState(true);
+  const [formComp, setFormComp] = useState<{ anuncio: Anuncio; existente: Comparativo | null } | null>(null);
+  const [soFavoritos, setSoFavoritos] = useState(false);
+  const hoje = hojeSP();
   const [carregando, setCarregando] = useState(true);
   const [carregandoAnuncios, setCarregandoAnuncios] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -76,29 +76,67 @@ export default function ConcorrentesPainel() {
     setCarregando(false);
   }, []);
 
-  const carregarAnuncios = useCallback(async (id: string) => {
-    setCarregandoAnuncios(true);
-    try { setAnuncios((await buscarTudo("anuncios", COLUNAS, (q) => q.eq("categoria_id", id))) as Anuncio[]); setErro(null); }
-    catch (e: any) { setErro(`Não consegui ler os anúncios: ${e.message}`); }
-    finally { setCarregandoAnuncios(false); }
+  /** Lê o histórico (90 dias) desses anúncios e junta ao que já está na tela. */
+  const carregarHistorico = useCallback(async (ids: string[]) => {
+    if (!ids.length) return;
+    setCarregandoHist(true);
+    try {
+      const novo = await lerHistorico(ids, diasAtras(hojeSP(), JANELA_HISTORICO_DIAS));
+      setHistorico((h) => { const f = { ...h }; for (const id of ids) f[id] = novo[id] || []; return f; });
+    } catch (e: any) { setErro(`Não consegui ler o histórico: ${e.message}`); }
+    finally { setCarregandoHist(false); }
   }, []);
 
-  useEffect(() => { carregarCategorias(); }, [carregarCategorias]);
+  const carregarAnuncios = useCallback(async (id: string) => {
+    setCarregandoAnuncios(true);
+    try {
+      const lista = (await buscarTudo("anuncios", COLUNAS_ANUNCIO, (q) => q.eq("categoria_id", id))).map(lerAnuncio);
+      setAnuncios(lista); setErro(null);
+      carregarHistorico(lista.map((a) => a.id));
+    } catch (e: any) { setErro(`Não consegui ler os anúncios: ${e.message}`); }
+    finally { setCarregandoAnuncios(false); }
+  }, [carregarHistorico]);
+
+  const carregarFavoritos = useCallback(async () => {
+    try {
+      const lista = (await buscarTudo("anuncios", COLUNAS_ANUNCIO, (q) => q.eq("favorito", true))).map(lerAnuncio);
+      setFavoritos(lista);
+      carregarHistorico(lista.map((a) => a.id));
+    } catch (e: any) { setErro(`Não consegui ler os favoritos: ${e.message}`); }
+    finally { setCarregandoFav(false); }
+  }, [carregarHistorico]);
+
+  const carregarComparativos = useCallback(async () => {
+    try {
+      const linhas = (await buscarTudo("comparativos", "*")).map(lerComparativo);
+      const ids = Array.from(new Set(linhas.map((c) => c.anuncio_id)));
+      const porId = new Map<string, Anuncio>();
+      for (let i = 0; i < ids.length; i += 80) {
+        const { data, error } = await supabase.from("anuncios").select(COLUNAS_ANUNCIO).in("id", ids.slice(i, i + 80));
+        if (error) throw new Error(error.message);
+        for (const r of data || []) porId.set(r.id, lerAnuncio(r));
+      }
+      setComparativos(linhas.map((c) => ({ ...c, anuncio: porId.get(c.anuncio_id) || null })).sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em))));
+    } catch (e: any) { setErro(`Não consegui ler os comparativos: ${e.message}`); }
+    finally { setCarregandoComp(false); }
+  }, []);
+
+  useEffect(() => { carregarCategorias(); carregarFavoritos(); carregarComparativos(); }, [carregarCategorias, carregarFavoritos, carregarComparativos]);
   useEffect(() => { setAnuncios([]); setPagina(1); setBusca(""); if (categoriaId) carregarAnuncios(categoriaId); }, [categoriaId, carregarAnuncios]);
-  useEffect(() => { setPagina(1); }, [busca, ordem, mostrarInativos, tamanho]);
+  useEffect(() => { setPagina(1); }, [busca, ordem, mostrarInativos, tamanho, soFavoritos]);
 
   const categoria = categorias.find((c) => c.id === categoriaId) || null;
   const ativos = useMemo(() => anuncios.filter((a) => a.ativo), [anuncios]);
 
   const visiveis = useMemo(() => {
     const t = busca.trim().toLowerCase();
-    const lista = anuncios.filter((a) => (mostrarInativos || a.ativo) && (!t || a.titulo.toLowerCase().includes(t) || (a.vendedor || "").toLowerCase().includes(t) || a.mlb_id.toLowerCase().includes(t)));
+    const lista = anuncios.filter((a) => (mostrarInativos || a.ativo) && (!soFavoritos || a.favorito) && (!t || a.titulo.toLowerCase().includes(t) || (a.vendedor || "").toLowerCase().includes(t) || (a.marca || "").toLowerCase().includes(t) || a.mlb_id.toLowerCase().includes(t)));
     const chave = (a: Anuncio) => ordem === "vendas_dia" ? a.ultimas_vendas_dia : ordem === "total" ? a.ultimo_total_vendas : a.ultimo_preco;
     return [...lista].sort((a, b) => {
       if (ordem === "titulo") return a.titulo.localeCompare(b.titulo, "pt-BR");
       return (chave(b) ?? -1) - (chave(a) ?? -1);
     });
-  }, [anuncios, busca, ordem, mostrarInativos]);
+  }, [anuncios, busca, ordem, mostrarInativos, soFavoritos]);
 
   const pag = useMemo(() => {
     const ini = (Math.min(pagina, Math.max(1, Math.ceil(visiveis.length / tamanho))) - 1) * tamanho;
@@ -119,6 +157,7 @@ export default function ConcorrentesPainel() {
       precoMedio: comPreco.length ? comPreco.reduce((s, a) => s + (a.ultimo_preco || 0), 0) / comPreco.length : null,
       ultima: datas.sort().pop() ?? null,
       semBase: ativos.filter((a) => a.ultimas_vendas_dia == null).length,
+      faixas: ativos.filter((a) => a.ultimo_aproximado).length,
     };
   }, [ativos]);
 
@@ -141,7 +180,9 @@ export default function ConcorrentesPainel() {
       setTextoImport(""); setNomeImport("");
       await carregarCategorias(r.categoria.id);
       await carregarAnuncios(r.categoria.id);
+      carregarFavoritos(); carregarComparativos();
       const partes = [`${r.novos} novo(s)`, `${r.atualizados} atualizado(s) com a captura de hoje`];
+      if (r.precosMeusAtualizados) partes.push(`${r.precosMeusAtualizados} preço(s) de anúncio meu atualizado(s) nos comparativos`);
       if (r.desativadosIgnorados) partes.push(`${r.desativadosIgnorados} desativado(s) mantido(s) assim`);
       if (r.descartados) partes.push(`${r.descartados} descartado(s) por dado inválido`);
       avisar("ok", `${r.tipo === "anuncio" ? "Anúncio importado" : `Categoria “${r.categoria.nome}”`}: ${partes.join(", ")}.`);
@@ -169,6 +210,37 @@ export default function ConcorrentesPainel() {
     setAnuncios((l) => l.map((x) => (x.id === a.id ? { ...x, ativo } : x))); // otimista
     try { await chamar("anuncios", "PATCH", { id: a.id, ativo }); }
     catch (e: any) { setAnuncios((l) => l.map((x) => (x.id === a.id ? { ...x, ativo: a.ativo } : x))); avisar("erro", e.message); }
+  };
+
+  const alternarFavorito = async (a: Anuncio) => {
+    const favorito = !a.favorito;
+    const troca = (l: Anuncio[]) => l.map((x) => (x.id === a.id ? { ...x, favorito } : x));
+    setAnuncios(troca); // otimista
+    if (!favorito) setFavoritos((l) => l.filter((x) => x.id !== a.id)); else setFavoritos((l) => (l.some((x) => x.id === a.id) ? troca(l) : [...l, { ...a, favorito }]));
+    try { await chamar("anuncios", "PATCH", { id: a.id, favorito }); carregarFavoritos(); }
+    catch (e: any) { setAnuncios((l) => l.map((x) => (x.id === a.id ? { ...x, favorito: a.favorito } : x))); carregarFavoritos(); avisar("erro", e.message); }
+  };
+
+  const acoes: AcoesAnuncio = {
+    alternarFavorito,
+    abrirComparativo: (a) => setFormComp({ anuncio: a, existente: comparativos.find((c) => c.anuncio_id === a.id) || null }),
+    temComparativo: (id) => comparativos.some((c) => c.anuncio_id === id),
+  };
+
+  const removerComparativo = async (c: ComparativoComAnuncio) => {
+    if (!window.confirm("Remover este comparativo? O anúncio do concorrente continua sendo monitorado.")) return;
+    try { await chamar("comparativos", "DELETE", { id: c.id }); setComparativos((l) => l.filter((x) => x.id !== c.id)); avisar("ok", "Comparativo removido."); }
+    catch (e: any) { avisar("erro", e.message); }
+  };
+
+  const atualizarPrecoMeu = async (c: ComparativoComAnuncio, dados: { meu_preco?: string; texto?: string }): Promise<boolean> => {
+    try {
+      const r = await chamar<{ comparativo: Comparativo }>("comparativos", "PATCH", { id: c.id, ...dados });
+      const novo = lerComparativo(r.comparativo);
+      setComparativos((l) => l.map((x) => (x.id === c.id ? { ...x, ...novo } : x)));
+      avisar("ok", `Meu preço atualizado: ${brl(novo.meu_preco)}.`);
+      return true;
+    } catch (e: any) { avisar("erro", e.message); return false; }
   };
 
   const pausarCategoria = async () => {
@@ -272,24 +344,54 @@ export default function ConcorrentesPainel() {
         <div className={`${caixa} p-10 text-center text-sm text-slate-400`}>Nenhuma categoria cadastrada ainda. Cole acima o link de uma categoria ou busca do Mercado Livre.</div>
       ) : (
         <>
-          {/* Filtro por categoria (abas) */}
-          <div className="flex flex-wrap items-center gap-2" role="tablist" data-categorias>
-            {categorias.map((c) => (
-              <button key={c.id} role="tab" aria-selected={c.id === categoriaId} data-categoria-tab={c.nome} onClick={() => setCategoriaId(c.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-black tracking-wide cursor-pointer transition-colors ${c.id === categoriaId ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/40" : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-white"} ${c.ativo ? "" : "opacity-50"}`}>
-                {c.nome}
-                <span className="ml-2 text-[9px] font-bold opacity-70 uppercase">{nomeDoCanal(c.canal)}{c.ativo ? "" : " · pausada"}</span>
+          {/* Sub-abas */}
+          <nav className="flex flex-wrap gap-1 border-b border-slate-800" role="tablist" data-vistas>
+            {([
+              ["anuncios", "📋 Anúncios", null],
+              ["mudancas", "📉 Mudanças de preço", null],
+              ["favoritos", "★ Favoritos", favoritos.length],
+              ["comparativo", "⚖️ Comparativo", comparativos.length],
+            ] as [Vista, string, number | null][]).map(([id, rotulo, n]) => (
+              <button key={id} role="tab" aria-selected={vista === id} data-vista={id} onClick={() => setVista(id)}
+                className={`px-4 py-2 text-xs font-black tracking-wide cursor-pointer border-b-2 -mb-px transition-colors ${vista === id ? "border-indigo-500 text-white" : "border-transparent text-slate-500 hover:text-slate-200"}`}>
+                {rotulo}{n ? <span className="ml-1.5 text-[10px] font-bold text-slate-400">({n})</span> : null}
               </button>
             ))}
-          </div>
+          </nav>
 
-          {categoria && (
+          {/* Filtro por categoria (abas): vale para Anúncios e Mudanças de preço */}
+          {(vista === "anuncios" || vista === "mudancas") && (
+            <div className="flex flex-wrap items-center gap-2" role="tablist" data-categorias>
+              {categorias.map((c) => (
+                <button key={c.id} role="tab" aria-selected={c.id === categoriaId} data-categoria-tab={c.nome} onClick={() => setCategoriaId(c.id)}
+                  className={`px-4 py-2 rounded-xl text-xs font-black tracking-wide cursor-pointer transition-colors ${c.id === categoriaId ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/40" : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-white"} ${c.ativo ? "" : "opacity-50"}`}>
+                  {c.nome}
+                  <span className="ml-2 text-[9px] font-bold opacity-70 uppercase">{nomeDoCanal(c.canal)}{c.ativo ? "" : " · pausada"}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {vista === "mudancas" && categoria && (
+            <MudancasPreco anuncios={anuncios} historico={historico} hoje={hoje} carregando={carregandoAnuncios || carregandoHist} acoes={acoes} />
+          )}
+
+          {vista === "favoritos" && (
+            <Favoritos favoritos={favoritos} categorias={categorias} historico={historico} carregando={carregandoFav} acoes={acoes} onAbrirCategoria={(id) => { setCategoriaId(id); setVista("anuncios"); }} />
+          )}
+
+          {vista === "comparativo" && (
+            <ComparativoLista comparativos={comparativos} carregando={carregandoComp}
+              onEditar={(c) => { if (c.anuncio) setFormComp({ anuncio: c.anuncio, existente: c }); }} onRemover={removerComparativo} onPreco={atualizarPrecoMeu} />
+          )}
+
+          {vista === "anuncios" && categoria && (
             <>
               {/* Indicadores */}
               <div className={`${caixa} grid grid-cols-2 md:grid-cols-5 divide-x divide-slate-800`} data-resumo>
                 {[
                   ["Anúncios ativos", num(resumo.anuncios), `${anuncios.length - ativos.length} desativado(s)`],
-                  ["Vendas do dia", num(resumo.vendasDia), resumo.semBase ? `${resumo.semBase} ainda sem base de ontem` : "soma de todos os anúncios"],
+                  ["Vendas do dia", num(resumo.vendasDia), resumo.semBase ? `${resumo.semBase} ainda sem base de ontem` : resumo.faixas ? `${resumo.faixas} de ${resumo.anuncios} só informam faixa (+N)` : "soma de todos os anúncios"],
                   ["Total vendido", num(resumo.total), "acumulado informado pelo canal"],
                   ["Preço médio", brl(resumo.precoMedio), "preço atual dos anúncios"],
                   ["Última captura", dataBR(resumo.ultima), categoria.ativo ? "captura automática diária" : "categoria pausada"],
@@ -302,17 +404,20 @@ export default function ConcorrentesPainel() {
                 ))}
               </div>
 
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px] items-start">
+              <div className="grid gap-5 grid-cols-[minmax(0,1fr)] xl:grid-cols-[minmax(0,1fr)_340px] items-start">
                 {/* Tabela de anúncios */}
                 <section className={`${caixa} p-4 space-y-3`} data-tabela-anuncios>
                   <div className="flex flex-wrap items-center gap-2">
-                    <input data-campo="busca" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Filtrar por título, vendedor ou MLB…" className={`${campo} w-64`} />
+                    <input data-campo="busca" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Filtrar por título, marca, vendedor ou MLB…" className={`${campo} w-64`} />
                     <select data-campo="ordem" value={ordem} onChange={(e) => setOrdem(e.target.value as Ordem)} className={campo}>
                       <option value="vendas_dia">Mais vendidos hoje</option>
                       <option value="total">Maior total vendido</option>
                       <option value="preco">Maior preço</option>
                       <option value="titulo">Título (A–Z)</option>
                     </select>
+                    <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                      <input data-campo="so-favoritos" type="checkbox" checked={soFavoritos} onChange={(e) => setSoFavoritos(e.target.checked)} /> só favoritos ★
+                    </label>
                     <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                       <input data-campo="inativos" type="checkbox" checked={mostrarInativos} onChange={(e) => setMostrarInativos(e.target.checked)} /> mostrar desativados
                     </label>
@@ -333,41 +438,64 @@ export default function ConcorrentesPainel() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-left text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-800">
-                          <th className="py-2 pr-3 w-16">Imagem</th><th className="py-2 pr-3">Título</th><th className="py-2 pr-3">Vendedor</th>
-                          <th className="py-2 pr-3 text-right">Preço atual</th><th className="py-2 pr-3 text-right">Vendas do dia</th><th className="py-2 pr-3 text-right">Total vendido</th><th className="py-2 w-24" />
+                          <th className="py-2 pr-2 w-8" /><th className="py-2 pr-3 w-16">Imagem</th><th className="py-2 pr-3">Título</th><th className="py-2 pr-3">Marca</th><th className="py-2 pr-3">Vendedor</th>
+                          <th className="py-2 pr-3 text-right">Preço atual</th><th className="py-2 pr-3 text-right">Vendas do dia</th><th className="py-2 pr-3 text-right">Total vendido</th><th className="py-2 pr-3 text-right" title="Estimativa pelo histórico: precisa de pelo menos 7 dias">Média/dia (est.)</th><th className="py-2 w-28" />
                         </tr>
                       </thead>
                       <tbody>
-                        {carregandoAnuncios && <tr><td colSpan={7} className="py-8 text-center text-xs text-slate-500">Carregando anúncios…</td></tr>}
-                        {!carregandoAnuncios && pag.length === 0 && <tr><td colSpan={7} className="py-8 text-center text-xs text-slate-500">Nenhum anúncio para mostrar.</td></tr>}
-                        {pag.map((a) => (
-                          <tr key={a.id} data-anuncio-linha={a.mlb_id} className={`border-b border-slate-800/60 ${a.ativo ? "" : "opacity-40"}`}>
-                            <td className="py-2 pr-3">
-                              {a.url_imagem
-                                // eslint-disable-next-line @next/next/no-img-element
-                                ? <img src={a.url_imagem} alt="" loading="lazy" referrerPolicy="no-referrer" className="w-12 h-12 object-contain rounded-md bg-white" onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
-                                : <div className="w-12 h-12 rounded-md bg-slate-800 grid place-items-center text-slate-600">🖼️</div>}
-                            </td>
-                            <td className="py-2 pr-3 max-w-[420px]">
-                              <a href={a.url_anuncio} target="_blank" rel="noopener noreferrer" className="font-semibold text-slate-100 hover:text-indigo-300 line-clamp-2">{a.titulo}</a>
-                              <span className="text-[10px] text-slate-500">{a.mlb_id}{a.manual ? " · avulso" : ""}{a.ativo ? "" : " · desativado"}</span>
-                            </td>
-                            <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{a.vendedor || "—"}</td>
-                            <td className="py-2 pr-3 text-right font-bold text-white whitespace-nowrap">{brl(a.ultimo_preco)}</td>
-                            <td data-vendas-dia className={`py-2 pr-3 text-right font-bold whitespace-nowrap ${(a.ultimas_vendas_dia || 0) > 0 ? "text-emerald-400" : "text-slate-400"}`}>{num(a.ultimas_vendas_dia)}</td>
-                            <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{num(a.ultimo_total_vendas)}</td>
-                            <td className="py-2 text-right">
-                              {a.ativo
-                                ? <button data-acao="desativar" onClick={() => mudarAtivo(a, false)} className="text-[11px] font-bold text-rose-400 hover:text-rose-300 cursor-pointer">Desativar</button>
-                                : <button data-acao="reativar" onClick={() => mudarAtivo(a, true)} className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer">Reativar</button>}
-                            </td>
-                          </tr>
-                        ))}
+                        {carregandoAnuncios && <tr><td colSpan={10} className="py-8 text-center text-xs text-slate-500">Carregando anúncios…</td></tr>}
+                        {!carregandoAnuncios && pag.length === 0 && <tr><td colSpan={10} className="py-8 text-center text-xs text-slate-500">Nenhum anúncio para mostrar.</td></tr>}
+                        {pag.map((a) => {
+                          const h = historico[a.id] || [];
+                          const mud = mudancasDePreco(h).filter((m) => m.data >= diasAtras(hoje, 30)).pop();
+                          const media = mediaVendasPorDia(h);
+                          return (
+                            <tr key={a.id} data-anuncio-linha={a.mlb_id} className={`border-b border-slate-800/60 ${a.ativo ? "" : "opacity-40"}`}>
+                              <td className="py-2 pr-2"><Estrela ativo={a.favorito} onClick={() => alternarFavorito(a)} /></td>
+                              <td className="py-2 pr-3">
+                                {a.url_imagem
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  ? <img src={a.url_imagem} alt="" loading="lazy" referrerPolicy="no-referrer" className="w-12 h-12 object-contain rounded-md bg-white" onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
+                                  : <div className="w-12 h-12 rounded-md bg-slate-800 grid place-items-center text-slate-600">🖼️</div>}
+                              </td>
+                              <td className="py-2 pr-3 max-w-[420px]">
+                                <a href={a.url_anuncio} target="_blank" rel="noopener noreferrer" className="font-semibold text-slate-100 hover:text-indigo-300 line-clamp-2">{a.titulo}</a>
+                                <span className="text-[10px] text-slate-500">{a.mlb_id}{a.manual ? " · avulso" : ""}{a.ativo ? "" : " · desativado"}</span>
+                              </td>
+                              <td data-marca className="py-2 pr-3 text-slate-300 whitespace-nowrap">{a.marca || "—"}</td>
+                              <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{a.vendedor || "—"}</td>
+                              <td className="py-2 pr-3 text-right font-bold text-white whitespace-nowrap">
+                                {brl(a.ultimo_preco)}
+                                {mud && <span data-mudou className={`block text-[10px] font-bold ${mud.pct < 0 ? "text-emerald-400" : "text-rose-400"}`} title={`Era ${brl(mud.de)} em ${dataBR(mud.dataAnterior)}`}>{mud.pct < 0 ? "▼" : "▲"} {pct(mud.pct)} em {dataBR(mud.data)}</span>}
+                              </td>
+                              <td data-vendas-dia className={`py-2 pr-3 text-right font-bold whitespace-nowrap ${(a.ultimas_vendas_dia || 0) > 0 ? "text-emerald-400" : "text-slate-400"}`}
+                                title={a.ultimo_aproximado ? "O canal só informa faixas (+N vendidos): o dia só muda quando a faixa muda" : undefined}>{num(a.ultimas_vendas_dia)}</td>
+                              <td data-total className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap" title={a.ultimo_aproximado ? "Faixa informada pelo canal: o total real é igual ou maior" : undefined}>{totalVendido(a)}</td>
+                              <td data-media className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap" title={media ? `Média dos últimos ${media.dias} dias${media.aproximado ? " (o canal informa faixas: é uma estimativa)" : ""}` : "Precisa de pelo menos 7 dias de histórico"}>
+                                {media ? `${media.aproximado ? "≈ " : ""}${media.porDia.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}` : "—"}
+                              </td>
+                              <td className="py-2 text-right whitespace-nowrap">
+                                <button data-acao="comparar" onClick={() => acoes.abrirComparativo(a)} title="Marcar como igual a um anúncio meu" className="mr-2 cursor-pointer text-base opacity-70 hover:opacity-100">{acoes.temComparativo(a.id) ? "⚖️✓" : "⚖️"}</button>
+                                {a.ativo
+                                  ? <button data-acao="desativar" onClick={() => mudarAtivo(a, false)} className="text-[11px] font-bold text-rose-400 hover:text-rose-300 cursor-pointer">Desativar</button>
+                                  : <button data-acao="reativar" onClick={() => mudarAtivo(a, true)} className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer">Reativar</button>}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                   <Paginacao total={visiveis.length} pagina={pagina} tamanho={tamanho} onPagina={setPagina} onTamanho={setTamanho} rotulo="anúncios" opcoes={[25, 50, 100]} />
-                  <p className="text-[10px] text-slate-500">“Vendas do dia” = total de hoje − total da captura anterior (aparece “—” até existir uma captura anterior). Se o canal só informa faixas (“+500 vendidos”), o dia fica em 0 até a faixa mudar.</p>
+                  <details className="text-[11px] text-slate-500" data-sobre-vendas>
+                    <summary className="cursor-pointer select-none font-bold text-slate-400">Como as vendas são medidas (e o que dá para confiar)</summary>
+                    <ul className="mt-2 space-y-1.5 list-disc list-inside">
+                      <li>O Mercado Livre não divulga a venda diária de anúncios de terceiros. Só aparece o <b>total acumulado</b> e, a partir de certo volume, em <b>faixas</b> (“+100”, “+500”, “+1 mil”, “+5 mil”…). O sinal “+” na coluna Total vendido marca esses casos.</li>
+                      <li><b>Vendas do dia</b> = total de hoje − total da captura anterior. Com faixas, fica em 0 até o anúncio mudar de faixa, e aí o salto é de uma faixa inteira (não é a venda de um dia). Só é exato nos anúncios que mostram o número certo (os pequenos).</li>
+                      <li><b>Média/dia (est.)</b> = quanto o total andou entre a primeira e a última captura ÷ dias entre elas (a partir de 7 dias de histórico, últimos 90). Quanto mais dias, mais confiável: com faixas o erro máximo é uma faixa dividida pelo número de dias. O “≈” indica essa estimativa.</li>
+                      <li>Para o ranking, use “Maior total vendido” e “Média/dia”; a variação do dia serve como alerta de que algo mudou.</li>
+                    </ul>
+                  </details>
                 </section>
 
                 {/* Palavras-chave */}
@@ -394,6 +522,11 @@ export default function ConcorrentesPainel() {
             </>
           )}
         </>
+      )}
+
+      {formComp && (
+        <ComparativoForm anuncio={formComp.anuncio} existente={formComp.existente} onFechar={() => setFormComp(null)}
+          onSalvo={async () => { setFormComp(null); await carregarComparativos(); setVista("comparativo"); avisar("ok", "Comparativo salvo."); }} />
       )}
 
       {/* Diagnóstico */}

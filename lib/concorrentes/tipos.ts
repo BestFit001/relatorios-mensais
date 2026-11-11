@@ -5,6 +5,8 @@ export interface AnuncioRaspado {
   mlb_id: string;
   titulo: string;
   vendedor: string | null;
+  /** marca do produto, quando o anúncio mostra (nunca é inventada) */
+  marca?: string | null;
   url_anuncio: string;
   /** só o link da imagem (https); o arquivo não é guardado */
   url_imagem: string | null;

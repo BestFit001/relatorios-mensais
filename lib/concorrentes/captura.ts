@@ -5,6 +5,7 @@ import { calcularVendasNoDia, hojeSP, comLimite, totalBase } from "./calculos";
 import { ErroValidacao, SEM_TEMPO, type AnuncioRaspado, type Captura } from "./tipos";
 import { sanitizarPayload } from "./importacao";
 import { nomeDaCategoria } from "./mercadolivre/url";
+import { atualizarPrecosMeusDeImportacao } from "./comparativos";
 
 export const PAGINAS_POR_CATEGORIA = 2;
 const MAX_ANUNCIOS = 100;
@@ -17,9 +18,9 @@ function falha(contexto: string, error: { message: string } | null) {
 /** Linhas de `anuncios` + 1ª linha de histórico (sem vendas_no_dia: ainda não há "ontem"). */
 async function gravarAnuncios(db: SupabaseClient, categoria_id: string, lista: AnuncioRaspado[], hoje: string, manual: boolean) {
   const linhas = lista.map((a) => ({
-    categoria_id, mlb_id: a.mlb_id, titulo: a.titulo, vendedor: a.vendedor, url_anuncio: a.url_anuncio, url_imagem: a.url_imagem,
+    categoria_id, mlb_id: a.mlb_id, titulo: a.titulo, vendedor: a.vendedor, marca: a.marca ?? null, url_anuncio: a.url_anuncio, url_imagem: a.url_imagem,
     ativo: true, manual,
-    ultimo_preco: a.preco, ultimo_total_vendas: a.total_vendas, ultimas_vendas_dia: null, ultima_captura: hoje,
+    ultimo_preco: a.preco, ultimo_total_vendas: a.total_vendas, ultimo_aproximado: a.vendas_aproximado, ultimas_vendas_dia: null, ultima_captura: hoje,
   }));
   const novos: { id: string; mlb_id: string }[] = [];
   for (const lote of em(linhas, 200)) {
@@ -86,6 +87,12 @@ export async function definirAtivo(db: SupabaseClient, anuncio_id: string, ativo
   falha("atualizar anúncio", error);
 }
 
+/** Marca ou desmarca o anúncio como favorito (aparece na aba Favoritos, de todas as categorias). */
+export async function definirFavorito(db: SupabaseClient, anuncio_id: string, favorito: boolean) {
+  const { error } = await db.from("anuncios").update({ favorito }).eq("id", anuncio_id);
+  falha("atualizar anúncio", error);
+}
+
 /** ESTRATEGIA=manual: o servidor não busca nada no marketplace; os dados entram pelo "Importar do navegador". */
 export const modoManual = () => (process.env.ML_ESTRATEGIA || "").toLowerCase() === "manual";
 const MSG_MANUAL = 'O servidor está em modo manual (ML_ESTRATEGIA=manual): use "Importar do navegador".';
@@ -101,7 +108,7 @@ async function registrarCapturas(db: SupabaseClient, hoje: string, lista: { a: a
     atualizacoes.push({ id: a.id, campos: {
       ...(extra || {}),
       ...(cap.preco != null ? { ultimo_preco: cap.preco } : {}),
-      ...(cap.total_vendas != null ? { ultimo_total_vendas: cap.total_vendas } : {}), // sem número novo, mantém o último como base
+      ...(cap.total_vendas != null ? { ultimo_total_vendas: cap.total_vendas, ultimo_aproximado: cap.vendas_aproximado } : {}), // sem número novo, mantém o último como base
       ultimas_vendas_dia: vendasDia,
       ultima_captura: hoje,
     } });
@@ -253,9 +260,11 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
     if (!ex) { novos.push(a); continue; }
     const reativar = !ex.ativo && p.tipo === "anuncio"; // adicionar um anúncio avulso de propósito reativa
     if (!ex.ativo && !reativar) { desativadosIgnorados++; continue; } // na importação da categoria, o que foi desativado à mão continua desativado
-    atualizar.push({ a: ex, cap: { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }, extra: { titulo: a.titulo, vendedor: a.vendedor, url_imagem: a.url_imagem, url_anuncio: a.url_anuncio, ...(reativar ? { ativo: true } : {}) } });
+    atualizar.push({ a: ex, cap: { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }, extra: { titulo: a.titulo, vendedor: a.vendedor, ...(a.marca ? { marca: a.marca } : {}), url_imagem: a.url_imagem, url_anuncio: a.url_anuncio, ...(reativar ? { ativo: true } : {}) } });
   }
   const criados = novos.length ? await gravarAnuncios(db, categoria.id, novos, hoje, p.tipo === "anuncio") : 0;
   await registrarCapturas(db, hoje, atualizar);
-  return { categoria, tipo: p.tipo, recebidos: p.anuncios.length, novos: criados, atualizados: atualizar.length, desativadosIgnorados, descartados: p.descartados };
+  // se um dos anúncios lidos é o MEU de algum comparativo, o meu preço também é atualizado
+  const precosMeusAtualizados = await atualizarPrecosMeusDeImportacao(db, p.anuncios);
+  return { categoria, tipo: p.tipo, recebidos: p.anuncios.length, novos: criados, atualizados: atualizar.length, desativadosIgnorados, descartados: p.descartados, precosMeusAtualizados };
 }

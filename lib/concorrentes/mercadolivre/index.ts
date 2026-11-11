@@ -65,6 +65,7 @@ async function categoriaPeloHtml(url: string, paginas: number, ate: number): Pro
       const d = parseAnuncio(await baixarHtml(a.url_anuncio, ate), a.url_anuncio);
       if (!d) { falhas++; return; }
       a.vendedor = a.vendedor ?? d.vendedor;
+      a.marca = a.marca ?? d.marca;
       a.preco = a.preco ?? d.preco;
       a.url_imagem = a.url_imagem ?? d.url_imagem;
       if (a.total_vendas == null) { a.total_vendas = d.total_vendas; a.vendas_aproximado = d.vendas_aproximado; }

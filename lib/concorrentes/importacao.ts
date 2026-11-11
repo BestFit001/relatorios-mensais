@@ -2,6 +2,7 @@
 import type { AnuncioRaspado } from "./tipos";
 import { ErroValidacao } from "./tipos";
 import { parsePreco, parseVendidos } from "./calculos";
+import { separarMarcaVendedor } from "./marca";
 import { imagemSegura, normalizarUrlAnuncio } from "./mercadolivre/url";
 
 export const MAX_IMPORTADOS = 300;
@@ -41,9 +42,10 @@ export function sanitizarPayload(bruto: unknown): PayloadLimpo {
       vistos.add(mlb_id);
       const preco = parsePreco(a?.preco);
       const vendas = parseVendidos(typeof a?.vendas_texto === "string" ? a.vendas_texto.slice(0, 80) : null);
+      const { marca, vendedor } = separarMarcaVendedor(texto(a?.marca, 80), texto(a?.vendedor, 120));
       anuncios.push({
         mlb_id, titulo, url_anuncio: url,
-        vendedor: texto(a?.vendedor, 120),
+        vendedor, marca,
         url_imagem: imagemSegura(typeof a?.imagem === "string" ? a.imagem.slice(0, 500) : null),
         preco: preco != null && preco > 0 && preco < 10_000_000 ? preco : null,
         total_vendas: vendas && vendas.total >= 0 && vendas.total < 1_000_000_000 ? vendas.total : null,
