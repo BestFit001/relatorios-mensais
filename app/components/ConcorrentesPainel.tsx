@@ -64,7 +64,13 @@ export default function ConcorrentesPainel() {
   const [pagina, setPagina] = useState(1);
   const [tamanho, setTamanho] = useState(25);
 
-  const avisar = (tipo: "ok" | "erro", texto: string) => { setAviso({ tipo, texto }); if (tipo === "ok") setTimeout(() => setAviso(null), 6000); };
+  // um aviso antigo não pode apagar um aviso novo: o relógio anterior é cancelado a cada aviso
+  const relogioAviso = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const avisar = (tipo: "ok" | "erro", texto: string) => {
+    if (relogioAviso.current) clearTimeout(relogioAviso.current);
+    setAviso({ tipo, texto });
+    relogioAviso.current = tipo === "ok" ? setTimeout(() => setAviso(null), 6000) : null;
+  };
 
   const carregarCategorias = useCallback(async (escolher?: string) => {
     const { data, error } = await supabase.from("categorias").select("*").order("criado_em", { ascending: true });
@@ -315,31 +321,6 @@ export default function ConcorrentesPainel() {
         </div>
       </details>
 
-      {/* Cadastro de categoria */}
-      <details className={`${caixa} group`} data-cadastro-categoria>
-        <summary className="cursor-pointer select-none px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-300 flex items-center justify-between">
-          <span>➕ Cadastrar categoria pelo servidor</span>
-          <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">só funciona se o servidor conseguir ler o Mercado Livre (veja “Testar conexão”)</span>
-        </summary>
-        <div className="px-5 pb-5 grid gap-3 md:grid-cols-[180px_1fr_220px_auto] items-end">
-          <label className="grid gap-1 text-[11px] font-bold text-slate-400">Canal
-            <select data-campo="canal" value={canal} onChange={(e) => setCanal(e.target.value)} className={`${campo} w-full`}>
-              {CANAIS.map((c) => <option key={c.id} value={c.id} disabled={!c.disponivel}>{c.nome}{c.disponivel ? "" : " (em breve)"}</option>)}
-            </select>
-          </label>
-          <label className="grid gap-1 text-[11px] font-bold text-slate-400">Link da categoria ou busca
-            <input data-campo="url" value={urlCategoria} onChange={(e) => setUrlCategoria(e.target.value)} placeholder={canalDisponivel?.exemploUrl} className={`${campo} w-full`} />
-          </label>
-          <label className="grid gap-1 text-[11px] font-bold text-slate-400">Nome (opcional)
-            <input data-campo="nome" value={nomeCategoria} onChange={(e) => setNomeCategoria(e.target.value)} placeholder="Ex.: Organizadores" className={`${campo} w-full`} />
-          </label>
-          <button data-acao="cadastrar" onClick={cadastrar} disabled={cadastrando || !urlCategoria.trim() || !canalDisponivel?.disponivel} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>
-            {cadastrando ? "Lendo anúncios…" : "Cadastrar e raspar"}
-          </button>
-        </div>
-        {cadastrando && <p className="px-5 pb-4 -mt-2 text-xs text-slate-400">Isso pode levar até um minuto: a página é lida e cada anúncio é aberto para pegar vendedor e vendas.</p>}
-      </details>
-
       {carregando ? <p className="text-xs text-slate-500">Carregando…</p> : categorias.length === 0 ? (
         <div className={`${caixa} p-10 text-center text-sm text-slate-400`}>Nenhuma categoria cadastrada ainda. Cole acima o link de uma categoria ou busca do Mercado Livre.</div>
       ) : (
@@ -529,7 +510,37 @@ export default function ConcorrentesPainel() {
           onSalvo={async () => { setFormComp(null); await carregarComparativos(); setVista("comparativo"); avisar("ok", "Comparativo salvo."); }} />
       )}
 
-      {/* Diagnóstico */}
+      {/* Avançado: só serve se o servidor conseguir ler o Mercado Livre (proxy pago ou API) */}
+      <details className={`${caixa}`} data-avancado>
+        <summary className="cursor-pointer select-none px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-400 flex items-center justify-between">
+          <span>⚙️ Avançado: leitura pelo servidor</span>
+          <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">não precisa para o dia a dia — só funciona com proxy pago ou API do Mercado Livre</span>
+        </summary>
+        <div className="px-5 pb-5 space-y-4">
+      <details className={`${caixa} group`} data-cadastro-categoria>
+        <summary className="cursor-pointer select-none px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-300 flex items-center justify-between">
+          <span>➕ Cadastrar categoria pelo servidor</span>
+          <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">só funciona se o servidor conseguir ler o Mercado Livre (veja “Testar conexão”)</span>
+        </summary>
+        <div className="px-5 pb-5 grid gap-3 md:grid-cols-[180px_1fr_220px_auto] items-end">
+          <label className="grid gap-1 text-[11px] font-bold text-slate-400">Canal
+            <select data-campo="canal" value={canal} onChange={(e) => setCanal(e.target.value)} className={`${campo} w-full`}>
+              {CANAIS.map((c) => <option key={c.id} value={c.id} disabled={!c.disponivel}>{c.nome}{c.disponivel ? "" : " (em breve)"}</option>)}
+            </select>
+          </label>
+          <label className="grid gap-1 text-[11px] font-bold text-slate-400">Link da categoria ou busca
+            <input data-campo="url" value={urlCategoria} onChange={(e) => setUrlCategoria(e.target.value)} placeholder={canalDisponivel?.exemploUrl} className={`${campo} w-full`} />
+          </label>
+          <label className="grid gap-1 text-[11px] font-bold text-slate-400">Nome (opcional)
+            <input data-campo="nome" value={nomeCategoria} onChange={(e) => setNomeCategoria(e.target.value)} placeholder="Ex.: Organizadores" className={`${campo} w-full`} />
+          </label>
+          <button data-acao="cadastrar" onClick={cadastrar} disabled={cadastrando || !urlCategoria.trim() || !canalDisponivel?.disponivel} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>
+            {cadastrando ? "Lendo anúncios…" : "Cadastrar e raspar"}
+          </button>
+        </div>
+        {cadastrando && <p className="px-5 pb-4 -mt-2 text-xs text-slate-400">Isso pode levar até um minuto: a página é lida e cada anúncio é aberto para pegar vendedor e vendas.</p>}
+      </details>
+
       <div className="flex flex-wrap items-center gap-3">
         <button data-acao="diagnostico" onClick={testarConexao} disabled={!!atualizando} className={`${botao} bg-slate-800 text-slate-300 hover:bg-slate-700`}>🔌 Testar conexão com o Mercado Livre</button>
         <span className="text-[10px] text-slate-500">Mostra o que o servidor consegue ler hoje (API oficial e páginas públicas).</span>
@@ -543,6 +554,8 @@ export default function ConcorrentesPainel() {
           ))}
         </ul>
       )}
+        </div>
+      </details>
     </div>
   );
 }

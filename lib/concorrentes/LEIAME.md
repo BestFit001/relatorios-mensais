@@ -38,6 +38,8 @@ O Mercado Livre costuma barrar IPs de servidor, e proxies que passam por ele sã
 Repetir no dia seguinte grava a captura do dia e calcula `vendas_no_dia`. Com `ML_ESTRATEGIA=manual` o servidor não busca nada (o cron e "Atualizar agora" ficam inativos).
 O total de vendas só vem se a listagem do ML mostrar "N vendidos" no cartão; senão fica "—" (use o favorito na página do anúncio para os que importam).
 
+Na tela, “Cadastrar categoria pelo servidor” e “Testar conexão” ficam num bloco fechado “Avançado”: só servem se o servidor conseguir ler o Mercado Livre (proxy pago ou API).
+
 ## Sub-abas da tela
 - **Anúncios**: tabela por categoria, ★ favorito, marca, total em faixa (“+5.000”), média/dia estimada, selo ▼/▲ de mudança de preço (30 dias).
 - **Mudanças de preço**: cada vez que o preço de uma captura difere do da captura anterior (período 7/30/90 dias, só quedas/altas, só favoritos). Só enxerga os dias em que houve captura.
