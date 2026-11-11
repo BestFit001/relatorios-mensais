@@ -6,6 +6,7 @@ import { ErroValidacao, SEM_TEMPO, type AnuncioRaspado, type Captura } from "./t
 import { sanitizarPayload } from "./importacao";
 import { nomeDaCategoria } from "./mercadolivre/url";
 import { atualizarPrecosMeusDeImportacao } from "./comparativos";
+import { atualizarRanking, movimentoRanking } from "./ranking";
 
 export const PAGINAS_POR_CATEGORIA = 2;
 const MAX_ANUNCIOS = 100;
@@ -21,6 +22,7 @@ async function gravarAnuncios(db: SupabaseClient, categoria_id: string, lista: A
     categoria_id, mlb_id: a.mlb_id, titulo: a.titulo, vendedor: a.vendedor, marca: a.marca ?? null, url_anuncio: a.url_anuncio, url_imagem: a.url_imagem,
     ativo: true, manual,
     ultimo_preco: a.preco, ultimo_total_vendas: a.total_vendas, ultimo_aproximado: a.vendas_aproximado, ultimas_vendas_dia: null, ultima_captura: hoje,
+    ranking_posicao: a.ranking ?? null, ranking_data: a.ranking != null ? hoje : null,
   }));
   const novos: { id: string; mlb_id: string }[] = [];
   for (const lote of em(linhas, 200)) {
@@ -216,8 +218,8 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
   const hoje = hojeSP();
 
   let categoria: { id: string; nome: string; ativo?: boolean };
-  if (p.tipo === "anuncio") {
-    if (!entrada.categoria_id) throw new ErroValidacao("Escolha a categoria (aba) em que o anúncio deve entrar.");
+  if (p.tipo === "anuncio" || p.tipo === "ranking") {
+    if (!entrada.categoria_id) throw new ErroValidacao("Escolha a categoria (aba) em que os anúncios devem entrar.");
     const { data, error } = await db.from("categorias").select("id,nome,canal").eq("id", entrada.categoria_id).maybeSingle();
     falha("buscar categoria", error);
     if (!data) throw new ErroValidacao("Categoria não encontrada.");
@@ -245,7 +247,7 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
   const existentes = new Map<string, any>();
   for (let de = 0; ; de += 1000) {
     const { data, error } = await db.from("anuncios")
-      .select("id,mlb_id,ativo,categoria_id,ultima_captura,ultimo_total_vendas,ultimas_vendas_dia")
+      .select("id,mlb_id,ativo,categoria_id,ultima_captura,ultimo_total_vendas,ultimas_vendas_dia,ranking_posicao,ranking_anterior,ranking_data,ranking_data_anterior")
       .eq("categoria_id", categoria.id).order("id", { ascending: true }).range(de, de + 999);
     falha("listar anúncios da categoria", error);
     for (const r of data || []) existentes.set(r.mlb_id, r);
@@ -260,11 +262,28 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
     if (!ex) { novos.push(a); continue; }
     const reativar = !ex.ativo && p.tipo === "anuncio"; // adicionar um anúncio avulso de propósito reativa
     if (!ex.ativo && !reativar) { desativadosIgnorados++; continue; } // na importação da categoria, o que foi desativado à mão continua desativado
-    atualizar.push({ a: ex, cap: { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }, extra: { titulo: a.titulo, vendedor: a.vendedor, ...(a.marca ? { marca: a.marca } : {}), url_imagem: a.url_imagem, url_anuncio: a.url_anuncio, ...(reativar ? { ativo: true } : {}) } });
+    atualizar.push({ a: ex, cap: { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }, extra: { titulo: a.titulo, vendedor: a.vendedor, ...(a.marca ? { marca: a.marca } : {}), url_imagem: a.url_imagem, url_anuncio: a.url_anuncio, ...(a.ranking != null ? atualizarRanking(ex, a.ranking, hoje) : {}), ...(reativar ? { ativo: true } : {}) } });
   }
   const criados = novos.length ? await gravarAnuncios(db, categoria.id, novos, hoje, p.tipo === "anuncio") : 0;
   await registrarCapturas(db, hoje, atualizar);
+
+  // ranking: o que subiu, caiu, entrou e saiu. Na página "Mais vendidos" quem estava no ranking e não apareceu mais SAIU
+  // (só se a leitura trouxe um ranking de verdade: com poucos anúncios provavelmente a página não carregou inteira)
+  const ranking = { lidos: 0, subiram: 0, cairam: 0, iguais: 0, entraram: novos.filter((a) => a.ranking != null).length, sairam: 0 };
+  for (const u of atualizar) {
+    if (u.extra.ranking_posicao === undefined || u.extra.ranking_posicao === null) continue;
+    ranking.lidos++;
+    const m = movimentoRanking({ ranking_posicao: u.extra.ranking_posicao as number, ranking_anterior: (u.extra.ranking_anterior ?? u.a.ranking_anterior ?? null) as number | null, ranking_data: hoje, ranking_data_anterior: (u.extra.ranking_data_anterior ?? u.a.ranking_data_anterior ?? null) as string | null });
+    if (m?.tipo === "subiu") ranking.subiram++; else if (m?.tipo === "caiu") ranking.cairam++; else if (m?.tipo === "igual") ranking.iguais++; else if (m?.tipo === "novo") ranking.entraram++;
+  }
+  ranking.lidos += novos.filter((a) => a.ranking != null).length;
+  if (p.tipo === "ranking" && ranking.lidos >= 5) {
+    const presentes = new Set(p.anuncios.map((a) => a.mlb_id));
+    const saidas = Array.from(existentes.values()).filter((e) => e.ranking_posicao != null && !presentes.has(e.mlb_id));
+    await comLimite(saidas, 8, async (e) => { const { error } = await db.from("anuncios").update(atualizarRanking(e, null, hoje)).eq("id", e.id); falha("atualizar ranking", error); });
+    ranking.sairam = saidas.length;
+  }
   // se um dos anúncios lidos é o MEU de algum comparativo, o meu preço também é atualizado
   const precosMeusAtualizados = await atualizarPrecosMeusDeImportacao(db, p.anuncios);
-  return { categoria, tipo: p.tipo, recebidos: p.anuncios.length, novos: criados, atualizados: atualizar.length, desativadosIgnorados, descartados: p.descartados, precosMeusAtualizados };
+  return { categoria, tipo: p.tipo, recebidos: p.anuncios.length, novos: criados, atualizados: atualizar.length, desativadosIgnorados, descartados: p.descartados, precosMeusAtualizados, ranking };
 }

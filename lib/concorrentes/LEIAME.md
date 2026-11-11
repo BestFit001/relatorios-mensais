@@ -46,6 +46,10 @@ Na tela, “Cadastrar categoria pelo servidor” e “Testar conexão” ficam n
 - **Favoritos**: anúncios com ★ de todas as categorias (preço atual, mín–máx, evolução, total, média/dia).
 - **Comparativo** (⚖️ no anúncio do concorrente): link do meu anúncio + SKU. Se o MLB está em `ml_anuncios_regras`, SKU, conta (1/2) e Clássico/Premium vêm de lá. Mostra os dois preços, comissão, tarifa fixa, frete estimado, imposto de 9%, o MEU custo (`tabela_custos_skus`, ou o custo digitado) e o lucro líquido/margem de cada lado. O meu preço é digitado, lido pelo favorito na página do meu anúncio, ou atualizado sozinho quando uma importação traz o mesmo MLB.
 
+## Ranking "Mais vendidos"
+O favorito também lê a página `mercadolivre.com.br/mais-vendidos/...` (tipo `ranking`, entra na categoria selecionada no painel) e qualquer cartão com a tag "Nº MAIS VENDIDO". A posição fica em `anuncios.ranking_posicao`; a leitura anterior em `ranking_anterior` (+ datas). A tela mostra a tag 🏆 com ▲/▼/=/novo/saiu. Na página Mais vendidos, anúncio que estava no ranking e não aparece mais "saiu" (só se a leitura trouxe ≥ 5 anúncios). Ler de novo no mesmo dia não perde a base do dia anterior.
+Atenção: os links dessa página podem ser de catálogo (`/p/MLB…`); o anúncio é identificado pelo `wid=` quando existir, senão pelo id do link — se vier só o id de catálogo, ele entra como um anúncio novo da categoria.
+
 ## Vendas do dia: o que dá para medir
 O Mercado Livre não divulga a venda diária de terceiros: só o total acumulado, em faixas a partir de certo volume (`ultimo_aproximado`/`vendas_aproximado` marcam isso). “Vendas do dia” só sai do zero quando a faixa muda; a **média/dia** (total da última captura − da primeira, ÷ dias; mínimo 7 dias, janela de 90) é uma estimativa cujo erro máximo é uma faixa ÷ dias.
 

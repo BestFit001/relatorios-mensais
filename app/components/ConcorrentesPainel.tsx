@@ -13,12 +13,13 @@ import {
   type AcoesAnuncio, type Anuncio, type Categoria, type Comparativo,
 } from "./concorrentes/comum";
 import Estrela from "./concorrentes/Estrela";
+import TagRanking from "./concorrentes/TagRanking";
 import MudancasPreco from "./concorrentes/MudancasPreco";
 import Favoritos from "./concorrentes/Favoritos";
 import ComparativoForm from "./concorrentes/ComparativoForm";
 import ComparativoLista, { type ComparativoComAnuncio } from "./concorrentes/ComparativoLista";
 
-type Ordem = "vendas_dia" | "total" | "preco" | "titulo";
+type Ordem = "vendas_dia" | "total" | "preco" | "titulo" | "ranking";
 type Vista = "anuncios" | "mudancas" | "favoritos" | "comparativo";
 
 export default function ConcorrentesPainel() {
@@ -34,6 +35,7 @@ export default function ConcorrentesPainel() {
   const [carregandoComp, setCarregandoComp] = useState(true);
   const [formComp, setFormComp] = useState<{ anuncio: Anuncio; existente: Comparativo | null } | null>(null);
   const [soFavoritos, setSoFavoritos] = useState(false);
+  const [soRanking, setSoRanking] = useState(false);
   const hoje = hojeSP();
   const [carregando, setCarregando] = useState(true);
   const [carregandoAnuncios, setCarregandoAnuncios] = useState(false);
@@ -129,20 +131,21 @@ export default function ConcorrentesPainel() {
 
   useEffect(() => { carregarCategorias(); carregarFavoritos(); carregarComparativos(); }, [carregarCategorias, carregarFavoritos, carregarComparativos]);
   useEffect(() => { setAnuncios([]); setPagina(1); setBusca(""); if (categoriaId) carregarAnuncios(categoriaId); }, [categoriaId, carregarAnuncios]);
-  useEffect(() => { setPagina(1); }, [busca, ordem, mostrarInativos, tamanho, soFavoritos]);
+  useEffect(() => { setPagina(1); }, [busca, ordem, mostrarInativos, tamanho, soFavoritos, soRanking]);
 
   const categoria = categorias.find((c) => c.id === categoriaId) || null;
   const ativos = useMemo(() => anuncios.filter((a) => a.ativo), [anuncios]);
 
   const visiveis = useMemo(() => {
     const t = busca.trim().toLowerCase();
-    const lista = anuncios.filter((a) => (mostrarInativos || a.ativo) && (!soFavoritos || a.favorito) && (!t || a.titulo.toLowerCase().includes(t) || (a.vendedor || "").toLowerCase().includes(t) || (a.marca || "").toLowerCase().includes(t) || a.mlb_id.toLowerCase().includes(t)));
+    const lista = anuncios.filter((a) => (mostrarInativos || a.ativo) && (!soFavoritos || a.favorito) && (!soRanking || a.ranking_posicao != null) && (!t || a.titulo.toLowerCase().includes(t) || (a.vendedor || "").toLowerCase().includes(t) || (a.marca || "").toLowerCase().includes(t) || a.mlb_id.toLowerCase().includes(t)));
     const chave = (a: Anuncio) => ordem === "vendas_dia" ? a.ultimas_vendas_dia : ordem === "total" ? a.ultimo_total_vendas : a.ultimo_preco;
     return [...lista].sort((a, b) => {
       if (ordem === "titulo") return a.titulo.localeCompare(b.titulo, "pt-BR");
+      if (ordem === "ranking") return (a.ranking_posicao ?? 1e9) - (b.ranking_posicao ?? 1e9) || (b.ultimo_total_vendas ?? -1) - (a.ultimo_total_vendas ?? -1);
       return (chave(b) ?? -1) - (chave(a) ?? -1);
     });
-  }, [anuncios, busca, ordem, mostrarInativos, soFavoritos]);
+  }, [anuncios, busca, ordem, mostrarInativos, soFavoritos, soRanking]);
 
   const pag = useMemo(() => {
     const ini = (Math.min(pagina, Math.max(1, Math.ceil(visiveis.length / tamanho))) - 1) * tamanho;
@@ -189,9 +192,13 @@ export default function ConcorrentesPainel() {
       carregarFavoritos(); carregarComparativos();
       const partes = [`${r.novos} novo(s)`, `${r.atualizados} atualizado(s) com a captura de hoje`];
       if (r.precosMeusAtualizados) partes.push(`${r.precosMeusAtualizados} preço(s) de anúncio meu atualizado(s) nos comparativos`);
+      if (r.ranking?.lidos) {
+        const k = r.ranking, mov = [k.subiram && `${k.subiram} subiram`, k.cairam && `${k.cairam} caíram`, k.entraram && `${k.entraram} novo(s) no ranking`, k.sairam && `${k.sairam} saíram do ranking`].filter(Boolean);
+        partes.push(`Mais vendidos: ${k.lidos} com posição${mov.length ? ` (${mov.join(", ")})` : ""}`);
+      }
       if (r.desativadosIgnorados) partes.push(`${r.desativadosIgnorados} desativado(s) mantido(s) assim`);
       if (r.descartados) partes.push(`${r.descartados} descartado(s) por dado inválido`);
-      avisar("ok", `${r.tipo === "anuncio" ? "Anúncio importado" : `Categoria “${r.categoria.nome}”`}: ${partes.join(", ")}.`);
+      avisar("ok", `${r.tipo === "anuncio" ? "Anúncio importado" : r.tipo === "ranking" ? `Mais vendidos em “${r.categoria.nome}”` : `Categoria “${r.categoria.nome}”`}: ${partes.join(", ")}.`);
     } catch (e: any) { avisar("erro", e.message); }
     finally { setImportando(false); }
   };
@@ -306,7 +313,7 @@ export default function ConcorrentesPainel() {
               <button data-acao="copiar-favorito" onClick={copiarFavorito} className="text-[11px] underline text-slate-300 hover:text-white cursor-pointer">não consegui arrastar</button>
               <span className="text-slate-500"> (barra escondida? Ctrl+Shift+B no Chrome)</span>
             </li>
-            <li>Abra no Mercado Livre a categoria ou busca (ou a página de um anúncio) e clique no favorito. Em uma lista ele lê as 2 primeiras páginas; numa página de anúncio, só aquele anúncio (que entra na aba de categoria selecionada aqui).</li>
+            <li>Abra no Mercado Livre a categoria ou busca (ou a página de um anúncio) e clique no favorito. Em uma lista ele lê as 2 primeiras páginas; numa página de anúncio, só aquele anúncio; na página “Mais vendidos” da categoria, a posição (1º, 2º…) de cada anúncio. Anúncio e Mais vendidos entram na categoria selecionada aqui.</li>
             <li>Volte aqui, cole o texto copiado e clique em Importar. Repita uma vez por dia, na mesma categoria: o histórico e as vendas do dia são calculados a cada importação.</li>
           </ol>
           <div className="grid gap-3 md:grid-cols-[1fr_220px_auto] items-end">
@@ -394,10 +401,14 @@ export default function ConcorrentesPainel() {
                       <option value="vendas_dia">Mais vendidos hoje</option>
                       <option value="total">Maior total vendido</option>
                       <option value="preco">Maior preço</option>
+                      <option value="ranking">Posição no Mais vendidos</option>
                       <option value="titulo">Título (A–Z)</option>
                     </select>
                     <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                       <input data-campo="so-favoritos" type="checkbox" checked={soFavoritos} onChange={(e) => setSoFavoritos(e.target.checked)} /> só favoritos ★
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                      <input data-campo="so-ranking" type="checkbox" checked={soRanking} onChange={(e) => setSoRanking(e.target.checked)} /> só no Mais vendidos 🏆
                     </label>
                     <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                       <input data-campo="inativos" type="checkbox" checked={mostrarInativos} onChange={(e) => setMostrarInativos(e.target.checked)} /> mostrar desativados
@@ -441,7 +452,8 @@ export default function ConcorrentesPainel() {
                               </td>
                               <td className="py-2 pr-3 max-w-[420px]">
                                 <a href={a.url_anuncio} target="_blank" rel="noopener noreferrer" className="font-semibold text-slate-100 hover:text-indigo-300 line-clamp-2">{a.titulo}</a>
-                                <span className="text-[10px] text-slate-500">{a.mlb_id}{a.manual ? " · avulso" : ""}{a.ativo ? "" : " · desativado"}</span>
+                                <span className="block text-[10px] text-slate-500">{a.mlb_id}{a.manual ? " · avulso" : ""}{a.ativo ? "" : " · desativado"}</span>
+                                <TagRanking a={a} />
                               </td>
                               <td data-marca className="py-2 pr-3 text-slate-300 whitespace-nowrap">{a.marca || "—"}</td>
                               <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{a.vendedor || "—"}</td>

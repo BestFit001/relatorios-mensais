@@ -7,6 +7,8 @@ export interface AnuncioRaspado {
   vendedor: string | null;
   /** marca do produto, quando o anúncio mostra (nunca é inventada) */
   marca?: string | null;
+  /** posição no ranking "Mais vendidos" quando o anúncio mostra a tag */
+  ranking?: number | null;
   url_anuncio: string;
   /** só o link da imagem (https); o arquivo não é guardado */
   url_imagem: string | null;

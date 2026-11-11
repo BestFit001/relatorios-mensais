@@ -31,22 +31,36 @@ export const FAVORITO_JS = String.raw`(async function () {
     for (var k = 0; k < cand.length; k++) { if (cand[k] && cand[k].indexOf("data:") !== 0) return cand[k]; }
     return null;
   }
+  function posicaoTag(t) { var m = /(\d{1,3})\s*[\u00ba\u00b0o]\s*mais\s+vendido/i.exec(t || ""); return m ? Number(m[1]) : null; }
+  function montar(el, a, base, generico) {
+    var href; try { href = new URL(a.getAttribute("href"), base).href; } catch (e) { return null; }
+    var id = idMLB(href); if (!id) return null;
+    var titulo = generico ? (texto(el.querySelector("h2,h3,.poly-component__title")) || limpa(a.getAttribute("title")) || texto(a).slice(0, 150)) : (texto(a) || limpa(a.getAttribute("title")) || texto(el.querySelector("h2,h3")));
+    if (!titulo) return null;
+    var vend = texto(el.querySelector(".poly-component__seller, .ui-search-official-store-label")).replace(/^(vendido\s+)?por\s+/i, "");
+    return { mlb_id: id, titulo: titulo, vendedor: vend || null, marca: texto(el.querySelector(".poly-component__brand")) || null, url: href, imagem: imagem(el), preco: preco(el), vendas_texto: vendas(el.textContent), posicao: posicaoTag(el.textContent) };
+  }
   function cartoes(doc, base) {
     var mapa = {}, lista = [];
+    function juntar(item) {
+      if (!item) return;
+      var ja = mapa[item.mlb_id];
+      if (ja) { for (var k in item) { if (ja[k] == null && item[k] != null) ja[k] = item[k]; } }
+      else { mapa[item.mlb_id] = item; lista.push(item); }
+    }
     var els = doc.querySelectorAll("li.ui-search-layout__item, div.poly-card, div.ui-search-result__wrapper");
     Array.prototype.forEach.call(els, function (el) {
       var a = el.querySelector("a.poly-component__title, a.ui-search-link, a.ui-search-item__group__element, h2 a, h3 a") || el.querySelector("a[href]");
-      if (!a) return;
-      var href; try { href = new URL(a.getAttribute("href"), base).href; } catch (e) { return; }
-      var id = idMLB(href); if (!id) return;
-      var titulo = texto(a) || limpa(a.getAttribute("title")) || texto(el.querySelector("h2,h3"));
-      if (!titulo) return;
-      var vend = texto(el.querySelector(".poly-component__seller, .ui-search-official-store-label")).replace(/^(vendido\s+)?por\s+/i, "");
-      var item = { mlb_id: id, titulo: titulo, vendedor: vend || null, marca: texto(el.querySelector(".poly-component__brand")) || null, url: href, imagem: imagem(el), preco: preco(el), vendas_texto: vendas(el.textContent) };
-      var ja = mapa[id];
-      if (ja) { for (var k in item) { if (ja[k] == null && item[k] != null) ja[k] = item[k]; } }
-      else { mapa[id] = item; lista.push(item); }
+      if (a) juntar(montar(el, a, base, false));
     });
+    if (!lista.length) {
+      Array.prototype.forEach.call(doc.querySelectorAll("a[href]"), function (a) {
+        if (!idMLB(a.getAttribute("href") || "")) return;
+        var el = a;
+        for (var i = 0; i < 7 && el; i++) { if (el.querySelector && el.querySelector("img") && el.querySelector(".andes-money-amount")) break; el = el.parentElement; }
+        if (el && el.querySelector && el.querySelector(".andes-money-amount")) juntar(montar(el, a, base, true));
+      });
+    }
     return lista;
   }
   function proxima(doc, base) {
@@ -70,7 +84,8 @@ export const FAVORITO_JS = String.raw`(async function () {
   try {
     var payload;
     var ehLista = /^lista\./.test(location.hostname);
-    if (!ehLista && idMLB(location.href)) {
+    var ehRanking = /^\/mais-vendidos/i.test(location.pathname);
+    if (!ehLista && !ehRanking && idMLB(location.href)) {
       status("Lendo o anúncio…");
       var ld = produtoLD() || {};
       var of = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
@@ -97,12 +112,14 @@ export const FAVORITO_JS = String.raw`(async function () {
         var r = await fetch(prox, { credentials: "include" }); if (!r.ok) break;
         doc = new DOMParser().parseFromString(await r.text(), "text/html"); base = prox;
       }
-      if (!todos.length) throw new Error("Não encontrei anúncios nesta página. Abra uma listagem do Mercado Livre (lista.mercadolivre.com.br) e tente de novo.");
-      payload = { v: 1, tipo: "categoria", pagina_url: location.href, categoria_nome: texto(document.querySelector("h1")) || null, coletado_em: new Date().toISOString(), anuncios: todos };
+      if (!todos.length) throw new Error("Não encontrei anúncios nesta página. Abra uma listagem ou a página Mais vendidos do Mercado Livre e tente de novo.");
+      if (ehRanking) { todos.forEach(function (c, i) { if (c.posicao == null) c.posicao = i + 1; }); }
+      payload = { v: 1, tipo: ehRanking ? "ranking" : "categoria", pagina_url: location.href, categoria_nome: texto(document.querySelector("h1")) || null, coletado_em: new Date().toISOString(), anuncios: todos };
     }
     var json = JSON.stringify(payload);
     var comVendas = payload.anuncios.filter(function (a) { return a.vendas_texto; }).length;
-    tela("<b>Pronto: " + payload.anuncios.length + " anúncio(s)</b><div id='cb-msg' style='margin:6px 0;color:#a5b4fc'>" + comVendas + " com total de vendas visível.</div>" +
+    var comPosicao = payload.anuncios.filter(function (a) { return a.posicao; }).length;
+    tela("<b>Pronto: " + payload.anuncios.length + " anúncio(s)</b><div id='cb-info' style='margin:6px 0 0;color:#cbd5e1'>" + comVendas + " com total de vendas visível" + (comPosicao ? ", " + comPosicao + " com posição no Mais vendidos" : "") + ".</div><div id='cb-msg' style='margin:2px 0 6px;color:#a5b4fc'></div>" +
       "<textarea id='cb-ta' readonly style='width:100%;height:80px;background:#020617;color:#e2e8f0;border:1px solid #334155;border-radius:8px;font:11px monospace'></textarea>" +
       "<div style='margin-top:8px;display:flex;gap:8px'><button id='cb-copiar' style='background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:700'>Copiar</button>" +
       "<button id='cb-fechar' style='background:#1e293b;color:#e2e8f0;border:0;border-radius:8px;padding:6px 12px;cursor:pointer'>Fechar</button></div>");

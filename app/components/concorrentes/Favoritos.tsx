@@ -4,6 +4,7 @@ import { mediaVendasPorDia, mudancasDePreco, resumoDePreco, type Ponto } from ".
 import { brl, caixa, dataBR, num, pct, totalVendido, type AcoesAnuncio, type Anuncio, type Categoria } from "./comum";
 import Estrela from "./Estrela";
 import Sparkline from "./Sparkline";
+import TagRanking from "./TagRanking";
 
 /** Sub-aba "Favoritos": os anúncios marcados com ★ em todas as categorias, lado a lado. */
 export default function Favoritos({ favoritos, categorias, historico, carregando, acoes, onAbrirCategoria }: {
@@ -41,7 +42,8 @@ export default function Favoritos({ favoritos, categorias, historico, carregando
                       : <div className="w-10 h-10 rounded-md bg-slate-800 shrink-0" />}
                     <div className="min-w-0">
                       <a href={a.url_anuncio} target="_blank" rel="noopener noreferrer" className="font-semibold text-slate-100 hover:text-indigo-300 line-clamp-2">{a.titulo}</a>
-                      <span className="text-[10px] text-slate-500">
+                      <TagRanking a={a} />
+                      <span className="block text-[10px] text-slate-500">
                         {[a.marca, a.vendedor].filter(Boolean).join(" · ")}{(a.marca || a.vendedor) ? " · " : ""}
                         <button onClick={() => onAbrirCategoria(a.categoria_id)} className="underline hover:text-slate-300 cursor-pointer">{nomeDa.get(a.categoria_id) || "categoria"}</button>
                       </span>

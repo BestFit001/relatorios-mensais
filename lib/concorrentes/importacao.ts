@@ -8,7 +8,7 @@ import { imagemSegura, normalizarUrlAnuncio } from "./mercadolivre/url";
 export const MAX_IMPORTADOS = 300;
 
 export interface PayloadLimpo {
-  tipo: "categoria" | "anuncio";
+  tipo: "categoria" | "anuncio" | "ranking";
   paginaUrl: string;
   nomeCategoria: string | null;
   anuncios: AnuncioRaspado[];
@@ -26,7 +26,7 @@ export function sanitizarPayload(bruto: unknown): PayloadLimpo {
   if (!p || typeof p !== "object" || p.v !== 1 || !Array.isArray(p.anuncios)) {
     throw new ErroValidacao("Texto de importação inválido. Cole exatamente o que o favorito copiou.");
   }
-  const tipo = p.tipo === "anuncio" ? "anuncio" : p.tipo === "categoria" ? "categoria" : null;
+  const tipo = p.tipo === "anuncio" ? "anuncio" : p.tipo === "categoria" ? "categoria" : p.tipo === "ranking" ? "ranking" : null;
   if (!tipo) throw new ErroValidacao("Texto de importação inválido (tipo desconhecido).");
   if (p.anuncios.length === 0) throw new ErroValidacao("O texto não tem nenhum anúncio.");
   if (p.anuncios.length > MAX_IMPORTADOS) throw new ErroValidacao(`Anúncios demais de uma vez (máximo ${MAX_IMPORTADOS}).`);
@@ -46,6 +46,7 @@ export function sanitizarPayload(bruto: unknown): PayloadLimpo {
       anuncios.push({
         mlb_id, titulo, url_anuncio: url,
         vendedor, marca,
+        ranking: typeof a?.posicao === "number" && Number.isInteger(a.posicao) && a.posicao >= 1 && a.posicao <= 1000 ? a.posicao : null,
         url_imagem: imagemSegura(typeof a?.imagem === "string" ? a.imagem.slice(0, 500) : null),
         preco: preco != null && preco > 0 && preco < 10_000_000 ? preco : null,
         total_vendas: vendas && vendas.total >= 0 && vendas.total < 1_000_000_000 ? vendas.total : null,
