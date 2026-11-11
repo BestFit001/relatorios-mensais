@@ -4,11 +4,12 @@ import { obterConector } from "./marketplaces";
 import { calcularVendasNoDia, hojeSP, comLimite, totalBase } from "./calculos";
 import { ErroValidacao, SEM_TEMPO, type AnuncioRaspado, type Captura } from "./tipos";
 import { sanitizarPayload } from "./importacao";
-import { nomeDaCategoria } from "./mercadolivre/url";
+import { urlsDoCanal, URLS } from "./urls";
 import { atualizarPrecosMeusDeImportacao } from "./comparativos";
 import { atualizarRanking, movimentoRanking } from "./ranking";
 
 export const PAGINAS_POR_CATEGORIA = 2;
+const nomeCanal = (id: string) => URLS[id]?.nome ?? id;
 const MAX_ANUNCIOS = 100;
 const em = <T,>(l: T[], n: number): T[][] => Array.from({ length: Math.ceil(l.length / n) }, (_, i) => l.slice(i * n, (i + 1) * n));
 
@@ -21,7 +22,7 @@ async function gravarAnuncios(db: SupabaseClient, categoria_id: string, lista: A
   const linhas = lista.map((a) => ({
     categoria_id, mlb_id: a.mlb_id, titulo: a.titulo, vendedor: a.vendedor, marca: a.marca ?? null, url_anuncio: a.url_anuncio, url_imagem: a.url_imagem,
     ativo: true, manual,
-    ultimo_preco: a.preco, ultimo_total_vendas: a.total_vendas, ultimo_aproximado: a.vendas_aproximado, ultimas_vendas_dia: null, ultima_captura: hoje,
+    ultimo_preco: a.preco, ultimo_total_vendas: a.total_vendas, ultimo_vendas_mes: a.vendas_mes ?? null, ultimo_aproximado: a.vendas_aproximado, ultimas_vendas_dia: null, ultima_captura: hoje,
     ranking_posicao: a.ranking ?? null, ranking_data: a.ranking != null ? hoje : null,
   }));
   const novos: { id: string; mlb_id: string }[] = [];
@@ -46,6 +47,7 @@ async function gravarAnuncios(db: SupabaseClient, categoria_id: string, lista: A
 export async function cadastrarCategoria(db: SupabaseClient, entrada: { canal: string; url: string; nome?: string }) {
   if (modoManual()) throw new ErroValidacao(MSG_MANUAL);
   const conector = obterConector(entrada.canal);
+  if (!conector.leituraServidor) throw new ErroValidacao(`${conector.nome}: o servidor não lê esse site. Use o favorito “Capturar anúncios” no navegador e importe.`);
   const url = conector.validarUrlCategoria(entrada.url);
   const hoje = hojeSP();
 
@@ -78,6 +80,7 @@ export async function adicionarAnuncioAvulso(db: SupabaseClient, entrada: { cate
     falha("reativar anúncio", e3);
     return { reativado: true, mlb_id };
   }
+  if (!conector.leituraServidor) throw new ErroValidacao(`${conector.nome}: o servidor não lê esse site. Abra a página do anúncio, clique no favorito e importe.`);
   if (modoManual()) throw new ErroValidacao(MSG_MANUAL);
   const a = await conector.buscarAnuncio(entrada.url);
   await gravarAnuncios(db, cat.id, [a], hojeSP(), true);
@@ -160,6 +163,10 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
     todos.push(...(data || []));
     if (!data || data.length < 1000) break;
   }
+  // Shopee e Amazon não são lidas pelo servidor: entram só pelo favorito, então a captura diária automática as ignora
+  const lidosPeloServidor = (a: any) => { try { return obterConector(a.categorias.canal).leituraServidor; } catch { return false; } };
+  const naoLidos = todos.filter((a) => !lidosPeloServidor(a));
+  if (naoLidos.length) todos.splice(0, todos.length, ...todos.filter(lidosPeloServidor));
 
   // já capturado hoje = pulado, exceto o que foi cadastrado sem o total de vendas (faltou tempo/dado na leitura inicial)
   const fila = todos.filter((a) => opc.forcar || a.ultima_captura !== hoje || a.ultimo_total_vendas == null);
@@ -214,8 +221,9 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
 export async function importarDoNavegador(db: SupabaseClient, entrada: { payload: unknown; canal?: string; categoria_id?: string; nome?: string }) {
   const canal = entrada.canal || "mercadolivre";
   const conector = obterConector(canal);
-  const p = sanitizarPayload(entrada.payload);
+  const p = sanitizarPayload(entrada.payload, canal);
   const hoje = hojeSP();
+  const urls = urlsDoCanal(canal);
 
   let categoria: { id: string; nome: string; ativo?: boolean };
   if (p.tipo === "anuncio" || p.tipo === "ranking") {
@@ -223,6 +231,7 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
     const { data, error } = await db.from("categorias").select("id,nome,canal").eq("id", entrada.categoria_id).maybeSingle();
     falha("buscar categoria", error);
     if (!data) throw new ErroValidacao("Categoria não encontrada.");
+    if (data.canal !== canal) throw new ErroValidacao(`Essa categoria é do ${nomeCanal(data.canal)}, mas o texto veio do ${urls.nome}.`);
     categoria = data;
   } else {
     const url = conector.validarUrlCategoria(p.paginaUrl);
@@ -236,7 +245,7 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
       categoria = { id: ja.id, nome: nomeInformado || ja.nome };
     } else {
       const { data, error } = await db.from("categorias")
-        .insert({ nome: nomeInformado || p.nomeCategoria || nomeDaCategoria(url), canal, url_origem: url, ativo: true, ultima_raspagem: new Date().toISOString() })
+        .insert({ nome: nomeInformado || p.nomeCategoria || urls.nomeDaCategoria(url), canal, url_origem: url, ativo: true, ultima_raspagem: new Date().toISOString() })
         .select("id,nome").single();
       falha("gravar categoria", error);
       categoria = data!;
@@ -262,7 +271,7 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
     if (!ex) { novos.push(a); continue; }
     const reativar = !ex.ativo && p.tipo === "anuncio"; // adicionar um anúncio avulso de propósito reativa
     if (!ex.ativo && !reativar) { desativadosIgnorados++; continue; } // na importação da categoria, o que foi desativado à mão continua desativado
-    atualizar.push({ a: ex, cap: { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }, extra: { titulo: a.titulo, vendedor: a.vendedor, ...(a.marca ? { marca: a.marca } : {}), url_imagem: a.url_imagem, url_anuncio: a.url_anuncio, ...(a.ranking != null ? atualizarRanking(ex, a.ranking, hoje) : {}), ...(reativar ? { ativo: true } : {}) } });
+    atualizar.push({ a: ex, cap: { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }, extra: { titulo: a.titulo, vendedor: a.vendedor, ...(a.marca ? { marca: a.marca } : {}), ...(a.vendas_mes != null ? { ultimo_vendas_mes: a.vendas_mes } : {}), url_imagem: a.url_imagem, url_anuncio: a.url_anuncio, ...(a.ranking != null ? atualizarRanking(ex, a.ranking, hoje) : {}), ...(reativar ? { ativo: true } : {}) } });
   }
   const criados = novos.length ? await gravarAnuncios(db, categoria.id, novos, hoje, p.tipo === "anuncio") : 0;
   await registrarCapturas(db, hoje, atualizar);

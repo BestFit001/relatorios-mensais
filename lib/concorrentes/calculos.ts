@@ -39,14 +39,33 @@ export function hojeSP(agora: Date = new Date()): string {
 export function parseVendidos(texto: string | null | undefined): { total: number; aproximado: boolean } | null {
   if (!texto) return null;
   const t = texto.replace(/ /g, " ");
-  const m = /(\+)?\s*(\d[\d.,]*)\s*(mil|milh(?:ão|ao|ões|oes))?\s*vendid[oa]s?/i.exec(t);
+  const m = /(\+)?\s*(\d[\d.,]*)\s*(mil|k|milh(?:ão|ao|ões|oes))?\s*vendid[oa]s?/i.exec(t)
+    // Shopee também mostra "Vendidos 1,2mil" (o número depois)
+    || /vendid[oa]s?\s*:?\s*()(\d[\d.,]*)\s*(mil|k|milh(?:ão|ao|ões|oes))?(?![\d\p{L}])/iu.exec(t);
   if (!m) return null;
-  let n = Number(m[2].replace(/\./g, "").replace(",", "."));
+  return numeroDeFaixa(m[1], m[2], m[3]);
+}
+
+function numeroDeFaixa(mais: string | undefined, digitos: string, mult: string | undefined): { total: number; aproximado: boolean } | null {
+  let n = Number(digitos.replace(/\./g, "").replace(",", "."));
   if (!Number.isFinite(n)) return null;
-  const mult = m[3]?.toLowerCase();
-  if (mult === "mil") n *= 1000;
-  else if (mult) n *= 1_000_000;
-  return { total: Math.round(n), aproximado: Boolean(m[1]) || Boolean(mult) };
+  const x = mult?.toLowerCase();
+  if (x === "mil" || x === "k") n *= 1000;
+  else if (x) n *= 1_000_000;
+  return { total: Math.round(n), aproximado: Boolean(mais) || Boolean(x) };
+}
+
+/**
+ * Amazon: "100+ compras no mês passado", "Mais de 1 mil compras no mês passado", "+300 comprados no mês passado".
+ * É a venda dos últimos 30 dias em faixas (nunca exata), então `aproximado` é sempre true.
+ */
+export function parseComprasNoMes(texto: string | null | undefined): { total: number; aproximado: true } | null {
+  if (!texto) return null;
+  const t = texto.replace(/ /g, " ");
+  const m = /(?:mais\s+de\s+)?\+?\s*(\d[\d.,]*)\s*(mil|milh(?:ão|ao|ões|oes))?\s*\+?\s*(?:compra(?:s|dos?)|vendid[oa]s?)\s+(?:no|nos|em)\s+(?:[úu]ltimos?\s+30\s+dias|(?:[úu]ltimo\s+)?m[eê]s(?:\s+passado)?)/i.exec(t);
+  if (!m) return null;
+  const r = numeroDeFaixa(undefined, m[1], m[2]);
+  return r ? { total: r.total, aproximado: true } : null;
 }
 
 /** "1.234,56" / "1234.56" / 49.9 -> número (ou null). */

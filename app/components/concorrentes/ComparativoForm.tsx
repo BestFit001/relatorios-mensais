@@ -1,7 +1,9 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
-import { CANAIS_COMPARATIVO, canalDoCadastro, comModalidade, type CanalComparativo } from "../../../lib/concorrentes/comparativo";
+import { CANAIS_ANALISE } from "../../../lib/analiseMercado";
+import { CANAIS, nomeDoCanal } from "../../../lib/concorrentes/canais";
+import { CANAIS_COMPARATIVO, canalDoCadastro, comModalidade } from "../../../lib/concorrentes/comparativo";
 import { botao, brl, campo, chamar, type Anuncio, type Comparativo } from "./comum";
 
 const mlbDoLink = (t: string) => { const m = /MLB-?(\d{6,})/i.exec(t); return m ? `MLB${m[1]}` : null; };
@@ -9,12 +11,15 @@ const escLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 const modalidadeDe = (canal: string): "Clássico" | "Premium" => (canal.endsWith("Premium") ? "Premium" : "Clássico");
 
 /** Janela "Marcar como igual a um anúncio meu": link + SKU (+ modalidade e preço) do meu anúncio. */
-export default function ComparativoForm({ anuncio, existente, onFechar, onSalvo }: {
-  anuncio: Anuncio; existente: Comparativo | null; onFechar: () => void; onSalvo: (c: Comparativo) => void;
+export default function ComparativoForm({ anuncio, existente, canal = "mercadolivre", onFechar, onSalvo }: {
+  anuncio: Anuncio; existente: Comparativo | null; canal?: string; onFechar: () => void; onSalvo: (c: Comparativo) => void;
 }) {
+  const ehML = canal === "mercadolivre";
+  // no ML o concorrente escolhe só Clássico/Premium; Shopee e Amazon têm um canal só, e o meu anúncio pode estar em qualquer canal da Análise de mercado
+  const canalDoConcorrente = CANAIS.find((c) => c.id === canal)?.canalAnalise || "Mercado Livre 1 Clássico";
   const [link, setLink] = useState(existente?.meu_url || "");
   const [sku, setSku] = useState(existente?.sku || "");
-  const [canalMeu, setCanalMeu] = useState<CanalComparativo>((existente?.canal_meu as CanalComparativo) || "Mercado Livre 1 Clássico");
+  const [canalMeu, setCanalMeu] = useState<string>(existente?.canal_meu || canalDoConcorrente);
   const [modConc, setModConc] = useState<"Clássico" | "Premium">(modalidadeDe(existente?.canal_concorrente || existente?.canal_meu || "Clássico"));
   const [preco, setPreco] = useState(existente?.meu_preco != null ? String(existente.meu_preco).replace(".", ",") : "");
   const [texto, setTexto] = useState("");
@@ -37,10 +42,10 @@ export default function ComparativoForm({ anuncio, existente, onFechar, onSalvo 
       if (!vivo) return;
       const r = data?.[0];
       if (!r) { setAchado(null); return; }
-      const canal = canalDoCadastro(r);
-      setAchado(`Achei esse anúncio no seu cadastro: SKU ${r.sku}, ${canal}.`);
+      const canalMl = canalDoCadastro(r);
+      setAchado(`Achei esse anúncio no seu cadastro: SKU ${r.sku}, ${canalMl}.`);
       if (!skuMexido) setSku(String(r.sku || ""));
-      if (!existente) { setCanalMeu(canal); setModConc(modalidadeDe(canal)); }
+      if (!existente) { setCanalMeu(canalMl); setModConc(modalidadeDe(canalMl)); }
     }, 350);
     return () => { vivo = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -65,7 +70,7 @@ export default function ComparativoForm({ anuncio, existente, onFechar, onSalvo 
     try {
       const r = await chamar<{ comparativo: Comparativo }>("comparativos", "POST", {
         anuncio_id: anuncio.id, sku, meu_url: link || undefined, texto: texto || undefined, meu_preco: preco || undefined,
-        canal_meu: canalMeu, canal_concorrente: comModalidade(canalMeu, modConc), custo_manual: custo?.achou ? undefined : custoManual || undefined,
+        canal_meu: canalMeu, canal_concorrente: ehML ? comModalidade(canalMeu, modConc) : canalDoConcorrente, custo_manual: custo?.achou ? undefined : custoManual || undefined,
       });
       onSalvo(r.comparativo);
     } catch (e: any) { setErro(e.message); }
@@ -82,7 +87,7 @@ export default function ComparativoForm({ anuncio, existente, onFechar, onSalvo 
         </div>
 
         <label className={rotulo}>Link do meu anúncio
-          <input data-campo="cmp-link" value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://produto.mercadolivre.com.br/MLB-…" className={`${campo} w-full`} />
+          <input data-campo="cmp-link" value={link} onChange={(e) => setLink(e.target.value)} placeholder={ehML ? "https://produto.mercadolivre.com.br/MLB-…" : "Link do seu anúncio (Mercado Livre, Shopee ou Amazon)"} className={`${campo} w-full`} />
         </label>
         {achado && <p className="text-[11px] text-emerald-400" data-cmp-achado>{achado}</p>}
 
@@ -93,16 +98,20 @@ export default function ComparativoForm({ anuncio, existente, onFechar, onSalvo 
           <label className={rotulo}>Meu preço atual (R$)
             <input data-campo="cmp-preco" value={preco} onChange={(e) => setPreco(e.target.value)} inputMode="decimal" placeholder="Ex.: 59,90" className={`${campo} w-full`} />
           </label>
-          <label className={rotulo}>Minha modalidade
-            <select data-campo="cmp-canal" value={canalMeu} onChange={(e) => setCanalMeu(e.target.value as CanalComparativo)} className={`${campo} w-full`}>
-              {CANAIS_COMPARATIVO.map((c) => <option key={c} value={c}>{c}</option>)}
+          <label className={rotulo}>{ehML ? "Minha modalidade" : "Meu canal"}
+            <select data-campo="cmp-canal" value={canalMeu} onChange={(e) => setCanalMeu(e.target.value)} className={`${campo} w-full`}>
+              {(ehML ? [...CANAIS_COMPARATIVO] : CANAIS_ANALISE).map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
-          <label className={rotulo}>Modalidade do concorrente
-            <select data-campo="cmp-mod-conc" value={modConc} onChange={(e) => setModConc(e.target.value as any)} className={`${campo} w-full`}>
-              <option value="Clássico">Clássico</option><option value="Premium">Premium</option>
-            </select>
-          </label>
+          {ehML ? (
+            <label className={rotulo}>Modalidade do concorrente
+              <select data-campo="cmp-mod-conc" value={modConc} onChange={(e) => setModConc(e.target.value as any)} className={`${campo} w-full`}>
+                <option value="Clássico">Clássico</option><option value="Premium">Premium</option>
+              </select>
+            </label>
+          ) : (
+            <p className="text-[11px] text-slate-400 self-end pb-2">Canal do concorrente: <b className="text-slate-200">{nomeDoCanal(canal)}</b></p>
+          )}
         </div>
 
         {sku.trim() && custo && (custo.achou
@@ -115,7 +124,7 @@ export default function ComparativoForm({ anuncio, existente, onFechar, onSalvo 
 
         <details className="text-xs text-slate-400">
           <summary className="cursor-pointer select-none font-bold">Ler o preço pelo favorito (opcional)</summary>
-          <p className="mt-2">Abra a página do SEU anúncio no Mercado Livre, clique no favorito “Capturar anúncios” e cole aqui o texto copiado: o preço (e o título) vêm dele.</p>
+          <p className="mt-2">Abra a página do SEU anúncio, clique no favorito “Capturar anúncios” e cole aqui o texto copiado: o preço (e o título) vêm dele.</p>
           <textarea data-campo="cmp-texto" value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} placeholder='{"v":1,"tipo":"anuncio",…}' className={`${campo} w-full font-mono text-xs mt-2`} />
         </details>
 

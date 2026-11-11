@@ -1,11 +1,12 @@
 // Comparativo "igual ao meu": mesmo cálculo da Análise de mercado (comissão + tarifa fixa + frete + imposto), aplicado
 // ao preço do concorrente e ao meu preço, sempre com o MEU custo. As tarifas são estimativas.
-import { analisarPreco, type AnalisePreco, type AnuncioML, type OpcoesCalculo } from "../analiseMercado";
+import { CANAIS_ANALISE, analisarPreco, type AnalisePreco, type AnuncioML, type OpcoesCalculo } from "../analiseMercado";
 
 export const CANAIS_COMPARATIVO = ["Mercado Livre 1 Clássico", "Mercado Livre 1 Premium", "Mercado Livre 2 Clássico", "Mercado Livre 2 Premium"] as const;
 export type CanalComparativo = (typeof CANAIS_COMPARATIVO)[number];
 
-export const canalValido = (v: unknown): v is CanalComparativo => typeof v === "string" && (CANAIS_COMPARATIVO as readonly string[]).includes(v);
+/** Qualquer canal da Análise de mercado (Mercado Livre, Amazon, Shopee, Magalu…): as taxas vêm de lá. */
+export const canalValido = (v: unknown): v is string => typeof v === "string" && CANAIS_ANALISE.includes(v);
 
 /** Canal (conta 1/2 + Clássico/Premium) deduzido do cadastro do meu anúncio em `ml_anuncios_regras`. */
 export function canalDoCadastro(r: { canal?: string | null; comissao?: number | string | null }): CanalComparativo {
@@ -15,7 +16,7 @@ export function canalDoCadastro(r: { canal?: string | null; comissao?: number | 
 }
 
 /** Troca só a modalidade (Clássico/Premium), mantendo a conta. */
-export function comModalidade(canal: CanalComparativo, modalidade: "Clássico" | "Premium"): CanalComparativo {
+export function comModalidade(canal: string, modalidade: "Clássico" | "Premium"): CanalComparativo {
   return canal.replace(/(Clássico|Premium)$/, modalidade) as CanalComparativo;
 }
 

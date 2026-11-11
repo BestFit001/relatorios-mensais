@@ -17,6 +17,8 @@ export interface AnuncioRaspado {
   total_vendas: number | null;
   /** true quando o marketplace só informa faixa ("+500 vendidos") */
   vendas_aproximado: boolean;
+  /** Amazon: "+100 compras no mês passado" (vendas dos últimos 30 dias, sempre em faixas; não é o total acumulado) */
+  vendas_mes?: number | null;
 }
 
 /** O que a captura diária precisa de cada anúncio. */
@@ -47,6 +49,8 @@ export interface ResultadoLote {
 export interface Conector {
   id: string;
   nome: string;
+  /** false = o servidor não lê esse marketplace (bloqueia): os dados só entram pelo favorito no navegador */
+  leituraServidor: boolean;
   /** devolve a URL normalizada ou lança Error com mensagem para o usuário */
   validarUrlCategoria(url: string): string;
   validarUrlAnuncio(url: string): { url: string; mlb_id: string };

@@ -1,12 +1,15 @@
-// Registro de conectores. Para plugar Shopee/Amazon: criar `lib/concorrentes/<canal>/index.ts` com um `Conector`,
-// registrar aqui e marcar `disponivel: true` em canais.ts.
+// Registro de conectores. Shopee e Amazon são "só pelo favorito" (fonteNavegador.ts); para ler pelo servidor, trocar por um conector completo
+// (como o do Mercado Livre) e marcar `leituraServidor: true` em canais.ts.
 import type { Conector } from "./tipos";
 import { ErroValidacao } from "./tipos";
 import { CANAIS } from "./canais";
 import { conectorMercadoLivre } from "./mercadolivre";
+import { conectorSoNavegador } from "./fonteNavegador";
 
 const conectores: Record<string, Conector> = {
   mercadolivre: conectorMercadoLivre,
+  shopee: conectorSoNavegador("shopee", "Shopee"),
+  amazon: conectorSoNavegador("amazon", "Amazon"),
 };
 
 export function obterConector(canal: string): Conector {

@@ -414,14 +414,9 @@ export default function Navbar() {
                       Vídeos
                     </Link>
                   )}
-                  {temPermissao("/analise-mercado") && (
-                    <Link href="/analise-mercado" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/analise-mercado" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Análise de mercado
-                    </Link>
-                  )}
-                  {temPermissao("/concorrentes") && (
+                  {(temPermissao("/concorrentes") || temPermissao("/analise-mercado")) && (
                     <Link href="/concorrentes" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/concorrentes" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Monitor de concorrentes
+                      Análise da concorrência
                     </Link>
                   )}
                 </div>

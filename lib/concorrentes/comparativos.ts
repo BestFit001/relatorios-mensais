@@ -2,11 +2,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parsePreco } from "./calculos";
 import { canalValido } from "./comparativo";
-import { sanitizarPayload } from "./importacao";
-import { normalizarUrlAnuncio } from "./mercadolivre/url";
+import { canalDoPayload, sanitizarPayload } from "./importacao";
+import { CANAIS } from "./canais";
+import { anuncioDeQualquerCanal } from "./urls";
 import { ErroValidacao, type AnuncioRaspado } from "./tipos";
 
-const CANAL_PADRAO = "Mercado Livre 1 Clássico";
 const em = <T,>(l: T[], n: number): T[][] => Array.from({ length: Math.ceil(l.length / n) }, (_, i) => l.slice(i * n, (i + 1) * n));
 
 function falha(contexto: string, error: { message: string } | null) {
@@ -17,7 +17,7 @@ function falha(contexto: string, error: { message: string } | null) {
 function anuncioDoTexto(texto: string): AnuncioRaspado {
   let bruto: unknown;
   try { bruto = JSON.parse(texto); } catch { throw new ErroValidacao("O texto colado não está completo. Use o botão Copiar do favorito, na página do seu anúncio, e cole tudo."); }
-  const p = sanitizarPayload(bruto);
+  const p = sanitizarPayload(bruto, canalDoPayload(bruto));
   if (p.anuncios.length !== 1) throw new ErroValidacao("Esse texto tem vários anúncios. Abra a página do SEU anúncio (não uma lista), clique no favorito e cole aqui.");
   return p.anuncios[0];
 }
@@ -45,16 +45,20 @@ export async function salvarComparativo(db: SupabaseClient, e: EntradaComparativ
   const sku = typeof e.sku === "string" ? e.sku.trim() : "";
   if (!sku || sku.length > 40) throw new ErroValidacao("Informe o SKU do seu produto.");
 
-  const { data: anuncio, error: e1 } = await db.from("anuncios").select("id").eq("id", e.anuncio_id).maybeSingle();
+  const { data: anuncio, error: e1 } = await db.from("anuncios").select("id,categoria_id").eq("id", e.anuncio_id).maybeSingle();
   falha("buscar anúncio", e1);
   if (!anuncio) throw new ErroValidacao("Anúncio do concorrente não encontrado.");
+  // canal padrão = o canal em que o concorrente vende (o meu anúncio costuma estar no mesmo)
+  const { data: cat, error: e1b } = await db.from("categorias").select("canal").eq("id", anuncio.categoria_id).maybeSingle();
+  falha("buscar categoria", e1b);
+  const canalPadrao = CANAIS.find((c) => c.id === cat?.canal)?.canalAnalise ?? "Mercado Livre 1 Clássico";
 
   let meuMlb: string | null = null, meuUrl: string | null = null, meuTitulo: string | null = null, precoDoTexto: number | null = null;
   if (typeof e.texto === "string" && e.texto.trim()) {
     const a = anuncioDoTexto(e.texto);
     meuMlb = a.mlb_id; meuUrl = a.url_anuncio; meuTitulo = a.titulo; precoDoTexto = a.preco;
   } else if (typeof e.meu_url === "string" && e.meu_url.trim()) {
-    const l = normalizarUrlAnuncio(e.meu_url.trim());
+    const l = anuncioDeQualquerCanal(e.meu_url.trim());
     meuMlb = l.mlb_id; meuUrl = l.url;
   } else {
     throw new ErroValidacao("Cole o link do seu anúncio.");
@@ -66,8 +70,9 @@ export async function salvarComparativo(db: SupabaseClient, e: EntradaComparativ
     anuncio_id: e.anuncio_id, sku,
     meu_url: meuUrl, meu_mlb_id: meuMlb, meu_titulo: meuTitulo,
     meu_preco: preco, meu_preco_em: preco != null ? new Date().toISOString() : null,
-    canal_meu: canalValido(e.canal_meu) ? e.canal_meu : CANAL_PADRAO,
-    canal_concorrente: canalValido(e.canal_concorrente) ? e.canal_concorrente : CANAL_PADRAO,
+    canal_meu: canalValido(e.canal_meu) ? e.canal_meu : canalPadrao,
+    // o canal do concorrente é o canal em que ele vende: no ML só muda a modalidade; Amazon e Shopee têm um canal só
+    canal_concorrente: canalValido(e.canal_concorrente) && (cat?.canal ?? "mercadolivre") === "mercadolivre" && e.canal_concorrente.includes("Mercado Livre") ? e.canal_concorrente : canalPadrao,
     custo_manual: custoManual,
   };
   const { data, error } = await db.from("comparativos").upsert(linha, { onConflict: "anuncio_id" }).select("*").single();

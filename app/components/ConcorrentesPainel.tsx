@@ -19,19 +19,23 @@ import Favoritos from "./concorrentes/Favoritos";
 import ComparativoForm from "./concorrentes/ComparativoForm";
 import ComparativoLista, { type ComparativoComAnuncio } from "./concorrentes/ComparativoLista";
 
-type Ordem = "vendas_dia" | "total" | "preco" | "titulo" | "ranking";
+type Ordem = "vendas_dia" | "total" | "mes" | "preco" | "titulo" | "ranking";
 type Vista = "anuncios" | "mudancas" | "favoritos" | "comparativo";
 
-export default function ConcorrentesPainel() {
+/** Painel de UM canal (Mercado Livre, Shopee ou Amazon): categorias importadas pelo favorito, anúncios, favoritos, mudanças de preço e comparativo. */
+export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?: string }) {
+  const info = CANAIS.find((c) => c.id === canal) || CANAIS[0];
+  const ehML = canal === "mercadolivre", ehAmazon = canal === "amazon";
+  const temRanking = canal !== "shopee";
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [categoriaId, setCategoriaId] = useState<string | null>(null);
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [vista, setVista] = useState<Vista>("anuncios");
   const [historico, setHistorico] = useState<Record<string, Ponto[]>>({});
   const [carregandoHist, setCarregandoHist] = useState(false);
-  const [favoritos, setFavoritos] = useState<Anuncio[]>([]);
+  const [favoritosTodos, setFavoritosTodos] = useState<Anuncio[]>([]);
   const [carregandoFav, setCarregandoFav] = useState(true);
-  const [comparativos, setComparativos] = useState<ComparativoComAnuncio[]>([]);
+  const [comparativosTodos, setComparativosTodos] = useState<ComparativoComAnuncio[]>([]);
   const [carregandoComp, setCarregandoComp] = useState(true);
   const [formComp, setFormComp] = useState<{ anuncio: Anuncio; existente: Comparativo | null } | null>(null);
   const [soFavoritos, setSoFavoritos] = useState(false);
@@ -42,7 +46,6 @@ export default function ConcorrentesPainel() {
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
 
-  const [canal, setCanal] = useState("mercadolivre");
   const [urlCategoria, setUrlCategoria] = useState("");
   const [nomeCategoria, setNomeCategoria] = useState("");
   const [cadastrando, setCadastrando] = useState(false);
@@ -61,7 +64,7 @@ export default function ConcorrentesPainel() {
   useEffect(() => { favoritoRef.current?.setAttribute("href", favoritoHref()); }, []);
 
   const [busca, setBusca] = useState("");
-  const [ordem, setOrdem] = useState<Ordem>("vendas_dia");
+  const [ordem, setOrdem] = useState<Ordem>(canal === "amazon" ? "mes" : "vendas_dia");
   const [mostrarInativos, setMostrarInativos] = useState(false);
   const [pagina, setPagina] = useState(1);
   const [tamanho, setTamanho] = useState(25);
@@ -75,14 +78,14 @@ export default function ConcorrentesPainel() {
   };
 
   const carregarCategorias = useCallback(async (escolher?: string) => {
-    const { data, error } = await supabase.from("categorias").select("*").order("criado_em", { ascending: true });
+    const { data, error } = await supabase.from("categorias").select("*").eq("canal", canal).order("criado_em", { ascending: true });
     if (error) { setErro(`Não consegui ler as categorias: ${error.message}`); setCarregando(false); return; }
     const lista = (data || []) as Categoria[];
     setCategorias(lista);
     setImportarAberto((aberto) => aberto || lista.length === 0);
     setCategoriaId((atual) => escolher || (atual && lista.some((c) => c.id === atual) ? atual : lista[0]?.id ?? null));
     setCarregando(false);
-  }, []);
+  }, [canal]);
 
   /** Lê o histórico (90 dias) desses anúncios e junta ao que já está na tela. */
   const carregarHistorico = useCallback(async (ids: string[]) => {
@@ -108,7 +111,7 @@ export default function ConcorrentesPainel() {
   const carregarFavoritos = useCallback(async () => {
     try {
       const lista = (await buscarTudo("anuncios", COLUNAS_ANUNCIO, (q) => q.eq("favorito", true))).map(lerAnuncio);
-      setFavoritos(lista);
+      setFavoritosTodos(lista);
       carregarHistorico(lista.map((a) => a.id));
     } catch (e: any) { setErro(`Não consegui ler os favoritos: ${e.message}`); }
     finally { setCarregandoFav(false); }
@@ -124,7 +127,7 @@ export default function ConcorrentesPainel() {
         if (error) throw new Error(error.message);
         for (const r of data || []) porId.set(r.id, lerAnuncio(r));
       }
-      setComparativos(linhas.map((c) => ({ ...c, anuncio: porId.get(c.anuncio_id) || null })).sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em))));
+      setComparativosTodos(linhas.map((c) => ({ ...c, anuncio: porId.get(c.anuncio_id) || null })).sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em))));
     } catch (e: any) { setErro(`Não consegui ler os comparativos: ${e.message}`); }
     finally { setCarregandoComp(false); }
   }, []);
@@ -133,13 +136,17 @@ export default function ConcorrentesPainel() {
   useEffect(() => { setAnuncios([]); setPagina(1); setBusca(""); if (categoriaId) carregarAnuncios(categoriaId); }, [categoriaId, carregarAnuncios]);
   useEffect(() => { setPagina(1); }, [busca, ordem, mostrarInativos, tamanho, soFavoritos, soRanking]);
 
+  // favoritos e comparativos são de todos os canais no banco; cada aba mostra só os do seu canal
+  const idsDoCanal = useMemo(() => new Set(categorias.map((c) => c.id)), [categorias]);
+  const favoritos = useMemo(() => favoritosTodos.filter((a) => idsDoCanal.has(a.categoria_id)), [favoritosTodos, idsDoCanal]);
+  const comparativos = useMemo(() => comparativosTodos.filter((c) => c.anuncio && idsDoCanal.has(c.anuncio.categoria_id)), [comparativosTodos, idsDoCanal]);
   const categoria = categorias.find((c) => c.id === categoriaId) || null;
   const ativos = useMemo(() => anuncios.filter((a) => a.ativo), [anuncios]);
 
   const visiveis = useMemo(() => {
     const t = busca.trim().toLowerCase();
     const lista = anuncios.filter((a) => (mostrarInativos || a.ativo) && (!soFavoritos || a.favorito) && (!soRanking || a.ranking_posicao != null) && (!t || a.titulo.toLowerCase().includes(t) || (a.vendedor || "").toLowerCase().includes(t) || (a.marca || "").toLowerCase().includes(t) || a.mlb_id.toLowerCase().includes(t)));
-    const chave = (a: Anuncio) => ordem === "vendas_dia" ? a.ultimas_vendas_dia : ordem === "total" ? a.ultimo_total_vendas : a.ultimo_preco;
+    const chave = (a: Anuncio) => ordem === "vendas_dia" ? a.ultimas_vendas_dia : ordem === "total" ? a.ultimo_total_vendas : ordem === "mes" ? a.ultimo_vendas_mes : a.ultimo_preco;
     return [...lista].sort((a, b) => {
       if (ordem === "titulo") return a.titulo.localeCompare(b.titulo, "pt-BR");
       if (ordem === "ranking") return (a.ranking_posicao ?? 1e9) - (b.ranking_posicao ?? 1e9) || (b.ultimo_total_vendas ?? -1) - (a.ultimo_total_vendas ?? -1);
@@ -163,6 +170,8 @@ export default function ConcorrentesPainel() {
       anuncios: ativos.length,
       vendasDia: ativos.reduce((s, a) => s + (a.ultimas_vendas_dia || 0), 0),
       total: ativos.reduce((s, a) => s + (a.ultimo_total_vendas || 0), 0),
+      mes: ativos.reduce((s, a) => s + (a.ultimo_vendas_mes || 0), 0),
+      comMes: ativos.filter((a) => a.ultimo_vendas_mes != null).length,
       precoMedio: comPreco.length ? comPreco.reduce((s, a) => s + (a.ultimo_preco || 0), 0) / comPreco.length : null,
       ultima: datas.sort().pop() ?? null,
       semBase: ativos.filter((a) => a.ultimas_vendas_dia == null).length,
@@ -173,7 +182,7 @@ export default function ConcorrentesPainel() {
   const cadastrar = async () => {
     setCadastrando(true); setAviso(null);
     try {
-      const r = await chamar("categorias", "POST", { url: urlCategoria, canal, nome: nomeCategoria || undefined });
+      const r = await chamar("categorias", "POST", { url: urlCategoria, canal: "mercadolivre", nome: nomeCategoria || undefined });
       setUrlCategoria(""); setNomeCategoria("");
       await carregarCategorias(r.categoria.id);
       if (r.categoria.id === categoriaId) await carregarAnuncios(r.categoria.id);
@@ -185,7 +194,7 @@ export default function ConcorrentesPainel() {
   const importar = async () => {
     setImportando(true); setAviso(null);
     try {
-      const r = await chamar("importar", "POST", { texto: textoImport, categoria_id: categoriaId, nome: nomeImport || undefined });
+      const r = await chamar("importar", "POST", { texto: textoImport, canal, categoria_id: categoriaId, nome: nomeImport || undefined });
       setTextoImport(""); setNomeImport("");
       await carregarCategorias(r.categoria.id);
       await carregarAnuncios(r.categoria.id);
@@ -229,7 +238,7 @@ export default function ConcorrentesPainel() {
     const favorito = !a.favorito;
     const troca = (l: Anuncio[]) => l.map((x) => (x.id === a.id ? { ...x, favorito } : x));
     setAnuncios(troca); // otimista
-    if (!favorito) setFavoritos((l) => l.filter((x) => x.id !== a.id)); else setFavoritos((l) => (l.some((x) => x.id === a.id) ? troca(l) : [...l, { ...a, favorito }]));
+    if (!favorito) setFavoritosTodos((l) => l.filter((x) => x.id !== a.id)); else setFavoritosTodos((l) => (l.some((x) => x.id === a.id) ? troca(l) : [...l, { ...a, favorito }]));
     try { await chamar("anuncios", "PATCH", { id: a.id, favorito }); carregarFavoritos(); }
     catch (e: any) { setAnuncios((l) => l.map((x) => (x.id === a.id ? { ...x, favorito: a.favorito } : x))); carregarFavoritos(); avisar("erro", e.message); }
   };
@@ -242,7 +251,7 @@ export default function ConcorrentesPainel() {
 
   const removerComparativo = async (c: ComparativoComAnuncio) => {
     if (!window.confirm("Remover este comparativo? O anúncio do concorrente continua sendo monitorado.")) return;
-    try { await chamar("comparativos", "DELETE", { id: c.id }); setComparativos((l) => l.filter((x) => x.id !== c.id)); avisar("ok", "Comparativo removido."); }
+    try { await chamar("comparativos", "DELETE", { id: c.id }); setComparativosTodos((l) => l.filter((x) => x.id !== c.id)); avisar("ok", "Comparativo removido."); }
     catch (e: any) { avisar("erro", e.message); }
   };
 
@@ -250,7 +259,7 @@ export default function ConcorrentesPainel() {
     try {
       const r = await chamar<{ comparativo: Comparativo }>("comparativos", "PATCH", { id: c.id, ...dados });
       const novo = lerComparativo(r.comparativo);
-      setComparativos((l) => l.map((x) => (x.id === c.id ? { ...x, ...novo } : x)));
+      setComparativosTodos((l) => l.map((x) => (x.id === c.id ? { ...x, ...novo } : x)));
       avisar("ok", `Meu preço atualizado: ${brl(novo.meu_preco)}.`);
       return true;
     } catch (e: any) { avisar("erro", e.message); return false; }
@@ -287,8 +296,7 @@ export default function ConcorrentesPainel() {
     finally { setAtualizando(null); }
   };
 
-  const canalDisponivel = CANAIS.find((c) => c.id === canal);
-
+  
   return (
     <div className="space-y-5" data-painel-concorrentes>
       {erro && <div data-erro className="p-4 rounded-xl border border-amber-800/60 bg-amber-950/30 text-amber-200 text-xs font-semibold">⚠️ {erro}</div>}
@@ -303,7 +311,7 @@ export default function ConcorrentesPainel() {
       <details open={importarAberto} className={`${caixa} group`} data-importar>
         <summary className="cursor-pointer select-none px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-300 flex items-center justify-between">
           <span>📋 Importar do navegador</span>
-          <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">sem proxy, sem API e sem senha: o seu navegador lê o Mercado Livre</span>
+          <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">sem proxy, sem API e sem senha: o seu navegador lê {ehML ? "o Mercado Livre" : ehAmazon ? "a Amazon" : "a Shopee"}</span>
         </summary>
         <div className="px-5 pb-5 space-y-4">
           <ol className="text-xs text-slate-400 space-y-2 list-decimal list-inside">
@@ -313,12 +321,14 @@ export default function ConcorrentesPainel() {
               <button data-acao="copiar-favorito" onClick={copiarFavorito} className="text-[11px] underline text-slate-300 hover:text-white cursor-pointer">não consegui arrastar</button>
               <span className="text-slate-500"> (barra escondida? Ctrl+Shift+B no Chrome)</span>
             </li>
-            <li>Abra no Mercado Livre a categoria ou busca (ou a página de um anúncio) e clique no favorito. Em uma lista ele lê as 2 primeiras páginas; numa página de anúncio, só aquele anúncio; na página “Mais vendidos” da categoria, a posição (1º, 2º…) de cada anúncio. Anúncio e Mais vendidos entram na categoria selecionada aqui.</li>
-            <li>Volte aqui, cole o texto copiado e clique em Importar. Repita uma vez por dia, na mesma categoria: o histórico e as vendas do dia são calculados a cada importação.</li>
+            {ehML && <li>Abra no Mercado Livre a categoria ou busca (ou a página de um anúncio) e clique no favorito. Em uma lista ele lê as 2 primeiras páginas; numa página de anúncio, só aquele anúncio; na página “Mais vendidos” da categoria, a posição (1º, 2º…) de cada anúncio. Anúncio e Mais vendidos entram na categoria selecionada aqui.</li>}
+            {ehAmazon && <li>Abra na Amazon uma busca, categoria (ou a página de um produto) e clique no favorito. Em uma lista ele lê as 2 primeiras páginas; numa página de produto, só aquele produto; na página “Mais vendidos”, a posição (#1, #2…) de cada produto. Produto e Mais vendidos entram na categoria selecionada aqui.</li>}
+            {canal === "shopee" && <li>Abra na Shopee uma busca, categoria ou loja (ou a página de um produto), espere os produtos carregarem e clique no favorito: ele rola a página sozinho e lê o que apareceu (a Shopee carrega a lista aos poucos, então vem só a página em que você está; para ler a seguinte, vá para ela e clique de novo). Produto avulso entra na categoria selecionada aqui.</li>}
+            <li>Volte aqui, cole o texto copiado e clique em Importar. Repita uma vez por dia, na mesma categoria: o histórico e {ehAmazon ? "as compras do mês" : "as vendas do dia"} são {ehAmazon ? "atualizados" : "calculados"} a cada importação.</li>
           </ol>
           <div className="grid gap-3 md:grid-cols-[1fr_220px_auto] items-end">
             <label className="grid gap-1 text-[11px] font-bold text-slate-400">Texto copiado pelo favorito
-              <textarea data-campo="importar-texto" value={textoImport} onChange={(e) => setTextoImport(e.target.value)} rows={3} placeholder='{"v":1,"tipo":"categoria",…}' className={`${campo} w-full font-mono text-xs`} />
+              <textarea data-campo="importar-texto" value={textoImport} onChange={(e) => setTextoImport(e.target.value)} rows={3} placeholder={`{"v":1,"canal":"${canal}","tipo":"categoria",…}`} className={`${campo} w-full font-mono text-xs`} />
             </label>
             <label className="grid gap-1 text-[11px] font-bold text-slate-400">Nome da categoria (opcional)
               <input data-campo="importar-nome" value={nomeImport} onChange={(e) => setNomeImport(e.target.value)} placeholder="Ex.: Pochetes" className={`${campo} w-full`} />
@@ -329,7 +339,7 @@ export default function ConcorrentesPainel() {
       </details>
 
       {carregando ? <p className="text-xs text-slate-500">Carregando…</p> : categorias.length === 0 ? (
-        <div className={`${caixa} p-10 text-center text-sm text-slate-400`}>Nenhuma categoria cadastrada ainda. Cole acima o link de uma categoria ou busca do Mercado Livre.</div>
+        <div className={`${caixa} p-10 text-center text-sm text-slate-400`}>Nenhuma categoria cadastrada ainda. Abra uma busca ou categoria {ehML ? "do Mercado Livre" : ehAmazon ? "da Amazon" : "da Shopee"}, clique no favorito e cole acima o texto que ele copiar.</div>
       ) : (
         <>
           {/* Sub-abas */}
@@ -379,10 +389,15 @@ export default function ConcorrentesPainel() {
               <div className={`${caixa} grid grid-cols-2 md:grid-cols-5 divide-x divide-slate-800`} data-resumo>
                 {[
                   ["Anúncios ativos", num(resumo.anuncios), `${anuncios.length - ativos.length} desativado(s)`],
-                  ["Vendas do dia", num(resumo.vendasDia), resumo.semBase ? `${resumo.semBase} ainda sem base de ontem` : resumo.faixas ? `${resumo.faixas} de ${resumo.anuncios} só informam faixa (+N)` : "soma de todos os anúncios"],
-                  ["Total vendido", num(resumo.total), "acumulado informado pelo canal"],
+                  ...(ehAmazon ? [
+                    ["Compras no mês", num(resumo.mes), `soma das faixas de ${resumo.comMes} de ${resumo.anuncios} produtos (mínimo, não exato)`],
+                    ["Compras por dia (est.)", resumo.mes ? `≈ ${(resumo.mes / 30).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}` : "—", "compras do mês ÷ 30"],
+                  ] : [
+                    ["Vendas do dia", num(resumo.vendasDia), resumo.semBase ? `${resumo.semBase} ainda sem base de ontem` : resumo.faixas ? `${resumo.faixas} de ${resumo.anuncios} só informam faixa (+N)` : "soma de todos os anúncios"],
+                    ["Total vendido", num(resumo.total), "acumulado informado pelo canal"],
+                  ]),
                   ["Preço médio", brl(resumo.precoMedio), "preço atual dos anúncios"],
-                  ["Última captura", dataBR(resumo.ultima), categoria.ativo ? "captura automática diária" : "categoria pausada"],
+                  ["Última captura", dataBR(resumo.ultima), !categoria.ativo ? "categoria pausada" : ehML ? "captura automática diária" : "atualize pelo favorito"],
                 ].map(([t, v, d]) => (
                   <div key={t} className="px-4 py-3">
                     <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{t}</p>
@@ -396,33 +411,38 @@ export default function ConcorrentesPainel() {
                 {/* Tabela de anúncios */}
                 <section className={`${caixa} p-4 space-y-3`} data-tabela-anuncios>
                   <div className="flex flex-wrap items-center gap-2">
-                    <input data-campo="busca" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Filtrar por título, marca, vendedor ou MLB…" className={`${campo} w-64`} />
+                    <input data-campo="busca" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder={`Filtrar por título, marca, vendedor ou ${ehML ? "MLB" : ehAmazon ? "ASIN" : "código"}…`} className={`${campo} w-64`} />
                     <select data-campo="ordem" value={ordem} onChange={(e) => setOrdem(e.target.value as Ordem)} className={campo}>
-                      <option value="vendas_dia">Mais vendidos hoje</option>
-                      <option value="total">Maior total vendido</option>
+                      {ehAmazon ? <option value="mes">Mais compras no mês</option> : <><option value="vendas_dia">Mais vendidos hoje</option><option value="total">Maior total vendido</option></>}
                       <option value="preco">Maior preço</option>
-                      <option value="ranking">Posição no Mais vendidos</option>
+                      {temRanking && <option value="ranking">Posição no Mais vendidos</option>}
                       <option value="titulo">Título (A–Z)</option>
                     </select>
                     <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                       <input data-campo="so-favoritos" type="checkbox" checked={soFavoritos} onChange={(e) => setSoFavoritos(e.target.checked)} /> só favoritos ★
                     </label>
-                    <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
-                      <input data-campo="so-ranking" type="checkbox" checked={soRanking} onChange={(e) => setSoRanking(e.target.checked)} /> só no Mais vendidos 🏆
-                    </label>
+                    {temRanking && (
+                      <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                        <input data-campo="so-ranking" type="checkbox" checked={soRanking} onChange={(e) => setSoRanking(e.target.checked)} /> só no Mais vendidos 🏆
+                      </label>
+                    )}
                     <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                       <input data-campo="inativos" type="checkbox" checked={mostrarInativos} onChange={(e) => setMostrarInativos(e.target.checked)} /> mostrar desativados
                     </label>
                     <div className="ml-auto flex flex-wrap gap-2">
-                      <button data-acao="atualizar" onClick={atualizarAgora} disabled={!!atualizando} className={`${botao} bg-emerald-700 text-white hover:bg-emerald-600`}>↻ Atualizar agora</button>
+                      {ehML && <button data-acao="atualizar" onClick={atualizarAgora} disabled={!!atualizando} className={`${botao} bg-emerald-700 text-white hover:bg-emerald-600`}>↻ Atualizar agora</button>}
                       <button data-acao="pausar" onClick={pausarCategoria} className={`${botao} bg-slate-800 text-slate-300 hover:bg-slate-700`}>{categoria.ativo ? "Pausar categoria" : "Retomar categoria"}</button>
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input data-campo="avulso" value={urlAvulso} onChange={(e) => setUrlAvulso(e.target.value)} placeholder="Adicionar anúncio avulso nesta categoria: cole o link do anúncio…" className={`${campo} flex-1 min-w-64`} />
-                    <button data-acao="adicionar-avulso" onClick={adicionarAvulso} disabled={adicionando || !urlAvulso.trim()} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>{adicionando ? "Adicionando…" : "Adicionar"}</button>
-                  </div>
+                  {ehML ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input data-campo="avulso" value={urlAvulso} onChange={(e) => setUrlAvulso(e.target.value)} placeholder="Adicionar anúncio avulso nesta categoria: cole o link do anúncio…" className={`${campo} flex-1 min-w-64`} />
+                      <button data-acao="adicionar-avulso" onClick={adicionarAvulso} disabled={adicionando || !urlAvulso.trim()} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>{adicionando ? "Adicionando…" : "Adicionar"}</button>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-500" data-aviso-atualizacao>O servidor não lê {nomeDoCanal(canal)}: para atualizar ou incluir um {ehAmazon ? "produto" : "anúncio"}, abra a página no navegador, clique no favorito e importe aqui (acima). Faça isso todo dia na mesma busca para formar o histórico de preços.</p>
+                  )}
 
                   {atualizando && <p className="text-xs text-slate-400" data-status>{atualizando}</p>}
 
@@ -431,12 +451,16 @@ export default function ConcorrentesPainel() {
                       <thead>
                         <tr className="text-left text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-800">
                           <th className="py-2 pr-2 w-8" /><th className="py-2 pr-3 w-16">Imagem</th><th className="py-2 pr-3">Título</th><th className="py-2 pr-3">Marca</th><th className="py-2 pr-3">Vendedor</th>
-                          <th className="py-2 pr-3 text-right">Preço atual</th><th className="py-2 pr-3 text-right">Vendas do dia</th><th className="py-2 pr-3 text-right">Total vendido</th><th className="py-2 pr-3 text-right" title="Estimativa pelo histórico: precisa de pelo menos 7 dias">Média/dia (est.)</th><th className="py-2 w-28" />
+                          <th className="py-2 pr-3 text-right">Preço atual</th>
+                          {ehAmazon
+                            ? <th className="py-2 pr-3 text-right" title="A Amazon informa as compras dos últimos 30 dias em faixas (+50, +100, +1 mil…)">Compras no mês</th>
+                            : <><th className="py-2 pr-3 text-right">Vendas do dia</th><th className="py-2 pr-3 text-right">Total vendido</th><th className="py-2 pr-3 text-right" title="Estimativa pelo histórico: precisa de pelo menos 7 dias">Média/dia (est.)</th></>}
+                          <th className="py-2 w-28" />
                         </tr>
                       </thead>
                       <tbody>
-                        {carregandoAnuncios && <tr><td colSpan={10} className="py-8 text-center text-xs text-slate-500">Carregando anúncios…</td></tr>}
-                        {!carregandoAnuncios && pag.length === 0 && <tr><td colSpan={10} className="py-8 text-center text-xs text-slate-500">Nenhum anúncio para mostrar.</td></tr>}
+                        {carregandoAnuncios && <tr><td colSpan={ehAmazon ? 8 : 10} className="py-8 text-center text-xs text-slate-500">Carregando anúncios…</td></tr>}
+                        {!carregandoAnuncios && pag.length === 0 && <tr><td colSpan={ehAmazon ? 8 : 10} className="py-8 text-center text-xs text-slate-500">Nenhum anúncio para mostrar.</td></tr>}
                         {pag.map((a) => {
                           const h = historico[a.id] || [];
                           const mud = mudancasDePreco(h).filter((m) => m.data >= diasAtras(hoje, 30)).pop();
@@ -461,12 +485,18 @@ export default function ConcorrentesPainel() {
                                 {brl(a.ultimo_preco)}
                                 {mud && <span data-mudou className={`block text-[10px] font-bold ${mud.pct < 0 ? "text-emerald-400" : "text-rose-400"}`} title={`Era ${brl(mud.de)} em ${dataBR(mud.dataAnterior)}`}>{mud.pct < 0 ? "▼" : "▲"} {pct(mud.pct)} em {dataBR(mud.data)}</span>}
                               </td>
-                              <td data-vendas-dia className={`py-2 pr-3 text-right font-bold whitespace-nowrap ${(a.ultimas_vendas_dia || 0) > 0 ? "text-emerald-400" : "text-slate-400"}`}
-                                title={a.ultimo_aproximado ? "O canal só informa faixas (+N vendidos): o dia só muda quando a faixa muda" : undefined}>{num(a.ultimas_vendas_dia)}</td>
-                              <td data-total className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap" title={a.ultimo_aproximado ? "Faixa informada pelo canal: o total real é igual ou maior" : undefined}>{totalVendido(a)}</td>
-                              <td data-media className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap" title={media ? `Média dos últimos ${media.dias} dias${media.aproximado ? " (o canal informa faixas: é uma estimativa)" : ""}` : "Precisa de pelo menos 7 dias de histórico"}>
-                                {media ? `${media.aproximado ? "≈ " : ""}${media.porDia.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}` : "—"}
-                              </td>
+                              {ehAmazon ? (
+                                <td data-mes className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap" title="Faixa informada pela Amazon: as compras dos últimos 30 dias são iguais ou maiores">{a.ultimo_vendas_mes != null ? `+${num(a.ultimo_vendas_mes)}` : "—"}</td>
+                              ) : (
+                                <>
+                                  <td data-vendas-dia className={`py-2 pr-3 text-right font-bold whitespace-nowrap ${(a.ultimas_vendas_dia || 0) > 0 ? "text-emerald-400" : "text-slate-400"}`}
+                                    title={a.ultimo_aproximado ? "O canal só informa faixas (+N vendidos): o dia só muda quando a faixa muda" : undefined}>{num(a.ultimas_vendas_dia)}</td>
+                                  <td data-total className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap" title={a.ultimo_aproximado ? "Faixa informada pelo canal: o total real é igual ou maior" : undefined}>{totalVendido(a)}</td>
+                                  <td data-media className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap" title={media ? `Média dos últimos ${media.dias} dias${media.aproximado ? " (o canal informa faixas: é uma estimativa)" : ""}` : "Precisa de pelo menos 7 dias de histórico"}>
+                                    {media ? `${media.aproximado ? "≈ " : ""}${media.porDia.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}` : "—"}
+                                  </td>
+                                </>
+                              )}
                               <td className="py-2 text-right whitespace-nowrap">
                                 <button data-acao="comparar" onClick={() => acoes.abrirComparativo(a)} title="Marcar como igual a um anúncio meu" className="mr-2 cursor-pointer text-base opacity-70 hover:opacity-100">{acoes.temComparativo(a.id) ? "⚖️✓" : "⚖️"}</button>
                                 {a.ativo
@@ -482,12 +512,20 @@ export default function ConcorrentesPainel() {
                   <Paginacao total={visiveis.length} pagina={pagina} tamanho={tamanho} onPagina={setPagina} onTamanho={setTamanho} rotulo="anúncios" opcoes={[25, 50, 100]} />
                   <details className="text-[11px] text-slate-500" data-sobre-vendas>
                     <summary className="cursor-pointer select-none font-bold text-slate-400">Como as vendas são medidas (e o que dá para confiar)</summary>
-                    <ul className="mt-2 space-y-1.5 list-disc list-inside">
-                      <li>O Mercado Livre não divulga a venda diária de anúncios de terceiros. Só aparece o <b>total acumulado</b> e, a partir de certo volume, em <b>faixas</b> (“+100”, “+500”, “+1 mil”, “+5 mil”…). O sinal “+” na coluna Total vendido marca esses casos.</li>
-                      <li><b>Vendas do dia</b> = total de hoje − total da captura anterior. Com faixas, fica em 0 até o anúncio mudar de faixa, e aí o salto é de uma faixa inteira (não é a venda de um dia). Só é exato nos anúncios que mostram o número certo (os pequenos).</li>
-                      <li><b>Média/dia (est.)</b> = quanto o total andou entre a primeira e a última captura ÷ dias entre elas (a partir de 7 dias de histórico, últimos 90). Quanto mais dias, mais confiável: com faixas o erro máximo é uma faixa dividida pelo número de dias. O “≈” indica essa estimativa.</li>
-                      <li>Para o ranking, use “Maior total vendido” e “Média/dia”; a variação do dia serve como alerta de que algo mudou.</li>
-                    </ul>
+                    {ehAmazon ? (
+                      <ul className="mt-2 space-y-1.5 list-disc list-inside">
+                        <li>A Amazon não mostra vendas por dia nem o total acumulado: só <b>“N compras no mês passado”</b>, em faixas (+50, +100, +200, +1 mil…) e apenas em parte dos produtos. A coluna Compras no mês mostra essa faixa; o valor real é igual ou maior.</li>
+                        <li>Por isso não existe “vendas do dia” na Amazon: dividir a faixa por 30 dá só uma ordem de grandeza (“Compras por dia (est.)” no topo).</li>
+                        <li>O que é confiável aqui: <b>preço</b> (a cada importação entra no histórico e alimenta a aba Mudanças de preço), <b>posição no Mais vendidos</b> e a faixa de compras para ordenar quem vende mais.</li>
+                      </ul>
+                    ) : (
+                      <ul className="mt-2 space-y-1.5 list-disc list-inside">
+                        <li>{ehML ? "O Mercado Livre não divulga" : "A Shopee não divulga"} a venda diária de anúncios de terceiros. Só aparece o <b>total acumulado</b> e, a partir de certo volume, em <b>faixas</b> ({ehML ? "“+100”, “+500”, “+1 mil”, “+5 mil”…" : "“1,2mil vendidos”"}). O sinal “+” na coluna Total vendido marca esses casos.</li>
+                        <li><b>Vendas do dia</b> = total de hoje − total da captura anterior. Com faixas, fica em 0 até o anúncio mudar de faixa, e aí o salto é de uma faixa inteira (não é a venda de um dia). Só é exato nos anúncios que mostram o número certo (os pequenos).</li>
+                        <li><b>Média/dia (est.)</b> = quanto o total andou entre a primeira e a última captura ÷ dias entre elas (a partir de 7 dias de histórico, últimos 90). Quanto mais dias, mais confiável: com faixas o erro máximo é uma faixa dividida pelo número de dias. O “≈” indica essa estimativa.</li>
+                        <li>Para o ranking, use “Maior total vendido” e “Média/dia”; a variação do dia serve como alerta de que algo mudou.</li>
+                      </ul>
+                    )}
                   </details>
                 </section>
 
@@ -518,12 +556,12 @@ export default function ConcorrentesPainel() {
       )}
 
       {formComp && (
-        <ComparativoForm anuncio={formComp.anuncio} existente={formComp.existente} onFechar={() => setFormComp(null)}
+        <ComparativoForm anuncio={formComp.anuncio} existente={formComp.existente} canal={canal} onFechar={() => setFormComp(null)}
           onSalvo={async () => { setFormComp(null); await carregarComparativos(); setVista("comparativo"); avisar("ok", "Comparativo salvo."); }} />
       )}
 
-      {/* Avançado: só serve se o servidor conseguir ler o Mercado Livre (proxy pago ou API) */}
-      <details className={`${caixa}`} data-avancado>
+      {/* Avançado: só serve se o servidor conseguir ler o Mercado Livre (proxy pago ou API); Shopee e Amazon só entram pelo favorito */}
+      {ehML && <details className={`${caixa}`} data-avancado>
         <summary className="cursor-pointer select-none px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-400 flex items-center justify-between">
           <span>⚙️ Avançado: leitura pelo servidor</span>
           <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">não precisa para o dia a dia — só funciona com proxy pago ou API do Mercado Livre</span>
@@ -534,19 +572,14 @@ export default function ConcorrentesPainel() {
           <span>➕ Cadastrar categoria pelo servidor</span>
           <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">só funciona se o servidor conseguir ler o Mercado Livre (veja “Testar conexão”)</span>
         </summary>
-        <div className="px-5 pb-5 grid gap-3 md:grid-cols-[180px_1fr_220px_auto] items-end">
-          <label className="grid gap-1 text-[11px] font-bold text-slate-400">Canal
-            <select data-campo="canal" value={canal} onChange={(e) => setCanal(e.target.value)} className={`${campo} w-full`}>
-              {CANAIS.map((c) => <option key={c.id} value={c.id} disabled={!c.disponivel}>{c.nome}{c.disponivel ? "" : " (em breve)"}</option>)}
-            </select>
-          </label>
+        <div className="px-5 pb-5 grid gap-3 md:grid-cols-[1fr_220px_auto] items-end">
           <label className="grid gap-1 text-[11px] font-bold text-slate-400">Link da categoria ou busca
-            <input data-campo="url" value={urlCategoria} onChange={(e) => setUrlCategoria(e.target.value)} placeholder={canalDisponivel?.exemploUrl} className={`${campo} w-full`} />
+            <input data-campo="url" value={urlCategoria} onChange={(e) => setUrlCategoria(e.target.value)} placeholder={info.exemploUrl} className={`${campo} w-full`} />
           </label>
           <label className="grid gap-1 text-[11px] font-bold text-slate-400">Nome (opcional)
             <input data-campo="nome" value={nomeCategoria} onChange={(e) => setNomeCategoria(e.target.value)} placeholder="Ex.: Organizadores" className={`${campo} w-full`} />
           </label>
-          <button data-acao="cadastrar" onClick={cadastrar} disabled={cadastrando || !urlCategoria.trim() || !canalDisponivel?.disponivel} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>
+          <button data-acao="cadastrar" onClick={cadastrar} disabled={cadastrando || !urlCategoria.trim()} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>
             {cadastrando ? "Lendo anúncios…" : "Cadastrar e raspar"}
           </button>
         </div>
@@ -567,7 +600,7 @@ export default function ConcorrentesPainel() {
         </ul>
       )}
         </div>
-      </details>
+      </details>}
     </div>
   );
 }

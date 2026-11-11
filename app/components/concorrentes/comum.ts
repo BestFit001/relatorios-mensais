@@ -5,7 +5,7 @@ import type { Ponto } from "../../../lib/concorrentes/historico";
 export interface Categoria { id: string; nome: string; canal: string; url_origem: string; ativo: boolean; criado_em: string; ultima_raspagem: string | null }
 export interface Anuncio {
   id: string; categoria_id: string; mlb_id: string; titulo: string; vendedor: string | null; marca: string | null; url_anuncio: string; url_imagem: string | null;
-  ativo: boolean; manual: boolean; favorito: boolean; ultimo_preco: number | null; ultimo_total_vendas: number | null; ultimo_aproximado: boolean;
+  ativo: boolean; manual: boolean; favorito: boolean; ultimo_preco: number | null; ultimo_total_vendas: number | null; ultimo_vendas_mes: number | null; ultimo_aproximado: boolean;
   ultimas_vendas_dia: number | null; ultima_captura: string | null;
   ranking_posicao: number | null; ranking_anterior: number | null; ranking_data: string | null; ranking_data_anterior: string | null;
 }
@@ -14,19 +14,20 @@ export interface Comparativo {
   meu_preco: number | null; meu_preco_em: string | null; canal_meu: string; canal_concorrente: string; custo_manual: number | null; criado_em: string;
 }
 
-export const COLUNAS_ANUNCIO = "id,categoria_id,mlb_id,titulo,vendedor,marca,url_anuncio,url_imagem,ativo,manual,favorito,ultimo_preco,ultimo_total_vendas,ultimo_aproximado,ultimas_vendas_dia,ultima_captura,ranking_posicao,ranking_anterior,ranking_data,ranking_data_anterior";
+export const COLUNAS_ANUNCIO = "id,categoria_id,mlb_id,titulo,vendedor,marca,url_anuncio,url_imagem,ativo,manual,favorito,ultimo_preco,ultimo_total_vendas,ultimo_vendas_mes,ultimo_aproximado,ultimas_vendas_dia,ultima_captura,ranking_posicao,ranking_anterior,ranking_data,ranking_data_anterior";
 
 const nm = (v: unknown): number | null => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 /** Linha do banco -> Anuncio com números de verdade (o banco pode devolver numeric como texto). */
-export const lerAnuncio = (r: any): Anuncio => ({ ...r, ultimo_preco: nm(r.ultimo_preco), ultimo_total_vendas: nm(r.ultimo_total_vendas), ultimas_vendas_dia: nm(r.ultimas_vendas_dia), favorito: Boolean(r.favorito), ultimo_aproximado: Boolean(r.ultimo_aproximado), ranking_posicao: nm(r.ranking_posicao), ranking_anterior: nm(r.ranking_anterior), ranking_data: r.ranking_data ?? null, ranking_data_anterior: r.ranking_data_anterior ?? null });
+export const lerAnuncio = (r: any): Anuncio => ({ ...r, ultimo_preco: nm(r.ultimo_preco), ultimo_total_vendas: nm(r.ultimo_total_vendas), ultimo_vendas_mes: nm(r.ultimo_vendas_mes), ultimas_vendas_dia: nm(r.ultimas_vendas_dia), favorito: Boolean(r.favorito), ultimo_aproximado: Boolean(r.ultimo_aproximado), ranking_posicao: nm(r.ranking_posicao), ranking_anterior: nm(r.ranking_anterior), ranking_data: r.ranking_data ?? null, ranking_data_anterior: r.ranking_data_anterior ?? null });
 export const lerComparativo = (r: any): Comparativo => ({ ...r, meu_preco: nm(r.meu_preco), custo_manual: nm(r.custo_manual) });
 
 export const brl = (v: number | null | undefined) => (v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 export const num = (v: number | null | undefined) => (v == null ? "—" : v.toLocaleString("pt-BR"));
 export const dataBR = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
 export const pct = (v: number | null | undefined, casas = 1) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toLocaleString("pt-BR", { maximumFractionDigits: casas })}%`);
-/** Total de vendas como o canal mostra: faixa ("+5.000") ou número exato. */
-export const totalVendido = (a: Pick<Anuncio, "ultimo_total_vendas" | "ultimo_aproximado">) => (a.ultimo_total_vendas == null ? "—" : `${a.ultimo_aproximado ? "+" : ""}${num(a.ultimo_total_vendas)}`);
+/** Total de vendas como o canal mostra: faixa ("+5.000") ou número exato. Na Amazon o canal só informa as compras do último mês ("+100/mês"). */
+export const totalVendido = (a: Pick<Anuncio, "ultimo_total_vendas" | "ultimo_aproximado"> & { ultimo_vendas_mes?: number | null }) =>
+  a.ultimo_total_vendas == null ? (a.ultimo_vendas_mes != null ? `+${num(a.ultimo_vendas_mes)}/mês` : "—") : `${a.ultimo_aproximado ? "+" : ""}${num(a.ultimo_total_vendas)}`;
 
 /** Chama as rotas /api/concorrentes/*; devolve o JSON ou lança Error com a mensagem do servidor. */
 export async function chamar<T = any>(rota: string, metodo: "POST" | "PATCH" | "DELETE", corpo: unknown): Promise<T> {

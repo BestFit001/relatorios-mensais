@@ -1,10 +1,11 @@
 # Monitor de concorrentes
 
-Acompanha, todo dia, preço e vendas dos anúncios de categorias de marketplaces (hoje: Mercado Livre).
+Página **Análise da concorrência** (`/concorrentes`). Abas: **Mercado Livre | Shopee | Amazon | Pesquisa por imagem | Análise de mercado**.
+As três primeiras acompanham, todo dia, preço e vendas dos anúncios de categorias/buscas; a quarta procura o item no Google; a quinta é a antiga página Análise de mercado (`/analise-mercado` redireciona para `/concorrentes?aba=analise-mercado`).
 
 ## Arquitetura
 ```
-Tela  /concorrentes  (app/components/ConcorrentesPainel.tsx)
+Tela  /concorrentes  (app/concorrentes/page.tsx = abas; ConcorrentesPainel.tsx = um canal; concorrentes/PesquisaImagem.tsx; AnaliseMercadoPainel.tsx)
  ├─ lê direto do Supabase (chave anon, só SELECT — RLS ligada nas 3 tabelas)
  └─ escreve via /api/concorrentes/*  (chave service_role, confere Origin = mesmo site)
         categorias  POST cadastra e raspa 2 páginas | PATCH pausa/retoma
@@ -12,13 +13,18 @@ Tela  /concorrentes  (app/components/ConcorrentesPainel.tsx)
         comparativos POST marca "igual ao meu" (link + SKU) | PATCH meu preço | DELETE
         capturar    POST = "Atualizar agora" (mesma captura do cron, em lotes)
         diagnostico POST testa API/HTML do ML a partir da Vercel
+        importar    POST texto do favorito -> categoria/anúncios/ranking (canal vem do texto e da aba; texto de outra aba é recusado)
+        pesquisas   POST cria (SKU + meu PDV + termo) | PATCH importa o texto do Google ou muda PDV/termo | DELETE
 
 Vercel Cron (vercel.json, 09:00 UTC = 06:00 SP) -> GET /api/cron/daily-scraper
         Authorization: Bearer $CRON_SECRET (a Vercel envia sozinha) ou x-cron-secret
 
 lib/concorrentes/
-  canais.ts          lista de marketplaces (Shopee/Amazon "em breve")
-  marketplaces.ts    registro de conectores  <- Shopee/Amazon entram aqui
+  canais.ts          marketplaces (leituraServidor: só o ML; canalAnalise = nome do canal na Análise de mercado)
+  marketplaces.ts    registro de conectores; Shopee e Amazon usam fonteNavegador.ts (o servidor não lê esses sites)
+  urls.ts            links por canal (amazon/url.ts: ASIN; shopee/url.ts: loja.item) — SSRF: só https nos domínios do canal
+  pesquisa.ts        Pesquisa por imagem: valida o texto lido no Google, loja -> canal meu, grava ofertas
+  pesquisaCalculo.ts preço por canal, diferença para o meu PDV, lucro líquido com o meu custo (puro, testável)
   mercadolivre/      url (validação/SSRF), parsers (HTML), fontes (API + HTML + proxy), index (conector)
   captura.ts         cadastrar categoria, avulso, captura diária (vendas_no_dia)
   calculos.ts        vendas_no_dia, "N vendidos", datas de SP
@@ -71,3 +77,17 @@ O Mercado Livre não divulga a venda diária de terceiros: só o total acumulado
 - Desativar um anúncio mantém o histórico. A captura roda em lotes dentro de ~50 s e pode ser repetida.
 - Totais "+500 vendidos" são faixas: o dia fica 0 até a faixa mudar.
 - Palavras-chave: cada palavra conta uma vez por título; ignora pontuação, stopwords, números e unidades.
+
+## Shopee e Amazon (só pelo favorito)
+- Os dois sites bloqueiam leitura automática de servidor; por isso **não há captura diária automática** para eles: a cada dia você abre a mesma busca/categoria, clica no favorito e importa (o histórico de preço e a posição no Mais vendidos são formados assim).
+- Mesmas tabelas (`categorias.canal` = `shopee`/`amazon`; `anuncios.mlb_id` guarda o ASIN da Amazon ou `loja.item` da Shopee). O cron ignora esses canais.
+- **Shopee**: mostra o total de vendidos (às vezes “1,2mil”: faixa). A lista carrega aos poucos e é uma SPA: o favorito rola a página e lê só a que está aberta.
+- **Amazon**: só informa “N compras no mês passado” (vendas dos últimos 30 dias, em faixas, só em parte dos produtos) → coluna `anuncios.ultimo_vendas_mes`; **não existe “vendas do dia”**. Mais vendidos: posição #N (`/gp/bestsellers/…`).
+- Os seletores do favorito para Shopee, Amazon e Google foram escritos e testados em páginas simuladas; os sites mudam o HTML sem aviso. Se o favorito disser que não achou nada, o ajuste fica em `favorito.ts`.
+
+## Pesquisa por imagem (Google)
+1. Cria-se a pesquisa (SKU + meu PDV + palavras). A **imagem fica só no navegador** (Ctrl+V/arrastar); “Copiar imagem” põe um PNG na área de transferência para colar no Google Lens (o Lens não aceita imagem por link/API).
+2. No Google (Lens ou Shopping) o favorito rola a página e lê cada resultado com preço: título, loja, preço, link (`/url?q=` é resolvido) e imagem (só se for https).
+3. O servidor valida (`sanitizarPesquisa`), liga a loja ao canal meu (`canalDaLoja`: Mercado Livre, Amazon, Shopee, Magalu, Netshoes, Shein, TikTok Shop, Centauro; o resto fica “fora dos meus canais”) e grava em `pesquisa_resultados` (mesma loja + mesmo título = mesma linha; ler de novo atualiza o preço).
+4. A tela mostra o menor preço por canal, a diferença para o meu PDV e o lucro líquido vendendo àquele preço, com o custo do SKU (`tabela_custos_skus`) e as taxas de `config_regras_tarifacao` (ML: cadastro dos anúncios do SKU, modalidade Clássico).
+- O Google mostra produtos parecidos, não garantidamente idênticos, e personaliza por localização/histórico. Há “oferta à mão” para quando o favorito não lê.

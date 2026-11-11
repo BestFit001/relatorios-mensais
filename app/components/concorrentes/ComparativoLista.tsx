@@ -4,6 +4,7 @@ import { supabase } from "../../../lib/supabase";
 import { normalizarSkuCadastro } from "../../../lib/cadastros";
 import type { AnuncioML } from "../../../lib/analiseMercado";
 import { compararAnuncios, type LadoComparativo } from "../../../lib/concorrentes/comparativo";
+import type { RegraTarifacao } from "../../../lib/tarifacao";
 import { botao, brl, campo, caixa, dataBR, pct, type Anuncio, type Comparativo } from "./comum";
 
 export type ComparativoComAnuncio = Comparativo & { anuncio: Anuncio | null };
@@ -15,7 +16,7 @@ const conta = (canal: string) => (canal.includes("2") ? "2" : "1");
 const neg = (v: number) => `−${brl(Math.abs(v))}`;
 const dinheiro = (v: number | null) => (v == null ? "—" : v < 0 ? neg(v) : brl(v));
 
-interface Dados { custos: Map<string, number>; porMlb: Map<string, RegraML>; porSku: Map<string, RegraML[]> }
+interface Dados { custos: Map<string, number>; porMlb: Map<string, RegraML>; porSku: Map<string, RegraML[]>; regras: RegraTarifacao[] }
 
 /** Sub-aba "Comparativo": preço, tarifas aproximadas e lucro líquido do anúncio do concorrente e do meu, com o meu custo. */
 export default function ComparativoLista({ comparativos, carregando, onEditar, onRemover, onPreco }: {
@@ -28,26 +29,27 @@ export default function ComparativoLista({ comparativos, carregando, onEditar, o
   const chave = useMemo(() => comparativos.map((c) => `${c.sku}|${c.meu_mlb_id}`).sort().join(","), [comparativos]);
 
   useEffect(() => {
-    if (!comparativos.length) { setDados({ custos: new Map(), porMlb: new Map(), porSku: new Map() }); return; }
+    if (!comparativos.length) { setDados({ custos: new Map(), porMlb: new Map(), porSku: new Map(), regras: [] }); return; }
     let vivo = true;
     (async () => {
       try {
         const skus = Array.from(new Set(comparativos.map((c) => c.sku)));
         const mlbs = Array.from(new Set(comparativos.map((c) => c.meu_mlb_id).filter(Boolean) as string[]));
         const colunas = "mlb,sku,comissao,peso_real,altura,largura,comprimento,canal";
-        const [custosRes, porMlbRes, porSkuRes] = await Promise.all([
+        const [regrasRes, custosRes, porMlbRes, porSkuRes] = await Promise.all([
+          supabase.from("config_regras_tarifacao").select("*"),
           Promise.all(skus.map((s) => supabase.from("tabela_custos_skus").select("sku,custo_unitario").ilike("sku", escLike(s)).limit(1))),
           mlbs.length ? supabase.from("ml_anuncios_regras").select(colunas).in("mlb", mlbs) : Promise.resolve({ data: [], error: null }),
           supabase.from("ml_anuncios_regras").select(colunas).in("sku", skus),
         ]);
-        for (const r of [...custosRes, porMlbRes, porSkuRes]) if ((r as any).error) throw new Error((r as any).error.message);
+        for (const r of [regrasRes, ...custosRes, porMlbRes, porSkuRes]) if ((r as any).error) throw new Error((r as any).error.message);
         const custos = new Map<string, number>();
         for (const r of custosRes) { const l = (r.data || [])[0]; if (l && l.custo_unitario != null) custos.set(normalizarSkuCadastro(l.sku), Number(l.custo_unitario)); }
         const porMlb = new Map<string, RegraML>();
         for (const r of porMlbRes.data || []) porMlb.set(String(r.mlb), paraML(r));
         const porSku = new Map<string, RegraML[]>();
         for (const r of porSkuRes.data || []) { const k = normalizarSkuCadastro(r.sku); porSku.set(k, [...(porSku.get(k) || []), paraML(r)]); }
-        if (vivo) { setDados({ custos, porMlb, porSku }); setErro(null); }
+        if (vivo) { setDados({ custos, porMlb, porSku, regras: (regrasRes.data as RegraTarifacao[]) || [] }); setErro(null); }
       } catch (e: any) { if (vivo) setErro(`Não consegui ler custos e tarifas: ${e.message}`); }
     })();
     return () => { vivo = false; };
@@ -66,7 +68,7 @@ export default function ComparativoLista({ comparativos, carregando, onEditar, o
       {dados && comparativos.map((c) => <Cartao key={c.id} c={c} dados={dados} onEditar={onEditar} onRemover={onRemover} onPreco={onPreco} />)}
       {comparativos.length > 0 && (
         <p className="text-[10px] text-slate-500">
-          Tarifas aproximadas: comissão pela modalidade, tarifa fixa de R$ 6,50 abaixo de R$ 79 e frete pela tabela do Mercado Livre com o peso e as medidas do seu SKU (as mesmas nos dois lados); imposto de 9% sobre o preço; o custo é o do seu SKU nos dois lados.
+          Tarifas aproximadas: no Mercado Livre, comissão pela modalidade, tarifa fixa de R$ 6,50 abaixo de R$ 79 e frete pela tabela do canal com o peso e as medidas do seu SKU (as mesmas nos dois lados); nos demais canais (Amazon, Shopee…), as regras cadastradas na Análise de mercado; imposto de 9% sobre o preço; o custo é o do seu SKU nos dois lados.
           Não entram frete grátis negociado, reputação, anúncios pagos, parcelamento nem promoções.
         </p>
       )}
@@ -87,11 +89,12 @@ function Cartao({ c, dados, onEditar, onRemover, onPreco }: { c: ComparativoComA
   const doSku = (dados.porSku.get(skuNorm) || []).filter((r) => conta(r.canal) === conta(c.canal_meu));
   const anunciosMeu = regraMeu ? [regraMeu] : doSku;
   const anunciosConcorrente = doSku.length ? doSku : regraMeu ? [regraMeu] : [];
-  const semMedidas = anunciosMeu.length === 0 && anunciosConcorrente.length === 0;
+  const mercadoLivre = (canal: string) => canal.toLowerCase().includes("mercado livre");
+  const semMedidas = (mercadoLivre(c.canal_meu) || mercadoLivre(c.canal_concorrente)) && anunciosMeu.length === 0 && anunciosConcorrente.length === 0;
 
   const r = compararAnuncios({
     precoConcorrente: c.anuncio?.ultimo_preco ?? null, precoMeu: c.meu_preco, canalConcorrente: c.canal_concorrente, canalMeu: c.canal_meu,
-    custo, regras: [], anunciosMeu, anunciosConcorrente,
+    custo, regras: dados.regras, anunciosMeu, anunciosConcorrente,
   });
 
   const idadePreco = c.meu_preco_em ? Math.floor((Date.now() - Date.parse(c.meu_preco_em)) / 86_400_000) : null;

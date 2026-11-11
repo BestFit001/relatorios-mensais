@@ -93,6 +93,7 @@ async function anuncioPeloHtml(url: string): Promise<AnuncioRaspado> {
 export const conectorMercadoLivre: Conector = {
   id: "mercadolivre",
   nome: "Mercado Livre",
+  leituraServidor: true,
 
   validarUrlCategoria: normalizarUrlCategoria,
   validarUrlAnuncio: normalizarUrlAnuncio,
