@@ -1,14 +1,16 @@
 "use client";
 import React, { useMemo, useState } from "react";
-import { diasAtras, mudancasDePreco, type MudancaPreco, type Ponto } from "../../../lib/concorrentes/historico";
+import { diasAtras, mudancasDePreco, type Ponto } from "../../../lib/concorrentes/historico";
+import { diaDaMudanca, juntarMudancas, type EventoPreco, type MudancaVista } from "../../../lib/concorrentes/precos";
 import { brl, campo, caixa, dataBR, pct, type AcoesAnuncio, type Anuncio } from "./comum";
 import Estrela from "./Estrela";
+import { quandoDaMudanca } from "./PrecoDePor";
 
-interface Evento extends MudancaPreco { anuncio: Anuncio }
+interface Evento extends MudancaVista { anuncio: Anuncio }
 
 /** Sub-aba "Mudanças de preço": toda vez que o preço (PDV) de um anúncio monitorado foi diferente da captura anterior. */
-export default function MudancasPreco({ anuncios, historico, hoje, carregando, acoes }: {
-  anuncios: Anuncio[]; historico: Record<string, Ponto[]>; hoje: string; carregando: boolean; acoes: AcoesAnuncio;
+export default function MudancasPreco({ anuncios, historico, eventos: registros, hoje, carregando, acoes }: {
+  anuncios: Anuncio[]; historico: Record<string, Ponto[]>; eventos: Record<string, EventoPreco[]>; hoje: string; carregando: boolean; acoes: AcoesAnuncio;
 }) {
   const [dias, setDias] = useState(30);
   const [tipo, setTipo] = useState<"todas" | "quedas" | "altas">("todas");
@@ -19,15 +21,15 @@ export default function MudancasPreco({ anuncios, historico, hoje, carregando, a
     const lista: Evento[] = [];
     for (const a of anuncios) {
       if (!a.ativo || (soFavoritos && !a.favorito)) continue;
-      for (const m of mudancasDePreco(historico[a.id] || [])) {
-        if (m.data < desde) continue;
+      for (const m of juntarMudancas(registros[a.id] || [], mudancasDePreco(historico[a.id] || []))) {
+        if (diaDaMudanca(m) < desde) continue;
         if (tipo === "quedas" && m.pct >= 0) continue;
         if (tipo === "altas" && m.pct <= 0) continue;
         lista.push({ ...m, anuncio: a });
       }
     }
-    return lista.sort((x, y) => y.data.localeCompare(x.data) || Math.abs(y.pct) - Math.abs(x.pct));
-  }, [anuncios, historico, desde, tipo, soFavoritos]);
+    return lista.sort((x, y) => (y.comHora ? y.quando : `${y.quando}T00:00:00`).localeCompare(x.comHora ? x.quando : `${x.quando}T00:00:00`) || Math.abs(y.pct) - Math.abs(x.pct));
+  }, [anuncios, historico, registros, desde, tipo, soFavoritos]);
 
   const resumo = useMemo(() => {
     const comMudanca = new Set(eventos.map((e) => e.anuncio.id));
@@ -64,7 +66,7 @@ export default function MudancasPreco({ anuncios, historico, hoje, carregando, a
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-800">
-              <th className="py-2 pr-3 w-8" /><th className="py-2 pr-3">Data</th><th className="py-2 pr-3">Anúncio</th><th className="py-2 pr-3 text-right">Era</th><th className="py-2 pr-3 text-right">Ficou</th><th className="py-2 pr-3 text-right">Variação</th><th className="py-2 w-10" />
+              <th className="py-2 pr-3 w-8" /><th className="py-2 pr-3">Quando</th><th className="py-2 pr-3">Anúncio</th><th className="py-2 pr-3 text-right">Era</th><th className="py-2 pr-3 text-right">Ficou</th><th className="py-2 pr-3 text-right">Variação</th><th className="py-2 w-10" />
             </tr>
           </thead>
           <tbody>
@@ -77,9 +79,9 @@ export default function MudancasPreco({ anuncios, historico, hoje, carregando, a
               </td></tr>
             )}
             {eventos.map((e, i) => (
-              <tr key={`${e.anuncio.id}-${e.data}-${i}`} data-mudanca={e.anuncio.mlb_id} className="border-b border-slate-800/60">
+              <tr key={`${e.anuncio.id}-${e.quando}-${i}`} data-mudanca={e.anuncio.mlb_id} className="border-b border-slate-800/60">
                 <td className="py-2 pr-3"><Estrela ativo={e.anuncio.favorito} onClick={() => acoes.alternarFavorito(e.anuncio)} /></td>
-                <td className="py-2 pr-3 whitespace-nowrap text-slate-300">{dataBR(e.data)}<span className="block text-[10px] text-slate-600">vs {dataBR(e.dataAnterior)}</span></td>
+                <td data-quando className="py-2 pr-3 whitespace-nowrap text-slate-300">{quandoDaMudanca(e)}<span className="block text-[10px] text-slate-600">{e.comHora ? "hora da leitura" : `vs ${dataBR(e.anteriorEm)}`}</span></td>
                 <td className="py-2 pr-3 max-w-[420px]">
                   <a href={e.anuncio.url_anuncio} target="_blank" rel="noopener noreferrer" className="font-semibold text-slate-100 hover:text-indigo-300 line-clamp-2">{e.anuncio.titulo}</a>
                   <span className="text-[10px] text-slate-500">{[e.anuncio.marca, e.anuncio.vendedor, e.anuncio.mlb_id].filter(Boolean).join(" · ")}</span>
@@ -93,7 +95,7 @@ export default function MudancasPreco({ anuncios, historico, hoje, carregando, a
           </tbody>
         </table>
       </div>
-      <p className="text-[10px] text-slate-500">Cada linha compara o preço de uma captura com o da captura anterior do mesmo anúncio. Só dá para ver o que o preço fez nos dias em que houve captura: se ele subiu e voltou entre duas capturas, não aparece.</p>
+      <p className="text-[10px] text-slate-500">Cada linha é uma mudança do preço “Por” (o preço atual) entre duas leituras do mesmo anúncio. Desde que o registro por leitura foi ligado, várias mudanças no mesmo dia aparecem, com a hora em que o painel leu o preço (não a hora exata em que o concorrente mudou). Antes disso só havia a comparação entre dias. Se o preço subir e voltar entre duas leituras, não aparece.</p>
     </section>
   );
 }

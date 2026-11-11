@@ -4,6 +4,7 @@ import * as cheerio from "cheerio";
 import type { AnuncioRaspado } from "../tipos";
 import { parsePreco, parseVendidos } from "../calculos";
 import { separarMarcaVendedor } from "../marca";
+import { originalValido } from "../precos";
 import { idDoAnuncio, imagemSegura, urlAnuncioSegura } from "./url";
 
 export class ErroBloqueio extends Error {}
@@ -21,6 +22,16 @@ function precoDe($: cheerio.CheerioAPI, el: cheerio.Cheerio<any>): number | null
   // preço atual (o riscado "de R$ X" fica em .andes-money-amount--previous)
   const atual = el.find(".poly-price__current .andes-money-amount, .ui-search-price__second-line .andes-money-amount").first();
   const bloco = atual.length ? atual : el.find(".andes-money-amount").not(".andes-money-amount--previous").first();
+  if (!bloco.length) return null;
+  const inteiro = limpar(bloco.find(".andes-money-amount__fraction").first().text()).replace(/\./g, "");
+  const cents = limpar(bloco.find(".andes-money-amount__cents").first().text());
+  if (!inteiro) return null;
+  return parsePreco(`${inteiro}${cents ? "," + cents : ""}`);
+}
+
+/** Preço "De" (riscado): o bloco .andes-money-amount--previous. Só vale se for maior que o "Por" (ver originalValido). */
+function precoOriginalDe(el: cheerio.Cheerio<any>): number | null {
+  const bloco = el.find(".andes-money-amount--previous").first();
   if (!bloco.length) return null;
   const inteiro = limpar(bloco.find(".andes-money-amount__fraction").first().text()).replace(/\./g, "");
   const cents = limpar(bloco.find(".andes-money-amount__cents").first().text());
@@ -69,11 +80,13 @@ export function parseListagem(html: string): { nome: string | null; anuncios: An
     if (!titulo) return;
     const vendas = parseVendidos(el.text());
     const mv = marcaEVendedorDe(el);
+    const precoCard = precoDe($, el);
     const novo: AnuncioRaspado = {
       mlb_id, titulo, url_anuncio: url,
       vendedor: mv.vendedor, marca: mv.marca,
       url_imagem: imagemDe(el),
-      preco: precoDe($, el),
+      preco: precoCard,
+      preco_original: originalValido(precoCard, precoOriginalDe(el)),
       total_vendas: vendas?.total ?? null,
       vendas_aproximado: vendas?.aproximado ?? false,
     };
@@ -86,6 +99,7 @@ export function parseListagem(html: string): { nome: string | null; anuncios: An
       marca: antigo.marca ?? novo.marca,
       url_imagem: antigo.url_imagem ?? novo.url_imagem,
       preco: antigo.preco ?? novo.preco,
+      preco_original: antigo.preco != null ? antigo.preco_original ?? null : novo.preco_original ?? null,
       total_vendas: antigo.total_vendas ?? novo.total_vendas,
       vendas_aproximado: antigo.total_vendas != null ? antigo.vendas_aproximado : novo.vendas_aproximado,
     } : novo);
@@ -129,6 +143,9 @@ export function parseAnuncio(html: string, urlPagina: string): AnuncioRaspado | 
   const preco = parsePreco(oferta?.price ?? $('meta[itemprop="price"]').attr("content"))
     ?? precoDe($, $(".ui-pdp-price__second-line").first());
 
+  // "De": bloco riscado da primeira linha de preço da página do anúncio (se houver)
+  const original = originalValido(preco, precoOriginalDe($(".ui-pdp-price").first()));
+
   const vendedor = limpar(typeof oferta?.seller === "object" ? oferta.seller?.name : "")
     || limpar($(".ui-pdp-seller__header__title, .ui-pdp-seller__link-trigger-button, a[href*='/perfil/']").first().text())
     || null;
@@ -158,7 +175,7 @@ export function parseAnuncio(html: string, urlPagina: string): AnuncioRaspado | 
     vendedor: vendedor ? vendedor.replace(/^(vendido\s+)?por\s+/i, "").trim() || null : null,
     marca: marca ? marca.slice(0, 80) : null,
     url_anuncio: urlAnuncioSegura(urlPagina) || urlPagina,
-    url_imagem: imagem, preco,
+    url_imagem: imagem, preco, preco_original: original,
     total_vendas: vendas?.total ?? null,
     vendas_aproximado: vendas?.aproximado ?? false,
   };

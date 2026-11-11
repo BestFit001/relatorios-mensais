@@ -1,21 +1,23 @@
 "use client";
 import React, { useMemo } from "react";
 import { mediaVendasPorDia, mudancasDePreco, resumoDePreco, type Ponto } from "../../../lib/concorrentes/historico";
+import { juntarMudancas, type EventoPreco } from "../../../lib/concorrentes/precos";
 import { brl, caixa, dataBR, num, pct, totalVendido, type AcoesAnuncio, type Anuncio, type Categoria } from "./comum";
 import Estrela from "./Estrela";
+import { PrecoDePor, SeloMudanca } from "./PrecoDePor";
 import Sparkline from "./Sparkline";
 import TagRanking from "./TagRanking";
 
 /** Sub-aba "Favoritos": os anúncios marcados com ★ em todas as categorias, lado a lado. */
-export default function Favoritos({ favoritos, categorias, historico, carregando, acoes, onAbrirCategoria }: {
-  favoritos: Anuncio[]; categorias: Categoria[]; historico: Record<string, Ponto[]>; carregando: boolean; acoes: AcoesAnuncio; onAbrirCategoria: (id: string) => void;
+export default function Favoritos({ favoritos, categorias, historico, eventos, carregando, acoes, onAbrirCategoria }: {
+  favoritos: Anuncio[]; categorias: Categoria[]; historico: Record<string, Ponto[]>; eventos: Record<string, EventoPreco[]>; carregando: boolean; acoes: AcoesAnuncio; onAbrirCategoria: (id: string) => void;
 }) {
   const nomeDa = useMemo(() => new Map(categorias.map((c) => [c.id, c.nome])), [categorias]);
   const linhas = useMemo(() => favoritos.map((a) => {
     const h = historico[a.id] || [];
-    const m = mudancasDePreco(h);
+    const m = juntarMudancas(eventos[a.id] || [], mudancasDePreco(h));
     return { a, h, preco: resumoDePreco(h), media: mediaVendasPorDia(h), ultima: m[m.length - 1] || null };
-  }), [favoritos, historico]);
+  }), [favoritos, historico, eventos]);
 
   return (
     <section className={`${caixa} p-4 space-y-3`} data-favoritos>
@@ -51,8 +53,8 @@ export default function Favoritos({ favoritos, categorias, historico, carregando
                   </div>
                 </td>
                 <td className="py-2 pr-3 text-right whitespace-nowrap">
-                  <b className="text-white">{brl(a.ultimo_preco)}</b>
-                  {ultima && <span className={`block text-[10px] font-bold ${ultima.pct < 0 ? "text-emerald-400" : "text-rose-400"}`} title={`de ${brl(ultima.de)} em ${dataBR(ultima.dataAnterior)}`}>{ultima.pct < 0 ? "▼" : "▲"} {pct(ultima.pct)} em {dataBR(ultima.data)}</span>}
+                  <PrecoDePor a={a} />
+                  {ultima && <SeloMudanca m={ultima} onClick={() => acoes.abrirHistoricoPreco(a)} />}
                 </td>
                 <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap text-xs">{preco.capturas > 1 ? `${brl(preco.minimo)} – ${brl(preco.maximo)}` : "—"}</td>
                 <td className="py-2 pr-3"><Sparkline pontos={h} /></td>

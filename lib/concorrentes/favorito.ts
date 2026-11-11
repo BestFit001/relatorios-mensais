@@ -46,6 +46,22 @@ export const FAVORITO_JS = String.raw`(async function () {
     var n = Number(m[1].replace(/\./g, "").replace(",", "."));
     return isFinite(n) ? n : null;
   }
+  function numeroDe(t) {
+    var m = /R\$\s*(\d[\d.]*(?:,\d{1,2})?)/.exec(t || ""); if (!m) return null;
+    var n = Number(m[1].replace(/\./g, "").replace(",", ".")); return isFinite(n) ? n : null;
+  }
+  function precoRiscadoGenerico(raiz) {
+    var achado = null;
+    if (!raiz) return null;
+    Array.prototype.forEach.call(raiz.querySelectorAll("*"), function (e) {
+      if (achado != null) return;
+      var t = limpa(e.textContent);
+      if (t.length > 40 || !RE_PRECO.test(t)) return;
+      for (var i = 0; i < e.children.length; i++) { if (limpa(e.children[i].textContent) === t) return; }
+      if (riscado(e)) achado = numeroDe(t);
+    });
+    return achado;
+  }
   function vendasGenerico(raiz) {
     var achado = null;
     Array.prototype.forEach.call(raiz.querySelectorAll("*"), function (e) {
@@ -92,7 +108,7 @@ export const FAVORITO_JS = String.raw`(async function () {
     var titulo = generico ? (texto(el.querySelector("h2,h3,.poly-component__title")) || limpa(a.getAttribute("title")) || texto(a).slice(0, 150)) : (texto(a) || limpa(a.getAttribute("title")) || texto(el.querySelector("h2,h3")));
     if (!titulo) return null;
     var vend = texto(el.querySelector(".poly-component__seller, .ui-search-official-store-label")).replace(/^(vendido\s+)?por\s+/i, "");
-    return { mlb_id: id, titulo: titulo, vendedor: vend || null, marca: texto(el.querySelector(".poly-component__brand")) || null, url: href, imagem: imagem(el), preco: precoML(el), vendas_texto: vendas(el.textContent), posicao: posicaoTag(el.textContent) };
+    return { mlb_id: id, titulo: titulo, vendedor: vend || null, marca: texto(el.querySelector(".poly-component__brand")) || null, url: href, imagem: imagem(el), preco: precoML(el), preco_original: precoOriginalML(el), vendas_texto: vendas(el.textContent), posicao: posicaoTag(el.textContent) };
   }
   function precoML(raiz) {
     if (!raiz) return null;
@@ -101,6 +117,14 @@ export const FAVORITO_JS = String.raw`(async function () {
     if (!atual) return null;
     var f = atual.querySelector(".andes-money-amount__fraction"); if (!f) return null;
     var c = atual.querySelector(".andes-money-amount__cents");
+    var n = Number(texto(f).replace(/\./g, "") + (c ? "." + texto(c) : ""));
+    return isFinite(n) ? n : null;
+  }
+  function precoOriginalML(raiz) {
+    if (!raiz) return null;
+    var b = raiz.querySelector(".andes-money-amount--previous"); if (!b) return null;
+    var f = b.querySelector(".andes-money-amount__fraction"); if (!f) return null;
+    var c = b.querySelector(".andes-money-amount__cents");
     var n = Number(texto(f).replace(/\./g, "") + (c ? "." + texto(c) : ""));
     return isFinite(n) ? n : null;
   }
@@ -152,7 +176,7 @@ export const FAVORITO_JS = String.raw`(async function () {
       if (!marca1) { Array.prototype.forEach.call(document.querySelectorAll("tr"), function (tr) { var th = tr.querySelector("th"), td = tr.querySelector("td"); if (!marca1 && th && td && /^marca$/i.test(texto(th))) marca1 = texto(td); }); }
       return { v: 1, canal: "mercadolivre", tipo: "anuncio", pagina_url: location.href, coletado_em: new Date().toISOString(), anuncios: [{
         mlb_id: idMLB(location.href), titulo: titulo, vendedor: vend1 || null, marca: marca1 || null, url: location.href,
-        imagem: imgLd || (og && og.content) || null, preco: isFinite(pr) ? pr : null,
+        imagem: imgLd || (og && og.content) || null, preco: isFinite(pr) ? pr : null, preco_original: precoOriginalML(document.querySelector(".ui-pdp-price")),
         vendas_texto: vendas(texto(document.querySelector(".ui-pdp-subtitle")) || texto(document.querySelector(".ui-pdp-header")))
       }] };
     }
@@ -176,7 +200,8 @@ export const FAVORITO_JS = String.raw`(async function () {
     var titulo = texto(h) || limpa(img && img.getAttribute("alt")); if (!titulo) return null;
     var p = el.querySelector(".a-price:not(.a-text-price) .a-offscreen");
     var pr = p ? Number(texto(p).replace(/[^\d,]/g, "").replace(",", ".")) : precoGenerico(el);
-    return { mlb_id: asin.toUpperCase(), titulo: titulo, vendedor: null, marca: null, url: "https://www.amazon.com.br/dp/" + asin.toUpperCase(), imagem: img ? (img.getAttribute("src") || null) : null, preco: pr != null && isFinite(pr) ? pr : null, vendas_texto: compras(folhas(el)), posicao: null };
+    var pd = el.querySelector(".a-price.a-text-price .a-offscreen");
+    return { mlb_id: asin.toUpperCase(), titulo: titulo, vendedor: null, marca: null, url: "https://www.amazon.com.br/dp/" + asin.toUpperCase(), imagem: img ? (img.getAttribute("src") || null) : null, preco: pr != null && isFinite(pr) ? pr : null, preco_original: pd ? numeroDe(texto(pd)) : null, vendas_texto: compras(folhas(el)), posicao: null };
   }
   function cartoesAmazonLista(doc, base) {
     var mapa = {}, lista = [], juntar = juntarEm(mapa, lista, "mlb_id");
@@ -213,6 +238,7 @@ export const FAVORITO_JS = String.raw`(async function () {
       if (!titulo) throw new Error("Não consegui ler o título do produto. Abra a página do produto da Amazon e tente de novo.");
       var pe = document.querySelector("#corePriceDisplay_desktop_feature_div .a-price:not(.a-text-price) .a-offscreen, #corePrice_feature_div .a-price:not(.a-text-price) .a-offscreen, #apex_desktop .a-price:not(.a-text-price) .a-offscreen, .a-price:not(.a-text-price) .a-offscreen");
       var pr = pe ? Number(texto(pe).replace(/[^\d,]/g, "").replace(",", ".")) : null;
+      var pdp = document.querySelector("#corePriceDisplay_desktop_feature_div .a-price.a-text-price .a-offscreen, #corePrice_feature_div .a-price.a-text-price .a-offscreen, #apex_desktop .basisPrice .a-offscreen, .basisPrice .a-offscreen");
       var vend = texto(document.getElementById("sellerProfileTriggerId"));
       if (!vend) { var mi = /(?:vendido|enviado)\s+por\s+(.+?)(?:\s+e\s+entregue|\.|$)/i.exec(texto(document.getElementById("merchantInfoFeature_feature_div")) || texto(document.getElementById("tabular-buybox"))); if (mi) vend = limpa(mi[1]); }
       var marca = texto(document.getElementById("bylineInfo")).replace(/^(marca:|visite a loja\s+(?:d[aeo]s?\s+)?|visit the\s+|brand:)\s*/i, "").replace(/\s+store$/i, "");
@@ -222,7 +248,7 @@ export const FAVORITO_JS = String.raw`(async function () {
       var prova = folhas(document.getElementById("social-proofing-faceout-title-tk_bought")) || folhas(document.getElementById("centerCol"));
       return { v: 1, canal: "amazon", tipo: "anuncio", pagina_url: location.href, coletado_em: new Date().toISOString(), anuncios: [{
         mlb_id: asin, titulo: titulo, vendedor: vend || null, marca: marca || null, url: "https://www.amazon.com.br/dp/" + asin, imagem: imagemSrc,
-        preco: pr != null && isFinite(pr) ? pr : null, vendas_texto: compras(prova)
+        preco: pr != null && isFinite(pr) ? pr : null, preco_original: pdp ? numeroDe(texto(pdp)) : null, vendas_texto: compras(prova)
       }] };
     }
     var PAGINAS = ehRanking ? 1 : 2, todos = [], vistos = {}, doc = document, base = location.href;
@@ -258,7 +284,7 @@ export const FAVORITO_JS = String.raw`(async function () {
       }
       if (!titulo) return;
       var sp = id.split(".");
-      juntar({ mlb_id: id, titulo: titulo, vendedor: null, marca: null, url: "https://shopee.com.br/product/" + sp[0] + "/" + sp[1], imagem: img ? (img.getAttribute("src") || null) : null, preco: precoGenerico(el), vendas_texto: vendasGenerico(el), posicao: null });
+      juntar({ mlb_id: id, titulo: titulo, vendedor: null, marca: null, url: "https://shopee.com.br/product/" + sp[0] + "/" + sp[1], imagem: img ? (img.getAttribute("src") || null) : null, preco: precoGenerico(el), preco_original: precoRiscadoGenerico(el), vendas_texto: vendasGenerico(el), posicao: null });
     });
     return lista;
   }
@@ -276,7 +302,7 @@ export const FAVORITO_JS = String.raw`(async function () {
       var sp = id.split(".");
       return { v: 1, canal: "shopee", tipo: "anuncio", pagina_url: location.href, coletado_em: new Date().toISOString(), anuncios: [{
         mlb_id: id, titulo: titulo, vendedor: null, marca: marca || null, url: "https://shopee.com.br/product/" + sp[0] + "/" + sp[1],
-        imagem: imgLd || (og && og.content) || null, preco: pr, vendas_texto: vendasGenerico(document.querySelector("main") || document.body)
+        imagem: imgLd || (og && og.content) || null, preco: pr, preco_original: precoRiscadoGenerico(document.querySelector("main") || document.body), vendas_texto: vendasGenerico(document.querySelector("main") || document.body)
       }] };
     }
     status("Rolando a página para carregar os produtos…");

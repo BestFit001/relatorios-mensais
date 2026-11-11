@@ -3,6 +3,7 @@ import type { AnuncioRaspado } from "./tipos";
 import { ErroValidacao } from "./tipos";
 import { parseComprasNoMes, parsePreco, parseVendidos } from "./calculos";
 import { separarMarcaVendedor } from "./marca";
+import { originalValido } from "./precos";
 import { imagemSegura } from "./mercadolivre/url";
 import { URLS, urlsDoCanal } from "./urls";
 
@@ -56,6 +57,7 @@ export function sanitizarPayload(bruto: unknown, canal: string = "mercadolivre")
       if (!titulo || vistos.has(mlb_id)) { descartados++; continue; }
       vistos.add(mlb_id);
       const preco = parsePreco(a?.preco);
+      const precoOk = preco != null && preco > 0 && preco < 10_000_000 ? preco : null;
       const vtxt = typeof a?.vendas_texto === "string" ? a.vendas_texto.slice(0, 80) : null;
       // Amazon informa as compras do ÚLTIMO MÊS (faixa); ML e Shopee informam o total acumulado
       const mes = canal === "amazon" ? parseComprasNoMes(vtxt) : null;
@@ -66,7 +68,8 @@ export function sanitizarPayload(bruto: unknown, canal: string = "mercadolivre")
         vendedor, marca,
         ranking: typeof a?.posicao === "number" && Number.isInteger(a.posicao) && a.posicao >= 1 && a.posicao <= 1000 ? a.posicao : null,
         url_imagem: imagemSegura(typeof a?.imagem === "string" ? a.imagem.slice(0, 500) : null),
-        preco: preco != null && preco > 0 && preco < 10_000_000 ? preco : null,
+        preco: precoOk,
+        preco_original: originalValido(precoOk, parsePreco(a?.preco_original)),
         total_vendas: vendas && vendas.total >= 0 && vendas.total < 1_000_000_000 ? vendas.total : null,
         vendas_aproximado: vendas?.aproximado ?? false,
         vendas_mes: mes && mes.total >= 0 && mes.total < 1_000_000_000 ? mes.total : null,

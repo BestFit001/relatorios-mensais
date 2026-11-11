@@ -5,6 +5,7 @@
 //   ML_SCRAPER_URL_TEMPLATE                             -> serviço de raspagem/proxy, ex.: https://proxy.exemplo/?key=XXX&url={url}
 import type { AnuncioRaspado } from "../tipos";
 import { parsePreco } from "../calculos";
+import { originalValido } from "../precos";
 import { ErroBloqueio, pareceBloqueio } from "./parsers";
 import { idDoAnuncio, imagemSegura, urlAnuncioSegura } from "./url";
 
@@ -82,6 +83,7 @@ export function itemDaApi(it: any): AnuncioRaspado | null {
     vendedor: it.seller?.nickname ? String(it.seller.nickname) : null,
     url_imagem: imagemSegura(img),
     preco: parsePreco(it.price),
+    preco_original: originalValido(parsePreco(it.price), parsePreco(it.original_price)),
     total_vendas: Number.isFinite(Number(it.sold_quantity)) && it.sold_quantity != null ? Number(it.sold_quantity) : null,
     vendas_aproximado: false,
   };

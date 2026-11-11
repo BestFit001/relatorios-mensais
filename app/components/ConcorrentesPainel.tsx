@@ -7,14 +7,16 @@ import { rankingPalavrasChave } from "../../lib/concorrentes/palavrasChave";
 import { favoritoHref } from "../../lib/concorrentes/favorito";
 import { hojeSP } from "../../lib/concorrentes/calculos";
 import { diasAtras, mediaVendasPorDia, mudancasDePreco, type Ponto } from "../../lib/concorrentes/historico";
+import { diaDaMudanca, juntarMudancas, type EventoPreco } from "../../lib/concorrentes/precos";
 import Paginacao from "./Paginacao";
 import {
-  JANELA_HISTORICO_DIAS, COLUNAS_ANUNCIO, botao, brl, campo, caixa, chamar, dataBR, lerAnuncio, lerComparativo, lerHistorico, num, pct, totalVendido,
+  JANELA_HISTORICO_DIAS, COLUNAS_ANUNCIO, botao, brl, campo, caixa, chamar, dataBR, lerAnuncio, lerComparativo, lerEventos, lerHistorico, num, pct, totalVendido,
   type AcoesAnuncio, type Anuncio, type Categoria, type Comparativo,
 } from "./concorrentes/comum";
 import Estrela from "./concorrentes/Estrela";
 import TagRanking from "./concorrentes/TagRanking";
 import MudancasPreco from "./concorrentes/MudancasPreco";
+import { HistoricoPrecoModal, PrecoDePor, SeloMudanca } from "./concorrentes/PrecoDePor";
 import Favoritos from "./concorrentes/Favoritos";
 import ComparativoForm from "./concorrentes/ComparativoForm";
 import ComparativoLista, { type ComparativoComAnuncio } from "./concorrentes/ComparativoLista";
@@ -32,6 +34,8 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [vista, setVista] = useState<Vista>("anuncios");
   const [historico, setHistorico] = useState<Record<string, Ponto[]>>({});
+  const [eventos, setEventos] = useState<Record<string, EventoPreco[]>>({});
+  const [historicoPrecoDe, setHistoricoPrecoDe] = useState<Anuncio | null>(null);
   const [carregandoHist, setCarregandoHist] = useState(false);
   const [favoritosTodos, setFavoritosTodos] = useState<Anuncio[]>([]);
   const [carregandoFav, setCarregandoFav] = useState(true);
@@ -92,8 +96,10 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
     if (!ids.length) return;
     setCarregandoHist(true);
     try {
-      const novo = await lerHistorico(ids, diasAtras(hojeSP(), JANELA_HISTORICO_DIAS));
+      const desde = diasAtras(hojeSP(), JANELA_HISTORICO_DIAS);
+      const [novo, ev] = await Promise.all([lerHistorico(ids, desde), lerEventos(ids, `${desde}T00:00:00-03:00`)]);
       setHistorico((h) => { const f = { ...h }; for (const id of ids) f[id] = novo[id] || []; return f; });
+      setEventos((h) => { const f = { ...h }; for (const id of ids) f[id] = ev[id] || []; return f; });
     } catch (e: any) { setErro(`Não consegui ler o histórico: ${e.message}`); }
     finally { setCarregandoHist(false); }
   }, []);
@@ -200,6 +206,7 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
       await carregarAnuncios(r.categoria.id);
       carregarFavoritos(); carregarComparativos();
       const partes = [`${r.novos} novo(s)`, `${r.atualizados} atualizado(s) com a captura de hoje`];
+      if (r.mudancasPreco) partes.push(`${r.mudancasPreco} mudança(s) de preço registrada(s)`);
       if (r.precosMeusAtualizados) partes.push(`${r.precosMeusAtualizados} preço(s) de anúncio meu atualizado(s) nos comparativos`);
       if (r.ranking?.lidos) {
         const k = r.ranking, mov = [k.subiram && `${k.subiram} subiram`, k.cairam && `${k.cairam} caíram`, k.entraram && `${k.entraram} novo(s) no ranking`, k.sairam && `${k.sairam} saíram do ranking`].filter(Boolean);
@@ -247,7 +254,10 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
     alternarFavorito,
     abrirComparativo: (a) => setFormComp({ anuncio: a, existente: comparativos.find((c) => c.anuncio_id === a.id) || null }),
     temComparativo: (id) => comparativos.some((c) => c.anuncio_id === id),
+    abrirHistoricoPreco: (a) => setHistoricoPrecoDe(a),
   };
+  /** Mudanças do preço "Por" do anúncio: registro por leitura (com hora, várias no mesmo dia) + dias antigos. */
+  const mudancasDe = (id: string) => juntarMudancas(eventos[id] || [], mudancasDePreco(historico[id] || []));
 
   const removerComparativo = async (c: ComparativoComAnuncio) => {
     if (!window.confirm("Remover este comparativo? O anúncio do concorrente continua sendo monitorado.")) return;
@@ -275,16 +285,16 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
     if (!categoriaId) return;
     setAtualizando("Capturando preços e vendas…"); setAviso(null);
     try {
-      let ok = 0, falhas = 0, ultimoErro = "";
+      let ok = 0, falhas = 0, mudancas = 0, ultimoErro = "";
       for (let rodada = 0; rodada < 12; rodada++) { // a rota trabalha em lotes dentro do limite de tempo; repete até acabar
         const r = await chamar("capturar", "POST", { categoria_id: categoriaId });
         if (r.manual) { avisar("erro", 'O servidor está em modo manual: atualize usando "Importar do navegador".'); setAtualizando(null); return; }
-        ok += r.ok; falhas += r.falhas; if (r.erros?.[0]) ultimoErro = r.erros[0].motivo;
+        ok += r.ok; falhas += r.falhas; mudancas += r.mudancasPreco || 0; if (r.erros?.[0]) ultimoErro = r.erros[0].motivo;
         if (r.pendentes === 0 || r.processados === 0) break; // acabou, ou a rodada não avançou
         setAtualizando(`Capturando… ${ok + falhas} anúncio(s) processados`);
       }
       await carregarAnuncios(categoriaId);
-      avisar(falhas && !ok ? "erro" : "ok", `${ok} anúncio(s) atualizados${falhas ? `, ${falhas} com falha` : ""}.${ultimoErro ? ` Motivo: ${ultimoErro}` : ""}`);
+      avisar(falhas && !ok ? "erro" : "ok", `${ok} anúncio(s) atualizados${mudancas ? `, ${mudancas} mudança(s) de preço registrada(s)` : ""}${falhas ? `, ${falhas} com falha` : ""}.${ultimoErro ? ` Motivo: ${ultimoErro}` : ""}`);
     } catch (e: any) { avisar("erro", e.message); }
     finally { setAtualizando(null); }
   };
@@ -371,11 +381,11 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
           )}
 
           {vista === "mudancas" && categoria && (
-            <MudancasPreco anuncios={anuncios} historico={historico} hoje={hoje} carregando={carregandoAnuncios || carregandoHist} acoes={acoes} />
+            <MudancasPreco anuncios={anuncios} historico={historico} eventos={eventos} hoje={hoje} carregando={carregandoAnuncios || carregandoHist} acoes={acoes} />
           )}
 
           {vista === "favoritos" && (
-            <Favoritos favoritos={favoritos} categorias={categorias} historico={historico} carregando={carregandoFav} acoes={acoes} onAbrirCategoria={(id) => { setCategoriaId(id); setVista("anuncios"); }} />
+            <Favoritos favoritos={favoritos} categorias={categorias} historico={historico} eventos={eventos} carregando={carregandoFav} acoes={acoes} onAbrirCategoria={(id) => { setCategoriaId(id); setVista("anuncios"); }} />
           )}
 
           {vista === "comparativo" && (
@@ -463,7 +473,7 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
                         {!carregandoAnuncios && pag.length === 0 && <tr><td colSpan={ehAmazon ? 8 : 10} className="py-8 text-center text-xs text-slate-500">Nenhum anúncio para mostrar.</td></tr>}
                         {pag.map((a) => {
                           const h = historico[a.id] || [];
-                          const mud = mudancasDePreco(h).filter((m) => m.data >= diasAtras(hoje, 30)).pop();
+                          const mud = mudancasDe(a.id).filter((m) => diaDaMudanca(m) >= diasAtras(hoje, 30)).pop();
                           const media = mediaVendasPorDia(h);
                           return (
                             <tr key={a.id} data-anuncio-linha={a.mlb_id} className={`border-b border-slate-800/60 ${a.ativo ? "" : "opacity-40"}`}>
@@ -482,8 +492,8 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
                               <td data-marca className="py-2 pr-3 text-slate-300 whitespace-nowrap">{a.marca || "—"}</td>
                               <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{a.vendedor || "—"}</td>
                               <td className="py-2 pr-3 text-right font-bold text-white whitespace-nowrap">
-                                {brl(a.ultimo_preco)}
-                                {mud && <span data-mudou className={`block text-[10px] font-bold ${mud.pct < 0 ? "text-emerald-400" : "text-rose-400"}`} title={`Era ${brl(mud.de)} em ${dataBR(mud.dataAnterior)}`}>{mud.pct < 0 ? "▼" : "▲"} {pct(mud.pct)} em {dataBR(mud.data)}</span>}
+                                <PrecoDePor a={a} />
+                                {mud && <SeloMudanca m={mud} onClick={() => setHistoricoPrecoDe(a)} />}
                               </td>
                               {ehAmazon ? (
                                 <td data-mes className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap" title="Faixa informada pela Amazon: as compras dos últimos 30 dias são iguais ou maiores">{a.ultimo_vendas_mes != null ? `+${num(a.ultimo_vendas_mes)}` : "—"}</td>
@@ -601,6 +611,7 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
       )}
         </div>
       </details>}
+      {historicoPrecoDe && <HistoricoPrecoModal anuncio={historicoPrecoDe} mudancas={mudancasDe(historicoPrecoDe.id)} onFechar={() => setHistoricoPrecoDe(null)} />}
     </div>
   );
 }

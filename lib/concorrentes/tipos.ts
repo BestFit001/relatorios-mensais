@@ -13,6 +13,8 @@ export interface AnuncioRaspado {
   /** só o link da imagem (https); o arquivo não é guardado */
   url_imagem: string | null;
   preco: number | null;
+  /** preço "De" (riscado), só quando está em promoção; `preco` é sempre o "Por" (atual) */
+  preco_original?: number | null;
   /** total de vendas acumulado informado pelo marketplace */
   total_vendas: number | null;
   /** true quando o marketplace só informa faixa ("+500 vendidos") */
@@ -24,6 +26,7 @@ export interface AnuncioRaspado {
 /** O que a captura diária precisa de cada anúncio. */
 export interface Captura {
   preco: number | null;
+  preco_original?: number | null;
   total_vendas: number | null;
   vendas_aproximado: boolean;
 }

@@ -59,6 +59,12 @@ Atenção: os links dessa página podem ser de catálogo (`/p/MLB…`); o anúnc
 ## Vendas do dia: o que dá para medir
 O Mercado Livre não divulga a venda diária de terceiros: só o total acumulado, em faixas a partir de certo volume (`ultimo_aproximado`/`vendas_aproximado` marcam isso). “Vendas do dia” só sai do zero quando a faixa muda; a **média/dia** (total da última captura − da primeira, ÷ dias; mínimo 7 dias, janela de 90) é uma estimativa cujo erro máximo é uma faixa ÷ dias.
 
+## Preço "De" x "Por" e mudanças de preço
+- `anuncios.ultimo_preco` é SEMPRE o preço **"Por"** (o atual, que o cliente paga): é ele que as análises, o preço médio, os comparativos e a Pesquisa de preços usam. O **"De"** (riscado) fica em `ultimo_preco_original` só quando for maior que o "Por" (`originalValido` em `precos.ts`); é lido do bloco `.andes-money-amount--previous` (ML), `.a-text-price` (Amazon) ou do primeiro preço riscado (Shopee) e vem da API em `original_price`. A tela mostra "De:" riscado, "Por:" e o selo de desconto (`PrecoDePor`).
+- **Registro por leitura:** tabela `precos_eventos` (uma linha por mudança do "Por" + uma de partida na 1ª leitura), com `registrado_em` (hora em que o painel LEU o preço, não a da mudança na loja). Permite várias mudanças no mesmo dia. `historico_diario` continua com 1 linha por dia (o último preço do dia, e o "De").
+- Quando há leitura: favorito/Importar do navegador (sempre), cron diário e **"Atualizar agora"**, que relê também o que já foi lido hoje há mais de 10 min (`lido_em`). Sem leitura não há como saber: o painel não vê o que acontece entre duas leituras. O cron é diário (09:00 UTC); para pegar mais mudanças no dia, use "Atualizar agora"/o favorito mais vezes ou aumente a frequência do cron (depende do plano da Vercel).
+- Na tela: selo ▲/▼ com data e hora (clique abre o histórico do anúncio) e a sub-aba “Mudanças de preço” lista cada mudança com a hora. Antes do registro por leitura valia só a comparação entre dias, que continua aparecendo para o período antigo (`juntarMudancas`).
+
 ## Variáveis de ambiente (Vercel)
 | Variável | Obrigatória | Para quê |
 |---|---|---|

@@ -7,6 +7,7 @@ import { sanitizarPayload } from "./importacao";
 import { urlsDoCanal, URLS } from "./urls";
 import { atualizarPrecosMeusDeImportacao } from "./comparativos";
 import { atualizarRanking, movimentoRanking } from "./ranking";
+import { eventoDaLeitura, originalValido, type EventoPreco } from "./precos";
 
 export const PAGINAS_POR_CATEGORIA = 2;
 const nomeCanal = (id: string) => URLS[id]?.nome ?? id;
@@ -22,7 +23,7 @@ async function gravarAnuncios(db: SupabaseClient, categoria_id: string, lista: A
   const linhas = lista.map((a) => ({
     categoria_id, mlb_id: a.mlb_id, titulo: a.titulo, vendedor: a.vendedor, marca: a.marca ?? null, url_anuncio: a.url_anuncio, url_imagem: a.url_imagem,
     ativo: true, manual,
-    ultimo_preco: a.preco, ultimo_total_vendas: a.total_vendas, ultimo_vendas_mes: a.vendas_mes ?? null, ultimo_aproximado: a.vendas_aproximado, ultimas_vendas_dia: null, ultima_captura: hoje,
+    ultimo_preco: a.preco, ultimo_preco_original: originalValido(a.preco, a.preco_original), lido_em: new Date().toISOString(), ultimo_total_vendas: a.total_vendas, ultimo_vendas_mes: a.vendas_mes ?? null, ultimo_aproximado: a.vendas_aproximado, ultimas_vendas_dia: null, ultima_captura: hoje,
     ranking_posicao: a.ranking ?? null, ranking_data: a.ranking != null ? hoje : null,
   }));
   const novos: { id: string; mlb_id: string }[] = [];
@@ -35,11 +36,18 @@ async function gravarAnuncios(db: SupabaseClient, categoria_id: string, lista: A
   const porMlb = new Map(lista.map((a) => [a.mlb_id, a]));
   const historico = novos.map((n) => {
     const a = porMlb.get(n.mlb_id)!;
-    return { anuncio_id: n.id, data_captura: hoje, preco: a.preco, total_vendas_acumulado: a.total_vendas, vendas_no_dia: null, vendas_aproximado: a.vendas_aproximado };
+    return { anuncio_id: n.id, data_captura: hoje, preco: a.preco, preco_original: originalValido(a.preco, a.preco_original), total_vendas_acumulado: a.total_vendas, vendas_no_dia: null, vendas_aproximado: a.vendas_aproximado };
   });
   for (const lote of em(historico, 500)) {
     const { error } = await db.from("historico_diario").upsert(lote, { onConflict: "anuncio_id,data_captura", ignoreDuplicates: true });
     falha("gravar histórico", error);
+  }
+  // ponto de partida do histórico de preço (primeira leitura do anúncio)
+  const agora = new Date().toISOString();
+  const partida = novos.map((n) => eventoDaLeitura(n.id, null, porMlb.get(n.mlb_id)?.preco, porMlb.get(n.mlb_id)?.preco_original, agora)).filter(Boolean) as EventoPreco[];
+  for (const lote of em(partida, 500)) {
+    const { error } = await db.from("precos_eventos").insert(lote);
+    falha("gravar histórico de preço", error);
   }
   return novos.length;
 }
@@ -103,16 +111,25 @@ export const modoManual = () => (process.env.ML_ESTRATEGIA || "").toLowerCase() 
 const MSG_MANUAL = 'O servidor está em modo manual (ML_ESTRATEGIA=manual): use "Importar do navegador".';
 
 /** Grava a captura de hoje: histórico (1 linha por anúncio/dia) + últimos valores no anúncio, com vendas_no_dia = hoje − anterior. */
-async function registrarCapturas(db: SupabaseClient, hoje: string, lista: { a: any; cap: Captura; extra?: Record<string, unknown> }[]) {
-  if (!lista.length) return;
+async function registrarCapturas(db: SupabaseClient, hoje: string, lista: { a: any; cap: Captura; extra?: Record<string, unknown> }[]): Promise<{ mudancasPreco: number }> {
+  if (!lista.length) return { mudancasPreco: 0 };
   const historico: any[] = [];
+  const eventos: EventoPreco[] = [];
   const atualizacoes: { id: string; campos: Record<string, unknown> }[] = [];
+  const agora = new Date().toISOString();
   for (const { a, cap, extra } of lista) {
     const vendasDia = calcularVendasNoDia(cap.total_vendas, totalBase(a, hoje));
-    historico.push({ anuncio_id: a.id, data_captura: hoje, preco: cap.preco, total_vendas_acumulado: cap.total_vendas, vendas_no_dia: vendasDia, vendas_aproximado: cap.vendas_aproximado, capturado_em: new Date().toISOString() });
+    const original = originalValido(cap.preco, cap.preco_original);
+    // toda mudança do preço "Por" é registrada com a hora da leitura (várias no mesmo dia, se for o caso)
+    const anterior = a.ultimo_preco == null || a.ultimo_preco === "" ? null : Number(a.ultimo_preco);
+    const ev = eventoDaLeitura(a.id, Number.isFinite(anterior as number) ? anterior : null, cap.preco, cap.preco_original, agora);
+    if (ev) eventos.push(ev);
+    historico.push({ anuncio_id: a.id, data_captura: hoje, preco: cap.preco, preco_original: original, total_vendas_acumulado: cap.total_vendas, vendas_no_dia: vendasDia, vendas_aproximado: cap.vendas_aproximado, capturado_em: agora });
     atualizacoes.push({ id: a.id, campos: {
       ...(extra || {}),
-      ...(cap.preco != null ? { ultimo_preco: cap.preco } : {}),
+      lido_em: agora,
+      ...(cap.preco != null ? { ultimo_preco: cap.preco, ultimo_preco_original: original } : {}),
+      ...(ev && ev.preco_anterior != null ? { preco_anterior: ev.preco_anterior, preco_mudou_em: agora } : {}),
       ...(cap.total_vendas != null ? { ultimo_total_vendas: cap.total_vendas, ultimo_aproximado: cap.vendas_aproximado } : {}), // sem número novo, mantém o último como base
       ultimas_vendas_dia: vendasDia,
       ultima_captura: hoje,
@@ -122,7 +139,12 @@ async function registrarCapturas(db: SupabaseClient, hoje: string, lista: { a: a
     const { error } = await db.from("historico_diario").upsert(lote, { onConflict: "anuncio_id,data_captura" });
     falha("gravar histórico diário", error);
   }
+  for (const lote of em(eventos, 500)) {
+    const { error } = await db.from("precos_eventos").insert(lote);
+    falha("gravar histórico de preço", error);
+  }
   await comLimite(atualizacoes, 8, async (u) => { const { error: e } = await db.from("anuncios").update(u.campos).eq("id", u.id); falha("atualizar anúncio", e); });
+  return { mudancasPreco: eventos.filter((e) => e.preco_anterior != null).length };
 }
 
 export interface ResumoCaptura {
@@ -138,6 +160,8 @@ export interface ResumoCaptura {
   ms: number;
   /** true = servidor em modo manual: nada foi buscado */
   manual?: boolean;
+  /** quantos anúncios tiveram o preço "Por" diferente da leitura anterior */
+  mudancasPreco?: number;
 }
 
 /**
@@ -145,7 +169,7 @@ export interface ResumoCaptura {
  * vendas_no_dia = total de hoje − total da captura anterior. Roda dentro de um orçamento de tempo
  * e pode ser repetida (já capturados hoje são pulados), então nunca estoura o limite da função.
  */
-export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: number; forcar?: boolean; categoriaId?: string } = {}): Promise<ResumoCaptura> {
+export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: number; forcar?: boolean; categoriaId?: string; releitura?: boolean } = {}): Promise<ResumoCaptura> {
   const inicio = Date.now();
   const orcamento = opc.orcamentoMs ?? 50_000;
   const hoje = hojeSP();
@@ -154,7 +178,7 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
   const todos: any[] = [];
   for (let de = 0; ; de += 1000) {
     let q = db.from("anuncios")
-      .select("id,mlb_id,url_anuncio,ultima_captura,ultimo_total_vendas,ultimas_vendas_dia,categoria_id,categorias!inner(canal,ativo)")
+      .select("id,mlb_id,url_anuncio,ultima_captura,ultimo_total_vendas,ultimas_vendas_dia,ultimo_preco,lido_em,categoria_id,categorias!inner(canal,ativo)")
       .eq("ativo", true).eq("categorias.ativo", true)
       .order("id", { ascending: true }).range(de, de + 999);
     if (opc.categoriaId) q = q.eq("categoria_id", opc.categoriaId);
@@ -169,12 +193,17 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
   if (naoLidos.length) todos.splice(0, todos.length, ...todos.filter(lidosPeloServidor));
 
   // já capturado hoje = pulado, exceto o que foi cadastrado sem o total de vendas (faltou tempo/dado na leitura inicial)
-  const fila = todos.filter((a) => opc.forcar || a.ultima_captura !== hoje || a.ultimo_total_vendas == null);
+  // releitura = botão "Atualizar agora": lê de novo mesmo quem já foi lido hoje (para pegar mudança de preço no mesmo dia),
+  // mas só quem foi lido há mais de 10 minutos, senão repetir o botão nunca terminaria
+  const REL_MS = 10 * 60_000;
+  const velho = (a: any) => !a.lido_em || Date.now() - Date.parse(a.lido_em) > REL_MS;
+  const fila = todos.filter((a) => opc.forcar || a.ultima_captura !== hoje || a.ultimo_total_vendas == null || (opc.releitura && velho(a)));
   // quem está há mais tempo sem captura vai primeiro (se o tempo acabar, o resto fica para a próxima rodada)
   fila.sort((a, b) => String(a.ultima_captura ?? "").localeCompare(String(b.ultima_captura ?? "")));
 
   const resumo: ResumoCaptura = { data: hoje, ativos: todos.length, jaCapturados: todos.length - fila.length, processados: 0, ok: 0, falhas: 0, pendentes: 0, completo: true, erros: [], ms: 0 };
   const categoriasTocadas = new Set<string>();
+  let mudancasPreco = 0;
 
   for (const lote of em(fila, 10)) {
     if (Date.now() - inicio > orcamento) break;
@@ -203,9 +232,10 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
         categoriasTocadas.add(a.categoria_id);
         aGravar.push({ a, cap });
       }
-      await registrarCapturas(db, hoje, aGravar);
+      mudancasPreco += (await registrarCapturas(db, hoje, aGravar)).mudancasPreco;
     }
   }
+  resumo.mudancasPreco = mudancasPreco;
 
   if (categoriasTocadas.size) await db.from("categorias").update({ ultima_raspagem: new Date().toISOString() }).in("id", Array.from(categoriasTocadas));
   resumo.pendentes = Math.max(0, fila.length - resumo.processados);
@@ -256,7 +286,7 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
   const existentes = new Map<string, any>();
   for (let de = 0; ; de += 1000) {
     const { data, error } = await db.from("anuncios")
-      .select("id,mlb_id,ativo,categoria_id,ultima_captura,ultimo_total_vendas,ultimas_vendas_dia,ranking_posicao,ranking_anterior,ranking_data,ranking_data_anterior")
+      .select("id,mlb_id,ativo,categoria_id,ultima_captura,ultimo_total_vendas,ultimas_vendas_dia,ultimo_preco,ultimo_preco_original,ranking_posicao,ranking_anterior,ranking_data,ranking_data_anterior")
       .eq("categoria_id", categoria.id).order("id", { ascending: true }).range(de, de + 999);
     falha("listar anúncios da categoria", error);
     for (const r of data || []) existentes.set(r.mlb_id, r);
@@ -271,10 +301,10 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
     if (!ex) { novos.push(a); continue; }
     const reativar = !ex.ativo && p.tipo === "anuncio"; // adicionar um anúncio avulso de propósito reativa
     if (!ex.ativo && !reativar) { desativadosIgnorados++; continue; } // na importação da categoria, o que foi desativado à mão continua desativado
-    atualizar.push({ a: ex, cap: { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }, extra: { titulo: a.titulo, vendedor: a.vendedor, ...(a.marca ? { marca: a.marca } : {}), ...(a.vendas_mes != null ? { ultimo_vendas_mes: a.vendas_mes } : {}), url_imagem: a.url_imagem, url_anuncio: a.url_anuncio, ...(a.ranking != null ? atualizarRanking(ex, a.ranking, hoje) : {}), ...(reativar ? { ativo: true } : {}) } });
+    atualizar.push({ a: ex, cap: { preco: a.preco, preco_original: a.preco_original ?? null, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }, extra: { titulo: a.titulo, vendedor: a.vendedor, ...(a.marca ? { marca: a.marca } : {}), ...(a.vendas_mes != null ? { ultimo_vendas_mes: a.vendas_mes } : {}), url_imagem: a.url_imagem, url_anuncio: a.url_anuncio, ...(a.ranking != null ? atualizarRanking(ex, a.ranking, hoje) : {}), ...(reativar ? { ativo: true } : {}) } });
   }
   const criados = novos.length ? await gravarAnuncios(db, categoria.id, novos, hoje, p.tipo === "anuncio") : 0;
-  await registrarCapturas(db, hoje, atualizar);
+  const { mudancasPreco } = await registrarCapturas(db, hoje, atualizar);
 
   // ranking: o que subiu, caiu, entrou e saiu. Na página "Mais vendidos" quem estava no ranking e não apareceu mais SAIU
   // (só se a leitura trouxe um ranking de verdade: com poucos anúncios provavelmente a página não carregou inteira)
@@ -294,5 +324,5 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
   }
   // se um dos anúncios lidos é o MEU de algum comparativo, o meu preço também é atualizado
   const precosMeusAtualizados = await atualizarPrecosMeusDeImportacao(db, p.anuncios);
-  return { categoria, tipo: p.tipo, recebidos: p.anuncios.length, novos: criados, atualizados: atualizar.length, desativadosIgnorados, descartados: p.descartados, precosMeusAtualizados, ranking };
+  return { categoria, tipo: p.tipo, recebidos: p.anuncios.length, novos: criados, atualizados: atualizar.length, desativadosIgnorados, descartados: p.descartados, precosMeusAtualizados, ranking, mudancasPreco };
 }

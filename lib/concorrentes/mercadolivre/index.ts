@@ -66,7 +66,7 @@ async function categoriaPeloHtml(url: string, paginas: number, ate: number): Pro
       if (!d) { falhas++; return; }
       a.vendedor = a.vendedor ?? d.vendedor;
       a.marca = a.marca ?? d.marca;
-      a.preco = a.preco ?? d.preco;
+      if (a.preco == null) { a.preco = d.preco; a.preco_original = d.preco_original ?? null; }
       a.url_imagem = a.url_imagem ?? d.url_imagem;
       if (a.total_vendas == null) { a.total_vendas = d.total_vendas; a.vendas_aproximado = d.vendas_aproximado; }
     } catch (e) { if (e instanceof ErroSemTempo) semTempo++; else falhas++; }
@@ -123,7 +123,7 @@ export const conectorMercadoLivre: Conector = {
         const itens = await apiItens(pendentes.map((r) => r.mlb_id));
         pendentes = pendentes.filter((r) => {
           const a = itemDaApi(itens.get(r.mlb_id));
-          if (a && a.preco != null) { ok.set(r.mlb_id, { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }); return false; }
+          if (a && a.preco != null) { ok.set(r.mlb_id, { preco: a.preco, preco_original: a.preco_original ?? null, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }); return false; }
           erros.set(r.mlb_id, "API sem dados deste anúncio");
           return true;
         });
@@ -137,7 +137,7 @@ export const conectorMercadoLivre: Conector = {
         try {
           const a = parseAnuncio(await baixarHtml(r.url_anuncio, ate), r.url_anuncio);
           if (!a || a.preco == null) throw new Error("preço não encontrado na página");
-          ok.set(r.mlb_id, { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado });
+          ok.set(r.mlb_id, { preco: a.preco, preco_original: a.preco_original ?? null, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado });
           erros.delete(r.mlb_id);
         } catch (e) {
           if (e instanceof ErroSemTempo) { erros.set(r.mlb_id, SEM_TEMPO); return; }
