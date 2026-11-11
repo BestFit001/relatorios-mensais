@@ -1,7 +1,8 @@
 "use client";
 // Ferramentas > Consulta líquida (aba provisória).
-// Sobe uma planilha com ID do pedido, PDV e repasse (você diz em quais colunas estão). Cada pedido é procurado na base de vendas
-// (vendas_canais), o SKU é descoberto, e o líquido sai de: repasse − custo do SKU × quantidade − imposto (PDV × 9%).
+// Sobe uma planilha com ID do pedido e repasse (você diz em quais colunas estão; o PDV da planilha é opcional, só conferência).
+// Cada pedido é procurado na base de vendas (vendas_canais): o SKU, a quantidade e o PDV vêm da venda cadastrada, igual ao dashboard.
+// Líquido = repasse da planilha − custo do SKU × quantidade − imposto (9% do PDV cadastrado). Mostra por pedido e por produto.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
@@ -10,7 +11,7 @@ import { buscarTudo } from "../../lib/buscarTudo";
 import { indiceDaLetra } from "../../lib/cobertura";
 import { canaisSemRepeticao } from "../../lib/vendasCanaisLogica";
 import { lerArquivoComoLinhas } from "../../lib/lerArquivo";
-import { IMPOSTO_PADRAO_PCT, consultar, indexarBase, indexarCustos, totalizar, type ResultadoLinha, type StatusConsulta } from "../../lib/consultaLiquidaLogica";
+import { IMPOSTO_PADRAO_PCT, consultar, indexarBase, indexarCustos, porProduto, totalizar, type ResultadoLinha, type StatusConsulta } from "../../lib/consultaLiquidaLogica";
 import Navbar from "../components/Navbar";
 
 const CHAVE_FORM = "bestfit_consulta_liquida_form";   // só lembra as últimas colunas (conveniência)
@@ -34,6 +35,7 @@ export default function ConsultaLiquidaPage() {
   const [aviso, setAviso] = useState<{ tipo: "ok" | "erro" | "info"; linhas: string[] } | null>(null);
   const [resultados, setResultados] = useState<ResultadoLinha[]>([]);
   const [arquivo, setArquivo] = useState("");
+  const [visao, setVisao] = useState<"pedido" | "produto">("pedido");
   const [filtro, setFiltro] = useState<"todos" | StatusConsulta | "pendentes">("todos");
   const [impostoUsado, setImpostoUsado] = useState(IMPOSTO_PADRAO_PCT);
 
@@ -51,11 +53,13 @@ export default function ConsultaLiquidaPage() {
 
   const processar = async (arquivos: File[]) => {
     const f = arquivos[0]; if (!f) return;
-    const iPed = indiceDaLetra(form.colPedido), iPdv = indiceDaLetra(form.colPdv), iRep = indiceDaLetra(form.colRepasse);
+    const iPed = indiceDaLetra(form.colPedido), iRep = indiceDaLetra(form.colRepasse);
+    const usaPdvPlanilha = form.colPdv.trim() !== "";
+    const iPdv = usaPdvPlanilha ? indiceDaLetra(form.colPdv) : -1;
     const linhaInicial = parseInt(form.linha, 10);
     const imposto = Number(String(form.imposto).replace(",", "."));
-    if (iPed < 0 || iPdv < 0 || iRep < 0) return setAviso({ tipo: "erro", linhas: ["Informe as letras das colunas do ID do pedido, do PDV e do repasse (ex.: A, B, C)."] });
-    if (new Set([iPed, iPdv, iRep]).size < 3) return setAviso({ tipo: "erro", linhas: ["As três colunas precisam ser diferentes."] });
+    if (iPed < 0 || iRep < 0 || (usaPdvPlanilha && iPdv < 0)) return setAviso({ tipo: "erro", linhas: ["Informe as letras das colunas do ID do pedido e do repasse (ex.: A, C). A do PDV é opcional."] });
+    if (new Set([iPed, iRep, ...(usaPdvPlanilha ? [iPdv] : [])]).size < (usaPdvPlanilha ? 3 : 2)) return setAviso({ tipo: "erro", linhas: ["As colunas precisam ser diferentes."] });
     if (!(linhaInicial >= 1)) return setAviso({ tipo: "erro", linhas: ["A linha inicial deve ser 1 ou mais (use 2 se a primeira linha for o cabeçalho)."] });
     if (!(imposto >= 0 && imposto < 100)) return setAviso({ tipo: "erro", linhas: ["Informe o imposto entre 0 e 99,9%."] });
 
@@ -64,16 +68,16 @@ export default function ConsultaLiquidaPage() {
     try {
       const linhas = await lerArquivoComoLinhas(f);
       const [vendas, custos] = await Promise.all([
-        buscarTudo("vendas_canais", "id_pedido,canal,sku,quantidade", (q) => (canal === "__todos" ? q : q.eq("canal", canal))),
-        buscarTudo("tabela_custos_skus", "sku,custo_unitario"),
+        buscarTudo("vendas_canais", "id_pedido,canal,sku,quantidade,preco_venda", (q) => (canal === "__todos" ? q : q.eq("canal", canal))),
+        buscarTudo("tabela_custos_skus", "sku,custo_unitario,produto,marca"),
       ]);
       const { resultados: rs, ignoradas } = consultar(linhas, { linhaInicial, colPedido: iPed, colPdv: iPdv, colRepasse: iRep, impostoPct: imposto }, indexarBase(vendas as any[]), indexarCustos(custos as any[]));
-      setResultados(rs); setArquivo(f.name); setImpostoUsado(imposto); setFiltro("todos");
+      setResultados(rs); setArquivo(f.name); setImpostoUsado(imposto); setFiltro("todos"); setVisao("pedido");
       const t = totalizar(rs);
       const linhasAviso = [`${f.name}: ${rs.length} pedido(s) lido(s) — ${t.calculadas} calculado(s)${t.semPedido ? `, ${t.semPedido} não encontrado(s) na base` : ""}${t.semCusto ? `, ${t.semCusto} com SKU sem custo` : ""}${t.semValor ? `, ${t.semValor} com PDV/repasse inválido` : ""}.`];
       if (rs.length === 0) linhasAviso.push(`Nenhuma linha a partir da linha ${linhaInicial}. Confira a linha inicial e as colunas.`);
       if (t.semPedido > 0 && t.semPedido === rs.length) linhasAviso.push(`Nenhum pedido foi achado na base de ${canal === "__todos" ? "todos os canais" : canal}. Confira o canal e se a coluna ${form.colPedido.toUpperCase()} é mesmo o ID do pedido (e se as vendas desse canal já foram enviadas em Uploads Base).`);
-      if (ignoradas) linhasAviso.push(`${ignoradas} linha(s) em branco ignorada(s).`);
+      if (ignoradas) linhasAviso.push(`${ignoradas} linha(s) ignorada(s) (em branco, cabeçalho ou observações do relatório).`);
       setAviso({ tipo: t.calculadas > 0 ? "ok" : "info", linhas: linhasAviso });
     } catch (e: any) {
       setAviso({ tipo: "erro", linhas: ["Erro ao processar a planilha: " + (e?.message || e)] });
@@ -82,17 +86,29 @@ export default function ConsultaLiquidaPage() {
   };
 
   const totais = useMemo(() => totalizar(resultados), [resultados]);
+  const produtos = useMemo(() => porProduto(resultados), [resultados]);
+  const [ordemProd, setOrdemProd] = useState<"maior" | "menor" | "unidades">("maior");
+  const produtosOrdenados = useMemo(() => [...produtos].sort((a, b) => ordemProd === "menor" ? a.liquido - b.liquido : ordemProd === "unidades" ? b.unidades - a.unidades : b.liquido - a.liquido), [produtos, ordemProd]);
   const visiveis = useMemo(() => resultados.filter((r) => filtro === "todos" ? true : filtro === "pendentes" ? r.liquido == null : r.status === filtro), [resultados, filtro]);
 
   const baixar = () => {
     const dados = visiveis.map((r) => ({
-      "Linha da planilha": r.linha, "ID do pedido": r.idPedido, "Canal": r.canal ?? "", "SKU": r.skus.map((s) => s.sku).join(" + "), "Qtd": r.skus.reduce((s, i) => s + i.quantidade, 0) || "",
-      "PDV": r.pdv ?? "", "Repasse": r.repasse ?? "", "Custo do SKU": r.custo ?? "", [`Imposto (${impostoUsado}%)`]: r.imposto ?? "", "Líquido": r.liquido ?? "",
+      "Linha da planilha": r.linha, "ID do pedido": r.idPedido, "Canal": r.canal ?? "", "SKU": r.skus.map((x) => x.sku).join(" + "), "Produto": r.skus.map((x) => x.produto).filter(Boolean).join(" + "), "Qtd": r.skus.reduce((q, i) => q + i.quantidade, 0) || "",
+      "PDV (venda cadastrada)": r.pdv ?? "", "PDV da planilha": r.pdvPlanilha ?? "", "Repasse": r.repasse ?? "", "Custo (CMV)": r.custo ?? "", [`Imposto (${impostoUsado}% do PDV)`]: r.imposto ?? "", "Líquido": r.liquido ?? "",
       "Margem sobre o PDV (%)": r.margemPct == null ? "" : Math.round(r.margemPct * 10) / 10, "Situação": ROTULO[r.status], "Observação": r.detalhe,
     }));
-    const ws = XLSX.utils.json_to_sheet(dados);
+    const itens = visiveis.flatMap((r) => r.skus.map((x) => ({
+      "ID do pedido": r.idPedido, "SKU": x.sku, "Produto": x.produto, "Marca": x.marca, "Qtd": x.quantidade, "PDV": x.pdv, "Repasse (parte do item)": x.repasse ?? "", "Custo unitário": x.custoUnitario ?? "", "Custo (CMV)": x.custo ?? "",
+      [`Imposto (${impostoUsado}%)`]: x.imposto ?? "", "Líquido do item": x.liquido ?? "", "Situação do pedido": ROTULO[r.status],
+    })));
+    const prod = produtosOrdenados.map((p) => ({
+      "SKU": p.sku, "Produto": p.produto, "Marca": p.marca, "Unidades": p.unidades, "Pedidos": p.pedidos, "PDV": p.pdv, "Repasse": p.repasse, "Custo (CMV)": p.custo, [`Imposto (${impostoUsado}%)`]: p.imposto,
+      "Líquido": p.liquido, "Líquido por unidade": p.liquidoPorUnidade ?? "", "Margem sobre o PDV (%)": p.margemPct == null ? "" : Math.round(p.margemPct * 10) / 10,
+    }));
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Consulta líquida");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dados), "Por pedido");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(prod), "Por produto");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itens), "Itens dos pedidos");
     XLSX.writeFile(wb, `consulta_liquida_${canal.replace(/[^a-zA-Z0-9]+/g, "-")}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
@@ -121,8 +137,8 @@ export default function ConsultaLiquidaPage() {
           <div>
             <h2 className="text-sm font-black text-white uppercase tracking-wider">Subir a planilha</h2>
             <p className="text-[11px] text-slate-400 mt-1 max-w-4xl">
-              Escolha o canal e diga em quais colunas estão o <b className="text-slate-200">ID do pedido</b>, o <b className="text-slate-200">PDV</b> e o <b className="text-slate-200">repasse</b>.
-              Para cada pedido o painel procura o SKU na base de vendas, pega o custo do SKU (× a quantidade) e o imposto sobre o PDV, e calcula:
+              Escolha o canal e diga em quais colunas estão o <b className="text-slate-200">ID do pedido</b> e o <b className="text-slate-200">repasse</b>.
+              Para cada pedido o painel procura a venda cadastrada na base (SKU, quantidade e PDV, como no dashboard), pega o custo do SKU (× a quantidade) e o imposto sobre o PDV cadastrado, e calcula:
               <span className="font-mono text-slate-300"> líquido = repasse − custo − imposto</span>.
             </p>
           </div>
@@ -143,8 +159,8 @@ export default function ConsultaLiquidaPage() {
               <input type="text" maxLength={3} value={form.colPedido} onChange={(e) => setForm({ ...form, colPedido: e.target.value.toUpperCase() })} data-col-pedido className={campo + " font-mono text-center font-bold"} />
             </div>
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. do PDV</label>
-              <input type="text" maxLength={3} value={form.colPdv} onChange={(e) => setForm({ ...form, colPdv: e.target.value.toUpperCase() })} data-col-pdv className={campo + " font-mono text-center font-bold"} />
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. do PDV (opcional)</label>
+              <input type="text" maxLength={3} value={form.colPdv} onChange={(e) => setForm({ ...form, colPdv: e.target.value.toUpperCase() })} data-col-pdv placeholder="—" className={campo + " font-mono text-center font-bold"} />
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. do repasse</label>
@@ -164,7 +180,7 @@ export default function ConsultaLiquidaPage() {
               {processando && <p className="text-xs text-slate-400 mt-2">Lendo a planilha e consultando a base…</p>}
             </div>
           </div>
-          <p className="text-[10px] text-slate-500 max-w-4xl">Se o mesmo pedido tem mais de um SKU na base, os custos de todos entram (custo × quantidade de cada um). IDs grandes (como os do TikTok) precisam estar como texto na planilha: se o Excel os tiver virado número com “E+17”, os últimos dígitos já foram perdidos e o pedido não será achado.</p>
+          <p className="text-[10px] text-slate-500 max-w-4xl">Se o mesmo pedido tem mais de um SKU na base, os custos de todos entram (custo × quantidade de cada um). O PDV da planilha não entra na conta (se informado, só avisa quando difere do cadastrado). IDs grandes (como os do TikTok) precisam estar como texto na planilha: se o Excel os tiver virado número com “E+17”, os últimos dígitos já foram perdidos e o pedido não será achado.</p>
         </div>
 
         {resultados.length > 0 && (
@@ -175,19 +191,33 @@ export default function ConsultaLiquidaPage() {
               ))}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <select value={filtro} onChange={(e) => setFiltro(e.target.value as any)} data-filtro className={campo + " !w-auto cursor-pointer"}>
-                <option value="todos">Todas as linhas ({resultados.length})</option>
-                <option value="pendentes">Sem líquido calculado ({resultados.filter((r) => r.liquido == null).length})</option>
-                {(["ok", "repetido", "sem_pedido", "sem_custo", "sem_valor"] as StatusConsulta[]).map((s) => <option key={s} value={s}>{ROTULO[s]} ({resultados.filter((r) => r.status === s).length})</option>)}
-              </select>
-              <button data-acao="baixar" onClick={baixar} className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-black uppercase tracking-wider cursor-pointer">⬇ Baixar Excel{filtro !== "todos" ? " (filtrado)" : ""}</button>
+              <div className="flex rounded-xl border border-slate-700 overflow-hidden text-xs font-black uppercase tracking-wider">
+                {(["pedido", "produto"] as const).map((v) => (
+                  <button key={v} type="button" data-visao={v} onClick={() => setVisao(v)} className={`px-4 py-2 cursor-pointer ${visao === v ? "bg-indigo-600 text-white" : "bg-slate-950 text-slate-400 hover:text-white"}`}>{v === "pedido" ? "Por pedido" : "Por produto"}</button>
+                ))}
+              </div>
+              {visao === "pedido" ? (
+                <select value={filtro} onChange={(e) => setFiltro(e.target.value as any)} data-filtro className={campo + " !w-auto cursor-pointer"}>
+                  <option value="todos">Todas as linhas ({resultados.length})</option>
+                  <option value="pendentes">Sem líquido calculado ({resultados.filter((r) => r.liquido == null).length})</option>
+                  {(["ok", "repetido", "sem_pedido", "sem_custo", "sem_valor"] as StatusConsulta[]).map((s) => <option key={s} value={s}>{ROTULO[s]} ({resultados.filter((r) => r.status === s).length})</option>)}
+                </select>
+              ) : (
+                <select value={ordemProd} onChange={(e) => setOrdemProd(e.target.value as any)} data-ordem-produto className={campo + " !w-auto cursor-pointer"}>
+                  <option value="maior">Maior líquido primeiro</option>
+                  <option value="menor">Menor líquido primeiro (prejuízo no topo)</option>
+                  <option value="unidades">Mais unidades vendidas</option>
+                </select>
+              )}
+              <button data-acao="baixar" onClick={baixar} className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-black uppercase tracking-wider cursor-pointer">⬇ Baixar Excel{visao === "pedido" && filtro !== "todos" ? " (filtrado)" : ""}</button>
               <span className="text-[11px] text-slate-500">{arquivo}</span>
             </div>
-            <div className="overflow-x-auto">
+            {visao === "pedido" ? (
+            <div className="overflow-x-auto" data-tabela="pedido">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-left text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-800">
-                    <th className="py-2 pr-3">Linha</th><th className="py-2 pr-3">ID do pedido</th><th className="py-2 pr-3">SKU</th><th className="py-2 pr-3 text-right">Qtd</th><th className="py-2 pr-3 text-right">PDV</th><th className="py-2 pr-3 text-right">Repasse</th>
+                    <th className="py-2 pr-3">Linha</th><th className="py-2 pr-3">ID do pedido</th><th className="py-2 pr-3">SKU</th><th className="py-2 pr-3 text-right">Qtd</th><th className="py-2 pr-3 text-right">PDV (base)</th><th className="py-2 pr-3 text-right">Repasse</th>
                     <th className="py-2 pr-3 text-right">Custo</th><th className="py-2 pr-3 text-right">Imposto</th><th className="py-2 pr-3 text-right">Líquido</th><th className="py-2 pr-3 text-right">Margem</th><th className="py-2">Situação</th>
                   </tr>
                 </thead>
@@ -196,8 +226,8 @@ export default function ConsultaLiquidaPage() {
                     <tr key={r.linha} data-linha-resultado={r.idPedido} data-status={r.status} className="border-b border-slate-800/60">
                       <td className="py-2 pr-3 text-slate-500">{r.linha}</td>
                       <td className="py-2 pr-3 font-mono text-slate-200 whitespace-nowrap">{r.idPedido || "—"}</td>
-                      <td className="py-2 pr-3 text-slate-300">{r.skus.length ? r.skus.map((s) => <span key={s.sku} className="block whitespace-nowrap">{s.sku}{s.custoUnitario == null ? " ⚠" : ""}</span>) : "—"}</td>
-                      <td className="py-2 pr-3 text-right text-slate-300">{r.skus.length ? r.skus.reduce((s, i) => s + i.quantidade, 0) : "—"}</td>
+                      <td className="py-2 pr-3 text-slate-300">{r.skus.length ? r.skus.map((x) => <span key={x.sku} className="block whitespace-nowrap" title={x.produto}>{x.sku}{x.custoUnitario == null ? " ⚠" : ""}</span>) : "—"}</td>
+                      <td className="py-2 pr-3 text-right text-slate-300">{r.skus.length ? r.skus.reduce((q, i) => q + i.quantidade, 0) : "—"}</td>
                       <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{brl(r.pdv)}</td>
                       <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{brl(r.repasse)}</td>
                       <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{brl(r.custo)}</td>
@@ -211,7 +241,38 @@ export default function ConsultaLiquidaPage() {
               </table>
               {visiveis.length > LIMITE_TELA && <p className="text-[11px] text-slate-500 mt-2">Mostrando {LIMITE_TELA} de {visiveis.length} linhas. O Excel baixado leva todas.</p>}
             </div>
-            <p className="text-[10px] text-slate-500">Os totais somam só os pedidos com líquido calculado. O imposto é {impostoUsado}% do PDV; o custo é o custo unitário do SKU (Uploads Base) × a quantidade do pedido na base de vendas.</p>
+            ) : (
+            <div className="overflow-x-auto" data-tabela="produto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-800">
+                    <th className="py-2 pr-3">SKU</th><th className="py-2 pr-3">Produto</th><th className="py-2 pr-3 text-right">Unid.</th><th className="py-2 pr-3 text-right">Pedidos</th><th className="py-2 pr-3 text-right">PDV</th><th className="py-2 pr-3 text-right">Repasse</th>
+                    <th className="py-2 pr-3 text-right">Custo</th><th className="py-2 pr-3 text-right">Imposto</th><th className="py-2 pr-3 text-right">Líquido</th><th className="py-2 pr-3 text-right">Líq./unid.</th><th className="py-2 text-right">Margem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {produtosOrdenados.slice(0, LIMITE_TELA).map((p) => (
+                    <tr key={p.sku} data-linha-produto={p.sku} className="border-b border-slate-800/60">
+                      <td className="py-2 pr-3 font-mono text-slate-200 whitespace-nowrap">{p.sku}</td>
+                      <td className="py-2 pr-3 text-slate-300 max-w-[360px] truncate" title={p.produto}>{p.produto || "—"}{p.marca ? <span className="block text-[10px] text-slate-500">{p.marca}</span> : null}</td>
+                      <td className="py-2 pr-3 text-right text-slate-300">{p.unidades}</td>
+                      <td className="py-2 pr-3 text-right text-slate-300">{p.pedidos}</td>
+                      <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{brl(p.pdv)}</td>
+                      <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{brl(p.repasse)}</td>
+                      <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{brl(p.custo)}</td>
+                      <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{brl(p.imposto)}</td>
+                      <td data-liquido-produto className={`py-2 pr-3 text-right font-black whitespace-nowrap ${p.liquido < 0 ? "text-rose-400" : "text-emerald-400"}`}>{brl(p.liquido)}</td>
+                      <td className="py-2 pr-3 text-right text-slate-300 whitespace-nowrap">{brl(p.liquidoPorUnidade)}</td>
+                      <td className="py-2 text-right text-slate-300 whitespace-nowrap">{pct(p.margemPct)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {produtos.length === 0 && <p className="text-[11px] text-slate-500 mt-2">Nenhum produto com líquido calculado.</p>}
+              {produtos.length > LIMITE_TELA && <p className="text-[11px] text-slate-500 mt-2">Mostrando {LIMITE_TELA} de {produtos.length} produtos. O Excel baixado leva todos.</p>}
+            </div>
+            )}
+            <p className="text-[10px] text-slate-500">Os totais somam só os pedidos com líquido calculado. O imposto é {impostoUsado}% do PDV da venda cadastrada na base; o custo é o custo unitário do SKU (Uploads Base) × a quantidade da venda cadastrada. Por produto, o repasse de um pedido com vários itens é dividido na proporção do PDV de cada um.</p>
           </div>
         )}
       </div>
