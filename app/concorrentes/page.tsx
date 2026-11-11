@@ -11,7 +11,7 @@ const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "mercadolivre", rotulo: "🛒 Mercado Livre" },
   { id: "shopee", rotulo: "🧡 Shopee" },
   { id: "amazon", rotulo: "📦 Amazon" },
-  { id: "pesquisa-imagem", rotulo: "🔎 Pesquisa por imagem" },
+  { id: "pesquisa-imagem", rotulo: "🔎 Pesquisa de preços" },
   { id: "analise-mercado", rotulo: "📊 Análise de mercado" },
 ];
 const DESCRICAO: Record<Aba, string> = {

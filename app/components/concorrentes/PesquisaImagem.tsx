@@ -5,7 +5,7 @@ import { buscarTudo } from "../../../lib/buscarTudo";
 import { normalizarSkuCadastro } from "../../../lib/cadastros";
 import type { RegraTarifacao } from "../../../lib/tarifacao";
 import { favoritoHref } from "../../../lib/concorrentes/favorito";
-import { GOOGLE_LENS_URL, calcularOfertas, googleShoppingUrl, menorPrecoPorCanal, ofertaManualComoTexto, resumirOfertas, type Oferta } from "../../../lib/concorrentes/pesquisaCalculo";
+import { calcularOfertas, googleShoppingUrl, menorPrecoPorCanal, ofertaManualComoTexto, resumirOfertas, type Oferta } from "../../../lib/concorrentes/pesquisaCalculo";
 import { botao, brl, caixa, campo, chamar, dataBR, pct } from "./comum";
 
 interface Pesquisa { id: string; sku: string; meu_pdv: number | null; termo: string | null; criado_em: string; atualizado_em: string | null }
@@ -17,15 +17,7 @@ const neg = (v: number) => `−${brl(Math.abs(v))}`;
 const dinheiro = (v: number | null) => (v == null ? "—" : v < 0 ? neg(v) : brl(v));
 const rotulo = "grid gap-1 text-[11px] font-bold text-slate-400";
 
-async function paraPng(blob: Blob): Promise<Blob> {
-  if (blob.type === "image/png") return blob;
-  const bmp = await createImageBitmap(blob);
-  const c = document.createElement("canvas"); c.width = bmp.width; c.height = bmp.height;
-  c.getContext("2d")!.drawImage(bmp, 0, 0);
-  return await new Promise<Blob>((ok, falha) => c.toBlob((b) => (b ? ok(b) : falha(new Error("Não consegui converter a imagem."))), "image/png"));
-}
-
-/** Aba "Pesquisa por imagem": SKU + meu PDV + imagem -> ofertas lidas no Google (pelo favorito) -> preço do item em cada canal meu. */
+/** Aba "Pesquisa de preços": SKU + meu PDV + palavras -> ofertas lidas no Google Shopping (pelo favorito) -> preço do item em cada canal meu. */
 export default function PesquisaImagem() {
   const [pesquisas, setPesquisas] = useState<Pesquisa[]>([]);
   const [selecionada, setSelecionada] = useState<string | null>(null);
@@ -48,25 +40,6 @@ export default function PesquisaImagem() {
   const [termoMexido, setTermoMexido] = useState(false);
   const [criando, setCriando] = useState(false);
   const [custoDoSku, setCustoDoSku] = useState<{ achou: boolean; valor?: number; produto?: string } | null>(null);
-
-  // imagem: só na memória deste navegador (não vai para o servidor)
-  const [imagem, setImagem] = useState<{ url: string; blob: Blob } | null>(null);
-  const arquivoRef = useRef<HTMLInputElement>(null);
-  const definirImagem = useCallback((blob: Blob) => {
-    setImagem((atual) => { if (atual) URL.revokeObjectURL(atual.url); return { url: URL.createObjectURL(blob), blob }; });
-  }, []);
-  useEffect(() => {
-    const colar = (e: ClipboardEvent) => {
-      const alvo = e.target as HTMLElement | null;
-      if (alvo && /^(INPUT|TEXTAREA)$/.test(alvo.tagName)) return; // colando texto em um campo: não é imagem
-      const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
-      const f = item?.getAsFile();
-      if (f) { e.preventDefault(); definirImagem(f); }
-    };
-    window.addEventListener("paste", colar);
-    return () => window.removeEventListener("paste", colar);
-  }, [definirImagem]);
-  useEffect(() => () => { setImagem((a) => { if (a) URL.revokeObjectURL(a.url); return null; }); }, []);
 
   // dados para taxas e lucro
   const [regras, setRegras] = useState<RegraTarifacao[]>([]);
@@ -172,11 +145,6 @@ export default function PesquisaImagem() {
     catch (e: any) { avisar("erro", e.message); }
   };
 
-  const copiarImagem = async () => {
-    if (!imagem) return;
-    try { await navigator.clipboard.write([new ClipboardItem({ "image/png": await paraPng(imagem.blob) })]); avisar("ok", "Imagem copiada. No Google Lens, clique na caixa de busca e aperte Ctrl+V."); }
-    catch { avisar("erro", "Não consegui copiar a imagem automaticamente. No Google Lens, use “enviar arquivo” ou arraste a imagem."); }
-  };
   const copiarFavorito = async () => {
     try { await navigator.clipboard.writeText(favoritoHref()); avisar("ok", "Código do favorito copiado. Crie um favorito novo e cole no campo de endereço (URL)."); }
     catch { avisar("erro", "Não consegui copiar. Arraste o botão para a barra de favoritos."); }
@@ -201,7 +169,7 @@ export default function PesquisaImagem() {
       <section className={`${caixa} p-5 space-y-4`} data-nova-pesquisa>
         <div>
           <h2 className="text-xs font-black uppercase tracking-wider text-slate-300">🔎 Nova pesquisa</h2>
-          <p className="text-[11px] text-slate-500 mt-1">Informe o SKU, o seu PDV e a foto do produto. O Google (Shopping/Lens) mostra onde o item é vendido e por quanto; o favorito lê essa página no seu navegador e traz as ofertas para cá, já comparadas com os seus canais.</p>
+          <p className="text-[11px] text-slate-500 mt-1">Informe o SKU, o seu PDV e as palavras da busca. O Google Shopping mostra onde o item é vendido e por quanto; o favorito lê essa página no seu navegador e traz as ofertas para cá, já comparadas com os seus canais.</p>
         </div>
         <div className="grid gap-3 md:grid-cols-[1fr_160px_1.4fr]">
           <label className={rotulo}>SKU do meu produto
@@ -218,24 +186,6 @@ export default function PesquisaImagem() {
           ? <p className="text-[11px] text-slate-400" data-ps-custo>Custo do SKU na tabela de custos: <b className="text-white">{brl(custoDoSku.valor)}</b>{custoDoSku.produto ? ` (${custoDoSku.produto})` : ""}.</p>
           : <p className="text-[11px] text-amber-300" data-ps-custo>Esse SKU não está na tabela de custos: o lucro não poderá ser calculado (só preços, taxas e frete).</p>)}
 
-        <div className="grid gap-3 md:grid-cols-[220px_1fr] items-start">
-          <div
-            data-imagem-zona tabIndex={0}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { e.preventDefault(); const f = Array.from(e.dataTransfer.files).find((x) => x.type.startsWith("image/")); if (f) definirImagem(f); }}
-            onClick={() => arquivoRef.current?.click()}
-            className="rounded-xl border-2 border-dashed border-slate-700 hover:border-indigo-500 bg-slate-950/60 min-h-[140px] grid place-items-center text-center p-3 cursor-pointer">
-            {imagem
-              // eslint-disable-next-line @next/next/no-img-element
-              ? <img data-imagem-previa src={imagem.url} alt="Imagem do produto" className="max-h-40 object-contain rounded-md bg-white" />
-              : <span className="text-[11px] text-slate-500">Cole a imagem aqui (Ctrl+V), arraste um arquivo ou clique para escolher</span>}
-            <input ref={arquivoRef} data-campo="ps-arquivo" type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) definirImagem(f); e.target.value = ""; }} />
-          </div>
-          <div className="text-[11px] text-slate-500 space-y-1">
-            <p>A imagem fica só neste navegador (não é enviada nem guardada); ela serve para você colar no Google Lens. Se você recarregar a página, cole de novo.</p>
-            <p>Dica: foto limpa, só o produto, com fundo simples, acha mais lojas.</p>
-          </div>
-        </div>
         <button data-acao="ps-criar" onClick={criar} disabled={criando || !sku.trim()} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>{criando ? "Criando…" : "Criar pesquisa"}</button>
       </section>
 
@@ -256,7 +206,7 @@ export default function PesquisaImagem() {
             <>
               <section className={`${caixa} p-5 space-y-4`} data-passos>
                 <div className="flex flex-wrap items-center gap-3">
-                  <h2 className="text-xs font-black uppercase tracking-wider text-slate-300">Buscar no Google — SKU {pesquisa.sku}</h2>
+                  <h2 className="text-xs font-black uppercase tracking-wider text-slate-300">Buscar no Google Shopping — SKU {pesquisa.sku}</h2>
                   <label className="flex items-center gap-2 text-[11px] font-bold text-slate-400 ml-auto">Meu PDV (R$)
                     <input data-campo="ps-pdv-edit" key={pesquisa.id + String(pesquisa.meu_pdv)} defaultValue={pesquisa.meu_pdv != null ? String(pesquisa.meu_pdv).replace(".", ",") : ""} inputMode="decimal"
                       onBlur={(e) => { const v = e.target.value.trim(); if (v !== (pesquisa.meu_pdv != null ? String(pesquisa.meu_pdv).replace(".", ",") : "")) mudarPdv(v); }} className={`${campo} w-28`} />
@@ -265,24 +215,17 @@ export default function PesquisaImagem() {
                 </div>
                 <ol className="text-xs text-slate-400 space-y-2.5 list-decimal list-inside">
                   <li>
-                    Pela <b className="text-slate-200">imagem</b>:{" "}
-                    <button data-acao="ps-copiar-imagem" onClick={copiarImagem} disabled={!imagem} className={`${botao} !py-1 bg-slate-800 text-slate-200 hover:bg-slate-700`}>Copiar imagem</button>{" "}
-                    <a data-acao="ps-abrir-lens" href={GOOGLE_LENS_URL} target="_blank" rel="noopener noreferrer" className={`${botao} !py-1 inline-block bg-slate-800 text-slate-200 hover:bg-slate-700`}>Abrir Google Lens ↗</a>{" "}
-                    e cole a imagem (Ctrl+V). Nos resultados, abra os produtos/lojas (guia “Produtos” ou “Compras”).
-                    {!imagem && <span className="text-slate-500"> (cole a imagem acima para habilitar o botão)</span>}
-                  </li>
-                  <li>
-                    Ou pelo <b className="text-slate-200">texto</b>:{" "}
+                    Abra o Google Shopping:{" "}
                     <a data-acao="ps-abrir-shopping" aria-disabled={!termoBusca} href={termoBusca ? googleShoppingUrl(termoBusca) : undefined} target="_blank" rel="noopener noreferrer" className={`${botao} !py-1 inline-block bg-slate-800 text-slate-200 hover:bg-slate-700 ${termoBusca ? "" : "opacity-40 pointer-events-none"}`}>Abrir Google Shopping ↗</a>{" "}
                     {termoBusca ? <>com “{termoBusca}”.</> : <span className="text-slate-500">(preencha as palavras da busca ao criar a pesquisa)</span>}
                   </li>
                   <li>
-                    Na página de resultados do Google, clique no favorito{" "}
+                    Na página de resultados do Shopping, clique no favorito{" "}
                     <a ref={favoritoRef} data-favorito onClick={(e) => e.preventDefault()} draggable className="inline-block align-middle px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-wider cursor-grab">📋 Capturar anúncios</a>{" "}
                     <button data-acao="copiar-favorito" onClick={copiarFavorito} className="text-[11px] underline text-slate-300 hover:text-white cursor-pointer">não consegui arrastar</button>
                     <span className="text-slate-500"> (é o mesmo favorito das outras abas; ele rola a página, lê preço, loja e link de cada resultado e copia)</span>
                   </li>
-                  <li>Cole o texto aqui e importe. Pode repetir com outra busca ou outra imagem: as ofertas se somam e o preço das já lidas é atualizado.</li>
+                  <li>Cole o texto aqui e importe. Pode repetir com outra busca (outras palavras): as ofertas se somam e o preço das já lidas é atualizado.</li>
                 </ol>
                 <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
                   <textarea data-campo="ps-texto" value={textoImport} onChange={(e) => setTextoImport(e.target.value)} rows={3} placeholder='{"v":1,"canal":"google","tipo":"pesquisa",…}' className={`${campo} w-full font-mono text-xs`} />

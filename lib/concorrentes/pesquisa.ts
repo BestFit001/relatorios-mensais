@@ -1,4 +1,4 @@
-// Pesquisa por imagem / Google: o favorito lê a página de resultados do Google (Shopping ou Lens) NO NAVEGADOR e cola aqui.
+// Pesquisa de preços / Google Shopping: o favorito lê a página de resultados do Google (Shopping) NO NAVEGADOR e cola aqui.
 // Cada resultado vira uma "oferta" (loja, preço, link); as lojas que batem com os meus canais são ligadas ao canal da Análise de mercado.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parsePreco } from "./calculos";
@@ -64,7 +64,7 @@ export function linkDaOferta(bruto: unknown): { url: string | null; host: string
 export function sanitizarPesquisa(bruto: unknown): PesquisaLimpa {
   const p = bruto as any;
   if (!p || typeof p !== "object" || p.v !== 1 || p.tipo !== "pesquisa" || !Array.isArray(p.resultados)) {
-    throw new ErroValidacao("Texto inválido. Abra a pesquisa no Google (Shopping ou Lens), clique no favorito e cole o texto que ele copiou.");
+    throw new ErroValidacao("Texto inválido. Abra a pesquisa no Google (Shopping), clique no favorito e cole o texto que ele copiou.");
   }
   if (!p.resultados.length) throw new ErroValidacao("O texto não tem nenhum resultado.");
   if (p.resultados.length > MAX_RESULTADOS) throw new ErroValidacao(`Resultados demais de uma vez (máximo ${MAX_RESULTADOS}).`);

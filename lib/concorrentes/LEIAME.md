@@ -1,6 +1,6 @@
 # Monitor de concorrentes
 
-Página **Análise da concorrência** (`/concorrentes`). Abas: **Mercado Livre | Shopee | Amazon | Pesquisa por imagem | Análise de mercado**.
+Página **Análise da concorrência** (`/concorrentes`). Abas: **Mercado Livre | Shopee | Amazon | Pesquisa de preços | Análise de mercado**.
 As três primeiras acompanham, todo dia, preço e vendas dos anúncios de categorias/buscas; a quarta procura o item no Google; a quinta é a antiga página Análise de mercado (`/analise-mercado` redireciona para `/concorrentes?aba=analise-mercado`).
 
 ## Arquitetura
@@ -23,7 +23,7 @@ lib/concorrentes/
   canais.ts          marketplaces (leituraServidor: só o ML; canalAnalise = nome do canal na Análise de mercado)
   marketplaces.ts    registro de conectores; Shopee e Amazon usam fonteNavegador.ts (o servidor não lê esses sites)
   urls.ts            links por canal (amazon/url.ts: ASIN; shopee/url.ts: loja.item) — SSRF: só https nos domínios do canal
-  pesquisa.ts        Pesquisa por imagem: valida o texto lido no Google, loja -> canal meu, grava ofertas
+  pesquisa.ts        Pesquisa de preços: valida o texto lido no Google, loja -> canal meu, grava ofertas
   pesquisaCalculo.ts preço por canal, diferença para o meu PDV, lucro líquido com o meu custo (puro, testável)
   mercadolivre/      url (validação/SSRF), parsers (HTML), fontes (API + HTML + proxy), index (conector)
   captura.ts         cadastrar categoria, avulso, captura diária (vendas_no_dia)
@@ -85,9 +85,12 @@ O Mercado Livre não divulga a venda diária de terceiros: só o total acumulado
 - **Amazon**: só informa “N compras no mês passado” (vendas dos últimos 30 dias, em faixas, só em parte dos produtos) → coluna `anuncios.ultimo_vendas_mes`; **não existe “vendas do dia”**. Mais vendidos: posição #N (`/gp/bestsellers/…`).
 - Os seletores do favorito para Shopee, Amazon e Google foram escritos e testados em páginas simuladas; os sites mudam o HTML sem aviso. Se o favorito disser que não achou nada, o ajuste fica em `favorito.ts`.
 
-## Pesquisa por imagem (Google)
-1. Cria-se a pesquisa (SKU + meu PDV + palavras). A **imagem fica só no navegador** (Ctrl+V/arrastar); “Copiar imagem” põe um PNG na área de transferência para colar no Google Lens (o Lens não aceita imagem por link/API).
-2. No Google (Lens ou Shopping) o favorito rola a página e lê cada resultado com preço: título, loja, preço, link (`/url?q=` é resolvido) e imagem (só se for https).
+## Pesquisa de preços (Google)
+1. Cria-se a pesquisa (SKU + meu PDV + palavras). Não há busca por imagem (sem Google Lens): a busca é por texto, no **Google Shopping**.
+2. No Google Shopping (botão “Abrir Google Shopping”) o favorito rola a página e lê cada resultado com preço: título, loja, preço, link (`/url?q=` é resolvido) e imagem (só se for https).
 3. O servidor valida (`sanitizarPesquisa`), liga a loja ao canal meu (`canalDaLoja`: Mercado Livre, Amazon, Shopee, Magalu, Netshoes, Shein, TikTok Shop, Centauro; o resto fica “fora dos meus canais”) e grava em `pesquisa_resultados` (mesma loja + mesmo título = mesma linha; ler de novo atualiza o preço).
 4. A tela mostra o menor preço por canal, a diferença para o meu PDV e o lucro líquido vendendo àquele preço, com o custo do SKU (`tabela_custos_skus`) e as taxas de `config_regras_tarifacao` (ML: cadastro dos anúncios do SKU, modalidade Clássico).
 - O Google mostra produtos parecidos, não garantidamente idênticos, e personaliza por localização/histórico. Há “oferta à mão” para quando o favorito não lê.
+
+## Vídeos "Com problemas" → Correções (fora do monitor, mas relacionado ao Início)
+Veja `lib/videoCorrecoes.ts` e a migration `20261111180000_video_correcoes.sql`: tabelas `video_correcoes` (um registro por envio) e `video_correcoes_canais` (um por canal que não estava marcado). O produto some de Vídeos enquanto a correção está `aberta`.

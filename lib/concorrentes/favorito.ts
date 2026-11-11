@@ -1,5 +1,5 @@
 // Favorito (bookmarklet) "Capturar anúncios": roda DENTRO do navegador do usuário, na página do Mercado Livre, Shopee, Amazon
-// ou nos resultados do Google (Shopping/Lens), lê o que está na tela e mostra um texto (JSON) para colar no painel.
+// ou nos resultados do Google (Shopping), lê o que está na tela e mostra um texto (JSON) para colar no painel.
 // Não envia nada sozinho e não usa senha: o navegador já está logado e não é bloqueado como o servidor.
 // Deve ser JS puro e autocontido (sem comentários "//": o código vai numa linha só dentro do favorito).
 export const FAVORITO_JS = String.raw`(async function () {
@@ -332,11 +332,11 @@ export const FAVORITO_JS = String.raw`(async function () {
       var img = card.querySelector("img"); var src = img ? (img.getAttribute("src") || "") : "";
       if (titulo && preco != null) resultados.push({ titulo: titulo, loja: loja || host || null, host: host || null, preco: preco, url: link, imagem: /^https:/.test(src) ? src : null });
     });
-    if (!resultados.length) throw new Error("Não encontrei produtos com preço nesta página. No Google, abra a aba Shopping (ou os resultados do Lens com produtos), espere carregar e clique no favorito de novo.");
+    if (!resultados.length) throw new Error("Não encontrei produtos com preço nesta página. No Google, abra a aba Shopping, espere carregar e clique no favorito de novo.");
     var q = (new URL(location.href)).searchParams.get("q");
     return { v: 1, canal: "google", tipo: "pesquisa", pagina_url: location.href, termo: limpa(q) || null, coletado_em: new Date().toISOString(), resultados: resultados };
   }
-  var ABAS = { mercadolivre: "Mercado Livre", shopee: "Shopee", amazon: "Amazon", google: "Pesquisa por imagem" };
+  var ABAS = { mercadolivre: "Mercado Livre", shopee: "Shopee", amazon: "Amazon", google: "Pesquisa de preços" };
   async function mostrar(payload) {
     var itens = payload.anuncios || payload.resultados || [];
     var json = JSON.stringify(payload);

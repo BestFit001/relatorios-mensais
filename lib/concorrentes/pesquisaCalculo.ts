@@ -1,4 +1,4 @@
-// Contas da aba "Pesquisa por imagem" (sem rede nem banco, para poder testar): o preço do item em cada canal MEU,
+// Contas da aba "Pesquisa de preços" (sem rede nem banco, para poder testar): o preço do item em cada canal MEU,
 // a diferença para o meu PDV e o lucro líquido que eu teria vendendo a esse preço naquele canal, com o meu custo.
 import type { AnuncioML } from "../analiseMercado";
 import type { RegraTarifacao } from "../tarifacao";
@@ -74,6 +74,5 @@ export function ofertaManualComoTexto(e: { titulo: string; loja: string; preco: 
   return JSON.stringify({ v: 1, canal: "google", tipo: "pesquisa", resultados: [{ titulo: e.titulo, loja: e.loja, preco: e.preco, url: e.url || null }] });
 }
 
-/** Endereços do Google para a pesquisa (o Lens recebe a imagem por Ctrl+V; o Shopping, pelo texto). */
-export const GOOGLE_LENS_URL = "https://lens.google.com/";
+/** Endereço do Google Shopping para a pesquisa (pelo texto). */
 export const googleShoppingUrl = (termo: string) => `https://www.google.com/search?tbm=shop&q=${encodeURIComponent(termo.trim())}`;

@@ -9,6 +9,7 @@ import {
   textoAntecedencia, hhmm, diferencaDias, DIAS_SEMANA, inicioCiclo, ocorreNoDia, addDias, diaDaSemana, type Conclusao,
 } from "../../lib/tarefas";
 import { registrarPush, temAssinaturaAtiva, suportaPush } from "../../lib/push";
+import { correcoesVisiveis, correcaoConcluida, podeMarcarCanal, type Correcao, type CorrecaoCanal } from "../../lib/videoCorrecoes";
 import { foraDePromocao, type PromoValidade, type MarcaPromovido } from "../../lib/foraPromocao";
 
 // ---------------------------------------------------------------------------------------------
@@ -40,7 +41,7 @@ async function buscarTudo(tabela: string): Promise<any[]> {
   return todas;
 }
 
-type Notificacao = { id: string; tipo: "full" | "devolucao" | "tarefa" | "promocao"; nivel: "critico" | "atencao" | "info"; titulo: string; detalhe: string; canal?: string };
+type Notificacao = { id: string; tipo: "full" | "devolucao" | "tarefa" | "promocao" | "correcao"; nivel: "critico" | "atencao" | "info"; titulo: string; detalhe: string; canal?: string };
 
 export default function InicioPage() {
   const router = useRouter();
@@ -69,7 +70,11 @@ export default function InicioPage() {
   const [aba, setAba] = useState<"andamento" | "concluidas" | "todos">("andamento");
   const [pagina, setPagina] = useState(1);
   const [filtroResp, setFiltroResp] = useState("TODOS");
-  const [filtroNotif, setFiltroNotif] = useState<"todas" | "full" | "devolucao" | "tarefa" | "promocao">("todas");
+  const [filtroNotif, setFiltroNotif] = useState<"todas" | "full" | "devolucao" | "tarefa" | "promocao" | "correcao">("todas");
+  // Correções de vídeo: produtos marcados "Com problemas" na aba Vídeos, por canal (cada analista marca o(s) canal(is) dele)
+  const [correcoes, setCorrecoes] = useState<Correcao[]>([]);
+  const [correcoesCanais, setCorrecoesCanais] = useState<CorrecaoCanal[]>([]);
+  const [erroCorrecao, setErroCorrecao] = useState("");
   // Itens fora de promoção (Mercado Livre): validade das promoções registrada ao salvar as campanhas + marcações "já promovi"
   const [validadesMl, setValidadesMl] = useState<PromoValidade[]>([]);
   const [marcasMl, setMarcasMl] = useState<(MarcaPromovido & { id?: number })[]>([]);
@@ -126,6 +131,34 @@ export default function InicioPage() {
     setMarcasMl((m || []) as any[]);
   };
   useEffect(() => { carregarPromoMl(); }, []);
+
+  const carregarCorrecoes = async () => {
+    const [c, k] = await Promise.all([
+      supabase.from("video_correcoes").select("*").eq("status", "aberta").order("id", { ascending: false }),
+      supabase.from("video_correcoes_canais").select("*").order("id"),
+    ]);
+    if (c.error || k.error) { setErroCorrecao((c.error || k.error)!.message); return; }
+    setErroCorrecao("");
+    setCorrecoes((c.data || []) as Correcao[]);
+    setCorrecoesCanais((k.data || []) as CorrecaoCanal[]);
+  };
+  useEffect(() => { carregarCorrecoes(); }, []);
+
+  // Marca/desmarca "feito" em UM canal. Quando todos os canais da correção estão feitos, ela fecha e o produto volta para a aba Vídeos.
+  const alternarCorrecao = async (linha: CorrecaoCanal) => {
+    if (!usuario || !podeMarcarCanal(usuario, mapeamentos, linha.canal)) return;
+    const feito = !linha.feito;
+    const campos = { feito, feito_por: feito ? usuario.email : null, feito_em: feito ? new Date().toISOString() : null };
+    const { error } = await supabase.from("video_correcoes_canais").update(campos).eq("id", linha.id);
+    if (error) return alert("Erro ao atualizar a correção: " + error.message);
+    const novos = correcoesCanais.map((x) => (x.id === linha.id ? { ...x, ...campos } : x));
+    setCorrecoesCanais(novos);
+    if (feito && correcaoConcluida(novos.filter((x) => x.correcao_id === linha.correcao_id))) {
+      const { error: e2 } = await supabase.from("video_correcoes").update({ status: "concluida", concluido_em: new Date().toISOString() }).eq("id", linha.correcao_id);
+      if (e2) return alert("Erro ao concluir a correção: " + e2.message);
+      setCorrecoes((prev) => prev.filter((c) => c.id !== linha.correcao_id));
+    }
+  };
 
   const carregarTudo = async () => {
     setCarregando(true);
@@ -458,6 +491,13 @@ export default function InicioPage() {
       lista.push({ id: "promo-fora", tipo: "promocao", nivel: "atencao", titulo: `${foraPromo.length} anúncio(s) do Mercado Livre fora de promoção`, detalhe: "A promoção venceu e eles não estão em outra campanha. Veja a lista na aba “Itens fora de promoção”." });
     }
 
+    // Vídeos com problema: um aviso por produto, com os canais que ainda faltam corrigir
+    correcoesVisiveis(correcoes, correcoesCanais, mapeamentos, { admin: isAdmin, email: emailAlvo }).forEach(({ correcao, canais }) => {
+      const faltam = canais.filter((c) => !c.feito).map((c) => c.canal);
+      if (faltam.length === 0) return;
+      lista.push({ id: `correcao-${correcao.id}`, tipo: "correcao", nivel: "atencao", titulo: `Pai ${correcao.sku_pai}${correcao.produto ? " · " + correcao.produto : ""} — corrigir anúncio`, detalhe: `Corrigir em: ${faltam.join(", ")}. Depois de corrigir, marque como feito na aba “Correções”.` });
+    });
+
     // Estoque no Full (armazenagem): do mais urgente para o menos
     saldoFull
       .filter((s: any) => (s.nivel === "ALERTA" || s.nivel === "COBRANDO") && nomesVisiveis.has(norm(s.canal)))
@@ -504,14 +544,15 @@ export default function InicioPage() {
     });
     return lista;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saldoFull, lancFull, lancPropria, nomesVisiveis, mesBarra, minhasTarefas, conclusoes, hoje, hojeInfo.hora, isAdmin, emailRef, foraPromo]);
+  }, [saldoFull, lancFull, lancPropria, nomesVisiveis, mesBarra, minhasTarefas, conclusoes, hoje, hojeInfo.hora, isAdmin, emailRef, foraPromo, correcoes, correcoesCanais, mapeamentos, emailAlvo]);
 
   const notifFiltradas = notificacoes.filter((n) => filtroNotif === "todas" || n.tipo === filtroNotif);
   const contar = (tipo: string) => notificacoes.filter((n) => n.tipo === tipo).length;
+  const listaCorrecoes = useMemo(() => correcoesVisiveis(correcoes, correcoesCanais, mapeamentos, { admin: isAdmin, email: emailAlvo }), [correcoes, correcoesCanais, mapeamentos, isAdmin, emailAlvo]);
 
   // ---------------------------------------------------------------------------------------------
   const corNivel = (nivel: string) => (nivel === "critico" ? "border-rose-800/60 bg-rose-950/30 text-rose-200" : nivel === "atencao" ? "border-amber-800/60 bg-amber-950/20 text-amber-200" : "border-slate-700 bg-slate-900 text-slate-200");
-  const iconeTipo = (tipo: string) => (tipo === "full" ? "📦" : tipo === "devolucao" ? "↩️" : tipo === "promocao" ? "🏷️" : "📝");
+  const iconeTipo = (tipo: string) => (tipo === "full" ? "📦" : tipo === "devolucao" ? "↩️" : tipo === "promocao" ? "🏷️" : tipo === "correcao" ? "🛠️" : "📝");
   const corPrioridade = (p: string) => (p === "Alta" ? "bg-rose-950/60 text-rose-300 border-rose-800/50" : p === "Baixa" ? "bg-slate-800 text-slate-300 border-slate-700" : "bg-amber-950/50 text-amber-300 border-amber-800/50");
 
   // ---- Calendário do mês: resumo em cada dia; clicando no dia abre a lista completa
@@ -915,11 +956,43 @@ export default function InicioPage() {
           <div className="xl:col-span-2 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
             <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider mb-3">🔔 Notificações</h2>
             <div className="flex flex-wrap gap-2 mb-4">
-              {([["todas", "Todas", notificacoes.length], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["tarefa", "📝 Tarefas", contar("tarefa")], ["promocao", "🏷️ Itens fora de promoção", foraPromo.length]] as const).map(([k, nome, n]) => (
+              {([["todas", "Todas", notificacoes.length], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["tarefa", "📝 Tarefas", contar("tarefa")], ["promocao", "🏷️ Itens fora de promoção", foraPromo.length], ["correcao", "🛠️ Correções", listaCorrecoes.length]] as const).map(([k, nome, n]) => (
                 <button key={k} data-notif-aba={k} onClick={() => setFiltroNotif(k)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer ${filtroNotif === k ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>{nome} ({n})</button>
               ))}
             </div>
-            {filtroNotif === "promocao" ? (
+            {filtroNotif === "correcao" ? (
+              <div data-painel-correcoes className="space-y-3">
+                {erroCorrecao && <p className="text-[11px] text-rose-400 font-bold">⚠️ Não consegui ler as correções: {erroCorrecao}</p>}
+                {listaCorrecoes.length === 0 && !erroCorrecao && <p className="text-xs text-emerald-400 font-bold">✅ Nenhuma correção pendente.</p>}
+                <div className="space-y-2 max-h-[30rem] overflow-y-auto pr-1">
+                  {listaCorrecoes.map(({ correcao, canais }) => {
+                    const todos = correcoesCanais.filter((x) => x.correcao_id === correcao.id);
+                    const feitos = todos.filter((x) => x.feito).length;
+                    return (
+                      <div key={correcao.id} data-correcao={correcao.sku_pai} className="border border-amber-800/50 bg-amber-950/20 rounded-xl p-3 space-y-2">
+                        <div>
+                          <div className="text-xs font-bold text-amber-200"><span className="font-mono text-indigo-300">Pai: {correcao.sku_pai}</span>{correcao.produto ? <> — {correcao.produto}</> : null}</div>
+                          <div className="text-[11px] text-slate-400">Enviado da aba Vídeos em {dataBR(correcao.criado_em)}{correcao.criado_por ? ` por ${nomeDoEmail(correcao.criado_por).split(" ")[0]}` : ""} · {feitos}/{todos.length} canal(is) feito(s)</div>
+                        </div>
+                        <div className="space-y-1">
+                          {canais.map((c) => {
+                            const pode = podeMarcarCanal(usuario, mapeamentos, c.canal);
+                            return (
+                              <label key={c.id} className={`flex items-center gap-3 text-xs ${pode ? "cursor-pointer" : "opacity-60"}`}>
+                                <input type="checkbox" data-correcao-canal={c.canal} checked={c.feito} disabled={!pode} onChange={() => alternarCorrecao(c)} className="accent-emerald-500 w-4 h-4" title={pode ? "Marque quando corrigir este canal" : "Só o responsável por este canal marca"} />
+                                <span className={c.feito ? "line-through text-slate-500" : "text-slate-200 font-bold"}>{c.canal}</span>
+                                {c.feito && <span className="text-[10px] text-emerald-400">✔ {c.feito_por ? nomeDoEmail(c.feito_por).split(" ")[0] : ""} {dataBR(c.feito_em)}</span>}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-slate-500">Quando todos os canais do produto forem marcados como feitos, ele volta para a aba Vídeos para a responsável marcar. O analista vê e marca só os canais dele; o administrador, todos.</p>
+              </div>
+            ) : filtroNotif === "promocao" ? (
               <div data-painel-fora-promocao className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <input value={buscaPromo} onChange={(e) => { setBuscaPromo(e.target.value); setQtdPromoVisivel(100); }} placeholder="Buscar MLB, SKU ou promoção…" className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white outline-none w-64" />

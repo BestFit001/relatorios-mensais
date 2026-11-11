@@ -6,6 +6,7 @@ import { supabase } from "../../lib/supabase";
 import { canaisSemRepeticao } from "../../lib/vendasCanaisLogica";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
+import { STATUS_SEM_ESTOQUE, canaisNaoMarcados, paisEmCorrecao, situacaoDoItem, type Correcao, type SituacaoVideo } from "../../lib/videoCorrecoes";
 
 const CHAVE_CONFIG_CLIPES = "bestfit_canais_clipes_config";   // mesma chave de antes: a escolha de canais já feita continua valendo
 // "Pasta" = o vídeo já foi salvo na pasta de vídeos. Fica junto dos clipes (mesma coluna clipes_enviados), com uma chave que não é de canal.
@@ -23,7 +24,8 @@ export default function VideosPage() {
   const [canaisComClipesConfig, setCanaisComClipesConfig] = useState<{ [canal: string]: boolean }>({});
 
   const [pesquisa, setPesquisa] = useState("");
-  const [filtroStatusVideo, setFiltroStatusVideo] = useState<"pendentes" | "finalizados" | "todos">("pendentes");
+  const [filtroStatusVideo, setFiltroStatusVideo] = useState<"pendentes" | "finalizados" | "sem_estoque" | "todos">("pendentes");
+  const [correcoes, setCorrecoes] = useState<Correcao[]>([]);
   const [paginaAtualVideos, setPaginaAtualVideos] = useState(1);
   const [itensPorPaginaVideos, setItensPorPaginaVideos] = useState(10);
 
@@ -53,6 +55,7 @@ export default function VideosPage() {
 
     await carregarRealizadosDoBanco();
     await carregarVideosManuaisDoBanco();
+    await carregarCorrecoes();
     setLoading(false);
   };
 
@@ -77,6 +80,39 @@ export default function VideosPage() {
   const carregarVideosManuaisDoBanco = async () => {
     const { data } = await supabase.from("produtos_videos_manuais").select("*").order("id", { ascending: false });
     if (data) setProdutosVideosManual(data);
+  };
+
+  const carregarCorrecoes = async () => {
+    const { data } = await supabase.from("video_correcoes").select("*").eq("status", "aberta");
+    setCorrecoes((data as Correcao[]) || []);
+  };
+
+  // Lista de seleção da linha: "Sem estoque" só marca; "Com problemas" tira o produto daqui e manda uma correção aos analistas dos canais sem marca
+  const mudarSituacao = async (item: any, nova: SituacaoVideo | "com_problemas") => {
+    const itens: any[] = item.tipo === "realizado" ? item.itensGrupo : [item.itemManual];
+    if (nova === "com_problemas") {
+      const canais = canaisNaoMarcados(itens, canaisAtivosClipes);
+      if (canaisAtivosClipes.length === 0) return alert("Nenhum canal com clipe marcado. Escolha os canais em Configurações.");
+      if (canais.length === 0) return alert("Todos os canais já estão marcados neste produto: não há o que corrigir.");
+      if (!confirm(`Enviar o Pai ${item.sku} para correção?\n\nEle some da aba Vídeos e vai para os analistas de: ${canais.join(", ")}.\nVolta para cá quando todos marcarem como feito.`)) return;
+      const usuario = (() => { try { return JSON.parse(localStorage.getItem("usuario_logado") || "{}"); } catch { return {}; } })();
+      const { data: nova1, error } = await supabase.from("video_correcoes").insert({ sku_pai: String(item.sku), produto: item.produto, origem: item.tipo, status: "aberta", criado_por: String(usuario.email || "") }).select("*").single();
+      if (error || !nova1) return alert("Erro ao enviar para correção: " + (error?.message || "sem resposta") + "\n(Se a tabela ainda não existe, rode a migration 20261111180000_video_correcoes.sql no Supabase.)");
+      const { error: e2 } = await supabase.from("video_correcoes_canais").insert(canais.map((canal) => ({ correcao_id: nova1.id, canal })));
+      if (e2) { await supabase.from("video_correcoes").delete().eq("id", nova1.id); return alert("Erro ao enviar para correção: " + e2.message); }
+      await carregarCorrecoes();
+      return;
+    }
+    const marcar = nova === "sem_estoque";
+    if (item.tipo === "realizado") {
+      for (const alvo of itens) {
+        const clipes = { ...(alvo.clipes_enviados || {}), [STATUS_SEM_ESTOQUE]: marcar };
+        await supabase.from("produtos_novos_cadastrados").update({ clipes_enviados: clipes }).eq("sku", alvo.sku);
+      }
+      await carregarRealizadosDoBanco();
+    } else {
+      await toggleClipeVideoManual(item.itemManual.sku, STATUS_SEM_ESTOQUE, marcar);
+    }
   };
 
   const buscarProdutoBaseCusto = async (e: React.FormEvent) => {
@@ -174,6 +210,8 @@ export default function VideosPage() {
 
   const canaisAtivosClipes = canaisLista.filter((c) => canaisComClipesConfig[c]);
 
+  const emCorrecao = paisEmCorrecao(correcoes);
+
   const itensUnificadosVideos = [
     ...chavesGrupos.map((paiKey) => {
       const itens = gruposRealizados[paiKey];
@@ -186,11 +224,15 @@ export default function VideosPage() {
       const finalizado = canaisAtivosClipes.length > 0 && canaisAtivosClipes.every((canal) => Boolean((item.clipes_enviados || {})[canal]));
       return { tipo: "manual", chave: item.sku, sku: paiDe(item), produto: titulo, itemManual: item, finalizado } as any;
     }),
-  ].filter((item) => {
+  ].map((item: any) => ({ ...item, situacao: situacaoDoItem(item.tipo === "realizado" ? item.itensGrupo : [item.itemManual]) as SituacaoVideo }))
+  .filter((item: any) => !emCorrecao.has(String(item.sku)))
+  .filter((item: any) => {
     if (filtroStatusVideo === "pendentes") return !item.finalizado;
     if (filtroStatusVideo === "finalizados") return item.finalizado;
+    if (filtroStatusVideo === "sem_estoque") return item.situacao === "sem_estoque";
     return true;
   });
+  const qtdEmCorrecao = emCorrecao.size;
 
   const totalPaginasVideos = Math.ceil(itensUnificadosVideos.length / itensPorPaginaVideos) || 1;
   const paginaSegura = Math.min(paginaAtualVideos, totalPaginasVideos);
@@ -224,6 +266,15 @@ export default function VideosPage() {
   const caixasDeVideo = [...canaisAtivosClipes, PASTA];
   const videosFeitos = unidadesPeriodo.filter((u) => u.itens.some((it) => caixasDeVideo.some((c) => Boolean((it.clipes_enviados || {})[c])))).length;
   const totalVideosPostados = unidadesPeriodo.reduce((soma, u) => soma + canaisAtivosClipes.filter((c) => marcado(u.itens, c)).length, 0);
+
+  const celulaSituacao = (item: any) => (
+    <select data-situacao={item.sku} value={item.situacao || ""} onChange={(e) => mudarSituacao(item, e.target.value as any)}
+      className={`bg-slate-950 border rounded-lg px-2 py-1 text-[11px] font-bold outline-none cursor-pointer ${item.situacao === "sem_estoque" ? "border-amber-600 text-amber-300" : "border-slate-700 text-slate-300"}`}>
+      <option value="">—</option>
+      <option value="sem_estoque">Sem estoque</option>
+      <option value="com_problemas">Com problemas</option>
+    </select>
+  );
 
   const abaCls = (ativa: boolean) => `px-4 py-2 rounded-lg font-bold text-xs uppercase cursor-pointer transition-all ${ativa ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"}`;
 
@@ -264,6 +315,7 @@ export default function VideosPage() {
                   className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer font-bold">
                   <option value="pendentes">Vídeos pendentes</option>
                   <option value="finalizados">Vídeos finalizados</option>
+                  <option value="sem_estoque">Sem estoque</option>
                   <option value="todos">Todos os vídeos</option>
                 </select>
               </div>
@@ -282,6 +334,12 @@ export default function VideosPage() {
               </div>
             </div>
 
+            {qtdEmCorrecao > 0 && (
+              <p className="text-xs text-amber-300 font-bold" data-em-correcao>
+                🛠️ {qtdEmCorrecao} produto(s) em correção com os analistas (somem desta lista e voltam quando todos os canais forem marcados como feitos, na tela Início &gt; Notificações &gt; Correções).
+              </p>
+            )}
+
             {canaisAtivosClipes.length === 0 && (
               <p className="text-xs text-amber-300 font-bold" data-sem-canais>
                 Nenhum canal com clipe marcado. <button type="button" onClick={() => setSubAba("config")} className="underline cursor-pointer">Escolha em Configurações</button>.
@@ -295,6 +353,7 @@ export default function VideosPage() {
                     <tr>
                       <th className="p-3">SKU Pai / Título do Produto</th>
                       <th className="p-3 text-center">Pasta</th>
+                      <th className="p-3 text-center">Situação</th>
                       {canaisAtivosClipes.map((canal, cIdx) => <th key={cIdx} className="p-3 text-center">{canal}</th>)}
                       <th className="p-3 text-center">Ações</th>
                     </tr>
@@ -322,6 +381,7 @@ export default function VideosPage() {
                                 className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
                               />
                             </td>
+                            <td className="p-3 text-center">{celulaSituacao(item)}</td>
                             {canaisAtivosClipes.map((canal, cIdx) => {
                               const todosMarcadosGrupo = item.itensGrupo.every((it: any) => Boolean((it.clipes_enviados || {})[canal]));
                               return (
@@ -357,6 +417,7 @@ export default function VideosPage() {
                               onChange={(e) => toggleClipeVideoManual(itemManual.sku, PASTA, e.target.checked)}
                               className="w-4 h-4 accent-emerald-600 rounded cursor-pointer" />
                           </td>
+                          <td className="p-3 text-center">{celulaSituacao(item)}</td>
                           {canaisAtivosClipes.map((canal, cIdx) => (
                             <td key={cIdx} className="p-3 text-center">
                               <input type="checkbox" checked={Boolean((itemManual.clipes_enviados || {})[canal])} data-clipe={canal}
@@ -371,7 +432,7 @@ export default function VideosPage() {
                       );
                     })}
                     {itensAtuaisVideos.length === 0 && (
-                      <tr><td colSpan={canaisAtivosClipes.length + 3} className="p-8 text-center text-slate-500">Nenhum vídeo encontrado para o filtro selecionado.</td></tr>
+                      <tr><td colSpan={canaisAtivosClipes.length + 4} className="p-8 text-center text-slate-500">Nenhum vídeo encontrado para o filtro selecionado.</td></tr>
                     )}
                   </tbody>
                 </table>
