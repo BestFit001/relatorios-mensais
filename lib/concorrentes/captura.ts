@@ -2,7 +2,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { obterConector } from "./marketplaces";
 import { calcularVendasNoDia, hojeSP, comLimite, totalBase } from "./calculos";
-import { ErroValidacao, SEM_TEMPO, type AnuncioRaspado } from "./tipos";
+import { ErroValidacao, SEM_TEMPO, type AnuncioRaspado, type Captura } from "./tipos";
+import { sanitizarPayload } from "./importacao";
+import { nomeDaCategoria } from "./mercadolivre/url";
 
 export const PAGINAS_POR_CATEGORIA = 2;
 const MAX_ANUNCIOS = 100;
@@ -39,6 +41,7 @@ async function gravarAnuncios(db: SupabaseClient, categoria_id: string, lista: A
 }
 
 export async function cadastrarCategoria(db: SupabaseClient, entrada: { canal: string; url: string; nome?: string }) {
+  if (modoManual()) throw new ErroValidacao(MSG_MANUAL);
   const conector = obterConector(entrada.canal);
   const url = conector.validarUrlCategoria(entrada.url);
   const hoje = hojeSP();
@@ -72,6 +75,7 @@ export async function adicionarAnuncioAvulso(db: SupabaseClient, entrada: { cate
     falha("reativar anúncio", e3);
     return { reativado: true, mlb_id };
   }
+  if (modoManual()) throw new ErroValidacao(MSG_MANUAL);
   const a = await conector.buscarAnuncio(entrada.url);
   await gravarAnuncios(db, cat.id, [a], hojeSP(), true);
   return { reativado: false, mlb_id: a.mlb_id, titulo: a.titulo };
@@ -80,6 +84,33 @@ export async function adicionarAnuncioAvulso(db: SupabaseClient, entrada: { cate
 export async function definirAtivo(db: SupabaseClient, anuncio_id: string, ativo: boolean) {
   const { error } = await db.from("anuncios").update({ ativo }).eq("id", anuncio_id);
   falha("atualizar anúncio", error);
+}
+
+/** ESTRATEGIA=manual: o servidor não busca nada no marketplace; os dados entram pelo "Importar do navegador". */
+export const modoManual = () => (process.env.ML_ESTRATEGIA || "").toLowerCase() === "manual";
+const MSG_MANUAL = 'O servidor está em modo manual (ML_ESTRATEGIA=manual): use "Importar do navegador".';
+
+/** Grava a captura de hoje: histórico (1 linha por anúncio/dia) + últimos valores no anúncio, com vendas_no_dia = hoje − anterior. */
+async function registrarCapturas(db: SupabaseClient, hoje: string, lista: { a: any; cap: Captura; extra?: Record<string, unknown> }[]) {
+  if (!lista.length) return;
+  const historico: any[] = [];
+  const atualizacoes: { id: string; campos: Record<string, unknown> }[] = [];
+  for (const { a, cap, extra } of lista) {
+    const vendasDia = calcularVendasNoDia(cap.total_vendas, totalBase(a, hoje));
+    historico.push({ anuncio_id: a.id, data_captura: hoje, preco: cap.preco, total_vendas_acumulado: cap.total_vendas, vendas_no_dia: vendasDia, vendas_aproximado: cap.vendas_aproximado, capturado_em: new Date().toISOString() });
+    atualizacoes.push({ id: a.id, campos: {
+      ...(extra || {}),
+      ...(cap.preco != null ? { ultimo_preco: cap.preco } : {}),
+      ...(cap.total_vendas != null ? { ultimo_total_vendas: cap.total_vendas } : {}), // sem número novo, mantém o último como base
+      ultimas_vendas_dia: vendasDia,
+      ultima_captura: hoje,
+    } });
+  }
+  for (const lote of em(historico, 500)) {
+    const { error } = await db.from("historico_diario").upsert(lote, { onConflict: "anuncio_id,data_captura" });
+    falha("gravar histórico diário", error);
+  }
+  await comLimite(atualizacoes, 8, async (u) => { const { error: e } = await db.from("anuncios").update(u.campos).eq("id", u.id); falha("atualizar anúncio", e); });
 }
 
 export interface ResumoCaptura {
@@ -93,6 +124,8 @@ export interface ResumoCaptura {
   completo: boolean;
   erros: { mlb_id: string; motivo: string }[];
   ms: number;
+  /** true = servidor em modo manual: nada foi buscado */
+  manual?: boolean;
 }
 
 /**
@@ -104,6 +137,7 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
   const inicio = Date.now();
   const orcamento = opc.orcamentoMs ?? 50_000;
   const hoje = hojeSP();
+  if (modoManual()) return { data: hoje, ativos: 0, jaCapturados: 0, processados: 0, ok: 0, falhas: 0, pendentes: 0, completo: true, erros: [], ms: 0, manual: true };
 
   const todos: any[] = [];
   for (let de = 0; ; de += 1000) {
@@ -139,8 +173,7 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
         continue;
       }
       const r = await conector.capturarLote(itens.map((a) => ({ mlb_id: a.mlb_id, url_anuncio: a.url_anuncio })), inicio + orcamento);
-      const historico: any[] = [];
-      const atualizacoes: { id: string; campos: Record<string, unknown> }[] = [];
+      const aGravar: { a: any; cap: Captura }[] = [];
       for (const a of itens) {
         const cap = r.ok.get(a.mlb_id);
         if (!cap && r.erros.get(a.mlb_id) === SEM_TEMPO) continue; // acabou o tempo: fica pendente para a próxima rodada
@@ -152,20 +185,9 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
         }
         resumo.ok++;
         categoriasTocadas.add(a.categoria_id);
-        const vendasDia = calcularVendasNoDia(cap.total_vendas, totalBase(a, hoje));
-        historico.push({ anuncio_id: a.id, data_captura: hoje, preco: cap.preco, total_vendas_acumulado: cap.total_vendas, vendas_no_dia: vendasDia, vendas_aproximado: cap.vendas_aproximado, capturado_em: new Date().toISOString() });
-        atualizacoes.push({ id: a.id, campos: {
-          ultimo_preco: cap.preco,
-          ...(cap.total_vendas != null ? { ultimo_total_vendas: cap.total_vendas } : {}), // sem número novo, mantém o último como base
-          ultimas_vendas_dia: vendasDia,
-          ultima_captura: hoje,
-        } });
+        aGravar.push({ a, cap });
       }
-      if (historico.length) {
-        const { error } = await db.from("historico_diario").upsert(historico, { onConflict: "anuncio_id,data_captura" });
-        falha("gravar histórico diário", error);
-        await comLimite(atualizacoes, 8, async (u) => { const { error: e } = await db.from("anuncios").update(u.campos).eq("id", u.id); falha("atualizar anúncio", e); });
-      }
+      await registrarCapturas(db, hoje, aGravar);
     }
   }
 
@@ -174,4 +196,66 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
   resumo.completo = resumo.pendentes === 0;
   resumo.ms = Date.now() - inicio;
   return resumo;
+}
+
+/**
+ * Importa o que o favorito leu no navegador. Serve para cadastrar a categoria (1ª vez) e para a atualização diária
+ * (de novo, outro dia): anúncios novos entram; os que já existem recebem a captura de hoje com vendas_no_dia.
+ */
+export async function importarDoNavegador(db: SupabaseClient, entrada: { payload: unknown; canal?: string; categoria_id?: string; nome?: string }) {
+  const canal = entrada.canal || "mercadolivre";
+  const conector = obterConector(canal);
+  const p = sanitizarPayload(entrada.payload);
+  const hoje = hojeSP();
+
+  let categoria: { id: string; nome: string; ativo?: boolean };
+  if (p.tipo === "anuncio") {
+    if (!entrada.categoria_id) throw new ErroValidacao("Escolha a categoria (aba) em que o anúncio deve entrar.");
+    const { data, error } = await db.from("categorias").select("id,nome,canal").eq("id", entrada.categoria_id).maybeSingle();
+    falha("buscar categoria", error);
+    if (!data) throw new ErroValidacao("Categoria não encontrada.");
+    categoria = data;
+  } else {
+    const url = conector.validarUrlCategoria(p.paginaUrl);
+    const nomeInformado = (entrada.nome || "").trim();
+    const { data: ja, error: e1 } = await db.from("categorias").select("id,nome").eq("canal", canal).eq("url_origem", url).maybeSingle();
+    falha("buscar categoria", e1);
+    if (ja) {
+      // categoria já existe: só muda o nome se o usuário digitou um (senão mantém o nome que ele escolheu antes)
+      const { error } = await db.from("categorias").update({ ultima_raspagem: new Date().toISOString(), ...(nomeInformado ? { nome: nomeInformado } : {}) }).eq("id", ja.id);
+      falha("atualizar categoria", error);
+      categoria = { id: ja.id, nome: nomeInformado || ja.nome };
+    } else {
+      const { data, error } = await db.from("categorias")
+        .insert({ nome: nomeInformado || p.nomeCategoria || nomeDaCategoria(url), canal, url_origem: url, ativo: true, ultima_raspagem: new Date().toISOString() })
+        .select("id,nome").single();
+      falha("gravar categoria", error);
+      categoria = data!;
+    }
+  }
+
+  // o que já existe nessa categoria
+  const existentes = new Map<string, any>();
+  for (let de = 0; ; de += 1000) {
+    const { data, error } = await db.from("anuncios")
+      .select("id,mlb_id,ativo,categoria_id,ultima_captura,ultimo_total_vendas,ultimas_vendas_dia")
+      .eq("categoria_id", categoria.id).order("id", { ascending: true }).range(de, de + 999);
+    falha("listar anúncios da categoria", error);
+    for (const r of data || []) existentes.set(r.mlb_id, r);
+    if (!data || data.length < 1000) break;
+  }
+
+  const novos: AnuncioRaspado[] = [];
+  const atualizar: { a: any; cap: Captura; extra: Record<string, unknown> }[] = [];
+  let desativadosIgnorados = 0;
+  for (const a of p.anuncios) {
+    const ex = existentes.get(a.mlb_id);
+    if (!ex) { novos.push(a); continue; }
+    const reativar = !ex.ativo && p.tipo === "anuncio"; // adicionar um anúncio avulso de propósito reativa
+    if (!ex.ativo && !reativar) { desativadosIgnorados++; continue; } // na importação da categoria, o que foi desativado à mão continua desativado
+    atualizar.push({ a: ex, cap: { preco: a.preco, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado }, extra: { titulo: a.titulo, vendedor: a.vendedor, url_imagem: a.url_imagem, url_anuncio: a.url_anuncio, ...(reativar ? { ativo: true } : {}) } });
+  }
+  const criados = novos.length ? await gravarAnuncios(db, categoria.id, novos, hoje, p.tipo === "anuncio") : 0;
+  await registrarCapturas(db, hoje, atualizar);
+  return { categoria, tipo: p.tipo, recebidos: p.anuncios.length, novos: criados, atualizados: atualizar.length, desativadosIgnorados, descartados: p.descartados };
 }

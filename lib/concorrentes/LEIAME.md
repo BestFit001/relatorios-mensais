@@ -25,6 +25,14 @@ lib/concorrentes/
   servidor.ts        service_role, CRON_SECRET, checagem de origem
 ```
 
+## Importar do navegador (quando o servidor é bloqueado pelo marketplace)
+O Mercado Livre costuma barrar IPs de servidor, e proxies que passam por ele são pagos. Alternativa sem proxy, API nem senha:
+1. No painel, arraste o botão "Capturar anúncios" para a barra de favoritos (código em `favorito.ts`).
+2. Na página do ML (lista ou anúncio), clique no favorito: ele lê as 2 primeiras páginas no navegador do usuário e copia um texto (JSON).
+3. Cole no painel e clique em Importar (`/api/concorrentes/importar`). A rota valida tudo (só links do ML, imagens https, limites).
+Repetir no dia seguinte grava a captura do dia e calcula `vendas_no_dia`. Com `ML_ESTRATEGIA=manual` o servidor não busca nada (o cron e "Atualizar agora" ficam inativos).
+O total de vendas só vem se a listagem do ML mostrar "N vendidos" no cartão; senão fica "—" (use o favorito na página do anúncio para os que importam).
+
 ## Variáveis de ambiente (Vercel)
 | Variável | Obrigatória | Para quê |
 |---|---|---|
@@ -34,7 +42,7 @@ lib/concorrentes/
 | `ML_CLIENT_ID` + `ML_CLIENT_SECRET` ou `ML_ACCESS_TOKEN` | opcional | chamadas autenticadas na API oficial |
 | `ML_TIMEOUT_MS` | opcional | tempo máximo de uma página (padrão 45000 via proxy, 15000 direto) |
 | `ML_CONCORRENCIA` | opcional | páginas lidas ao mesmo tempo (padrão 5; aumente se o plano do proxy permitir) |
-| `ML_ESTRATEGIA` | opcional | `auto` (padrão: API e depois páginas) · `api` · `html` |
+| `ML_ESTRATEGIA` | opcional | `auto` (padrão: API e depois páginas) · `api` · `html` · `manual` (só importação pelo navegador) |
 | `ML_API_BASE` | opcional | só para testes |
 
 ## Regras de negócio

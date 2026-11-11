@@ -1,9 +1,10 @@
 "use client";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { buscarTudo } from "../../lib/buscarTudo";
 import { CANAIS, nomeDoCanal } from "../../lib/concorrentes/canais";
 import { rankingPalavrasChave } from "../../lib/concorrentes/palavrasChave";
+import { favoritoHref } from "../../lib/concorrentes/favorito";
 import Paginacao from "./Paginacao";
 
 interface Categoria { id: string; nome: string; canal: string; url_origem: string; ativo: boolean; criado_em: string; ultima_raspagem: string | null }
@@ -27,7 +28,7 @@ async function chamar<T = any>(rota: string, metodo: "POST" | "PATCH", corpo: un
 }
 
 const caixa = "rounded-2xl border border-slate-800 bg-slate-900/60";
-const campo = "bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-indigo-500 placeholder:text-slate-600";
+const campo = "min-w-0 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-indigo-500 placeholder:text-slate-600";
 const botao = "px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
 
 export default function ConcorrentesPainel() {
@@ -48,6 +49,15 @@ export default function ConcorrentesPainel() {
   const [atualizando, setAtualizando] = useState<string | null>(null);
   const [diagnostico, setDiagnostico] = useState<{ ok: boolean; estrategia: string; detalhe: string; ms: number }[] | null>(null);
 
+  const [textoImport, setTextoImport] = useState("");
+  const [nomeImport, setNomeImport] = useState("");
+  const [importando, setImportando] = useState(false);
+  // aberto só na 1ª visita sem categorias; depois não fecha sozinho quando a primeira categoria é importada
+  const [importarAberto, setImportarAberto] = useState(false);
+  const favoritoRef = useRef<HTMLAnchorElement>(null);
+  // o React bloqueia "javascript:" em href vindo do JSX; o favorito precisa dele, então o endereço é posto direto no elemento
+  useEffect(() => { favoritoRef.current?.setAttribute("href", favoritoHref()); }, []);
+
   const [busca, setBusca] = useState("");
   const [ordem, setOrdem] = useState<Ordem>("vendas_dia");
   const [mostrarInativos, setMostrarInativos] = useState(false);
@@ -61,6 +71,7 @@ export default function ConcorrentesPainel() {
     if (error) { setErro(`Não consegui ler as categorias: ${error.message}`); setCarregando(false); return; }
     const lista = (data || []) as Categoria[];
     setCategorias(lista);
+    setImportarAberto((aberto) => aberto || lista.length === 0);
     setCategoriaId((atual) => escolher || (atual && lista.some((c) => c.id === atual) ? atual : lista[0]?.id ?? null));
     setCarregando(false);
   }, []);
@@ -123,6 +134,26 @@ export default function ConcorrentesPainel() {
     finally { setCadastrando(false); }
   };
 
+  const importar = async () => {
+    setImportando(true); setAviso(null);
+    try {
+      const r = await chamar("importar", "POST", { texto: textoImport, categoria_id: categoriaId, nome: nomeImport || undefined });
+      setTextoImport(""); setNomeImport("");
+      await carregarCategorias(r.categoria.id);
+      await carregarAnuncios(r.categoria.id);
+      const partes = [`${r.novos} novo(s)`, `${r.atualizados} atualizado(s) com a captura de hoje`];
+      if (r.desativadosIgnorados) partes.push(`${r.desativadosIgnorados} desativado(s) mantido(s) assim`);
+      if (r.descartados) partes.push(`${r.descartados} descartado(s) por dado inválido`);
+      avisar("ok", `${r.tipo === "anuncio" ? "Anúncio importado" : `Categoria “${r.categoria.nome}”`}: ${partes.join(", ")}.`);
+    } catch (e: any) { avisar("erro", e.message); }
+    finally { setImportando(false); }
+  };
+
+  const copiarFavorito = async () => {
+    try { await navigator.clipboard.writeText(favoritoHref()); avisar("ok", "Código do favorito copiado. Crie um favorito novo e cole no campo de endereço (URL)."); }
+    catch { avisar("erro", "Não consegui copiar. Arraste o botão para a barra de favoritos."); }
+  };
+
   const adicionarAvulso = async () => {
     if (!categoriaId) return;
     setAdicionando(true); setAviso(null);
@@ -153,6 +184,7 @@ export default function ConcorrentesPainel() {
       let ok = 0, falhas = 0, ultimoErro = "";
       for (let rodada = 0; rodada < 12; rodada++) { // a rota trabalha em lotes dentro do limite de tempo; repete até acabar
         const r = await chamar("capturar", "POST", { categoria_id: categoriaId });
+        if (r.manual) { avisar("erro", 'O servidor está em modo manual: atualize usando "Importar do navegador".'); setAtualizando(null); return; }
         ok += r.ok; falhas += r.falhas; if (r.erros?.[0]) ultimoErro = r.erros[0].motivo;
         if (r.pendentes === 0 || r.processados === 0) break; // acabou, ou a rodada não avançou
         setAtualizando(`Capturando… ${ok + falhas} anúncio(s) processados`);
@@ -182,23 +214,52 @@ export default function ConcorrentesPainel() {
         </div>
       )}
 
-      {/* Cadastro de categoria */}
-      <details open={!carregando && categorias.length === 0} className={`${caixa} group`} data-cadastro-categoria>
+      {/* Importar do navegador */}
+      <details open={importarAberto} className={`${caixa} group`} data-importar>
         <summary className="cursor-pointer select-none px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-300 flex items-center justify-between">
-          <span>➕ Cadastrar categoria para monitorar</span>
-          <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">lê as 2 primeiras páginas (cerca de 100 anúncios)</span>
+          <span>📋 Importar do navegador</span>
+          <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">sem proxy, sem API e sem senha: o seu navegador lê o Mercado Livre</span>
+        </summary>
+        <div className="px-5 pb-5 space-y-4">
+          <ol className="text-xs text-slate-400 space-y-2 list-decimal list-inside">
+            <li>
+              Arraste este botão para a sua barra de favoritos:{" "}
+              <a ref={favoritoRef} data-favorito onClick={(e) => e.preventDefault()} draggable className="inline-block align-middle px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-wider cursor-grab">📋 Capturar anúncios</a>{" "}
+              <button data-acao="copiar-favorito" onClick={copiarFavorito} className="text-[11px] underline text-slate-300 hover:text-white cursor-pointer">não consegui arrastar</button>
+              <span className="text-slate-500"> (barra escondida? Ctrl+Shift+B no Chrome)</span>
+            </li>
+            <li>Abra no Mercado Livre a categoria ou busca (ou a página de um anúncio) e clique no favorito. Em uma lista ele lê as 2 primeiras páginas; numa página de anúncio, só aquele anúncio (que entra na aba de categoria selecionada aqui).</li>
+            <li>Volte aqui, cole o texto copiado e clique em Importar. Repita uma vez por dia, na mesma categoria: o histórico e as vendas do dia são calculados a cada importação.</li>
+          </ol>
+          <div className="grid gap-3 md:grid-cols-[1fr_220px_auto] items-end">
+            <label className="grid gap-1 text-[11px] font-bold text-slate-400">Texto copiado pelo favorito
+              <textarea data-campo="importar-texto" value={textoImport} onChange={(e) => setTextoImport(e.target.value)} rows={3} placeholder='{"v":1,"tipo":"categoria",…}' className={`${campo} w-full font-mono text-xs`} />
+            </label>
+            <label className="grid gap-1 text-[11px] font-bold text-slate-400">Nome da categoria (opcional)
+              <input data-campo="importar-nome" value={nomeImport} onChange={(e) => setNomeImport(e.target.value)} placeholder="Ex.: Pochetes" className={`${campo} w-full`} />
+            </label>
+            <button data-acao="importar" onClick={importar} disabled={importando || !textoImport.trim()} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>{importando ? "Importando…" : "Importar"}</button>
+          </div>
+        </div>
+      </details>
+
+      {/* Cadastro de categoria */}
+      <details className={`${caixa} group`} data-cadastro-categoria>
+        <summary className="cursor-pointer select-none px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-300 flex items-center justify-between">
+          <span>➕ Cadastrar categoria pelo servidor</span>
+          <span className="text-[10px] font-semibold normal-case text-slate-500 tracking-normal">só funciona se o servidor conseguir ler o Mercado Livre (veja “Testar conexão”)</span>
         </summary>
         <div className="px-5 pb-5 grid gap-3 md:grid-cols-[180px_1fr_220px_auto] items-end">
           <label className="grid gap-1 text-[11px] font-bold text-slate-400">Canal
-            <select data-campo="canal" value={canal} onChange={(e) => setCanal(e.target.value)} className={campo}>
+            <select data-campo="canal" value={canal} onChange={(e) => setCanal(e.target.value)} className={`${campo} w-full`}>
               {CANAIS.map((c) => <option key={c.id} value={c.id} disabled={!c.disponivel}>{c.nome}{c.disponivel ? "" : " (em breve)"}</option>)}
             </select>
           </label>
           <label className="grid gap-1 text-[11px] font-bold text-slate-400">Link da categoria ou busca
-            <input data-campo="url" value={urlCategoria} onChange={(e) => setUrlCategoria(e.target.value)} placeholder={canalDisponivel?.exemploUrl} className={campo} />
+            <input data-campo="url" value={urlCategoria} onChange={(e) => setUrlCategoria(e.target.value)} placeholder={canalDisponivel?.exemploUrl} className={`${campo} w-full`} />
           </label>
           <label className="grid gap-1 text-[11px] font-bold text-slate-400">Nome (opcional)
-            <input data-campo="nome" value={nomeCategoria} onChange={(e) => setNomeCategoria(e.target.value)} placeholder="Ex.: Organizadores" className={campo} />
+            <input data-campo="nome" value={nomeCategoria} onChange={(e) => setNomeCategoria(e.target.value)} placeholder="Ex.: Organizadores" className={`${campo} w-full`} />
           </label>
           <button data-acao="cadastrar" onClick={cadastrar} disabled={cadastrando || !urlCategoria.trim() || !canalDisponivel?.disponivel} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>
             {cadastrando ? "Lendo anúncios…" : "Cadastrar e raspar"}

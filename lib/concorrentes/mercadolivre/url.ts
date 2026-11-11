@@ -32,9 +32,11 @@ export function normalizarUrlCategoria(bruta: string): string {
   if (u.hostname.toLowerCase() !== "lista.mercadolivre.com.br") {
     throw new ErroValidacao("Cole um link de listagem do Mercado Livre (começa com https://lista.mercadolivre.com.br/…). Abra a categoria ou a busca no site e copie o endereço.");
   }
-  let path = decodeURI(u.pathname).replace(/_Desde_\d+/gi, "").replace(/_NoIndex_True/gi, "").replace(/\/+$/, "");
+  // a barra final importa: categorias usam "/pochetes/_Desde_49", buscas usam "/slug_Desde_49"
+  const barraFinal = /\/$/.test(u.pathname.replace(/_Desde_\d+.*$/i, ""));
+  const path = decodeURI(u.pathname).replace(/_Desde_\d+/gi, "").replace(/_NoIndex_True/gi, "").replace(/\/+$/, "");
   if (!path || path === "/") throw new ErroValidacao("Esse link não aponta para uma categoria ou busca específica.");
-  return `https://lista.mercadolivre.com.br${encodeURI(path)}`;
+  return `https://lista.mercadolivre.com.br${encodeURI(path)}${barraFinal ? "/" : ""}`;
 }
 
 /** URL da página N (1 = a própria listagem; 2 = `_Desde_49`...). */
@@ -43,9 +45,10 @@ export function urlDaPagina(urlCategoria: string, pagina: number): string {
   return `${urlCategoria}_Desde_${(pagina - 1) * PAGINA_LISTAGEM + 1}`;
 }
 
-/** Texto da busca a partir do slug ("organizador-de-gaveta_Frete_Full" -> "organizador de gaveta"). */
+/** Texto da busca a partir do último trecho do endereço ("organizador-de-gaveta_Frete_Full" -> "organizador de gaveta"). */
 export function consultaDaCategoria(urlCategoria: string): string {
-  const slug = decodeURIComponent(new URL(urlCategoria).pathname.replace(/^\/+/, "").split("/")[0] || "");
+  const partes = decodeURIComponent(new URL(urlCategoria).pathname).split("/").filter(Boolean);
+  const slug = partes[partes.length - 1] || "";
   return slug.split("_")[0].replace(/-/g, " ").trim();
 }
 
