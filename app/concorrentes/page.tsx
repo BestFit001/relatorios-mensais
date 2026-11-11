@@ -21,7 +21,7 @@ const DESCRICAO: Record<Aba, string> = {
   shopee: "Acompanhe os preços e as vendas dos produtos da Shopee: o seu navegador lê a página e o painel guarda o histórico.",
   amazon: "Acompanhe os preços, as compras do mês e o Mais vendidos da Amazon: o seu navegador lê a página e o painel guarda o histórico.",
   "pesquisa-imagem": "Informe o SKU, o seu PDV e as palavras da busca: veja o preço do item em cada canal que o Google Shopping encontrar e quanto você lucraria.",
-  "buscar-fotos": "Envie uma foto de referência: o Google Cloud Vision acha o produto na internet e você baixa as fotos de maior resolução.",
+  "buscar-fotos": "Ache as fotos do produto na internet (pelo EAN, de graça, ou pela foto) e baixe as de maior resolução.",
   "analise-mercado": "Compare preços da concorrência e descubra o custo ideal ou o preço de venda indicado, com as regras de cada canal.",
 };
 

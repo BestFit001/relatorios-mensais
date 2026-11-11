@@ -95,8 +95,13 @@ O Mercado Livre não divulga a venda diária de terceiros: só o total acumulado
 ## Vídeos "Com problemas" → Correções (fora do monitor, mas relacionado ao Início)
 Veja `lib/videoCorrecoes.ts` e a migration `20261111180000_video_correcoes.sql`: tabelas `video_correcoes` (um registro por envio) e `video_correcoes_canais` (um por canal que não estava marcado). O produto some de Vídeos enquanto a correção está `aberta`.
 
-## Buscar fotos (Google Cloud Vision)
-Aba **📷 Buscar fotos** de `/concorrentes`. Código em `lib/fotos/` e `app/api/fotos/{buscar,baixar}`.
+## Buscar fotos (2 modos)
+Aba **📷 Buscar fotos** de `/concorrentes`. Código em `lib/fotos/` e `app/api/fotos/{importar,buscar,baixar}`.
+
+### Modo grátis (padrão, sem API)
+Busca por EAN ou palavras no **Bing Imagens**. O favorito (`lerBing` em `favorito.ts`) lê os resultados `a.iusc[m]` da página (o atributo `m` é um JSON com `murl` = foto em tamanho original, `purl` = página, `t` = título), clica em “Ver mais” e rola a página. O texto vai para `POST /api/fotos/importar` (`lib/fotos/importar.ts`), que valida (só https público, até 150 fotos), mede e ordena pela resolução. Não gasta cota nem exige chave. O Bing pode mudar o HTML sem aviso: se o favorito disser que não achou fotos, o ajuste fica em `lerBing`.
+
+### Modo Google Vision (busca pela foto)
 - A foto de referência é reduzida no navegador (até 1600 px, JPEG) e enviada a `POST /api/fotos/buscar`, que chama o Vision `WEB_DETECTION` (1 uso da cota por busca) e devolve as imagens **iguais / parciais / parecidas**.
 - O servidor lê só o começo de cada imagem (128 KB) para descobrir largura e altura (`lib/fotos/imagem.ts`), descarta ícones (< 100 px), HTML e links quebrados, e ordena da maior resolução para a menor.
 - `POST /api/fotos/baixar` entrega o arquivo original (o navegador não consegue por CORS); o ZIP é montado no navegador (JSZip).

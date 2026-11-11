@@ -9,7 +9,7 @@ export interface FotoAchada {
   url: string; largura: number; altura: number; pixels: number; tipo: TipoImagem; bytes: number | null;
   origem: OrigemFoto; pagina: string | null; titulo: string | null; dominio: string;
 }
-export interface BuscaResposta { fotos: FotoAchada[]; palpite: string; entidades: string[]; candidatos: number; usados: number; limite: number }
+export interface BuscaResposta { fotos: FotoAchada[]; palpite: string; entidades: string[]; candidatos: number; usados: number; limite: number; gratuito?: boolean }
 
 export const LIMITE_PADRAO = 950; // abaixo dos 1.000 gratuitos, para nunca virar cobrança por descuido
 export const limiteMensal = () => { const n = Number(process.env.FOTOS_LIMITE_MES); return Number.isFinite(n) && n > 0 ? Math.floor(n) : LIMITE_PADRAO; };
@@ -44,7 +44,7 @@ export async function medirImagem(c: Candidato, baixar: Baixar = baixarCabecalho
 /** Mede em paralelo (poucas por vez, com prazo total) e ordena: maior resolução primeiro; empate = mais parecida primeiro. */
 export async function medirTodas(cands: Candidato[], baixar: Baixar = baixarCabecalho, opc = { paralelo: 8, prazoMs: 40_000 }): Promise<FotoAchada[]> {
   const fim = Date.now() + opc.prazoMs; const saida: FotoAchada[] = []; let i = 0;
-  const peso = { igual: 0, parcial: 1, parecida: 2 } as const;
+  const peso = { igual: 0, parcial: 1, busca: 1, parecida: 2 } as const;
   const trabalhador = async () => { while (i < cands.length && Date.now() < fim) { const c = cands[i++]; const f = await medirImagem(c, baixar); if (f) saida.push(f); } };
   await Promise.all(Array.from({ length: Math.min(opc.paralelo, cands.length) }, trabalhador));
   return saida.sort((a, b) => b.pixels - a.pixels || peso[a.origem] - peso[b.origem]);

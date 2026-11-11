@@ -299,6 +299,23 @@ export const FAVORITO_JS = String.raw`(async function () {
     });
     return externo || primeiro;
   }
+  async function lerBing() {
+    for (var rodada = 0; rodada < 3; rodada++) {
+      await rolar();
+      var mais = document.querySelector("a.btn_seemore, a.btn_seemore_cn");
+      if (mais) { try { mais.click(); } catch (er) {} await espera(900); }
+    }
+    var vistos = {}, fotos = [];
+    Array.prototype.forEach.call(document.querySelectorAll("a.iusc[m], a[m*='murl']"), function (a) {
+      var m; try { m = JSON.parse(a.getAttribute("m")); } catch (er) { return; }
+      if (!m || !m.murl || vistos[m.murl]) return;
+      vistos[m.murl] = 1;
+      fotos.push({ url: String(m.murl), pagina: m.purl ? String(m.purl) : null, titulo: limpa(m.t || m.desc || "") || null });
+    });
+    if (!fotos.length) throw new Error("Não achei fotos nesta página. Abra o Bing Imagens (bing.com/images) com a busca feita, espere as fotos aparecerem e clique no favorito de novo.");
+    var q = ""; try { q = (new URL(location.href)).searchParams.get("q") || ""; } catch (er) {}
+    return { v: 1, canal: "bing", tipo: "fotos", pagina_url: location.href, termo: limpa(q) || null, coletado_em: new Date().toISOString(), fotos: fotos };
+  }
   async function lerGoogle() {
     status("Rolando a página para carregar os resultados…");
     await rolar();
@@ -336,12 +353,14 @@ export const FAVORITO_JS = String.raw`(async function () {
     var q = (new URL(location.href)).searchParams.get("q");
     return { v: 1, canal: "google", tipo: "pesquisa", pagina_url: location.href, termo: limpa(q) || null, coletado_em: new Date().toISOString(), resultados: resultados };
   }
-  var ABAS = { mercadolivre: "Mercado Livre", shopee: "Shopee", amazon: "Amazon", google: "Pesquisa de preços" };
+  var ABAS = { mercadolivre: "Mercado Livre", shopee: "Shopee", amazon: "Amazon", google: "Pesquisa de preços", bing: "Buscar fotos" };
   async function mostrar(payload) {
-    var itens = payload.anuncios || payload.resultados || [];
+    var itens = payload.anuncios || payload.resultados || payload.fotos || [];
     var json = JSON.stringify(payload);
     var info;
-    if (payload.tipo === "pesquisa") {
+    if (payload.tipo === "fotos") {
+      info = "O painel vai medir cada foto e mostrar da maior para a menor resolução.";
+    } else if (payload.tipo === "pesquisa") {
       var comLoja = itens.filter(function (a) { return a.loja; }).length;
       info = comLoja + " com o nome da loja identificado.";
     } else {
@@ -349,7 +368,7 @@ export const FAVORITO_JS = String.raw`(async function () {
       var comPosicao = itens.filter(function (a) { return a.posicao; }).length;
       info = comVendas + " com " + (payload.canal === "amazon" ? "compras do mês" : "total de vendas") + " visível" + (comPosicao ? ", " + comPosicao + " com posição no Mais vendidos" : "") + ".";
     }
-    tela("<b>Pronto: " + itens.length + (payload.tipo === "pesquisa" ? " oferta(s)" : " anúncio(s)") + "</b><div id='cb-info' style='margin:6px 0 0;color:#cbd5e1'>" + esc(info) + "</div><div id='cb-msg' style='margin:2px 0 6px;color:#a5b4fc'></div>" +
+    tela("<b>Pronto: " + itens.length + (payload.tipo === "fotos" ? " foto(s)" : payload.tipo === "pesquisa" ? " oferta(s)" : " anúncio(s)") + "</b><div id='cb-info' style='margin:6px 0 0;color:#cbd5e1'>" + esc(info) + "</div><div id='cb-msg' style='margin:2px 0 6px;color:#a5b4fc'></div>" +
       "<textarea id='cb-ta' readonly style='width:100%;height:80px;background:#020617;color:#e2e8f0;border:1px solid #334155;border-radius:8px;font:11px monospace'></textarea>" +
       "<div style='margin-top:8px;display:flex;gap:8px'><button id='cb-copiar' style='background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:700'>Copiar</button>" +
       "<button id='cb-fechar' style='background:#1e293b;color:#e2e8f0;border:0;border-radius:8px;padding:6px 12px;cursor:pointer'>Fechar</button></div>");
@@ -369,6 +388,7 @@ export const FAVORITO_JS = String.raw`(async function () {
     var h = location.hostname;
     var payload;
     if (/(^|\.)google\.[a-z.]+$/i.test(h)) payload = await lerGoogle();
+    else if (/(^|\.)bing\.com$/i.test(h)) payload = await lerBing();
     else if (/(^|\.)amazon\.com\.br$/i.test(h)) payload = await lerAmazon();
     else if (/(^|\.)shopee\.com\.br$/i.test(h)) payload = await lerShopee();
     else payload = await lerMercadoLivre();

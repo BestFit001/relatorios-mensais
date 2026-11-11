@@ -33,6 +33,7 @@ export function canalDoPayload(bruto: unknown): string {
 export function sanitizarPayload(bruto: unknown, canal: string = "mercadolivre"): PayloadLimpo {
   const urls = urlsDoCanal(canal);
   const p = bruto as any;
+  if (p && typeof p === "object" && p.tipo === "fotos") throw new ErroValidacao("Esse texto foi lido no Bing Imagens: cole na aba “Buscar fotos”.");
   if (p && typeof p === "object" && p.tipo === "pesquisa") throw new ErroValidacao("Esse texto foi lido no Google: cole na aba “Pesquisa de preços”.");
   if (!p || typeof p !== "object" || p.v !== 1 || !Array.isArray(p.anuncios)) {
     throw new ErroValidacao("Texto de importação inválido. Cole exatamente o que o favorito copiou.");

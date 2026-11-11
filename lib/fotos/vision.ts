@@ -1,11 +1,11 @@
 // Google Cloud Vision (WEB_DETECTION): recebe a foto e devolve as imagens/páginas iguais ou parecidas que existem na internet.
 import { ErroValidacao } from "../concorrentes/tipos";
 
-export type OrigemFoto = "igual" | "parcial" | "parecida";
+export type OrigemFoto = "igual" | "parcial" | "parecida" | "busca";
 export interface Candidato { url: string; origem: OrigemFoto; pagina?: string; titulo?: string }
 export interface ResultadoVision { candidatos: Candidato[]; palpite: string; entidades: string[] }
 
-const PESO: Record<OrigemFoto, number> = { igual: 0, parcial: 1, parecida: 2 };
+const PESO: Record<OrigemFoto, number> = { igual: 0, parcial: 1, busca: 1, parecida: 2 };
 const MAX_CANDIDATOS = 60;
 
 /** Transforma a resposta do Vision numa lista sem repetição, da mais certa (igual) para a menos certa (parecida). */

@@ -1,17 +1,18 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { favoritoHref } from "../../../lib/concorrentes/favorito";
 import { eanValido, googleImagensEanUrl, googleShoppingEanUrl, limparEan } from "../../../lib/ean";
 import { botao, campo, caixa } from "./comum";
 
 interface Foto {
   url: string; largura: number; altura: number; pixels: number; tipo: "jpeg" | "png" | "gif" | "webp"; bytes: number | null;
-  origem: "igual" | "parcial" | "parecida"; pagina: string | null; titulo: string | null; dominio: string;
+  origem: "igual" | "parcial" | "parecida" | "busca"; pagina: string | null; titulo: string | null; dominio: string;
 }
-interface Resultado { fotos: Foto[]; palpite: string; entidades: string[]; candidatos: number; usados: number; limite: number }
+interface Resultado { fotos: Foto[]; palpite: string; entidades: string[]; candidatos: number; usados: number; limite: number; gratuito?: boolean }
 interface Uso { usados: number; limite: number; configurado: boolean }
 
-const ROTULO_ORIGEM = { igual: "Igual", parcial: "Parcial", parecida: "Parecida" } as const;
-const COR_ORIGEM = { igual: "bg-emerald-950 text-emerald-300 border-emerald-800", parcial: "bg-amber-950 text-amber-300 border-amber-800", parecida: "bg-slate-800 text-slate-300 border-slate-700" } as const;
+const ROTULO_ORIGEM = { igual: "Igual", parcial: "Parcial", parecida: "Parecida", busca: "Bing" } as const;
+const COR_ORIGEM = { igual: "bg-emerald-950 text-emerald-300 border-emerald-800", parcial: "bg-amber-950 text-amber-300 border-amber-800", parecida: "bg-slate-800 text-slate-300 border-slate-700", busca: "bg-sky-950 text-sky-300 border-sky-800" } as const;
 const kb = (b: number | null) => (b == null ? "" : b >= 1_048_576 ? `${(b / 1_048_576).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB` : `${Math.round(b / 1024)} KB`);
 const ext = (t: Foto["tipo"]) => (t === "jpeg" ? "jpg" : t);
 const slug = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "foto";
@@ -34,8 +35,16 @@ function salvar(blob: Blob, nome: string) {
   const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = nome; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000);
 }
 
+const eanOk0 = (v: string) => eanValido(v);
+
 /** Aba "Buscar fotos": foto de referência -> Google Cloud Vision acha as imagens iguais/parecidas na internet -> maior resolução primeiro, para baixar. */
 export default function BuscaFotos({ usuario }: { usuario: string }) {
+  const [modo, setModo] = useState<"gratis" | "vision">("gratis");
+  const [termo, setTermo] = useState("");
+  const [textoImport, setTextoImport] = useState("");
+  const [importando, setImportando] = useState(false);
+  const favoritoRef = useRef<HTMLAnchorElement>(null);
+  useEffect(() => { favoritoRef.current?.setAttribute("href", favoritoHref()); }, [modo]);
   const [uso, setUso] = useState<Uso | null>(null);
   const [erroUso, setErroUso] = useState("");
   const [sku, setSku] = useState("");
@@ -86,6 +95,24 @@ export default function BuscaFotos({ usuario }: { usuario: string }) {
     finally { setBuscando(false); }
   };
 
+  const copiarFavorito = async () => {
+    try { await navigator.clipboard.writeText(favoritoHref()); setAviso({ tipo: "ok", texto: "Código do favorito copiado. Crie um favorito novo e cole no campo de endereço (URL)." }); }
+    catch { setAviso({ tipo: "erro", texto: "Não consegui copiar. Arraste o botão para a barra de favoritos." }); }
+  };
+
+  const importar = async () => {
+    setImportando(true); setAviso(null); setRes(null); setMarcadas(new Set()); setQuebradas(new Set());
+    try {
+      const r = await fetch("/api/fotos/importar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texto: textoImport }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.erro || "Erro ao importar.");
+      setRes(j); setTextoImport("");
+      if (!j.fotos.length) setAviso({ tipo: "erro", texto: `O Bing listou ${j.candidatos} foto(s), mas nenhuma pôde ser aberta (os sites bloqueiam ou removeram). Tente outra busca.` });
+    } catch (e: any) { setAviso({ tipo: "erro", texto: e?.message || "Erro ao importar." }); }
+    finally { setImportando(false); }
+  };
+
+  const termoBing = eanOk0(ean) ? limparEan(ean) : termo.trim();
+
   const visiveis = useMemo(() => (res?.fotos || []).filter((f) =>
     Math.max(f.largura, f.altura) >= minimo && (origem === "todas" || (origem === "iguais" ? f.origem === "igual" : f.origem !== "parecida"))), [res, minimo, origem]);
 
@@ -123,66 +150,107 @@ export default function BuscaFotos({ usuario }: { usuario: string }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-black text-white uppercase tracking-wider">📷 Buscar fotos do produto</h2>
-            <p className="text-xs text-slate-400 mt-1 max-w-3xl">Envie uma foto de referência. O Google Cloud Vision procura essa imagem na internet e o painel mostra as fotos encontradas, da <b className="text-slate-200">maior para a menor resolução</b>, para você baixar.</p>
+            <p className="text-xs text-slate-400 mt-1 max-w-3xl">Ache as fotos do produto na internet e baixe as de <b className="text-slate-200">maior resolução</b>. O painel abre cada foto, mede e mostra da maior para a menor.</p>
           </div>
-          <div className="text-right" data-fotos-uso>
-            {uso && <div className={`text-xs font-black ${restante != null && restante <= 50 ? "text-amber-400" : "text-slate-300"}`}>Buscas neste mês: {uso.usados} de {uso.limite}</div>}
-            <div className="text-[10px] text-slate-500">cota gratuita do Google: 1.000 por mês</div>
-            {erroUso && <div className="text-[10px] text-rose-400 max-w-xs">{erroUso}</div>}
+          <div className="flex rounded-xl overflow-hidden border border-slate-700" role="tablist" data-fotos-modos>
+            <button role="tab" aria-selected={modo === "gratis"} data-fotos-modo="gratis" onClick={() => { setModo("gratis"); setAviso(null); }} className={`px-4 py-2 text-[11px] font-black uppercase tracking-wider cursor-pointer ${modo === "gratis" ? "bg-emerald-700 text-white" : "bg-slate-900 text-slate-400 hover:text-white"}`}>🆓 Grátis (Bing, sem API)</button>
+            <button role="tab" aria-selected={modo === "vision"} data-fotos-modo="vision" onClick={() => { setModo("vision"); setAviso(null); }} className={`px-4 py-2 text-[11px] font-black uppercase tracking-wider cursor-pointer ${modo === "vision" ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-400 hover:text-white"}`}>🔎 Pela foto (Google Vision)</button>
           </div>
         </div>
 
-        {uso && !uso.configurado && (
-          <div className="rounded-xl border border-amber-700/60 bg-amber-950/20 p-4 text-xs text-amber-200 space-y-1" data-fotos-config-falta>
-            <b>Falta configurar a chave do Google Cloud Vision.</b>
-            <ol className="list-decimal pl-5 space-y-0.5 text-amber-100/90">
-              <li>Em console.cloud.google.com, crie (ou escolha) um projeto e ative a <b>Cloud Vision API</b>.</li>
-              <li>Em “APIs e serviços › Credenciais”, crie uma <b>chave de API</b> e restrinja-a à Cloud Vision API.</li>
-              <li>Na Vercel (Settings › Environment Variables), crie <code className="font-mono">GOOGLE_VISION_API_KEY</code> com essa chave e faça um novo deploy.</li>
+        <div className="flex flex-wrap gap-3">
+          <label className="grid gap-1 text-[11px] font-bold text-slate-400 w-56">EAN / código de barras {modo === "gratis" ? "(recomendado)" : "(opcional)"}
+            <input data-campo="fotos-ean" inputMode="numeric" className={campo} value={ean} onChange={(e) => setEan(e.target.value)} placeholder="Ex.: 7891234567895" />
+            {ean.trim() && <span data-fotos-ean-status className={eanOk ? "text-emerald-400" : "text-rose-400"}>{eanOk ? "✔ EAN válido" : "✕ EAN inválido (confira os dígitos)"}</span>}
+          </label>
+          <label className="grid gap-1 text-[11px] font-bold text-slate-400 w-44">SKU (opcional)
+            <input data-campo="fotos-sku" className={campo} value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Ex.: 12345" />
+          </label>
+          {modo === "gratis" && (
+            <label className="grid gap-1 text-[11px] font-bold text-slate-400 w-72">Palavras da busca (se não tiver EAN)
+              <input data-campo="fotos-termo" className={campo} value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="Ex.: garrafa térmica floral 500ml" />
+            </label>
+          )}
+        </div>
+
+        {modo === "gratis" ? (
+          <div className="space-y-3" data-fotos-gratis>
+            <ol className="text-xs text-slate-400 space-y-3 list-decimal list-inside">
+              <li>
+                Abra o Bing Imagens com a busca:{" "}
+                <a data-acao="fotos-abrir-bing" aria-disabled={!termoBing} href={termoBing ? `https://www.bing.com/images/search?q=${encodeURIComponent(termoBing)}` : undefined} target="_blank" rel="noopener noreferrer"
+                  className={`${botao} !py-1 inline-block bg-slate-800 text-slate-200 hover:bg-slate-700 ${termoBing ? "" : "opacity-40 pointer-events-none"}`}>Abrir Bing Imagens ↗</a>{" "}
+                {termoBing ? <>com “{termoBing}”.</> : <span className="text-slate-500">(informe o EAN ou as palavras da busca)</span>}
+                {eanOk && <> <a data-acao="fotos-ean-imagens" href={googleImagensEanUrl(ean)} target="_blank" rel="noopener noreferrer" className="underline text-slate-300 hover:text-white">Google Imagens pelo EAN</a> · <a data-acao="fotos-ean-shopping" href={googleShoppingEanUrl(ean)} target="_blank" rel="noopener noreferrer" className="underline text-slate-300 hover:text-white">Google Shopping pelo EAN</a> (para conferir)</>}
+              </li>
+              <li>
+                Espere as fotos aparecerem e clique no favorito <a ref={favoritoRef} data-favorito onClick={(e) => e.preventDefault()} draggable className="inline-block align-middle px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-wider cursor-grab">📋 Capturar</a>{" "}
+                <button data-acao="copiar-favorito" onClick={copiarFavorito} className="text-[11px] underline text-slate-300 hover:text-white cursor-pointer">não consegui arrastar</button>
+                <span className="text-slate-500"> (é o mesmo favorito das outras abas: arraste para a barra de favoritos; no Bing ele rola a página e copia o endereço de cada foto em tamanho original)</span>
+              </li>
+              <li>Cole o texto aqui e importe:</li>
             </ol>
-            <div className="text-amber-300/80">A chave fica só no servidor; nunca cole ela no código nem no chat.</div>
+            <textarea data-campo="fotos-texto" value={textoImport} onChange={(e) => setTextoImport(e.target.value)} placeholder="Cole aqui o texto que o favorito copiou no Bing Imagens" className={`${campo} w-full h-20 font-mono text-[11px]`} />
+            <div className="flex flex-wrap items-center gap-3">
+              <button data-acao="fotos-importar" disabled={!textoImport.trim() || importando} onClick={importar} className={`${botao} bg-emerald-700 hover:bg-emerald-600 text-white`}>{importando ? "Medindo as fotos… (até 1 min)" : "Importar fotos"}</button>
+              <span className="text-[11px] text-slate-500">Sem API e sem custo. O EAN acha o produto certo; sem EAN o Bing mostra fotos parecidas.</span>
+            </div>
+            <p className="text-[11px] text-slate-500 max-w-3xl">Para buscar pela foto sem API: envie-a em <a href="https://www.bing.com/visualsearch" target="_blank" rel="noopener noreferrer" className="underline text-slate-300">bing.com/visualsearch</a> e clique no favorito na página de resultados (experimental: o Bing pode mudar essa página).</p>
+          </div>
+        ) : (
+          <div className="space-y-4" data-fotos-vision>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <p className="text-xs text-slate-400 max-w-3xl">Envie uma foto de referência: o Google Cloud Vision procura essa imagem na internet. Cada busca usa 1 da cota do mês e <b className="text-slate-300">exige cobrança ativa no projeto do Google</b> (a cota gratuita é de 1.000 por mês).</p>
+              <div className="text-right" data-fotos-uso>
+                {uso && <div className={`text-xs font-black ${restante != null && restante <= 50 ? "text-amber-400" : "text-slate-300"}`}>Buscas neste mês: {uso.usados} de {uso.limite}</div>}
+                <div className="text-[10px] text-slate-500">cota gratuita do Google: 1.000 por mês</div>
+                {erroUso && <div className="text-[10px] text-rose-400 max-w-xs">{erroUso}</div>}
+              </div>
+            </div>
+
+            {uso && !uso.configurado && (
+              <div className="rounded-xl border border-amber-700/60 bg-amber-950/20 p-4 text-xs text-amber-200 space-y-1" data-fotos-config-falta>
+                <b>Falta configurar a chave do Google Cloud Vision.</b>
+                <ol className="list-decimal pl-5 space-y-0.5 text-amber-100/90">
+                  <li>Em console.cloud.google.com, crie (ou escolha) um projeto, ative a <b>Cloud Vision API</b> e a <b>cobrança</b> do projeto.</li>
+                  <li>Em “APIs e serviços › Credenciais”, crie uma <b>chave de API</b> e restrinja-a à Cloud Vision API.</li>
+                  <li>Na Vercel (Settings › Environment Variables), crie <code className="font-mono">GOOGLE_VISION_API_KEY</code> com essa chave e faça um novo deploy.</li>
+                </ol>
+                <div className="text-amber-300/80">A chave fica só no servidor; nunca cole ela no código nem no chat.</div>
+              </div>
+            )}
+
+            <div className="grid gap-4 md:grid-cols-[260px_1fr] items-start">
+              <div
+                data-fotos-zona onClick={() => arquivoRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); receber(e.dataTransfer.files?.[0]); }}
+                className="aspect-square rounded-xl border-2 border-dashed border-slate-700 hover:border-indigo-500 bg-slate-950 flex items-center justify-center text-center p-3 cursor-pointer overflow-hidden">
+                {previa
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={previa} alt="Foto de referência" data-fotos-previa className="max-h-full max-w-full object-contain" />
+                  : <span className="text-xs text-slate-500">Cole (Ctrl+V), arraste ou clique para escolher a foto de referência</span>}
+                <input ref={arquivoRef} type="file" accept="image/*" hidden data-fotos-arquivo onChange={(e) => { receber(e.target.files?.[0]); e.target.value = ""; }} />
+              </div>
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button data-acao="fotos-buscar" disabled={!previa || buscando || (uso != null && !uso.configurado)} onClick={buscar} className={`${botao} bg-indigo-600 hover:bg-indigo-500 text-white`}>
+                    {buscando ? "Procurando… (até 1 min)" : "🔎 Buscar fotos"}
+                  </button>
+                  {previa && !buscando && <button onClick={() => { setPrevia(null); setRes(null); setAviso(null); }} className={`${botao} bg-slate-800 hover:bg-slate-700 text-slate-300`}>Trocar foto</button>}
+                  <span className="text-[11px] text-slate-500">Use uma foto nítida, só do produto, sem texto por cima.</span>
+                </div>
+                {eanOk && (
+                  <div className="flex flex-wrap gap-2" data-fotos-ean-links>
+                    <a data-acao="fotos-ean-imagens" href={googleImagensEanUrl(ean)} target="_blank" rel="noopener noreferrer" className={`${botao} !py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 inline-block`}>Google Imagens pelo EAN ↗</a>
+                    <a data-acao="fotos-ean-shopping" href={googleShoppingEanUrl(ean)} target="_blank" rel="noopener noreferrer" className={`${botao} !py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 inline-block`}>Google Shopping pelo EAN ↗</a>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
-        <div className="grid gap-4 md:grid-cols-[260px_1fr] items-start">
-          <div
-            data-fotos-zona onClick={() => arquivoRef.current?.click()}
-            onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); receber(e.dataTransfer.files?.[0]); }}
-            className="aspect-square rounded-xl border-2 border-dashed border-slate-700 hover:border-indigo-500 bg-slate-950 flex items-center justify-center text-center p-3 cursor-pointer overflow-hidden">
-            {previa
-              // eslint-disable-next-line @next/next/no-img-element
-              ? <img src={previa} alt="Foto de referência" data-fotos-previa className="max-h-full max-w-full object-contain" />
-              : <span className="text-xs text-slate-500">Cole (Ctrl+V), arraste ou clique para escolher a foto de referência</span>}
-            <input ref={arquivoRef} type="file" accept="image/*" hidden data-fotos-arquivo onChange={(e) => { receber(e.target.files?.[0]); e.target.value = ""; }} />
-          </div>
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-3">
-              <label className="grid gap-1 text-[11px] font-bold text-slate-400 w-56">EAN / código de barras (opcional)
-                <input data-campo="fotos-ean" inputMode="numeric" className={campo} value={ean} onChange={(e) => setEan(e.target.value)} placeholder="Ex.: 7891234567895" />
-                {ean.trim() && <span data-fotos-ean-status className={eanOk ? "text-emerald-400" : "text-rose-400"}>{eanOk ? "✔ EAN válido" : "✕ EAN inválido (confira os dígitos)"}</span>}
-              </label>
-              <label className="grid gap-1 text-[11px] font-bold text-slate-400 w-44">SKU (opcional)
-                <input data-campo="fotos-sku" className={campo} value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Ex.: 12345" />
-              </label>
-            </div>
-            <p className="text-[11px] text-slate-500">O EAN dá nome aos arquivos e abre a busca por código de barras no Google. A busca pela foto continua sendo feita pela imagem.</p>
-            {eanOk && (
-              <div className="flex flex-wrap gap-2" data-fotos-ean-links>
-                <a data-acao="fotos-ean-imagens" href={googleImagensEanUrl(ean)} target="_blank" rel="noopener noreferrer" className={`${botao} !py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 inline-block`}>Google Imagens pelo EAN ↗</a>
-                <a data-acao="fotos-ean-shopping" href={googleShoppingEanUrl(ean)} target="_blank" rel="noopener noreferrer" className={`${botao} !py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 inline-block`}>Google Shopping pelo EAN ↗</a>
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-3">
-              <button data-acao="fotos-buscar" disabled={!previa || buscando || (uso != null && !uso.configurado)} onClick={buscar} className={`${botao} bg-indigo-600 hover:bg-indigo-500 text-white`}>
-                {buscando ? "Procurando… (até 1 min)" : "🔎 Buscar fotos"}
-              </button>
-              {previa && !buscando && <button onClick={() => { setPrevia(null); setRes(null); setAviso(null); }} className={`${botao} bg-slate-800 hover:bg-slate-700 text-slate-300`}>Trocar foto</button>}
-              <span className="text-[11px] text-slate-500">Cada busca usa 1 da cota do mês. Use uma foto nítida, só do produto, sem texto por cima.</span>
-            </div>
-            <p className="text-[11px] text-slate-500 max-w-3xl">As fotos pertencem a quem as publicou. Para uso comercial, prefira as do fabricante, do fornecedor ou da marca; os marketplaces não permitem copiar foto de anúncio de concorrente.</p>
-          </div>
-        </div>
-
+        <p className="text-[11px] text-slate-500 max-w-3xl">As fotos pertencem a quem as publicou. Para uso comercial, prefira as do fabricante, do fornecedor ou da marca; os marketplaces não permitem copiar foto de anúncio de concorrente.</p>
         {aviso && <div data-aviso={aviso.tipo} className={`text-xs font-bold rounded-lg px-3 py-2 ${aviso.tipo === "ok" ? "bg-emerald-950 text-emerald-300 border border-emerald-800" : "bg-rose-950 text-rose-300 border border-rose-800"}`}>{aviso.texto}</div>}
       </section>
 
@@ -190,17 +258,17 @@ export default function BuscaFotos({ usuario }: { usuario: string }) {
         <section className={`${caixa} p-5 space-y-4`} data-fotos-resultado>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-slate-400" data-fotos-resumo>
-              <b className="text-slate-200">{visiveis.length}</b> de {res.fotos.length} foto(s) abertas ({res.candidatos} achadas pelo Google)
-              {res.palpite && <> · o Google acha que é: <b className="text-slate-200">{res.palpite}</b></>}
+              <b className="text-slate-200">{visiveis.length}</b> de {res.fotos.length} foto(s) abertas ({res.candidatos} achadas {res.gratuito ? "no Bing" : "pelo Google"})
+              {res.palpite && <> · {res.gratuito ? "busca" : "o Google acha que é"}: <b className="text-slate-200">{res.palpite}</b></>}
               {res.entidades.length > 0 && <> · {res.entidades.slice(0, 4).join(", ")}</>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <select data-fotos-min value={minimo} onChange={(e) => setMinimo(Number(e.target.value))} className={campo}>
                 <option value={0}>Qualquer tamanho</option><option value={500}>Lado maior ≥ 500 px</option><option value={800}>≥ 800 px</option><option value={1000}>≥ 1000 px</option><option value={1500}>≥ 1500 px</option>
               </select>
-              <select data-fotos-origem value={origem} onChange={(e) => setOrigem(e.target.value as any)} className={campo}>
+              {!res.gratuito && <select data-fotos-origem value={origem} onChange={(e) => setOrigem(e.target.value as any)} className={campo}>
                 <option value="todas">Iguais, parciais e parecidas</option><option value="iguais_parciais">Só iguais e parciais</option><option value="iguais">Só iguais</option>
-              </select>
+              </select>}
               <button data-acao="fotos-marcar-todas" onClick={() => setMarcadas(new Set(visiveis.map((f) => f.url)))} className={`${botao} bg-slate-800 hover:bg-slate-700 text-slate-200`}>Marcar todas</button>
               <button data-acao="fotos-zip" disabled={!marcadas.size || progresso != null} onClick={baixarZip} className={`${botao} bg-emerald-700 hover:bg-emerald-600 text-white`}>⬇ Baixar marcadas (ZIP){marcadas.size ? ` · ${marcadas.size}` : ""}</button>
             </div>
