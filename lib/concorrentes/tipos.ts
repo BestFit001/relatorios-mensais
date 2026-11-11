@@ -48,7 +48,8 @@ export interface Conector {
   validarUrlAnuncio(url: string): { url: string; mlb_id: string };
   rasparCategoria(url: string, paginas: number): Promise<ResultadoCategoria>;
   buscarAnuncio(url: string): Promise<AnuncioRaspado>;
-  capturarLote(refs: RefAnuncio[]): Promise<ResultadoLote>;
+  /** `ate` = instante (ms) em que a rodada precisa terminar; o que não der tempo volta como SEM_TEMPO */
+  capturarLote(refs: RefAnuncio[], ate?: number): Promise<ResultadoLote>;
   /** testa cada estratégia (API/HTML) e conta o que cada uma consegue fazer daqui */
   diagnosticar(): Promise<DiagnosticoItem[]>;
 }
@@ -57,3 +58,6 @@ export interface DiagnosticoItem { estrategia: string; ok: boolean; detalhe: str
 
 /** Erro de entrada do usuário (link inválido, canal sem conector...) -> a rota responde 400, não 500. */
 export class ErroValidacao extends Error {}
+
+/** Motivo usado quando a rodada acabou antes de o anúncio ser lido (não é falha: fica para a próxima rodada). */
+export const SEM_TEMPO = "sem tempo nesta rodada";

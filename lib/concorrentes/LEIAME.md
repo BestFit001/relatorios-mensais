@@ -32,6 +32,8 @@ lib/concorrentes/
 | `CRON_SECRET` | sim | autenticar o cron; sem ela a rota recusa rodar |
 | `ML_SCRAPER_URL_TEMPLATE` | recomendada | serviço de raspagem/proxy, ex. `https://servico/?key=XXX&url={url}` (o ML costuma barrar IPs de datacenter) |
 | `ML_CLIENT_ID` + `ML_CLIENT_SECRET` ou `ML_ACCESS_TOKEN` | opcional | chamadas autenticadas na API oficial |
+| `ML_TIMEOUT_MS` | opcional | tempo máximo de uma página (padrão 45000 via proxy, 15000 direto) |
+| `ML_CONCORRENCIA` | opcional | páginas lidas ao mesmo tempo (padrão 5; aumente se o plano do proxy permitir) |
 | `ML_ESTRATEGIA` | opcional | `auto` (padrão: API e depois páginas) · `api` · `html` |
 | `ML_API_BASE` | opcional | só para testes |
 

@@ -2,7 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { obterConector } from "./marketplaces";
 import { calcularVendasNoDia, hojeSP, comLimite, totalBase } from "./calculos";
-import { ErroValidacao, type AnuncioRaspado } from "./tipos";
+import { ErroValidacao, SEM_TEMPO, type AnuncioRaspado } from "./tipos";
 
 export const PAGINAS_POR_CATEGORIA = 2;
 const MAX_ANUNCIOS = 100;
@@ -118,14 +118,15 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
     if (!data || data.length < 1000) break;
   }
 
-  const fila = todos.filter((a) => opc.forcar || a.ultima_captura !== hoje);
+  // já capturado hoje = pulado, exceto o que foi cadastrado sem o total de vendas (faltou tempo/dado na leitura inicial)
+  const fila = todos.filter((a) => opc.forcar || a.ultima_captura !== hoje || a.ultimo_total_vendas == null);
   // quem está há mais tempo sem captura vai primeiro (se o tempo acabar, o resto fica para a próxima rodada)
   fila.sort((a, b) => String(a.ultima_captura ?? "").localeCompare(String(b.ultima_captura ?? "")));
 
   const resumo: ResumoCaptura = { data: hoje, ativos: todos.length, jaCapturados: todos.length - fila.length, processados: 0, ok: 0, falhas: 0, pendentes: 0, completo: true, erros: [], ms: 0 };
   const categoriasTocadas = new Set<string>();
 
-  for (const lote of em(fila, 20)) {
+  for (const lote of em(fila, 10)) {
     if (Date.now() - inicio > orcamento) break;
     // anúncios de um mesmo lote podem ser de canais diferentes
     const porCanal = new Map<string, any[]>();
@@ -137,12 +138,13 @@ export async function capturarDiario(db: SupabaseClient, opc: { orcamentoMs?: nu
         for (const a of itens) { resumo.falhas++; resumo.processados++; if (resumo.erros.length < 20) resumo.erros.push({ mlb_id: a.mlb_id, motivo: e.message }); }
         continue;
       }
-      const r = await conector.capturarLote(itens.map((a) => ({ mlb_id: a.mlb_id, url_anuncio: a.url_anuncio })));
+      const r = await conector.capturarLote(itens.map((a) => ({ mlb_id: a.mlb_id, url_anuncio: a.url_anuncio })), inicio + orcamento);
       const historico: any[] = [];
       const atualizacoes: { id: string; campos: Record<string, unknown> }[] = [];
       for (const a of itens) {
-        resumo.processados++;
         const cap = r.ok.get(a.mlb_id);
+        if (!cap && r.erros.get(a.mlb_id) === SEM_TEMPO) continue; // acabou o tempo: fica pendente para a próxima rodada
+        resumo.processados++;
         if (!cap) {
           resumo.falhas++;
           if (resumo.erros.length < 20) resumo.erros.push({ mlb_id: a.mlb_id, motivo: r.erros.get(a.mlb_id) || "sem resposta" });

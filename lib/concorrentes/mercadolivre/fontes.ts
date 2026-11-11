@@ -11,22 +11,31 @@ import { idDoAnuncio, imagemSegura, urlAnuncioSegura } from "./url";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 const TEMPO_LIMITE_MS = 15000;
 
+/** A rodada acabou antes de esta página poder ser lida. */
+export class ErroSemTempo extends Error { constructor() { super("sem tempo nesta rodada"); } }
+
+/** Tempo máximo de UMA página: serviços de raspagem demoram (o ML é pesado), então via proxy o padrão é maior. Ajustável em ML_TIMEOUT_MS. */
+export const limiteHtmlMs = () => Number(process.env.ML_TIMEOUT_MS) || (temProxy() ? 45000 : 15000);
+
 export const apiBase = () => (process.env.ML_API_BASE || "https://api.mercadolibre.com").replace(/\/+$/, "");
 export const temProxy = () => Boolean(process.env.ML_SCRAPER_URL_TEMPLATE);
 
-async function pedir(url: string, init: RequestInit = {}): Promise<Response> {
+async function pedir(url: string, init: RequestInit = {}, limiteMs: number = TEMPO_LIMITE_MS): Promise<Response> {
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), TEMPO_LIMITE_MS);
+  const t = setTimeout(() => ctl.abort(), limiteMs);
   try { return await fetch(url, { ...init, signal: ctl.signal, redirect: "follow", cache: "no-store" }); }
   catch (e: any) { throw new Error(e?.name === "AbortError" ? "tempo esgotado" : `falha de rede (${e?.cause?.code || e?.message || e})`); }
   finally { clearTimeout(t); }
 }
 
 // ---------- HTML ----------
-export async function baixarHtml(url: string): Promise<string> {
+/** `ate` (opcional) = instante limite da rodada: o tempo da página nunca passa dele. */
+export async function baixarHtml(url: string, ate?: number): Promise<string> {
+  let limite = limiteHtmlMs();
+  if (ate) { limite = Math.min(limite, ate - Date.now()); if (limite < 3000) throw new ErroSemTempo(); }
   const modelo = process.env.ML_SCRAPER_URL_TEMPLATE;
   const alvo = modelo ? modelo.replace("{url}", encodeURIComponent(url)) : url;
-  const r = await pedir(alvo, { headers: modelo ? {} : { "User-Agent": UA, "Accept-Language": "pt-BR,pt;q=0.9", Accept: "text/html,application/xhtml+xml" } });
+  const r = await pedir(alvo, { headers: modelo ? {} : { "User-Agent": UA, "Accept-Language": "pt-BR,pt;q=0.9", Accept: "text/html,application/xhtml+xml" } }, limite);
   const html = await r.text();
   if (pareceBloqueio(r.status, html)) throw new ErroBloqueio(`o Mercado Livre bloqueou a leitura da página (HTTP ${r.status})${modelo ? " mesmo via proxy" : " — o servidor da Vercel é barrado; configure ML_SCRAPER_URL_TEMPLATE"}`);
   if (!r.ok) throw new Error(`HTTP ${r.status} ao abrir a página`);

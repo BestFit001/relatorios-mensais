@@ -154,7 +154,7 @@ export default function ConcorrentesPainel() {
       for (let rodada = 0; rodada < 12; rodada++) { // a rota trabalha em lotes dentro do limite de tempo; repete até acabar
         const r = await chamar("capturar", "POST", { categoria_id: categoriaId });
         ok += r.ok; falhas += r.falhas; if (r.erros?.[0]) ultimoErro = r.erros[0].motivo;
-        if (r.pendentes === 0) break;
+        if (r.pendentes === 0 || r.processados === 0) break; // acabou, ou a rodada não avançou
         setAtualizando(`Capturando… ${ok + falhas} anúncio(s) processados`);
       }
       await carregarAnuncios(categoriaId);
