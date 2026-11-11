@@ -4,6 +4,7 @@
 
 import { avaliarFormulaPorUnidade as avaliarFormulaRepasse } from "./formulaRepasse";
 import { DESCONTAR_FRETE_ADS_NO_LUCRO, mesDoEnvio } from "./regrasLucro";
+import { criarRepasseReal } from "./repasseRealLogica";
 
 export type BancoDash = Record<string, any[]>;
 
@@ -26,7 +27,7 @@ export interface ResumoCanal {
 
 export const TABELAS_RESUMO = [
   "vendas_canais", "faturados", "tarifas_site", "tabela_custos_skus", "config_regras_canais",
-  "config_regras_tiny", "tb_metas", "devolucoes", "cancelados", "ads_faturamento_canal", "plp_pedidos",
+  "config_regras_tiny", "tb_metas", "devolucoes", "cancelados", "ads_faturamento_canal", "plp_pedidos", "repasses_pedidos",
 ] as const;
 
 const MESES_MAP: Record<string, string> = {
@@ -109,6 +110,7 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
 
   const channelRules = db.config_regras_canais || [];
   const sales = db.vendas_canais || [];
+  const repasseRealDe = criarRepasseReal(db.repasses_pedidos, sales);   // repasse REAL do extrato do canal (hoje TikTok)
   const products = db.tabela_custos_skus || [];
   const goals = db.tb_metas || [];
   const cancelados = db.cancelados || [];
@@ -235,6 +237,8 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       if (isNaN(repasseLiquido) || repasseLiquido <= 0 || (precoVenda > 0 && repasseLiquido > precoVenda * qtd * 1.5)) {
         repasseLiquido = Math.max(0, precoVenda * qtd - precoVenda * qtd * 0.16);
       }
+      const repasseReal = repasseRealDe(s);
+      if (repasseReal !== null) repasseLiquido = repasseReal;
       const nomeCanal = normalizarTexto(s.canal);
       if ((nomeCanal.includes("site") || nomeCanal.includes("loja virtual")) && tarifasSiteMap[ped]) {
         repasseLiquido = Math.max(0, repasseLiquido - parseCurrency(tarifasSiteMap[ped]));
