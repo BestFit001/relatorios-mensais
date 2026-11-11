@@ -102,3 +102,6 @@ Aba **📷 Buscar fotos** de `/concorrentes`. Código em `lib/fotos/` e `app/api
 - `POST /api/fotos/baixar` entrega o arquivo original (o navegador não consegue por CORS); o ZIP é montado no navegador (JSZip).
 - **Segurança (as URLs vêm da internet):** só https público, porta 443, sem usuário/senha; o DNS é conferido na hora de conectar e cada redirecionamento é refeito (`lib/fotos/seguranca.ts`); mesma origem obrigatória; limite de 15 MB. `FOTOS_PERMITIR_REDE_LOCAL` e `GOOGLE_VISION_URL` só valem fora da Vercel (testes).
 - **Custo:** `GOOGLE_VISION_API_KEY` (Vercel) é obrigatória. Cada busca é registrada em `fotos_buscas`; o limite mensal padrão é 950 (`FOTOS_LIMITE_MES`) para ficar abaixo dos 1.000 gratuitos. Erros do Google não contam.
+
+## EAN
+`lib/ean.ts` valida EAN/GTIN (8, 12, 13 ou 14 dígitos + dígito verificador). O SKU é interno (serve para custo e tarifas); o EAN é o código universal que o Google conhece. Na **Pesquisa de preços** o EAN (`pesquisas_imagem.ean`) vira a busca do Google Shopping, no lugar das palavras. Em **Buscar fotos** ele nomeia os arquivos e abre o Google Imagens/Shopping pelo código; o Vision continua buscando pela foto.

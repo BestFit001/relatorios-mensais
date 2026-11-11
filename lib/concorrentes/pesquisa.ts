@@ -1,5 +1,6 @@
 // Pesquisa de preços / Google Shopping: o favorito lê a página de resultados do Google (Shopping) NO NAVEGADOR e cola aqui.
 // Cada resultado vira uma "oferta" (loja, preço, link); as lojas que batem com os meus canais são ligadas ao canal da Análise de mercado.
+import { eanValido, limparEan } from "../ean";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parsePreco } from "./calculos";
 import { imagemSegura } from "./mercadolivre/url";
@@ -99,6 +100,12 @@ function falha(contexto: string, error: { message: string } | null) {
   if (error) throw new Error(`${contexto}: ${error.message}`);
 }
 
+const eanOpcional = (v: unknown): string | null => {
+  if (v == null || String(v).trim() === "") return null;
+  if (!eanValido(v)) throw new ErroValidacao("EAN inválido: confira os dígitos (8, 12, 13 ou 14 números; o último é o dígito verificador).");
+  return limparEan(v);
+};
+
 const precoOpcional = (v: unknown): number | null => {
   if (v == null || v === "") return null;
   const n = parsePreco(v);
@@ -106,18 +113,19 @@ const precoOpcional = (v: unknown): number | null => {
   return Math.round(n * 100) / 100;
 };
 
-export async function criarPesquisa(db: SupabaseClient, e: { sku: unknown; meu_pdv?: unknown; termo?: unknown }) {
+export async function criarPesquisa(db: SupabaseClient, e: { sku: unknown; meu_pdv?: unknown; termo?: unknown; ean?: unknown }) {
   const sku = typeof e.sku === "string" ? e.sku.trim() : "";
   if (!sku || sku.length > 40) throw new ErroValidacao("Informe o SKU do seu produto.");
-  const { data, error } = await db.from("pesquisas_imagem").insert({ sku, meu_pdv: precoOpcional(e.meu_pdv), termo: limpo(e.termo, 160) }).select("*").single();
+  const { data, error } = await db.from("pesquisas_imagem").insert({ sku, meu_pdv: precoOpcional(e.meu_pdv), termo: limpo(e.termo, 160), ean: eanOpcional(e.ean) }).select("*").single();
   falha("criar pesquisa", error);
   return { pesquisa: data };
 }
 
-export async function atualizarPesquisa(db: SupabaseClient, e: { id: string; meu_pdv?: unknown; termo?: unknown }) {
+export async function atualizarPesquisa(db: SupabaseClient, e: { id: string; meu_pdv?: unknown; termo?: unknown; ean?: unknown }) {
   const campos: Record<string, unknown> = { atualizado_em: new Date().toISOString() };
   if (e.meu_pdv !== undefined) campos.meu_pdv = precoOpcional(e.meu_pdv);
   if (e.termo !== undefined) campos.termo = limpo(e.termo, 160);
+  if (e.ean !== undefined) campos.ean = eanOpcional(e.ean);
   const { data, error } = await db.from("pesquisas_imagem").update(campos).eq("id", e.id).select("*").maybeSingle();
   falha("atualizar pesquisa", error);
   if (!data) throw new ErroValidacao("Pesquisa não encontrada.");

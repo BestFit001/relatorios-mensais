@@ -6,9 +6,10 @@ import { normalizarSkuCadastro } from "../../../lib/cadastros";
 import type { RegraTarifacao } from "../../../lib/tarifacao";
 import { favoritoHref } from "../../../lib/concorrentes/favorito";
 import { calcularOfertas, googleShoppingUrl, menorPrecoPorCanal, ofertaManualComoTexto, resumirOfertas, type Oferta } from "../../../lib/concorrentes/pesquisaCalculo";
+import { eanValido, limparEan } from "../../../lib/ean";
 import { botao, brl, caixa, campo, chamar, dataBR, pct } from "./comum";
 
-interface Pesquisa { id: string; sku: string; meu_pdv: number | null; termo: string | null; criado_em: string; atualizado_em: string | null }
+interface Pesquisa { id: string; sku: string; meu_pdv: number | null; termo: string | null; ean: string | null; criado_em: string; atualizado_em: string | null }
 const nm = (v: unknown): number | null => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 const lerPesquisa = (r: any): Pesquisa => ({ ...r, meu_pdv: nm(r.meu_pdv) });
 const lerOferta = (r: any): Oferta => ({ ...r, preco: Number(r.preco) });
@@ -36,6 +37,7 @@ export default function PesquisaImagem() {
   // nova pesquisa
   const [sku, setSku] = useState("");
   const [pdv, setPdv] = useState("");
+  const [ean, setEan] = useState("");
   const [termo, setTermo] = useState("");
   const [termoMexido, setTermoMexido] = useState(false);
   const [criando, setCriando] = useState(false);
@@ -113,8 +115,8 @@ export default function PesquisaImagem() {
   const criar = async () => {
     setCriando(true); setAviso(null);
     try {
-      const r = await chamar<{ pesquisa: Pesquisa }>("pesquisas", "POST", { sku, meu_pdv: pdv || undefined, termo: termo || undefined });
-      setSku(""); setPdv(""); setTermo(""); setTermoMexido(false);
+      const r = await chamar<{ pesquisa: Pesquisa }>("pesquisas", "POST", { sku, meu_pdv: pdv || undefined, termo: termo || undefined, ean: ean || undefined });
+      setSku(""); setPdv(""); setEan(""); setTermo(""); setTermoMexido(false);
       await carregarPesquisas(r.pesquisa.id);
       avisar("ok", "Pesquisa criada. Agora faça a busca no Google e importe os resultados (passos abaixo).");
     } catch (e: any) { avisar("erro", e.message); }
@@ -139,6 +141,12 @@ export default function PesquisaImagem() {
     catch (e: any) { avisar("erro", e.message); }
   };
 
+  const mudarEan = async (valor: string) => {
+    if (!pesquisa) return;
+    try { await chamar("pesquisas", "PATCH", { id: pesquisa.id, ean: valor }); await carregarPesquisas(pesquisa.id); avisar("ok", valor.trim() ? "EAN atualizado." : "EAN removido."); }
+    catch (e: any) { avisar("erro", e.message); await carregarPesquisas(pesquisa.id); }
+  };
+
   const remover = async () => {
     if (!pesquisa || !window.confirm(`Remover a pesquisa do SKU ${pesquisa.sku} e as ofertas dela?`)) return;
     try { await chamar("pesquisas", "DELETE", { id: pesquisa.id }); setSelecionada(null); await carregarPesquisas(); avisar("ok", "Pesquisa removida."); }
@@ -154,7 +162,9 @@ export default function PesquisaImagem() {
   const porCanal = useMemo(() => menorPrecoPorCanal(ofertas), [ofertas]);
   const resumo = useMemo(() => resumirOfertas(ofertas, pesquisa?.meu_pdv ?? null), [ofertas, pesquisa?.meu_pdv]);
   const nosCanais = linhas.filter((l) => l.canal), fora = linhas.filter((l) => !l.canal);
-  const termoBusca = (pesquisa?.termo || "").trim();
+  const eanBusca = pesquisa?.ean ? limparEan(pesquisa.ean) : "";
+  // o EAN é o código universal: o Google Shopping acha o MESMO produto nas lojas (palavras podem trazer produtos parecidos)
+  const termoBusca = eanBusca || (pesquisa?.termo || "").trim();
 
   return (
     <div className="space-y-5" data-pesquisa-imagem>
@@ -169,16 +179,20 @@ export default function PesquisaImagem() {
       <section className={`${caixa} p-5 space-y-4`} data-nova-pesquisa>
         <div>
           <h2 className="text-xs font-black uppercase tracking-wider text-slate-300">🔎 Nova pesquisa</h2>
-          <p className="text-[11px] text-slate-500 mt-1">Informe o SKU, o seu PDV e as palavras da busca. O Google Shopping mostra onde o item é vendido e por quanto; o favorito lê essa página no seu navegador e traz as ofertas para cá, já comparadas com os seus canais.</p>
+          <p className="text-[11px] text-slate-500 mt-1">Informe o SKU (para custo e tarifas), o EAN (para o Google achar exatamente o mesmo produto) e o seu PDV. O Google Shopping mostra onde o item é vendido e por quanto; o favorito lê essa página no seu navegador e traz as ofertas para cá, já comparadas com os seus canais.</p>
         </div>
-        <div className="grid gap-3 md:grid-cols-[1fr_160px_1.4fr]">
+        <div className="grid gap-3 md:grid-cols-[1fr_1fr_160px_1.4fr]">
           <label className={rotulo}>SKU do meu produto
             <input data-campo="ps-sku" value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Ex.: 17385002086" className={`${campo} w-full`} />
+          </label>
+          <label className={rotulo}>EAN / código de barras (recomendado)
+            <input data-campo="ps-ean" value={ean} onChange={(e) => setEan(e.target.value)} inputMode="numeric" placeholder="Ex.: 7891234567895" className={`${campo} w-full`} />
+            {ean.trim() && <span data-ps-ean-status className={eanValido(ean) ? "text-emerald-400" : "text-rose-400"}>{eanValido(ean) ? "✔ EAN válido: a busca será por ele" : "✕ EAN inválido (confira os dígitos)"}</span>}
           </label>
           <label className={rotulo}>Meu PDV (R$)
             <input data-campo="ps-pdv" value={pdv} onChange={(e) => setPdv(e.target.value)} inputMode="decimal" placeholder="Ex.: 59,90" className={`${campo} w-full`} />
           </label>
-          <label className={rotulo}>Palavras para buscar (opcional)
+          <label className={rotulo}>Palavras para buscar (se não tiver EAN)
             <input data-campo="ps-termo" value={termo} onChange={(e) => { setTermo(e.target.value); setTermoMexido(true); }} placeholder="Nome do produto como o cliente procura" className={`${campo} w-full`} />
           </label>
         </div>
@@ -186,7 +200,7 @@ export default function PesquisaImagem() {
           ? <p className="text-[11px] text-slate-400" data-ps-custo>Custo do SKU na tabela de custos: <b className="text-white">{brl(custoDoSku.valor)}</b>{custoDoSku.produto ? ` (${custoDoSku.produto})` : ""}.</p>
           : <p className="text-[11px] text-amber-300" data-ps-custo>Esse SKU não está na tabela de custos: o lucro não poderá ser calculado (só preços, taxas e frete).</p>)}
 
-        <button data-acao="ps-criar" onClick={criar} disabled={criando || !sku.trim()} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>{criando ? "Criando…" : "Criar pesquisa"}</button>
+        <button data-acao="ps-criar" onClick={criar} disabled={criando || !sku.trim() || (ean.trim() !== "" && !eanValido(ean))} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>{criando ? "Criando…" : "Criar pesquisa"}</button>
       </section>
 
       {carregando ? <p className="text-xs text-slate-500">Carregando…</p> : pesquisas.length === 0 ? (
@@ -207,7 +221,11 @@ export default function PesquisaImagem() {
               <section className={`${caixa} p-5 space-y-4`} data-passos>
                 <div className="flex flex-wrap items-center gap-3">
                   <h2 className="text-xs font-black uppercase tracking-wider text-slate-300">Buscar no Google Shopping — SKU {pesquisa.sku}</h2>
-                  <label className="flex items-center gap-2 text-[11px] font-bold text-slate-400 ml-auto">Meu PDV (R$)
+                  <label className="flex items-center gap-2 text-[11px] font-bold text-slate-400 ml-auto">EAN
+                    <input data-campo="ps-ean-edit" key={pesquisa.id + String(pesquisa.ean)} defaultValue={pesquisa.ean || ""} inputMode="numeric" placeholder="sem EAN"
+                      onBlur={(e) => { const v = e.target.value.trim(); if (v !== (pesquisa.ean || "")) mudarEan(v); }} className={`${campo} w-36`} />
+                  </label>
+                  <label className="flex items-center gap-2 text-[11px] font-bold text-slate-400">Meu PDV (R$)
                     <input data-campo="ps-pdv-edit" key={pesquisa.id + String(pesquisa.meu_pdv)} defaultValue={pesquisa.meu_pdv != null ? String(pesquisa.meu_pdv).replace(".", ",") : ""} inputMode="decimal"
                       onBlur={(e) => { const v = e.target.value.trim(); if (v !== (pesquisa.meu_pdv != null ? String(pesquisa.meu_pdv).replace(".", ",") : "")) mudarPdv(v); }} className={`${campo} w-28`} />
                   </label>
@@ -217,7 +235,7 @@ export default function PesquisaImagem() {
                   <li>
                     Abra o Google Shopping:{" "}
                     <a data-acao="ps-abrir-shopping" aria-disabled={!termoBusca} href={termoBusca ? googleShoppingUrl(termoBusca) : undefined} target="_blank" rel="noopener noreferrer" className={`${botao} !py-1 inline-block bg-slate-800 text-slate-200 hover:bg-slate-700 ${termoBusca ? "" : "opacity-40 pointer-events-none"}`}>Abrir Google Shopping ↗</a>{" "}
-                    {termoBusca ? <>com “{termoBusca}”.</> : <span className="text-slate-500">(preencha as palavras da busca ao criar a pesquisa)</span>}
+                    {eanBusca ? <>pelo EAN <b className="text-slate-200">{eanBusca}</b>.</> : termoBusca ? <>com “{termoBusca}”. <span className="text-amber-300">Com o EAN o Google acha o mesmo produto, não só parecidos.</span></> : <span className="text-slate-500">(informe o EAN ou as palavras da busca)</span>}
                   </li>
                   <li>
                     Na página de resultados do Shopping, clique no favorito{" "}

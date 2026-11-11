@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { eanValido, googleImagensEanUrl, googleShoppingEanUrl, limparEan } from "../../../lib/ean";
 import { botao, campo, caixa } from "./comum";
 
 interface Foto {
@@ -38,6 +39,7 @@ export default function BuscaFotos({ usuario }: { usuario: string }) {
   const [uso, setUso] = useState<Uso | null>(null);
   const [erroUso, setErroUso] = useState("");
   const [sku, setSku] = useState("");
+  const [ean, setEan] = useState("");
   const [previa, setPrevia] = useState<string | null>(null);
   const [buscando, setBuscando] = useState(false);
   const [res, setRes] = useState<Resultado | null>(null);
@@ -76,7 +78,7 @@ export default function BuscaFotos({ usuario }: { usuario: string }) {
     if (!previa) return;
     setBuscando(true); setAviso(null); setRes(null); setMarcadas(new Set()); setQuebradas(new Set());
     try {
-      const r = await fetch("/api/fotos/buscar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ imagem: previa, sku: sku.trim(), usuario }) });
+      const r = await fetch("/api/fotos/buscar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ imagem: previa, sku: (eanOk ? limparEan(ean) : sku.trim()), usuario }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.erro || "Erro na busca.");
       setRes(j); setUso((u) => (u ? { ...u, usados: j.usados, limite: j.limite } : u));
       if (!j.fotos.length) setAviso({ tipo: "erro", texto: j.candidatos ? `O Google achou ${j.candidatos} imagem(ns), mas nenhuma pôde ser aberta (sites bloqueiam ou removeram). Tente outra foto.` : "O Google não encontrou essa foto na internet. Tente uma foto mais nítida, só do produto." });
@@ -87,7 +89,9 @@ export default function BuscaFotos({ usuario }: { usuario: string }) {
   const visiveis = useMemo(() => (res?.fotos || []).filter((f) =>
     Math.max(f.largura, f.altura) >= minimo && (origem === "todas" || (origem === "iguais" ? f.origem === "igual" : f.origem !== "parecida"))), [res, minimo, origem]);
 
-  const nomeArquivo = (f: Foto, i: number) => `${slug(sku || res?.palpite || "foto")}-${String(i + 1).padStart(2, "0")}-${f.largura}x${f.altura}.${ext(f.tipo)}`;
+  const eanOk = eanValido(ean);
+  const base = () => slug((eanOk ? limparEan(ean) : "") || sku || res?.palpite || "foto");
+  const nomeArquivo = (f: Foto, i: number) => `${base()}-${String(i + 1).padStart(2, "0")}-${f.largura}x${f.altura}.${ext(f.tipo)}`;
   const alternar = (url: string) => setMarcadas((s) => { const n = new Set(s); n.has(url) ? n.delete(url) : n.add(url); return n; });
 
   const baixarUma = async (f: Foto, i: number) => {
@@ -107,7 +111,7 @@ export default function BuscaFotos({ usuario }: { usuario: string }) {
     }
     setProgresso(null);
     if (!feitas) return setAviso({ tipo: "erro", texto: "Nenhuma foto pôde ser baixada (os sites bloquearam)." });
-    salvar(await zip.generateAsync({ type: "blob" }), `${slug(sku || res?.palpite || "fotos")}-fotos.zip`);
+    salvar(await zip.generateAsync({ type: "blob" }), `${base()}-fotos.zip`);
     setAviso({ tipo: falhas.length ? "erro" : "ok", texto: `ZIP com ${feitas} foto(s)${falhas.length ? `; não baixaram: ${falhas.join(", ")}` : ""}.` });
   };
 
@@ -152,9 +156,22 @@ export default function BuscaFotos({ usuario }: { usuario: string }) {
             <input ref={arquivoRef} type="file" accept="image/*" hidden data-fotos-arquivo onChange={(e) => { receber(e.target.files?.[0]); e.target.value = ""; }} />
           </div>
           <div className="space-y-3">
-            <label className="grid gap-1 text-[11px] font-bold text-slate-400 max-w-xs">SKU (opcional: usado no nome dos arquivos)
-              <input data-campo="fotos-sku" className={campo} value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Ex.: 12345" />
-            </label>
+            <div className="flex flex-wrap gap-3">
+              <label className="grid gap-1 text-[11px] font-bold text-slate-400 w-56">EAN / código de barras (opcional)
+                <input data-campo="fotos-ean" inputMode="numeric" className={campo} value={ean} onChange={(e) => setEan(e.target.value)} placeholder="Ex.: 7891234567895" />
+                {ean.trim() && <span data-fotos-ean-status className={eanOk ? "text-emerald-400" : "text-rose-400"}>{eanOk ? "✔ EAN válido" : "✕ EAN inválido (confira os dígitos)"}</span>}
+              </label>
+              <label className="grid gap-1 text-[11px] font-bold text-slate-400 w-44">SKU (opcional)
+                <input data-campo="fotos-sku" className={campo} value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Ex.: 12345" />
+              </label>
+            </div>
+            <p className="text-[11px] text-slate-500">O EAN dá nome aos arquivos e abre a busca por código de barras no Google. A busca pela foto continua sendo feita pela imagem.</p>
+            {eanOk && (
+              <div className="flex flex-wrap gap-2" data-fotos-ean-links>
+                <a data-acao="fotos-ean-imagens" href={googleImagensEanUrl(ean)} target="_blank" rel="noopener noreferrer" className={`${botao} !py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 inline-block`}>Google Imagens pelo EAN ↗</a>
+                <a data-acao="fotos-ean-shopping" href={googleShoppingEanUrl(ean)} target="_blank" rel="noopener noreferrer" className={`${botao} !py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 inline-block`}>Google Shopping pelo EAN ↗</a>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-3">
               <button data-acao="fotos-buscar" disabled={!previa || buscando || (uso != null && !uso.configurado)} onClick={buscar} className={`${botao} bg-indigo-600 hover:bg-indigo-500 text-white`}>
                 {buscando ? "Procurando… (até 1 min)" : "🔎 Buscar fotos"}

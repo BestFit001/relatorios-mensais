@@ -6,12 +6,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-/** Cria a pesquisa (um produto meu: SKU + meu PDV + termo). A imagem NÃO vai para o servidor. Corpo: { sku, meu_pdv?, termo? } */
+/** Cria a pesquisa (um produto meu: SKU + meu PDV + termo). A imagem NÃO vai para o servidor. Corpo: { sku, meu_pdv?, termo?, ean? } */
 export async function POST(req: Request) {
-  return executar(req, async (c) => criarPesquisa(supabaseServidor(), { sku: c.sku, meu_pdv: c.meu_pdv, termo: c.termo }));
+  return executar(req, async (c) => criarPesquisa(supabaseServidor(), { sku: c.sku, meu_pdv: c.meu_pdv, termo: c.termo, ean: c.ean }));
 }
 
-/** Importa o que o favorito leu no Google ou ajusta meu PDV/termo. Corpo: { id, texto } ou { id, meu_pdv?, termo? } */
+/** Importa o que o favorito leu no Google ou ajusta meu PDV/termo. Corpo: { id, texto } ou { id, meu_pdv?, termo?, ean? } */
 export async function PATCH(req: Request) {
   return executar(req, async (c) => {
     if (!ehUuid(c.id)) throw new ErroValidacao("Pedido inválido.");
@@ -22,7 +22,7 @@ export async function PATCH(req: Request) {
       try { payload = JSON.parse(c.texto); } catch { throw new ErroValidacao("O texto colado não está completo. Use o botão Copiar do favorito e cole tudo."); }
       return importarResultados(supabaseServidor(), { pesquisa_id: c.id, payload });
     }
-    return atualizarPesquisa(supabaseServidor(), { id: c.id, meu_pdv: c.meu_pdv, termo: c.termo });
+    return atualizarPesquisa(supabaseServidor(), { id: c.id, meu_pdv: c.meu_pdv, termo: c.termo, ean: c.ean });
   });
 }
 
