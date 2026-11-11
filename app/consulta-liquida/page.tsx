@@ -23,8 +23,8 @@ const pct = (n: number | null) => (n == null ? "—" : `${n.toLocaleString("pt-B
 interface Form { linha: string; colPedido: string; colPdv: string; colRepasse: string; imposto: string }
 const FORM_VAZIO: Form = { linha: "2", colPedido: "A", colPdv: "B", colRepasse: "C", imposto: String(IMPOSTO_PADRAO_PCT) };
 
-const ROTULO: Record<StatusConsulta, string> = { ok: "Calculado", sem_pedido: "Pedido não encontrado", sem_custo: "SKU sem custo", sem_valor: "PDV/repasse inválido", repetido: "Repetido (calculado)" };
-const COR: Record<StatusConsulta, string> = { ok: "text-emerald-400", repetido: "text-sky-300", sem_pedido: "text-rose-400", sem_custo: "text-amber-400", sem_valor: "text-amber-400" };
+const ROTULO: Record<StatusConsulta, string> = { ok: "Calculado", sem_pedido: "Pedido não encontrado", sem_custo: "SKU sem custo", sem_valor: "PDV/repasse inválido", somado: "Vários repasses somados" };
+const COR: Record<StatusConsulta, string> = { ok: "text-emerald-400", somado: "text-sky-300", sem_pedido: "text-rose-400", sem_custo: "text-amber-400", sem_valor: "text-amber-400" };
 
 export default function ConsultaLiquidaPage() {
   const router = useRouter();
@@ -93,7 +93,7 @@ export default function ConsultaLiquidaPage() {
 
   const baixar = () => {
     const dados = visiveis.map((r) => ({
-      "Linha da planilha": r.linha, "ID do pedido": r.idPedido, "Canal": r.canal ?? "", "SKU": r.skus.map((x) => x.sku).join(" + "), "Produto": r.skus.map((x) => x.produto).filter(Boolean).join(" + "), "Qtd": r.skus.reduce((q, i) => q + i.quantidade, 0) || "",
+      "Linha(s) da planilha": r.linhasPlanilha.join(", "), "ID do pedido": r.idPedido, "Canal": r.canal ?? "", "SKU": r.skus.map((x) => x.sku).join(" + "), "Produto": r.skus.map((x) => x.produto).filter(Boolean).join(" + "), "Qtd": r.skus.reduce((q, i) => q + i.quantidade, 0) || "",
       "PDV (venda cadastrada)": r.pdv ?? "", "PDV da planilha": r.pdvPlanilha ?? "", "Repasse": r.repasse ?? "", "Custo (CMV)": r.custo ?? "", [`Imposto (${impostoUsado}% do PDV)`]: r.imposto ?? "", "Líquido": r.liquido ?? "",
       "Margem sobre o PDV (%)": r.margemPct == null ? "" : Math.round(r.margemPct * 10) / 10, "Situação": ROTULO[r.status], "Observação": r.detalhe,
     }));
@@ -180,7 +180,7 @@ export default function ConsultaLiquidaPage() {
               {processando && <p className="text-xs text-slate-400 mt-2">Lendo a planilha e consultando a base…</p>}
             </div>
           </div>
-          <p className="text-[10px] text-slate-500 max-w-4xl">Se o mesmo pedido tem mais de um SKU na base, os custos de todos entram (custo × quantidade de cada um). O PDV da planilha não entra na conta (se informado, só avisa quando difere do cadastrado). IDs grandes (como os do TikTok) precisam estar como texto na planilha: se o Excel os tiver virado número com “E+17”, os últimos dígitos já foram perdidos e o pedido não será achado.</p>
+          <p className="text-[10px] text-slate-500 max-w-4xl">Pedido de carrinho (o mesmo ID em várias linhas da planilha, uma por item): os repasses de todas as linhas são somados e os custos de todos os SKUs da venda entram (custo × quantidade de cada um). O PDV da planilha não entra na conta (se informado, só avisa quando difere do cadastrado). IDs grandes (como os do TikTok) precisam estar como texto na planilha: se o Excel os tiver virado número com “E+17”, os últimos dígitos já foram perdidos e o pedido não será achado.</p>
         </div>
 
         {resultados.length > 0 && (
@@ -200,7 +200,7 @@ export default function ConsultaLiquidaPage() {
                 <select value={filtro} onChange={(e) => setFiltro(e.target.value as any)} data-filtro className={campo + " !w-auto cursor-pointer"}>
                   <option value="todos">Todas as linhas ({resultados.length})</option>
                   <option value="pendentes">Sem líquido calculado ({resultados.filter((r) => r.liquido == null).length})</option>
-                  {(["ok", "repetido", "sem_pedido", "sem_custo", "sem_valor"] as StatusConsulta[]).map((s) => <option key={s} value={s}>{ROTULO[s]} ({resultados.filter((r) => r.status === s).length})</option>)}
+                  {(["ok", "somado", "sem_pedido", "sem_custo", "sem_valor"] as StatusConsulta[]).map((s) => <option key={s} value={s}>{ROTULO[s]} ({resultados.filter((r) => r.status === s).length})</option>)}
                 </select>
               ) : (
                 <select value={ordemProd} onChange={(e) => setOrdemProd(e.target.value as any)} data-ordem-produto className={campo + " !w-auto cursor-pointer"}>
@@ -224,7 +224,7 @@ export default function ConsultaLiquidaPage() {
                 <tbody>
                   {visiveis.slice(0, LIMITE_TELA).map((r) => (
                     <tr key={r.linha} data-linha-resultado={r.idPedido} data-status={r.status} className="border-b border-slate-800/60">
-                      <td className="py-2 pr-3 text-slate-500">{r.linha}</td>
+                      <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{r.linhasPlanilha.join(", ")}</td>
                       <td className="py-2 pr-3 font-mono text-slate-200 whitespace-nowrap">{r.idPedido || "—"}</td>
                       <td className="py-2 pr-3 text-slate-300">{r.skus.length ? r.skus.map((x) => <span key={x.sku} className="block whitespace-nowrap" title={x.produto}>{x.sku}{x.custoUnitario == null ? " ⚠" : ""}</span>) : "—"}</td>
                       <td className="py-2 pr-3 text-right text-slate-300">{r.skus.length ? r.skus.reduce((q, i) => q + i.quantidade, 0) : "—"}</td>

@@ -19,7 +19,7 @@ export const chaveSku = (v: unknown): string => {
 /** colPdv = -1: a planilha não tem PDV (ou não interessa); o PDV usado é sempre o da venda cadastrada na base. */
 export interface ConfigConsulta { linhaInicial: number; colPedido: number; colPdv: number; colRepasse: number; impostoPct: number }
 
-export type StatusConsulta = "ok" | "sem_pedido" | "sem_custo" | "sem_valor" | "repetido";
+export type StatusConsulta = "ok" | "sem_pedido" | "sem_custo" | "sem_valor" | "somado";
 
 export interface ItemConsulta {
   sku: string; produto: string; marca: string; quantidade: number; custoUnitario: number | null;
@@ -31,11 +31,12 @@ export interface ItemConsulta {
 }
 
 export interface ResultadoLinha {
-  linha: number;                 // número da linha na planilha (1 = primeira)
+  linha: number;                 // número da primeira linha do pedido na planilha (1 = primeira)
+  linhasPlanilha: number[];      // todas as linhas da planilha que trazem este pedido (carrinho: uma por item/repasse)
   idPedido: string;
   pdv: number | null;            // PDV da venda cadastrada na base (soma das linhas do pedido) — base do imposto
   pdvPlanilha: number | null;    // PDV que veio na planilha (só conferência)
-  repasse: number | null;        // repasse da planilha
+  repasse: number | null;        // repasse da planilha (soma de todas as linhas do pedido)
   skus: ItemConsulta[];
   canal: string | null;
   custo: number | null;          // soma de custo unitário × quantidade (null se faltar custo de algum SKU)
@@ -73,8 +74,10 @@ export function indexarCustos(custos: CustoSku[]): Map<string, InfoCusto> {
 }
 
 export function consultar(linhas: any[][], cfg: ConfigConsulta, base: Map<string, LinhaBase[]>, custos: Map<string, InfoCusto>): { resultados: ResultadoLinha[]; ignoradas: number } {
-  const resultados: ResultadoLinha[] = [];
-  const vistos = new Set<string>();
+  // 1) Lê a planilha e junta as linhas do mesmo pedido: carrinho vem com um repasse por item, e o pedido vale a soma deles.
+  interface Grupo { chave: string; idPedido: string; linhas: number[]; repasses: Array<number | null>; pdvs: Array<number | null> }
+  const grupos: Grupo[] = [];
+  const porChave = new Map<string, Grupo>();
   let ignoradas = 0;
   for (let i = Math.max(0, cfg.linhaInicial - 1); i < linhas.length; i++) {
     const l = linhas[i] || [];
@@ -82,13 +85,32 @@ export function consultar(linhas: any[][], cfg: ConfigConsulta, base: Map<string
     const pdvPlanilha = cfg.colPdv >= 0 ? paraNumeroBR(l[cfg.colPdv]) : null;
     const repasse = paraNumeroBR(l[cfg.colRepasse]);
     const chave = chaveDoPedido(idPedido);
-    const itensBase = chave ? base.get(chave) : undefined;
     // linha em branco, ou cabeçalho/observação do relatório (sem repasse e sem pedido correspondente na base)
-    if (!itensBase && repasse == null && (!idPedido || pdvPlanilha == null)) { ignoradas++; continue; }
-    const r: ResultadoLinha = { linha: i + 1, idPedido, pdv: null, pdvPlanilha, repasse, skus: [], canal: null, custo: null, imposto: null, liquido: null, margemPct: null, status: "ok", detalhe: "" };
+    if (!(chave && base.get(chave)) && repasse == null && (!idPedido || pdvPlanilha == null)) { ignoradas++; continue; }
+    let g = chave ? porChave.get(chave) : undefined;
+    if (!g) { g = { chave, idPedido, linhas: [], repasses: [], pdvs: [] }; grupos.push(g); if (chave) porChave.set(chave, g); }
+    g.linhas.push(i + 1); g.repasses.push(repasse); g.pdvs.push(pdvPlanilha);
+  }
 
-    if (!chave) { r.status = "sem_pedido"; r.detalhe = "Linha sem ID de pedido."; resultados.push(r); continue; }
-    if (!itensBase) { r.status = "sem_pedido"; r.detalhe = "Pedido não encontrado na base de vendas."; resultados.push(r); continue; }
+  // 2) Calcula cada pedido
+  const resultados: ResultadoLinha[] = [];
+  const fmt = (n: number) => n.toFixed(2).replace(".", ",");
+  for (const g of grupos) {
+    const validos = g.repasses.filter((x): x is number => x != null);
+    const repasse = validos.length ? dinheiro(validos.reduce((a, b) => a + b, 0)) : null;
+    const pdvsValidos = g.pdvs.filter((x): x is number => x != null);
+    const pdvPlanilha = pdvsValidos.length ? dinheiro(pdvsValidos.reduce((a, b) => a + b, 0)) : null;
+    const idPedido = g.idPedido;
+    const itensBase = g.chave ? base.get(g.chave) : undefined;
+    const r: ResultadoLinha = { linha: g.linhas[0], linhasPlanilha: g.linhas, idPedido, pdv: null, pdvPlanilha, repasse, skus: [], canal: null, custo: null, imposto: null, liquido: null, margemPct: null, status: "ok", detalhe: "" };
+    const notas: string[] = [];
+    if (g.linhas.length > 1) {
+      notas.push(`Pedido em ${g.linhas.length} linhas da planilha (${g.linhas.join(", ")}): repasses somados${validos.length > 1 ? ` (${validos.map(fmt).join(" + ")} = ${fmt(repasse as number)})` : ""}.`);
+      if (validos.length < g.repasses.length) notas.push(`${g.repasses.length - validos.length} linha(s) sem repasse válido ficaram fora da soma.`);
+    }
+
+    if (!g.chave) { r.status = "sem_pedido"; r.detalhe = "Linha sem ID de pedido."; resultados.push(r); continue; }
+    if (!itensBase) { r.status = "sem_pedido"; r.detalhe = ["Pedido não encontrado na base de vendas.", ...notas].join(" "); resultados.push(r); continue; }
 
     r.canal = Array.from(new Set(itensBase.map((b) => b.canal))).join(", ");
     const brutos = itensBase.map((b) => {
@@ -97,11 +119,10 @@ export function consultar(linhas: any[][], cfg: ConfigConsulta, base: Map<string
       return { b, q: q != null && q > 0 ? q : 1, info, pdv: Math.max(0, paraNumeroBR(b.preco_venda) ?? 0) };
     });
     const somaPdv = brutos.reduce((s, x) => s + x.pdv, 0);
-    const notas: string[] = [];
     let pdvBase: number | null = somaPdv > 0 ? somaPdv : null;
     if (pdvBase == null && pdvPlanilha != null) { pdvBase = pdvPlanilha; notas.push("Pedido sem valor de venda na base: o imposto usou o PDV da planilha."); }
     r.pdv = pdvBase == null ? null : dinheiro(pdvBase);
-    if (somaPdv > 0 && pdvPlanilha != null && Math.abs(pdvPlanilha - somaPdv) > 0.05) notas.push(`PDV da planilha (${pdvPlanilha.toFixed(2).replace(".", ",")}) difere do cadastrado na base (${somaPdv.toFixed(2).replace(".", ",")}); vale o da base.`);
+    if (somaPdv > 0 && pdvPlanilha != null && Math.abs(pdvPlanilha - somaPdv) > 0.05) notas.push(`PDV da planilha (${fmt(pdvPlanilha)}) difere do cadastrado na base (${fmt(somaPdv)}); vale o da base.`);
 
     const semCusto = brutos.filter((x) => !x.info);
     const custoBruto = semCusto.length ? null : brutos.reduce((s, x) => s + (x.info as InfoCusto).custo * x.q, 0);
@@ -124,12 +145,9 @@ export function consultar(linhas: any[][], cfg: ConfigConsulta, base: Map<string
       };
     });
 
-    const repetido = vistos.has(chave); vistos.add(chave);
-    const problema = semCusto.length ? "sem_custo" : (repasse == null || pdvBase == null) ? "sem_valor" : null;
-    if (problema === "sem_custo") { r.status = "sem_custo"; notas.unshift(`Sem custo cadastrado para o SKU ${semCusto.map((x) => String(x.b.sku ?? "").trim()).join(", ")}.`); }
-    else if (problema === "sem_valor") { r.status = "sem_valor"; notas.unshift(repasse == null ? "Repasse vazio ou inválido." : "Pedido sem valor de venda (PDV)."); }
-    else if (repetido) r.status = "repetido";
-    if (repetido) notas.push("Pedido repetido na planilha (conta de novo nos totais).");
+    if (semCusto.length) { r.status = "sem_custo"; notas.unshift(`Sem custo cadastrado para o SKU ${semCusto.map((x) => String(x.b.sku ?? "").trim()).join(", ")}.`); }
+    else if (repasse == null || pdvBase == null) { r.status = "sem_valor"; notas.unshift(repasse == null ? "Repasse vazio ou inválido." : "Pedido sem valor de venda (PDV)."); }
+    else if (g.linhas.length > 1) r.status = "somado";
     r.detalhe = notas.join(" ");
     resultados.push(r);
   }
