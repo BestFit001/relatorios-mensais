@@ -95,18 +95,15 @@ O Mercado Livre não divulga a venda diária de terceiros: só o total acumulado
 ## Vídeos "Com problemas" → Correções (fora do monitor, mas relacionado ao Início)
 Veja `lib/videoCorrecoes.ts` e a migration `20261111180000_video_correcoes.sql`: tabelas `video_correcoes` (um registro por envio) e `video_correcoes_canais` (um por canal que não estava marcado). O produto some de Vídeos enquanto a correção está `aberta`.
 
-## Buscar fotos (2 modos)
-Aba **📷 Buscar fotos** de `/concorrentes`. Código em `lib/fotos/` e `app/api/fotos/{importar,buscar,baixar}`.
-
-### Modo grátis (padrão, sem API)
-Busca por EAN ou palavras no **Bing Imagens**. O favorito (`lerBing` em `favorito.ts`) lê os resultados `a.iusc[m]` da página (o atributo `m` é um JSON com `murl` = foto em tamanho original, `purl` = página, `t` = título), clica em “Ver mais” e rola a página. O texto vai para `POST /api/fotos/importar` (`lib/fotos/importar.ts`), que valida (só https público, até 150 fotos), mede e ordena pela resolução. Não gasta cota nem exige chave. O Bing pode mudar o HTML sem aviso: se o favorito disser que não achou fotos, o ajuste fica em `lerBing`.
-
-### Modo Google Vision (busca pela foto)
-- A foto de referência é reduzida no navegador (até 1600 px, JPEG) e enviada a `POST /api/fotos/buscar`, que chama o Vision `WEB_DETECTION` (1 uso da cota por busca) e devolve as imagens **iguais / parciais / parecidas**.
-- O servidor lê só o começo de cada imagem (128 KB) para descobrir largura e altura (`lib/fotos/imagem.ts`), descarta ícones (< 100 px), HTML e links quebrados, e ordena da maior resolução para a menor.
-- `POST /api/fotos/baixar` entrega o arquivo original (o navegador não consegue por CORS); o ZIP é montado no navegador (JSZip).
-- **Segurança (as URLs vêm da internet):** só https público, porta 443, sem usuário/senha; o DNS é conferido na hora de conectar e cada redirecionamento é refeito (`lib/fotos/seguranca.ts`); mesma origem obrigatória; limite de 15 MB. `FOTOS_PERMITIR_REDE_LOCAL` e `GOOGLE_VISION_URL` só valem fora da Vercel (testes).
-- **Custo:** `GOOGLE_VISION_API_KEY` (Vercel) é obrigatória. Cada busca é registrada em `fotos_buscas`; o limite mensal padrão é 950 (`FOTOS_LIMITE_MES`) para ficar abaixo dos 1.000 gratuitos. Erros do Google não contam.
+## Buscar fotos (sem API)
+Aba **📷 Buscar fotos** de `/concorrentes`. Código em `lib/fotos/` e `app/api/fotos/{importar,baixar}`. Não usa Google Cloud Vision nem nenhuma API paga (`GOOGLE_VISION_API_KEY` não existe mais).
+1. A pessoa pesquisa no **Google Shopping** (por EAN, palavras ou pela imagem, como na Pesquisa de preços) e clica no mesmo favorito da Pesquisa de preços (`lerGoogle` em `favorito.ts`; só lê resultados com preço). O texto colado vai para `POST /api/fotos/importar` (`lib/fotos/importar.ts`).
+2. O servidor valida com `sanitizarPesquisa`, escolhe até 30 páginas de loja (https público, sem repetir, sem páginas do próprio Google) e as abre (até 6 em paralelo, ~22 s no total, 1,5 MB e 8 s por página).
+3. De cada página `lib/fotos/paginas.ts` tira as fotos do produto: JSON-LD (Product/ImageObject), `og:image`/`twitter:image`/`image_src`, ampliações da loja (`hiRes`, `data-a-dynamic-image`, `data-old-hires`) e testa versões maiores conhecidas (Amazon sem `._AC_…_`, Mercado Livre `-F`/`-O`, Shopee sem `_tn`, Magalu 1500x1500). Quem não existir some na medição.
+4. `lib/fotos/busca.ts` lê só o começo de cada imagem (128 KB, `Range`) para saber largura e altura, descarta ícones (< 100 px), HTML e links quebrados, tira repetidas (mesmas dimensões e bytes) e ordena da maior resolução para a menor.
+5. `POST /api/fotos/baixar` entrega o arquivo original (o navegador não consegue por CORS); o ZIP é montado no navegador (JSZip).
+- **Segurança (as URLs vêm da internet):** só https público, porta 443, sem usuário/senha; o DNS é conferido na hora de conectar e cada redirecionamento é refeito (`lib/fotos/seguranca.ts`); mesma origem obrigatória; limite de 15 MB por foto. `FOTOS_PERMITIR_REDE_LOCAL` só vale fora da Vercel (testes).
+- **Limites:** lojas que bloqueiam acesso de servidor (Amazon, Mercado Livre e Shopee costumam bloquear) não entregam a foto; o painel mostra “X de Y páginas abertas”. As miniaturas do Google são pequenas e não são usadas. A tabela `fotos_buscas` (contador do Vision) foi removida.
 
 ## EAN
-`lib/ean.ts` valida EAN/GTIN (8, 12, 13 ou 14 dígitos + dígito verificador). O SKU é interno (serve para custo e tarifas); o EAN é o código universal que o Google conhece. Na **Pesquisa de preços** o EAN (`pesquisas_imagem.ean`) vira a busca do Google Shopping, no lugar das palavras. Em **Buscar fotos** ele nomeia os arquivos e abre o Google Imagens/Shopping pelo código; o Vision continua buscando pela foto.
+`lib/ean.ts` valida EAN/GTIN (8, 12, 13 ou 14 dígitos + dígito verificador). O SKU é interno (serve para custo e tarifas); o EAN é o código universal que o Google conhece. Na **Pesquisa de preços** o EAN (`pesquisas_imagem.ean`) vira a busca do Google Shopping, no lugar das palavras. Em **Buscar fotos** ele abre o Google Shopping pelo código e nomeia os arquivos.

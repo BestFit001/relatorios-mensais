@@ -1,4 +1,4 @@
-// Busca de fotos: download seguro de URLs que NÃO são nossas (vêm do Google/Vision). Barra SSRF: só https público.
+// Busca de fotos: download seguro de URLs que NÃO são nossas (vêm das lojas encontradas no Google). Barra SSRF: só https público.
 import { lookup as dnsLookup } from "node:dns";
 import { request as httpsRequest } from "node:https";
 import type { IncomingHttpHeaders } from "node:http";
