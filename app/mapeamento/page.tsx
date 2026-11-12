@@ -9,6 +9,7 @@ import CanaisDoMapa from "../components/CanaisDoMapa";
 import SkusPorCanal from "../components/SkusPorCanal";
 import { carregarPaiManual, salvarPaiManual } from "../../lib/skuPaiDb";
 import { normalizarSkuPai, paiPadrao } from "../../lib/skuPai";
+import { carregarParaExclusao } from "../../lib/skusExclusao";
 import { canaisSemRepeticao, canalTemCadastro, normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
 
 // ───────────────────────── utilidades ─────────────────────────
@@ -106,6 +107,7 @@ export default function MapeamentoPage() {
   const [ocultos, setOcultos] = useState<Set<string>>(new Set());   // canais ocultos no painel (nome normalizado)
   const [itens, setItens] = useState<ItemCadastro[]>([]);
   const [paiManual, setPaiManual] = useState<Map<string, string>>(new Map());   // ajustes do SKU pai (sku normalizado -> pai)
+  const [paraExclusao, setParaExclusao] = useState<Set<string>>(new Set());     // SKUs marcados "Para exclusão" (normalizados)
 
   const [subAba, setSubAba] = useState<"progresso" | "skus" | "graficos" | "config">("progresso");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
@@ -164,6 +166,7 @@ export default function MapeamentoPage() {
       setCanais(listaCanais);
       setItens(resultado);
       setPaiManual(await carregarPaiManual());
+      setParaExclusao(await carregarParaExclusao());
     } catch (e: any) {
       setErro(e?.message || "Erro ao carregar os cadastros.");
     } finally {
@@ -411,7 +414,7 @@ export default function MapeamentoPage() {
         )}
 
         {/* ═════════════ SUB-ABA: SKUs POR CANAL ═════════════ */}
-        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} onCadastrarVarios={registrarCadastros} paiManual={paiManual} onEditarPai={editarPai} />}
+        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} onCadastrarVarios={registrarCadastros} paraExclusao={paraExclusao} paiManual={paiManual} onEditarPai={editarPai} />}
 
         {/* ═════════════ SUB-ABA: GRÁFICOS ═════════════ */}
         {subAba === "graficos" && (

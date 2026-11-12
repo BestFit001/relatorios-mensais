@@ -14,6 +14,8 @@ interface Props {
   onCadastrar: (sku: string, canal: string) => Promise<string | null>;
   /** Grava vários SKUs (os filhos de um pai) como cadastrados no canal. */
   onCadastrarVarios: (skus: string[], canal: string) => Promise<string | null>;
+  /** SKUs (normalizados) marcados "Para exclusão" pelo upload em Configurações. */
+  paraExclusao: Set<string>;
   /** Ajuste manual do SKU pai (vale para todo o app). Devolve a mensagem de erro, ou null. */
   paiManual: Map<string, string>;
   onEditarPai: (skus: string[], pai: string) => Promise<string | null>;
@@ -23,12 +25,14 @@ type Marca = 0 | 1 | 2;   // 0 = sem filtro, 1 = cadastrado neste canal, 2 = NÃ
 const fmtInt = (n: number) => n.toLocaleString("pt-BR");
 const normBusca = (v: string) => v.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 
-export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, onCadastrarVarios, paiManual, onEditarPai }: Props) {
+export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, onCadastrarVarios, paraExclusao, paiManual, onEditarPai }: Props) {
   const [marcas, setMarcas] = useState<Record<string, Marca>>({});
   const [status, setStatus] = useState<"TODOS" | "Normal" | "Obsoleto">("TODOS");
   const [estoque, setEstoque] = useState<"TODOS" | "COM" | "SEM">("TODOS");
   const [qtds, setQtds] = useState<Set<number>>(new Set());
   const [busca, setBusca] = useState("");
+  const [exclusao, setExclusao] = useState<"TODOS" | "EXCLUIR" | "MANTIDOS">("TODOS");
+  const paraExcluir = (sku: string) => paraExclusao.has(normalizarSkuPai(sku));
   const [visao, setVisao] = useState<"ambos" | "pais" | "filhos">("ambos");   // pais e filhos | só pais | só filhos
   const agrupar = visao !== "filhos";
   const [pagina, setPagina] = useState(1);
@@ -65,6 +69,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
       if (status !== "TODOS" && it.status !== status) continue;
       if (estoque === "COM" && !(it.estoque > 0)) continue;
       if (estoque === "SEM" && it.estoque > 0) continue;
+      if (exclusao !== "TODOS" && paraExclusao.has(normalizarSkuPai(it.sku)) !== (exclusao === "EXCLUIR")) continue;
       if (termos.length > 0 && !termos.some((t) => it.skuNorm.includes(t) || paiDoSku(it.sku, paiManual).includes(t))) continue;
       let ok = true;
       for (const m of marcasAtivas) { if ((m.marca === 1) !== !!it.pres[m.i]) { ok = false; break; } }
@@ -75,7 +80,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
       lista.push({ ...it, cad });
     }
     return { base: lista, histograma: hist };
-  }, [itens, visiveis, totalCanais, status, estoque, termos, marcasAtivas, paiManual]);
+  }, [itens, visiveis, totalCanais, status, estoque, exclusao, paraExclusao, termos, marcasAtivas, paiManual]);
 
   const filtrados = useMemo(() => (qtds.size === 0 ? base : base.filter((it) => qtds.has(it.cad))), [base, qtds]);
   const grupos = useMemo(() => agruparPorPai(filtrados, (it) => it.sku, paiManual), [filtrados, paiManual]);
@@ -86,8 +91,8 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
 
   const alternarMarca = (canal: string) => setMarcas((m) => ({ ...m, [canal]: (((m[canal] || 0) + 1) % 3) as Marca }));
   const alternarQtd = (n: number) => setQtds((s) => { const novo = new Set(s); if (novo.has(n)) novo.delete(n); else novo.add(n); return novo; });
-  const limpar = () => { setMarcas({}); setStatus("TODOS"); setEstoque("TODOS"); setQtds(new Set()); setBusca(""); setPagina(1); };
-  const haFiltro = marcasAtivas.length > 0 || status !== "TODOS" || estoque !== "TODOS" || qtds.size > 0 || busca.trim() !== "";
+  const limpar = () => { setMarcas({}); setStatus("TODOS"); setEstoque("TODOS"); setExclusao("TODOS"); setQtds(new Set()); setBusca(""); setPagina(1); };
+  const haFiltro = marcasAtivas.length > 0 || status !== "TODOS" || estoque !== "TODOS" || exclusao !== "TODOS" || qtds.size > 0 || busca.trim() !== "";
 
   const confirmarCadastro = async () => {
     if (!perguntando) return;
@@ -122,9 +127,9 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
 
   const baixarCsv = () => {
     const esc = (v: any) => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const cab = ["SKU pai", "SKU", "Status", "Estoque", "Canais cadastrados", "Total de canais", ...visiveis.map((v) => v.canal)];
+    const cab = ["SKU pai", "SKU", "Status", "Exclusão", "Estoque", "Canais cadastrados", "Total de canais", ...visiveis.map((v) => v.canal)];
     const ordenados = filhosOrdenados;
-    const linhas = ordenados.map((it) => [paiDoSku(it.sku, paiManual).toUpperCase(), it.sku, it.status, it.estoque, it.cad, totalCanais, ...visiveis.map((v) => (it.pres[v.i] ? "Sim" : "Não"))]);
+    const linhas = ordenados.map((it) => [paiDoSku(it.sku, paiManual).toUpperCase(), it.sku, it.status, paraExcluir(it.sku) ? "Para exclusão" : "Mantido", it.estoque, it.cad, totalCanais, ...visiveis.map((v) => (it.pres[v.i] ? "Sim" : "Não"))]);
     const csv = "﻿" + [cab, ...linhas].map((l) => l.map(esc).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a"); a.href = url; a.download = "skus_por_canal.csv"; a.click();
@@ -154,6 +159,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
       {!agrupar && <td className="p-3.5 font-mono text-slate-400">{paiDoSku(it.sku, paiManual).toUpperCase()}</td>}
       <td className="p-3.5 text-center">
         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${it.status === "Obsoleto" ? "bg-rose-950/60 text-rose-400 border border-rose-900/50" : "bg-emerald-950/60 text-emerald-400 border border-emerald-900/50"}`}>{it.status}</span>
+        {paraExcluir(it.sku) && <span data-tag-exclusao className="block mt-1 mx-auto w-fit px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/60 text-amber-300 border border-amber-800/60">Para exclusão</span>}
       </td>
       <td className={`p-3.5 text-right font-bold ${it.estoque > 0 ? "text-indigo-400" : "text-slate-500"}`}>{it.estoque}</td>
       <td className={`p-3.5 text-center font-mono font-bold ${it.cad === 0 ? "text-rose-400" : it.cad === totalCanais ? "text-emerald-400" : "text-slate-300"}`}>{it.cad}/{totalCanais}</td>
@@ -182,6 +188,12 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
             <label className={rotulo}>Estoque no Tiny:</label>
             <select data-f="estoque" value={estoque} onChange={(e) => { setEstoque(e.target.value as any); setPagina(1); }} className={campo}>
               <option value="TODOS">Todos</option><option value="COM">Com estoque (&gt; 0)</option><option value="SEM">Sem estoque (≤ 0)</option>
+            </select>
+          </div>
+          <div>
+            <label className={rotulo}>Exclusão:</label>
+            <select data-f="exclusao" value={exclusao} onChange={(e) => { setExclusao(e.target.value as any); setPagina(1); }} className={campo}>
+              <option value="TODOS">Todos</option><option value="EXCLUIR">Para exclusão</option><option value="MANTIDOS">Mantidos</option>
             </select>
           </div>
           <div>
@@ -281,6 +293,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
                                   <div className="flex flex-wrap items-center gap-3">
                                     <span className="font-mono font-black text-indigo-300 text-sm">{g.pai.toUpperCase()}</span>
                                     <span className="text-[11px] text-slate-400">{g.itens.length === total ? `${total} ${total === 1 ? "filho" : "filhos"}` : `${g.itens.length} de ${total} filhos`}</span>
+                                    {(() => { const n = (filhosPorPai.get(g.pai) || []).filter((it) => paraExcluir(it.sku)).length; return n > 0 ? <span data-tag-exclusao-pai className="text-[10px] font-bold text-amber-300 bg-amber-950/60 border border-amber-800/60 rounded px-2 py-0.5">Para exclusão: {n === total ? "todos" : `${n} de ${total}`}</span> : null; })()}
                                     {sug && <span className="text-[10px] font-bold text-amber-300 bg-amber-950/40 border border-amber-900/50 rounded px-2 py-0.5" title="SKUs de 10 dígitos costumam ter pai de 4 dígitos">⚠ pai pode ter 4 dígitos ({sug.toUpperCase()})</span>}
                                     <button type="button" data-editar-pai={g.pai} onClick={() => abrirEdicaoPai(g.pai)} className="text-[11px] font-bold text-slate-300 hover:text-white bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 cursor-pointer">✏️ Editar pai</button>
                                   </div>

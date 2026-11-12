@@ -11,12 +11,13 @@ import { buscarTudo } from "@/lib/buscarTudo";
 import { indiceDaLetra, lerEstoque, normalizarSkuEstoque } from "@/lib/cobertura";
 import { abaPrincipal } from "@/lib/lerArquivo";
 import { canalTemCadastro, normalizarNomeCanal } from "@/lib/vendasCanaisLogica";
+import { carregarParaExclusao, gravarParaExclusao, limparParaExclusao } from "@/lib/skusExclusao";
 
-type Letras = { sku: string; estoque: string; status_sku: string; status_valor: string };
+type Letras = { sku: string; estoque: string; status_sku: string; status_valor: string; exclusao_sku: string };
 type Aviso = { tipo: "ok" | "erro"; texto: string } | null;
 interface RegraCanal { id: number; canal: string; coluna_sku: string | null }
 
-const LETRAS_PADRAO: Letras = { sku: "C", estoque: "F", status_sku: "A", status_valor: "B" };
+const LETRAS_PADRAO: Letras = { sku: "C", estoque: "F", status_sku: "A", status_valor: "B", exclusao_sku: "A" };
 const soLetras = (v: string) => v.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
 
 /** Lê a aba com os dados (ignora abas ocultas/vazias, como a dropdown_options_hidden das planilhas do ML). */
@@ -59,6 +60,8 @@ export default function ConfigMapaCadastros({
   const [ocupado, setOcupado] = useState("");
   const [aviso, setAviso] = useState<Aviso>(null);
   const [novoCanal, setNovoCanal] = useState("");
+  const [totalExclusao, setTotalExclusao] = useState<number | null>(null);
+  const [modoExclusao, setModoExclusao] = useState<"somar" | "substituir">("somar");
 
   const carregar = useCallback(async () => {
     const [{ data: tiny }, { data: regras }] = await Promise.all([
@@ -67,11 +70,12 @@ export default function ConfigMapaCadastros({
     ]);
     if (tiny) {
       const g = (k: keyof Letras) => String(tiny.find((t: any) => t.campo === k)?.coluna || LETRAS_PADRAO[k]);
-      setLetras({ sku: g("sku"), estoque: g("estoque"), status_sku: g("status_sku"), status_valor: g("status_valor") });
+      setLetras({ sku: g("sku"), estoque: g("estoque"), status_sku: g("status_sku"), status_valor: g("status_valor"), exclusao_sku: g("exclusao_sku") });
     }
     if (regras) setCanais(regras as RegraCanal[]);
   }, []);
   useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { carregarParaExclusao().then((s) => setTotalExclusao(s.size)); }, []);
 
   // ---- colunas (letras) ----
   const salvarLetra = async (campo: keyof Letras) => {
@@ -146,6 +150,39 @@ export default function ConfigMapaCadastros({
       if (erro) return terminar("erro", "Falhou ao gravar os status: " + erro);
       terminar("ok", `✅ Status atualizados: ${mapa.size} SKUs validados.`);
     } catch (e: any) { terminar("erro", "Erro ao ler a planilha: " + (e?.message || e)); }
+  };
+
+  // ---- Para exclusão (SKUs que não serão repostos) ----
+  const subirExclusao = async (arquivo: File | undefined | null) => {
+    if (!arquivo) return;
+    const iSku = indiceDaLetra(letras.exclusao_sku);
+    if (iSku < 0) return setAviso({ tipo: "erro", texto: "Defina a coluna do SKU antes de subir." });
+    setOcupado("exclusao"); setAviso(null);
+    try {
+      const linhas = await lerPrimeiraAba(arquivo);
+      const lidos: string[] = [];
+      linhas.forEach((row, n) => {
+        const sku = normalizarSkuEstoque(row?.[iSku]);
+        if (!sku) return;
+        if (n === 0 && !/\d{6,}/.test(sku)) return;   // cabeçalho ("Grade", "SKU"...)
+        lidos.push(sku);
+      });
+      const unicos = Array.from(new Set(lidos));
+      if (unicos.length === 0) return terminar("erro", "Nenhum SKU foi lido com essa coluna. Confira a letra da coluna do SKU.");
+      const base = await buscarTudo("cadastros_base_tiny", "sku");
+      const naBase = new Set(base.map((t: any) => normalizarSkuEstoque(t.sku)));
+      const existem = unicos.filter((s) => naBase.has(s)).length;
+      const erro = await gravarParaExclusao(unicos, modoExclusao === "substituir");
+      if (erro) return terminar("erro", erro);
+      setTotalExclusao((await carregarParaExclusao()).size);
+      terminar("ok", `✅ ${unicos.length} SKU(s) marcados como “Para exclusão” (${modoExclusao === "substituir" ? "lista substituída" : "somados à lista"})${existem < unicos.length ? ` · ${unicos.length - existem} não constam na base do Tiny e não aparecem em SKUs por canal` : ""}.`);
+    } catch (e: any) { terminar("erro", "Erro ao ler a planilha: " + (e?.message || e)); }
+  };
+  const limparExclusao = async () => {
+    if (!confirm("Remover a marca “Para exclusão” de todos os SKUs?")) return;
+    const erro = await limparParaExclusao();
+    if (!erro) setTotalExclusao(0);
+    terminar(erro ? "erro" : "ok", erro || "🗑️ Lista “Para exclusão” limpa: todos os SKUs voltam a “Mantidos”.");
   };
 
   // ---- Canais ----
@@ -251,6 +288,27 @@ export default function ConfigMapaCadastros({
           </div>
           <input type="file" accept=".xlsx,.xls,.csv" disabled={!!ocupado} data-upload-status onChange={(e) => { subirStatus(e.target.files?.[0]); e.target.value = ""; }} className={arquivoCls + " file:bg-violet-600"} />
         </div>
+      </div>
+
+      <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-config-exclusao>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Produtos para exclusão</h3>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-400"><strong className="text-amber-300" data-total-exclusao>{totalExclusao ?? "…"}</strong> SKU(s) marcados</span>
+            <button type="button" onClick={limparExclusao} disabled={!!ocupado || !totalExclusao} data-limpar-exclusao className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[10px] font-bold py-1 px-2.5 rounded-lg cursor-pointer disabled:opacity-40">🗑️ Limpar lista</button>
+          </div>
+        </div>
+        <p className="text-xs text-slate-400">Suba a planilha dos produtos que não serão repostos e indique a coluna do SKU. Todos os SKUs dela ficam com a tag “Para exclusão” em SKUs por canal, onde dá para filtrar por “Para exclusão” ou “Mantidos”.</p>
+        <div className="flex flex-wrap items-center gap-4">
+          <CampoLetra rotulo="Coluna do SKU" dado="exclusao_sku" valor={letras.exclusao_sku} onMudar={(v) => setLetras((l) => ({ ...l, exclusao_sku: v }))} onSalvar={() => salvarLetra("exclusao_sku")} />
+          <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase">Ao subir:
+            <select value={modoExclusao} onChange={(e) => setModoExclusao(e.target.value as any)} data-modo-exclusao className="bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-200 font-semibold normal-case outline-none cursor-pointer">
+              <option value="somar">somar à lista atual</option>
+              <option value="substituir">substituir a lista atual</option>
+            </select>
+          </label>
+        </div>
+        <input type="file" accept=".xlsx,.xls,.csv" disabled={!!ocupado} data-upload-exclusao onChange={(e) => { subirExclusao(e.target.files?.[0]); e.target.value = ""; }} className={arquivoCls + " file:bg-amber-600"} />
       </div>
 
       <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
