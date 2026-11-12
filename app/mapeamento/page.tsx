@@ -251,17 +251,25 @@ export default function MapeamentoPage() {
   }, [canais, carregar]);
 
   // Marca um SKU como cadastrado em um canal (clique no ❌ da sub-aba "SKUs por canal"): grava na base e atualiza a tela sem recarregar
-  const registrarCadastro = useCallback(async (sku: string, canal: string): Promise<string | null> => {
-    const { error } = await supabase.from("mapeamento_canais_skus").upsert({ canal, sku, presente: true }, { onConflict: "canal,sku" });
-    if (error) return "Não consegui gravar o cadastro: " + error.message;
+  // Grava um ou vários SKUs como cadastrados no canal (o X do pai grava todas as variações de uma vez)
+  const registrarCadastros = useCallback(async (skus: string[], canal: string): Promise<string | null> => {
+    for (let i = 0; i < skus.length; i += 500) {
+      const lote = skus.slice(i, i + 500).map((sku) => ({ canal, sku, presente: true }));
+      const { error } = await supabase.from("mapeamento_canais_skus").upsert(lote, { onConflict: "canal,sku" });
+      if (error) return "Não consegui gravar o cadastro: " + error.message;
+    }
     const idx = canais.findIndex((c) => c === canal);
-    if (idx >= 0) setItens((prev) => prev.map((it) => {
-      if (it.sku !== sku) return it;
-      const pres = it.pres.slice(); pres[idx] = true;   // cópia: o vetor "vazio" é compartilhado entre SKUs sem cadastro
-      return { ...it, pres };
-    }));
+    if (idx >= 0) {
+      const set = new Set(skus);
+      setItens((prev) => prev.map((it) => {
+        if (!set.has(it.sku)) return it;
+        const pres = it.pres.slice(); pres[idx] = true;   // cópia: o vetor "vazio" é compartilhado entre SKUs sem cadastro
+        return { ...it, pres };
+      }));
+    }
     return null;
   }, [canais]);
+  const registrarCadastro = useCallback((sku: string, canal: string) => registrarCadastros([sku], canal), [registrarCadastros]);
 
   // Ajuste do SKU pai (botão "editar pai" da sub-aba SKUs por canal): grava na base e atualiza a tela
   const editarPai = useCallback(async (skus: string[], pai: string): Promise<string | null> => {
@@ -403,7 +411,7 @@ export default function MapeamentoPage() {
         )}
 
         {/* ═════════════ SUB-ABA: SKUs POR CANAL ═════════════ */}
-        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} paiManual={paiManual} onEditarPai={editarPai} />}
+        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} onCadastrarVarios={registrarCadastros} paiManual={paiManual} onEditarPai={editarPai} />}
 
         {/* ═════════════ SUB-ABA: GRÁFICOS ═════════════ */}
         {subAba === "graficos" && (

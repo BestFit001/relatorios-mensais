@@ -12,6 +12,8 @@ interface Props {
   itens: SkuDoMapa[]; visiveis: { canal: string; i: number }[]; loading: boolean;
   /** Grava o SKU como cadastrado no canal (devolve a mensagem de erro, ou null se deu certo). */
   onCadastrar: (sku: string, canal: string) => Promise<string | null>;
+  /** Grava vários SKUs (os filhos de um pai) como cadastrados no canal. */
+  onCadastrarVarios: (skus: string[], canal: string) => Promise<string | null>;
   /** Ajuste manual do SKU pai (vale para todo o app). Devolve a mensagem de erro, ou null. */
   paiManual: Map<string, string>;
   onEditarPai: (skus: string[], pai: string) => Promise<string | null>;
@@ -21,17 +23,18 @@ type Marca = 0 | 1 | 2;   // 0 = sem filtro, 1 = cadastrado neste canal, 2 = NÃ
 const fmtInt = (n: number) => n.toLocaleString("pt-BR");
 const normBusca = (v: string) => v.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 
-export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, paiManual, onEditarPai }: Props) {
+export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, onCadastrarVarios, paiManual, onEditarPai }: Props) {
   const [marcas, setMarcas] = useState<Record<string, Marca>>({});
   const [status, setStatus] = useState<"TODOS" | "Normal" | "Obsoleto">("TODOS");
   const [estoque, setEstoque] = useState<"TODOS" | "COM" | "SEM">("TODOS");
   const [qtds, setQtds] = useState<Set<number>>(new Set());
   const [busca, setBusca] = useState("");
-  const [agrupar, setAgrupar] = useState(true);
+  const [visao, setVisao] = useState<"ambos" | "pais" | "filhos">("ambos");   // pais e filhos | só pais | só filhos
+  const agrupar = visao !== "filhos";
   const [pagina, setPagina] = useState(1);
   const [tamanho, setTamanho] = useState(50);          // SKUs por página (lista simples)
   const [tamanhoPais, setTamanhoPais] = useState(20);  // pais por página (agrupado)
-  const [perguntando, setPerguntando] = useState<{ sku: string; canal: string } | null>(null);
+  const [perguntando, setPerguntando] = useState<{ sku: string; canal: string; pai?: string; skus: string[] } | null>(null);
   const [gravando, setGravando] = useState(false);
   const [erroCadastro, setErroCadastro] = useState("");
   const [editandoPai, setEditandoPai] = useState<string | null>(null);   // pai (do grupo) em edição
@@ -75,9 +78,11 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, pa
   }, [itens, visiveis, totalCanais, status, estoque, termos, marcasAtivas, paiManual]);
 
   const filtrados = useMemo(() => (qtds.size === 0 ? base : base.filter((it) => qtds.has(it.cad))), [base, qtds]);
-  const grupos = useMemo(() => (agrupar ? agruparPorPai(filtrados, (it) => it.sku, paiManual) : []), [agrupar, filtrados, paiManual]);
+  const grupos = useMemo(() => agruparPorPai(filtrados, (it) => it.sku, paiManual), [filtrados, paiManual]);
+  const filhosOrdenados = useMemo(() => grupos.flatMap((g) => g.itens), [grupos]);   // lista só de filhos, já na ordem do pai
   const maxHist = Math.max(1, ...histograma);
-  const pg = paginar(agrupar ? grupos.length : filtrados.length, pagina, agrupar ? tamanhoPais : tamanho);
+  const paginasDePai = visao === "ambos";   // "ambos": a página tem N pais com todos os filhos; "pais" e "filhos": N linhas
+  const pg = paginar(agrupar ? grupos.length : filtrados.length, pagina, paginasDePai ? tamanhoPais : tamanho);
 
   const alternarMarca = (canal: string) => setMarcas((m) => ({ ...m, [canal]: (((m[canal] || 0) + 1) % 3) as Marca }));
   const alternarQtd = (n: number) => setQtds((s) => { const novo = new Set(s); if (novo.has(n)) novo.delete(n); else novo.add(n); return novo; });
@@ -87,7 +92,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, pa
   const confirmarCadastro = async () => {
     if (!perguntando) return;
     setGravando(true); setErroCadastro("");
-    const erro = await onCadastrar(perguntando.sku, perguntando.canal);
+    const erro = perguntando.pai ? await onCadastrarVarios(perguntando.skus, perguntando.canal) : await onCadastrar(perguntando.sku, perguntando.canal);
     setGravando(false);
     if (erro) setErroCadastro(erro); else setPerguntando(null);
   };
@@ -118,7 +123,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, pa
   const baixarCsv = () => {
     const esc = (v: any) => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const cab = ["SKU pai", "SKU", "Status", "Estoque", "Canais cadastrados", "Total de canais", ...visiveis.map((v) => v.canal)];
-    const ordenados = agrupar ? grupos.flatMap((g) => g.itens) : filtrados;
+    const ordenados = filhosOrdenados;
     const linhas = ordenados.map((it) => [paiDoSku(it.sku, paiManual).toUpperCase(), it.sku, it.status, it.estoque, it.cad, totalCanais, ...visiveis.map((v) => (it.pres[v.i] ? "Sim" : "Não"))]);
     const csv = "﻿" + [cab, ...linhas].map((l) => l.map(esc).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -133,8 +138,15 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, pa
   if (totalCanais === 0) return <p className="p-10 text-center text-slate-500 bg-slate-900/90 rounded-2xl border border-slate-800">Nenhum canal visível. Mostre algum na faixa “Canais exibidos”.</p>;
 
   const botaoX = (sku: string, canal: string) => (
-    <button type="button" data-x={`${sku}|${canal}`} title="Clique se você já fez este cadastro" onClick={() => { setErroCadastro(""); setPerguntando({ sku, canal }); }} className="text-rose-500/60 hover:text-rose-400 hover:scale-125 transition cursor-pointer">❌</button>
+    <button type="button" data-x={`${sku}|${canal}`} title="Clique se você já fez este cadastro" onClick={() => { setErroCadastro(""); setPerguntando({ sku, canal, skus: [sku] }); }} className="text-rose-500/60 hover:text-rose-400 hover:scale-125 transition cursor-pointer">❌</button>
   );
+
+  // X do pai: subir uma variação sobe todas, então o cadastro vale para todos os filhos do pai que ainda não estão no canal
+  const perguntarPai = (pai: string, canal: string, i: number) => {
+    const faltam = (filhosPorPai.get(pai) || []).filter((it) => !it.pres[i]).map((it) => it.sku);
+    if (faltam.length === 0) return;
+    setErroCadastro(""); setPerguntando({ sku: pai, pai, canal, skus: faltam });
+  };
 
   const linhaSku = (it: SkuDoMapa & { cad: number }, recuo: boolean) => (
     <tr key={it.sku} className="hover:bg-slate-800/40 transition-colors">
@@ -172,10 +184,15 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, pa
               <option value="TODOS">Todos</option><option value="COM">Com estoque (&gt; 0)</option><option value="SEM">Sem estoque (≤ 0)</option>
             </select>
           </div>
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-200 cursor-pointer pb-3">
-            <input type="checkbox" data-f="agrupar" checked={agrupar} onChange={(e) => { setAgrupar(e.target.checked); setPagina(1); }} className="accent-indigo-500 w-4 h-4" />
-            Agrupar por SKU pai
-          </label>
+          <div>
+            <label className={rotulo}>Mostrar:</label>
+            <div className="flex rounded-xl overflow-hidden border border-slate-700" data-visao-grupo>
+              {([["ambos", "Pais e filhos"], ["pais", "Só pais"], ["filhos", "Só filhos"]] as const).map(([k, t]) => (
+                <button key={k} type="button" data-visao={k} onClick={() => { setVisao(k); setPagina(1); }}
+                  className={`px-3.5 py-2.5 text-xs font-bold cursor-pointer ${visao === k ? "bg-indigo-600 text-white" : "bg-slate-950 text-slate-300 hover:text-white"}`}>{t}</button>
+              ))}
+            </div>
+          </div>
           {haFiltro && <button type="button" onClick={limpar} className="px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-200 border border-slate-700 hover:text-white cursor-pointer">Limpar filtros</button>}
         </div>
 
@@ -232,7 +249,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, pa
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                   <tr>
-                    <th className="p-3.5">{agrupar ? "SKU pai / SKU filho" : "SKU"}</th>
+                    <th className="p-3.5">{visao === "ambos" ? "SKU pai / SKU filho" : visao === "pais" ? "SKU pai" : "SKU"}</th>
                     {!agrupar && <th className="p-3.5">SKU pai</th>}
                     <th className="p-3.5 text-center">Status</th>
                     <th className="p-3.5 text-right">Estoque</th>
@@ -270,25 +287,34 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, pa
                                 )}
                               </td>
                               {visiveis.map(({ canal, i }) => {
-                                const ok = g.itens.filter((it) => it.pres[i]).length;
+                                const doPai = filhosPorPai.get(g.pai) || [];
+                                const okTodos = doPai.filter((it) => it.pres[i]).length;   // contagem sobre todos os filhos do pai (não só os filtrados)
                                 return (
                                   <td key={canal} className="p-3.5 text-center text-[11px] font-mono font-bold">
-                                    {ok === g.itens.length ? <span className="text-emerald-400">✅</span> : ok === 0 ? <span className="text-rose-500/60">❌</span> : <span className="text-amber-300">{ok}/{g.itens.length}</span>}
+                                    {okTodos === doPai.length
+                                      ? <span className="text-emerald-400 text-sm">✅</span>
+                                      : <button type="button" data-x-pai={`${g.pai}|${canal}`} onClick={() => perguntarPai(g.pai, canal, i)}
+                                          title={okTodos === 0 ? "Clique se você já cadastrou este pai (todas as variações)" : `Faltam ${doPai.length - okTodos} variações. Clique se você já cadastrou`}
+                                          className={`cursor-pointer hover:scale-125 transition ${okTodos === 0 ? "text-rose-500/60 hover:text-rose-400 text-sm" : "text-amber-300 hover:text-amber-200"}`}>
+                                          {okTodos === 0 ? "❌" : `${okTodos}/${doPai.length}`}
+                                        </button>}
                                   </td>
                                 );
                               })}
                             </tr>
-                            {g.itens.map((it) => linhaSku(it as any, true))}
+                            {visao === "ambos" && g.itens.map((it) => linhaSku(it as any, true))}
                           </React.Fragment>
                         );
                       })
-                    : filtrados.slice(pg.inicio, pg.fim).map((it) => linhaSku(it, false))}
+                    : filhosOrdenados.slice(pg.inicio, pg.fim).map((it) => linhaSku(it, false))}
                 </tbody>
               </table>
             </div>
             <div className="p-4 border-t border-slate-800">
-              {agrupar
+              {visao === "ambos"
                 ? <Paginacao total={grupos.length} pagina={pg.pagina} tamanho={tamanhoPais} onPagina={setPagina} onTamanho={(t) => { setTamanhoPais(t); setPagina(1); }} rotulo="SKUs pai" opcoes={[10, 20, 50, 100]} />
+                : visao === "pais"
+                ? <Paginacao total={grupos.length} pagina={pg.pagina} tamanho={tamanho} onPagina={setPagina} onTamanho={(t) => { setTamanho(t); setPagina(1); }} rotulo="SKUs pai" opcoes={[25, 50, 100, 200]} />
                 : <Paginacao total={filtrados.length} pagina={pg.pagina} tamanho={tamanho} onPagina={setPagina} onTamanho={(t) => { setTamanho(t); setPagina(1); }} rotulo="SKUs" opcoes={[25, 50, 100, 200]} />}
             </div>
           </>
@@ -300,8 +326,11 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, pa
           <div className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-7 text-center">
             <h3 className="text-base font-black text-white mb-2">Você efetuou esse cadastro?</h3>
             <p className="text-xs text-slate-400 mb-5">
-              SKU <strong className="text-slate-200 font-mono">{perguntando.sku}</strong> no canal <strong className="text-slate-200">{perguntando.canal}</strong>.
-              Se sim, ele passa a constar como cadastrado na base.
+              {perguntando.pai
+                ? <>SKU pai <strong className="text-slate-200 font-mono">{perguntando.pai.toUpperCase()}</strong> no canal <strong className="text-slate-200">{perguntando.canal}</strong>.
+                    Se sim, as <strong className="text-slate-200">{perguntando.skus.length}</strong> variações que ainda faltavam passam a constar como cadastradas na base (subir uma variação sobe todas).</>
+                : <>SKU <strong className="text-slate-200 font-mono">{perguntando.sku}</strong> no canal <strong className="text-slate-200">{perguntando.canal}</strong>.
+                    Se sim, ele passa a constar como cadastrado na base.</>}
             </p>
             {erroCadastro && <p className="text-xs text-rose-300 mb-4">{erroCadastro}</p>}
             <div className="flex gap-3">
