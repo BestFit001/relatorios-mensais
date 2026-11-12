@@ -9,6 +9,8 @@ import Paginacao from "@/app/components/Paginacao";
 import { buscarTudo } from "@/lib/buscarTudo";
 import { paginar } from "@/lib/cadastroCanais";
 import { carregarParaExclusao } from "@/lib/skusExclusao";
+import { carregarPaiManual } from "@/lib/skuPaiDb";
+import { paiDoSku } from "@/lib/skuPai";
 
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
@@ -50,6 +52,7 @@ export default function AjustesSitePage() {
   const [statusMap, setStatusMap] = useState<Map<string, string>>(new Map());
   const [estoqueMap, setEstoqueMap] = useState<Map<string, number>>(new Map());
   const [paraExclusao, setParaExclusao] = useState<Set<string>>(new Set());
+  const [paiManual, setPaiManual] = useState<Map<string, string>>(new Map());   // ajustes do SKU pai feitos no Mapa de Cadastros
   const [filtroStatus, setFiltroStatus] = useState<"TODOS" | "Normal" | "Obsoleto">("TODOS");
   const [filtroEstoque, setFiltroEstoque] = useState<"TODOS" | "COM" | "SEM">("TODOS");
   const [filtroExclusao, setFiltroExclusao] = useState<"TODOS" | "EXCLUIR" | "MANTIDOS">("TODOS");
@@ -71,11 +74,12 @@ export default function AjustesSitePage() {
   const carregarDados = async () => {
     setLoading(true);
     try {
-      const [custos, status, tiny, exclusao] = await Promise.all([
+      const [custos, status, tiny, exclusao, pais] = await Promise.all([
         buscarTudo("tabela_custos_skus", "sku, marca"),
         buscarTudo("status_skus_catalogo", "sku, status").catch(() => []),
         buscarTudo("cadastros_base_tiny", "sku, estoque").catch(() => []),
         carregarParaExclusao(),
+        carregarPaiManual(),
       ]);
       const mapa: Record<string, string> = {};
       custos.forEach((c: any) => { const k = normalizarSku(c.sku); if (k) mapa[k] = c.marca || "Outros"; });
@@ -83,6 +87,7 @@ export default function AjustesSitePage() {
       setStatusMap(new Map(status.map((r: any) => [normalizarSku(r.sku), String(r.status || "Normal")] as [string, string])));
       setEstoqueMap(new Map(tiny.map((r: any) => [normalizarSku(r.sku), Number(r.estoque) || 0] as [string, number])));
       setParaExclusao(exclusao);
+      setPaiManual(pais);
     } catch { /* sem as bases auxiliares os filtros só não separam nada */ }
 
     // TODOS os itens (o servidor devolve no máximo 1000 por consulta): lê página a página, com desempate pelo id para não repetir/pular linha
@@ -196,6 +201,8 @@ export default function AjustesSitePage() {
     return Array.from(new Set(itens.map((i) => i.marca).filter(Boolean)));
   }, [itens]);
 
+  const termosBusca = useMemo(() => busca.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean), [busca]);
+
   const itensFiltrados = useMemo(() => {
     return itens.filter((i) => {
       const matchAba =
@@ -207,11 +214,14 @@ export default function AjustesSitePage() {
 
       const matchMarca = filtroMarca === "TODAS" || i.marca === filtroMarca;
 
+      // busca por SKU, SKU pai (traz todos os filhos), título ou marca; vírgula separa vários códigos
       const matchBusca =
-        !busca.trim() ||
-        i.sku.toLowerCase().includes(busca.toLowerCase()) ||
-        i.titulo.toLowerCase().includes(busca.toLowerCase()) ||
-        i.marca.toLowerCase().includes(busca.toLowerCase());
+        termosBusca.length === 0 ||
+        termosBusca.some((t) => {
+          const cod = normalizarSku(t);
+          return i.sku.toLowerCase().includes(t) || i.titulo.toLowerCase().includes(t) || i.marca.toLowerCase().includes(t) ||
+            (cod !== "" && (normalizarSku(i.sku).includes(cod) || paiDoSku(i.sku, paiManual).startsWith(cod)));
+        });
 
       if (!(matchAba && matchMarca && matchBusca)) return false;
       const k = normalizarSku(i.sku);
@@ -220,7 +230,7 @@ export default function AjustesSitePage() {
       if (filtroExclusao !== "TODOS" && paraExclusao.has(k) !== (filtroExclusao === "EXCLUIR")) return false;
       return true;
     });
-  }, [itens, filtroAba, filtroMarca, busca, filtroStatus, filtroEstoque, filtroExclusao, statusMap, estoqueMap, paraExclusao]);
+  }, [itens, filtroAba, filtroMarca, termosBusca, paiManual, filtroStatus, filtroEstoque, filtroExclusao, statusMap, estoqueMap, paraExclusao]);
 
   useEffect(() => { setPagina(1); }, [filtroAba, filtroMarca, busca, filtroStatus, filtroEstoque, filtroExclusao]);
   const pg = paginar(itensFiltrados.length, pagina, tamanho);
@@ -349,10 +359,10 @@ export default function AjustesSitePage() {
 
               <input
                 type="text"
-                placeholder="Buscar SKU, Título..."
+                placeholder="Buscar SKU, SKU pai, Título..."
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-48"
+                className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none w-60" data-busca
               />
             </div>
           </div>
@@ -367,6 +377,7 @@ export default function AjustesSitePage() {
                 <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase text-[10px] z-10">
                   <tr>
                     <th className="p-3">SKU</th>
+                    <th className="p-3 text-center">SKU pai</th>
                     <th className="p-3 min-w-[220px]">Título do Produto</th>
                     <th className="p-3 text-center">Marca</th>
                     <th className="p-3 text-center w-24">Descrição</th>
@@ -391,6 +402,7 @@ export default function AjustesSitePage() {
                         {(statusMap.get(normalizarSku(item.sku)) || "Normal") === "Obsoleto" && <span data-tag-obsoleto className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-950/60 text-rose-400 border border-rose-900/50">Obsoleto</span>}
                         {paraExclusao.has(normalizarSku(item.sku)) && <span data-tag-exclusao className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-950/60 text-amber-300 border border-amber-800/60">Para exclusão</span>}
                       </td>
+                      <td className="p-3 text-center font-mono text-slate-400" data-pai-col>{paiDoSku(item.sku, paiManual).toUpperCase()}</td>
                       <td className="p-3 text-slate-200 font-medium max-w-[280px] truncate" title={item.titulo}>
                         {item.titulo}
                       </td>
