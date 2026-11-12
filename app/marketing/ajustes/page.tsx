@@ -5,6 +5,10 @@ export const dynamic = "force-dynamic";
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "@/app/components/Navbar";
+import Paginacao from "@/app/components/Paginacao";
+import { buscarTudo } from "@/lib/buscarTudo";
+import { paginar } from "@/lib/cadastroCanais";
+import { carregarParaExclusao } from "@/lib/skusExclusao";
 
 function normalizarSku(valor: any): string {
   if (valor === null || valor === undefined) return "";
@@ -42,6 +46,15 @@ export default function AjustesSitePage() {
   const [salvando, setSalvando] = useState(false);
   const [itens, setItens] = useState<AjusteItem[]>([]);
   const [custosMap, setCustosMap] = useState<Record<string, string>>({});
+  // Informações do Mapa de Cadastros (mesmas bases): status (Normal/Obsoleto), estoque no Tiny e lista "Para exclusão"
+  const [statusMap, setStatusMap] = useState<Map<string, string>>(new Map());
+  const [estoqueMap, setEstoqueMap] = useState<Map<string, number>>(new Map());
+  const [paraExclusao, setParaExclusao] = useState<Set<string>>(new Set());
+  const [filtroStatus, setFiltroStatus] = useState<"TODOS" | "Normal" | "Obsoleto">("TODOS");
+  const [filtroEstoque, setFiltroEstoque] = useState<"TODOS" | "COM" | "SEM">("TODOS");
+  const [filtroExclusao, setFiltroExclusao] = useState<"TODOS" | "EXCLUIR" | "MANTIDOS">("TODOS");
+  const [pagina, setPagina] = useState(1);
+  const [tamanho, setTamanho] = useState(100);
 
   const [colunaSku, setColunaSku] = useState("A");
   const [colunaTitulo, setColunaTitulo] = useState("B");
@@ -57,33 +70,31 @@ export default function AjustesSitePage() {
 
   const carregarDados = async () => {
     setLoading(true);
-    let allCustos: any[] = [];
-    let from = 0;
-    const step = 1000;
-    let keep = true;
-    while (keep) {
-      const { data } = await supabase
-        .from("tabela_custos_skus")
-        .select("sku, marca")
-        .range(from, from + step - 1);
-      if (data && data.length > 0) {
-        allCustos = [...allCustos, ...data];
-        from += step;
-        if (data.length < step) keep = false;
-      } else keep = false;
+    try {
+      const [custos, status, tiny, exclusao] = await Promise.all([
+        buscarTudo("tabela_custos_skus", "sku, marca"),
+        buscarTudo("status_skus_catalogo", "sku, status").catch(() => []),
+        buscarTudo("cadastros_base_tiny", "sku, estoque").catch(() => []),
+        carregarParaExclusao(),
+      ]);
+      const mapa: Record<string, string> = {};
+      custos.forEach((c: any) => { const k = normalizarSku(c.sku); if (k) mapa[k] = c.marca || "Outros"; });
+      setCustosMap(mapa);
+      setStatusMap(new Map(status.map((r: any) => [normalizarSku(r.sku), String(r.status || "Normal")] as [string, string])));
+      setEstoqueMap(new Map(tiny.map((r: any) => [normalizarSku(r.sku), Number(r.estoque) || 0] as [string, number])));
+      setParaExclusao(exclusao);
+    } catch { /* sem as bases auxiliares os filtros só não separam nada */ }
+
+    // TODOS os itens (o servidor devolve no máximo 1000 por consulta): lê página a página, com desempate pelo id para não repetir/pular linha
+    const todos: any[] = [];
+    for (let de = 0; ; de += 1000) {
+      const { data, error } = await supabase.from("ajustes_site").select("*")
+        .order("created_at", { ascending: false }).order("id", { ascending: true }).range(de, de + 999);
+      if (error || !data || data.length === 0) break;
+      todos.push(...data);
+      if (data.length < 1000) break;
     }
-
-    const mapa: Record<string, string> = {};
-    allCustos.forEach((c: any) => {
-      const k = normalizarSku(c.sku);
-      if (k) mapa[k] = c.marca || "Outros";
-    });
-    setCustosMap(mapa);
-
-    const { data: dadosAjustes } = await supabase
-      .from("ajustes_site")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const dadosAjustes = todos;
 
     setItens(dadosAjustes || []);
     setLoading(false);
@@ -202,9 +213,17 @@ export default function AjustesSitePage() {
         i.titulo.toLowerCase().includes(busca.toLowerCase()) ||
         i.marca.toLowerCase().includes(busca.toLowerCase());
 
-      return matchAba && matchMarca && matchBusca;
+      if (!(matchAba && matchMarca && matchBusca)) return false;
+      const k = normalizarSku(i.sku);
+      if (filtroStatus !== "TODOS" && (statusMap.get(k) || "Normal") !== filtroStatus) return false;
+      if (filtroEstoque !== "TODOS" && ((estoqueMap.get(k) || 0) > 0) !== (filtroEstoque === "COM")) return false;
+      if (filtroExclusao !== "TODOS" && paraExclusao.has(k) !== (filtroExclusao === "EXCLUIR")) return false;
+      return true;
     });
-  }, [itens, filtroAba, filtroMarca, busca]);
+  }, [itens, filtroAba, filtroMarca, busca, filtroStatus, filtroEstoque, filtroExclusao, statusMap, estoqueMap, paraExclusao]);
+
+  useEffect(() => { setPagina(1); }, [filtroAba, filtroMarca, busca, filtroStatus, filtroEstoque, filtroExclusao]);
+  const pg = paginar(itensFiltrados.length, pagina, tamanho);
 
   const totalPendentes = itens.filter((i) => !i.concluido).length;
   const totalConcluidos = itens.filter((i) => i.concluido).length;
@@ -318,6 +337,16 @@ export default function AjustesSitePage() {
                 ))}
               </select>
 
+              <select data-f="status" value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value as any)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
+                <option value="TODOS">Todos os status</option><option value="Normal">Normais</option><option value="Obsoleto">Obsoletos</option>
+              </select>
+              <select data-f="estoque" value={filtroEstoque} onChange={(e) => setFiltroEstoque(e.target.value as any)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
+                <option value="TODOS">Com e sem estoque</option><option value="COM">Com estoque (&gt; 0)</option><option value="SEM">Sem estoque (≤ 0)</option>
+              </select>
+              <select data-f="exclusao" value={filtroExclusao} onChange={(e) => setFiltroExclusao(e.target.value as any)} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
+                <option value="TODOS">Exclusão: todos</option><option value="EXCLUIR">Para exclusão</option><option value="MANTIDOS">Mantidos</option>
+              </select>
+
               <input
                 type="text"
                 placeholder="Buscar SKU, Título..."
@@ -350,14 +379,18 @@ export default function AjustesSitePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
-                  {itensFiltrados.map((item) => (
+                  {itensFiltrados.slice(pg.inicio, pg.fim).map((item) => (
                     <tr
                       key={item.id}
                       className={`hover:bg-slate-800/30 transition-colors ${
                         item.concluido ? "bg-emerald-950/10 opacity-75" : ""
                       }`}
                     >
-                      <td className="p-3 font-mono font-bold text-indigo-400">{item.sku}</td>
+                      <td className="p-3 font-mono font-bold text-indigo-400">
+                        {item.sku}
+                        {(statusMap.get(normalizarSku(item.sku)) || "Normal") === "Obsoleto" && <span data-tag-obsoleto className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-950/60 text-rose-400 border border-rose-900/50">Obsoleto</span>}
+                        {paraExclusao.has(normalizarSku(item.sku)) && <span data-tag-exclusao className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-950/60 text-amber-300 border border-amber-800/60">Para exclusão</span>}
+                      </td>
                       <td className="p-3 text-slate-200 font-medium max-w-[280px] truncate" title={item.titulo}>
                         {item.titulo}
                       </td>
@@ -432,6 +465,11 @@ export default function AjustesSitePage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {!loading && itensFiltrados.length > 0 && (
+            <div className="p-4 border-t border-slate-800">
+              <Paginacao total={itensFiltrados.length} pagina={pg.pagina} tamanho={tamanho} onPagina={setPagina} onTamanho={(t) => { setTamanho(t); setPagina(1); }} rotulo="SKUs" opcoes={[50, 100, 200, 500]} />
             </div>
           )}
         </div>
