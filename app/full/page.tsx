@@ -28,76 +28,7 @@ import { ehMercadoLivre } from "../../lib/tarifacao";
 import { lerArquivoComoMatriz } from "../../lib/lerArquivo";
 import { formulaUsaQuantidade } from "../../lib/formulaRepasse";
 
-const matrizFretes = [
-  { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
-  { atePeso: 0.5, faixas: { "78.99": 8.25, "99.99": 13.85, "119.99": 16.15, "149.99": 18.15, "199.99": 20.45, "200": 23.25 } },
-  { atePeso: 1.0, faixas: { "78.99": 8.45, "99.99": 14.45, "119.99": 16.85, "149.99": 19.05, "199.99": 21.35, "200": 24.45 } },
-  { atePeso: 1.5, faixas: { "78.99": 8.65, "99.99": 14.75, "119.99": 17.15, "149.99": 19.45, "199.99": 21.75, "200": 25.45 } },
-  { atePeso: 2.0, faixas: { "78.99": 8.75, "99.99": 15.05, "119.99": 17.65, "149.99": 19.85, "199.99": 22.25, "200": 25.55 } },
-  { atePeso: 3.0, faixas: { "78.99": 9.15, "99.99": 16.45, "119.99": 19.15, "149.99": 21.65, "199.99": 24.35, "200": 27.05 } },
-  { atePeso: 4.0, faixas: { "78.99": 9.75, "99.99": 17.85, "119.99": 20.75, "149.99": 23.35, "199.99": 26.35, "200": 29.25 } },
-  { atePeso: 5.0, faixas: { "78.99": 10.25, "99.99": 19.75, "119.99": 22.85, "149.99": 26.05, "199.99": 29.25, "200": 32.45 } },
-  { atePeso: 6.0, faixas: { "78.99": 10.35, "99.99": 25.95, "119.99": 29.15, "149.99": 33.35, "199.99": 36.45, "200": 40.85 } },
-  { atePeso: 7.0, faixas: { "78.99": 10.45, "99.99": 27.55, "119.99": 31.65, "149.99": 36.75, "199.99": 40.85, "200": 45.25 } },
-];
-
-function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura: number, comprimento: number): number {
-  if (pdv < 79.00) return 0.00;
-  const pesoVolumetrico = (altura * largura * comprimento) / 6000;
-  const pesoConsiderado = Math.max(pesoReal, pesoVolumetrico);
-  let linhaFrete = matrizFretes.find(m => pesoConsiderado <= m.atePeso);
-  if (!linhaFrete) linhaFrete = matrizFretes[matrizFretes.length - 1];
-
-  let valorFrete = 0;
-  if (pdv < 79) valorFrete = linhaFrete.faixas["78.99"];
-  else if (pdv < 100) valorFrete = linhaFrete.faixas["99.99"];
-  else if (pdv < 120) valorFrete = linhaFrete.faixas["119.99"];
-  else if (pdv < 150) valorFrete = linhaFrete.faixas["149.99"];
-  else if (pdv < 200) valorFrete = linhaFrete.faixas["199.99"];
-  else valorFrete = linhaFrete.faixas["200"];
-  return valorFrete || 0;
-}
-
-function normalizarSku(valor: any) {
-  if (valor === null || valor === undefined) return "";
-  let s = String(valor).trim();
-  if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  s = s.replace(/^["']|["']$/g, "").trim();
-  // Full/FBA: o sufixo "-F" / "-FBA" (e tudo à direita do "-") é sempre desconsiderado ao validar o produto (custo, estoque Sede, vendas, devoluções)
-  return removerSufixoFba(s.toLowerCase());
-}
-
-function parseNumero(valor: any): number {
-  if (valor === null || valor === undefined || valor === "") return 0;
-  if (typeof valor === "number") return valor;
-  let s = String(valor).replace(/R\$/g, "").replace(/\s/g, "").trim();
-  if (s.includes(",") && s.includes(".")) s = s.replace(/\./g, "").replace(",", ".");
-  else if (s.includes(",")) s = s.replace(",", ".");
-  const num = parseFloat(s);
-  return isNaN(num) ? 0 : num;
-}
-
-function verificarDataNoPeriodo(dataStr: any, periodoCompetencia: string): boolean {
-  if (periodoCompetencia === "TODOS") return true;
-  if (!dataStr) return false;
-  const [mesAlvo, anoAlvo] = periodoCompetencia.split("/");
-  const str = String(dataStr).trim();
-  if (str.includes("-")) {
-    const partes = str.split("-");
-    if (partes.length >= 3) {
-      const a = partes[0]; const m = partes[1].padStart(2, "0");
-      return a === anoAlvo && m === mesAlvo.padStart(2, "0");
-    }
-  }
-  if (str.includes("/")) {
-    const partes = str.split("/");
-    if (partes.length === 3) {
-      const m = partes[1].padStart(2, "0"); const a = partes[2];
-      return a === anoAlvo && m === mesAlvo.padStart(2, "0");
-    }
-  }
-  return false;
-}
+import { normalizarSku, parseNumero, verificarDataNoPeriodo, carregarBasesFull, calcularFull, gravarAnaliseFull, resolverConfigFull, aplicarLayoutML, lerConfigFullDb, salvarConfigFullDb, type ConfigFull } from "../../lib/fullMotor";
 
 const formatarMoeda = (valor: number) => "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -164,6 +95,9 @@ export default function LogisticaPage() {
   // (Opcional) Como saber o que é Full dentro da planilha de vendas: coluna + texto. Em branco = tudo é Full.
   const [colIdFull, setColIdFull] = useState("");
   const [textoIdFull, setTextoIdFull] = useState("");
+  // Status do pedido: "considerar" (vírgula; vazio = todos) e "ignorar" (vírgula). A coluna do status é a do campo Status/Pacote.
+  const [statusConsiderar, setStatusConsiderar] = useState("");
+  const [statusIgnorar, setStatusIgnorar] = useState("");
   const baselineCfg = useRef<string | null>(null);
   const [cfgChave, setCfgChave] = useState("");   // "modo|canal" cuja configuração já foi carregada (libera o salvamento automático)
   const [regrasRitmo, setRegrasRitmo] = useState<RegraRitmo[]>(REGRAS_RITMO_PADRAO);
@@ -326,9 +260,12 @@ export default function LogisticaPage() {
     setColMlbVendas("Y"); setColQtdVendas("H"); setColPdvVendas("AC"); setColLiquidoVendas("T");
     setColReceitaPacote("I"); setColEntregaVendas("AS"); setTextoEntrega("flex"); setTaxaFlex("12.99");
     setColDataVendas("B");
+    setColIdFull("AR"); setTextoIdFull("mercado envios full"); setStatusIgnorar("cancelada, vamos te devolver"); setStatusConsiderar("");
   };
 
-  const carregarConfiguracoes = (canal: string) => {
+  const tokenConfig = useRef(0);
+  const carregarConfiguracoes = async (canal: string) => {
+    const meuToken = ++tokenConfig.current;
     const keyPrefix = modoLogistica === "full" ? "full_" : "padrao_";
     // Linha/colunas dos uploads de estoque do CD e de remessa: lembradas por canal
     setLinhaEstoque("13"); setColSkuEstoque("D"); setColQtdEstoque("X");
@@ -351,56 +288,27 @@ export default function LogisticaPage() {
     } catch { /* configuração corrompida: ignora e usa o padrão */ }
     let p: any = null;
     try { const salvoVen = localStorage.getItem(`${keyPrefix}vendas_${canal.toLowerCase()}`); if (salvoVen) p = JSON.parse(salvoVen); } catch { p = null; }
+    const doBanco = await lerConfigFullDb(supabase, canal, modoLogistica);
+    if (meuToken !== tokenConfig.current) return;   // o canal/modalidade mudou enquanto lia
+    aplicarConfigSalva(canal, doBanco || p);
+  };
 
-    // Só existem dois conceitos: Mercado Livre e Fórmula de Vendas (Regras).
-    // Configuração antiga (tarifação por faixa / líquido direto) é descartada e volta ao padrão do canal.
-    const tipoSalvo = p && (p.formula === "ml_recalculo" || p.formula === "formula_regras") ? p.formula : null;
-    const tipo: "ml_recalculo" | "formula_regras" = tipoSalvo || (ehMercadoLivre(canal) ? "ml_recalculo" : "formula_regras");
-    const usarSalvo = !!tipoSalvo && p;
-
-    // Parte sempre do padrão do tipo (não herda valores do canal anterior) e depois aplica o que foi salvo
-    setFormulaCanal(tipo);
-    setPdvTotalLinha(normTexto(canal).includes("amazon"));   // Amazon: a coluna PDV é o valor da linha; demais canais: preço unitário
-    setRegrasRitmo(REGRAS_RITMO_PADRAO); setPctDevAtencao("5"); setTetoMaxDevolucao("10"); setMinVendasDev("5");
-    setColIdFull(""); setTextoIdFull("");
-    if (tipo === "ml_recalculo") aplicarPadraoML();
-    else aplicarRegrasDoCanal(canal);
-
-    if (usarSalvo) {
-      if (p.linha) setLinhaVendas(p.linha);
-      if (p.colPedido !== undefined) setColPedidoVendas(p.colPedido);
-      if (p.colCarrinho !== undefined) setColCarrinhoVendas(p.colCarrinho);
-      if (p.colSku) setColSkuVendas(p.colSku);
-      if (p.colMlb) setColMlbVendas(p.colMlb);
-      if (p.colQtd) setColQtdVendas(p.colQtd);
-      if (p.colPdv) setColPdvVendas(p.colPdv);
-      if (p.colLiquido) setColLiquidoVendas(p.colLiquido);
-      if (p.colPacoteRec) setColReceitaPacote(p.colPacoteRec);
-      if (p.colEntrega !== undefined) setColEntregaVendas(p.colEntrega);
-      if (p.textoEntrega !== undefined) setTextoEntrega(p.textoEntrega);
-      if (p.taxaFlex !== undefined) setTaxaFlex(p.taxaFlex);
-      if (p.colData !== undefined) setColDataVendas(p.colData);
-      if (p.colIdFull !== undefined) setColIdFull(p.colIdFull);
-      if (p.textoIdFull !== undefined) setTextoIdFull(p.textoIdFull);
-      if (p.formulaVendas !== undefined && tipo === "formula_regras") setFormulaVendas(p.formulaVendas);
-      if (p.pdvTotalLinha !== undefined) setPdvTotalLinha(!!p.pdvTotalLinha);
-    }
-    if (p) {
-      if (p.comissao) setComissaoPadrao(p.comissao);
-      if (p.imposto) setAliquotaImposto(p.imposto);
-      if (p.metaDias) setMetaDiasCobertura(p.metaDias);
-      if (p.embalagem) setCustoEmbalagem(p.embalagem);
-      if (p.margemMin) setMargemMinimaPromissora(p.margemMin);
-      if (p.vendasMin) setVendasMinimasPromissoras(p.vendasMin);
-      if (p.tetoDev) setTetoMaxDevolucao(p.tetoDev);
-      if (p.pctDevAtencao !== undefined) setPctDevAtencao(p.pctDevAtencao);
-      if (p.minVendasDev !== undefined) setMinVendasDev(p.minVendasDev);
-      if (Array.isArray(p.regrasRitmo)) setRegrasRitmo(p.regrasRitmo);
-    }
+  // Configuração do canal: o banco manda (vale para quem sobe a planilha em qualquer navegador); sem registro, usa a do navegador
+  const aplicarConfigSalva = (canal: string, p: any) => {
+    const regra = regrasCanais.find((r: any) => String(r.canal || "").trim().toLowerCase() === canal.trim().toLowerCase());
+    const c = resolverConfigFull(canal, regra, p);
+    setFormulaCanal(c.formula); setFormulaVendas(c.formulaVendas); setPdvTotalLinha(c.pdvTotalLinha);
+    setLinhaVendas(c.linha); setColPedidoVendas(c.colPedido); setColCarrinhoVendas(c.colCarrinho); setColSkuVendas(c.colSku);
+    setColMlbVendas(c.colMlb); setColQtdVendas(c.colQtd); setColPdvVendas(c.colPdv); setColLiquidoVendas(c.colLiquido);
+    setColReceitaPacote(c.colPacoteRec); setColEntregaVendas(c.colEntrega); setTextoEntrega(c.textoEntrega); setTaxaFlex(c.taxaFlex);
+    setColDataVendas(c.colData); setColIdFull(c.colIdFull); setTextoIdFull(c.textoIdFull);
+    setStatusConsiderar(c.statusConsiderar); setStatusIgnorar(c.statusIgnorar);
+    setComissaoPadrao(c.comissao); setAliquotaImposto(c.imposto); setMetaDiasCobertura(c.metaDias); setCustoEmbalagem(c.embalagem);
+    setMargemMinimaPromissora(c.margemMin); setVendasMinimasPromissoras(c.vendasMin); setTetoMaxDevolucao(c.tetoDev);
+    setPctDevAtencao(c.pctDevAtencao); setMinVendasDev(c.minVendasDev); setRegrasRitmo(c.regrasRitmo);
     baselineCfg.current = null;
     setCfgChave(`${modoLogistica}|${canal}`);
   };
-
   // Tudo o que é digitado antes do upload (linhas, colunas, impostos, regras) fica gravado por canal e por modalidade
   const montarConfig = () => ({
     linha: linhaVendas, colPedido: colPedidoVendas, colCarrinho: colCarrinhoVendas,
@@ -411,6 +319,7 @@ export default function LogisticaPage() {
     vendasMin: vendasMinimasPromissoras, tetoDev: tetoMaxDevolucao,
     colData: colDataVendas, regrasRitmo: regrasRitmo, pctDevAtencao: pctDevAtencao, minVendasDev: minVendasDev,
     colIdFull: colIdFull, textoIdFull: textoIdFull, pdvTotalLinha: pdvTotalLinha,
+    statusConsiderar: statusConsiderar, statusIgnorar: statusIgnorar,
   });
   const montarConfigUploads = () => ({
     estoque: { linha: linhaEstoque, colSku: colSkuEstoque, colQtd: colQtdEstoque },
@@ -427,6 +336,8 @@ export default function LogisticaPage() {
       localStorage.setItem(`full_estoque_${chave}`, JSON.stringify(up.estoque));
       localStorage.setItem(`full_remessa_${chave}`, JSON.stringify(up.remessa));
     } catch { /* navegador sem armazenamento: segue sem salvar */ }
+    // No banco: o upload de vendas do Mercado Livre (Uploads) usa esta mesma configuração, de qualquer navegador
+    void salvarConfigFullDb(supabase, canalSelecionado, modoLogistica, montarConfig());
   };
 
   // Salvamento automático: assim que alterar qualquer campo, fica salvo (sem precisar de botão).
@@ -439,7 +350,7 @@ export default function LogisticaPage() {
   }, [cfgChave, canalSelecionado, modoLogistica, linhaVendas, colPedidoVendas, colCarrinhoVendas, colSkuVendas, colMlbVendas, colQtdVendas,
       colPdvVendas, colLiquidoVendas, colReceitaPacote, colEntregaVendas, textoEntrega, taxaFlex, comissaoPadrao, aliquotaImposto, metaDiasCobertura,
       custoEmbalagem, formulaCanal, formulaVendas, margemMinimaPromissora, vendasMinimasPromissoras, tetoMaxDevolucao, colDataVendas, regrasRitmo,
-      pctDevAtencao, minVendasDev, colIdFull, textoIdFull, pdvTotalLinha, linhaEstoque, colSkuEstoque, colQtdEstoque, linhaRemessa, colSkuRemessa, colQtdRemessa]);
+      pctDevAtencao, minVendasDev, colIdFull, textoIdFull, statusConsiderar, statusIgnorar, pdvTotalLinha, linhaEstoque, colSkuEstoque, colQtdEstoque, linhaRemessa, colSkuRemessa, colQtdRemessa]);
 
   const handleUploadVendas = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -465,6 +376,7 @@ export default function LogisticaPage() {
             setColReceitaPacote(det.receita);
             setColEntregaVendas(det.formaEntrega);
             setColDataVendas(det.data);
+            if (colIdFull.trim() && normTexto(textoIdFull).includes("full")) setColIdFull(det.formaEntrega);   // a modalidade é lida pelo cabeçalho "Forma de entrega"
             setLayoutDetectado(`Colunas conferidas pelo cabeçalho (${det.layout}): SKU ${det.sku} · PDV ${det.pdv} · Qtd ${det.unidades} · Status ${det.status}`);
           } else setLayoutDetectado("");
         }
@@ -591,514 +503,34 @@ export default function LogisticaPage() {
     setSalvando(false);
   };
 
-  // MOTOR COM RECALCULO VIA MLB E SUPORTE A OUTROS CANAIS
+  // Motor compartilhado (lib/fullMotor.ts): o mesmo que o upload de vendas do Mercado Livre usa para alimentar o Full
   const executarMotorGeral = async () => {
     if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
     setLoading(true);
     salvarConfiguracoes();
-
-    const colPedido = colPedidoVendas.trim().toUpperCase();
-    const colPacote = colCarrinhoVendas.trim().toUpperCase();
-    const temColunaPacote = colPacote !== "" && colPacote !== "ZZZ";
-
-    const colSku = colSkuVendas.trim().toUpperCase();
-    const colMlb = colMlbVendas.trim().toUpperCase();
-    const colQtd = colQtdVendas.trim().toUpperCase();
-    const colPdv = colPdvVendas.trim().toUpperCase();
-    const colLiquido = colLiquidoVendas.trim().toUpperCase();
-    const colRecPacote = colReceitaPacote.trim().toUpperCase();
-    const colEntrega = colEntregaVendas.trim().toUpperCase();
-    const modoFormulaRegras = formulaCanal === "formula_regras";
-    const palavraEntrega = normTexto(textoEntrega);
-    const temColunaEntrega = modoLogistica === "padrao" && colEntrega !== "" && colEntrega !== "ZZZ" && palavraEntrega !== "";   // Flex só existe na Logística Própria
-    // Envio que gera taxa (no ML: "Flex"; nos outros canais: o texto que você definir na Configuração do Canal)
-    const ehEnvioComTaxa = (valor: any) => temColunaEntrega && normTexto(valor).includes(palavraEntrega);
-
-    if (modoFormulaRegras) {
-      if (!formulaVendas.trim() || avaliarFormulaCanal(formulaVendas, 100, 1, colPdv, colQtd) === null) {
-        setLoading(false);
-        setSubAba("config");
-        return alert("A fórmula de vendas do canal está vazia ou inválida. Ajuste em Configuração do Canal (ex.: PDV - (PDV * 12%)), como na aba Regras.");
-      }
-    }
-
-    const impostoPct = Number(aliquotaImposto.replace(",", ".")) || 0;
-    const embalagemUnit = Number(custoEmbalagem.replace(",", ".")) || 0;
-    const taxaFlexNum = Number(String(taxaFlex).replace(",", "."));
-    const taxaFlexUnit = isNaN(taxaFlexNum) ? 0 : taxaFlexNum;
-    const metaDias = Number(metaDiasCobertura) || 45;
-
-    const metaMargemPromissora = Number(margemMinimaPromissora.replace(",", ".")) || 12;
-    const metaVendasMin = Number(vendasMinimasPromissoras) || 3;
-    const limiteDevolucao = Number(String(tetoMaxDevolucao).replace(",", ".")) || 10;
-    const limiteAtencaoDev = Number(String(pctDevAtencao).replace(",", ".")) || 5;
-    const amostraMinDev = Number(minVendasDev) || 0;
-
-    const startRow = Math.max(0, parseInt(linhaVendas, 10) - 1 || 0);
-
-    // (Opcional) Identificação do Full: coluna + texto definidos na Configuração do Canal.
-    // Em branco = tudo o que foi enviado é Full. Preenchido: Full usa só as linhas que casam; Logística Própria descarta as que casam.
-    const filtroFull = aplicarFiltroFull(matrizVendas, startRow, colPacote, colIdFull, textoIdFull, modoLogistica === "full" ? "incluir" : "excluir");
-    const matrizUsada = filtroFull.matriz;
-    const filtroFullAtivo = colIdFull.trim() !== "" && textoIdFull.trim() !== "";
-    if (filtroFullAtivo && filtroFull.mantidas === 0) {
+    const bases = await carregarBasesFull(supabase, canalSelecionado, mesSelecionado, { custosMap, regrasMlSkuMap, regrasMlMlbMap, tinyMap });
+    const res = calcularFull({ cfg: montarConfig() as ConfigFull, modo: modoLogistica, matriz: matrizVendas, canal: canalSelecionado, mes: mesSelecionado, bases });
+    if (res.erro) {
       setLoading(false);
-      return alert(modoLogistica === "full"
-        ? `Nenhuma linha da planilha tem "${textoIdFull}" na coluna ${colIdFull.toUpperCase()}. Confira a "Identificação do Full" em Configuração do Canal (ou deixe em branco para considerar tudo como Full).`
-        : `Todas as linhas da planilha foram identificadas como Full ("${textoIdFull}" na coluna ${colIdFull.toUpperCase()}), então não sobrou nada para a Logística Própria.`);
+      if (res.erro.tipo === "formula") setSubAba("config");
+      return alert(res.erro.texto);
     }
-    if (filtroFullAtivo) {
-      setLayoutDetectado(`Identificação do Full ativa (coluna ${colIdFull.toUpperCase()} contém "${textoIdFull}"): ${filtroFull.mantidas} linhas consideradas, ${filtroFull.ignoradas} ignoradas (${modoLogistica === "full" ? "não são Full" : "são Full"}).`);
+    if (res.filtro.ativo) {
+      setLayoutDetectado(`Identificação do Full ativa (coluna ${colIdFull.toUpperCase()} contém "${textoIdFull}"): ${res.filtro.mantidas} linhas consideradas, ${res.filtro.ignoradas} ignoradas (${modoLogistica === "full" ? "não são Full" : "são Full"}).`);
     }
-
-    // 1. Mapeia ordens de alteração (para capturar valor financeiro em caso de troca)
-    const pedidosAlteracaoMap = new Map<string, { receita: number; liquido: number; isFlex: boolean }>();
-
-    for (let r = startRow; r < matrizUsada.length; r++) {
-      const row = matrizUsada[r];
-      if (!row) continue;
-      const idPed = String(row[colPedido] || "").trim();
-      const status = String(row[colPacote] || "").toLowerCase();
-
-      if (idPed && status.includes("solicitação de alteração")) {
-        const rec = parseNumero(row[colRecPacote]);
-        let liq = parseNumero(row[colLiquido]);
-        const forma = temColunaEntrega ? String(row[colEntrega] || "") : "";
-        const isFlex = ehEnvioComTaxa(forma);
-
-        if (isFlex) {
-          liq -= taxaFlexUnit;
-        }
-
-        pedidosAlteracaoMap.set(idPed, { receita: rec, liquido: liq, isFlex });
-      }
-    }
-
-    // 2. Base de Devoluções e Curva ABC
-    // Aba Devoluções: unidades devolvidas do SKU, neste canal, no mês de competência
-    let devQuery = await supabase.from("devolucoes").select("sku, data_retorno, canal, quantidade");
-    if (devQuery.error) devQuery = await supabase.from("devolucoes").select("sku, data_retorno, canal") as any;  // base sem a coluna quantidade
-    const dadosDevolucaoRaw: any[] | null = devQuery.data as any;
-    const mapaDevContagem = new Map<string, number>();
-    if (dadosDevolucaoRaw) {
-      dadosDevolucaoRaw.forEach((d: any) => {
-        if (verificarDataNoPeriodo(d.data_retorno, mesSelecionado) && normTexto(d.canal) === normTexto(canalSelecionado)) {
-          const skuKey = normalizarSku(d.sku);
-          const unid = Math.max(1, Number(d.quantidade) || 1);
-          if (skuKey) mapaDevContagem.set(skuKey, (mapaDevContagem.get(skuKey) || 0) + unid);
-        }
-      });
-    }
-
-    const { data: dadosAbcRaw } = await supabase.from("curva_abc").select("codigo, quantidade").eq("mes_referencia", mesSelecionado);
-    const mapaVendasAbc = new Map<string, number>();
-    if (dadosAbcRaw) {
-      dadosAbcRaw.forEach((a: any) => {
-        const skuKey = normalizarSku(a.codigo);
-        if (skuKey) mapaVendasAbc.set(skuKey, (mapaVendasAbc.get(skuKey) || 0) + Number(a.quantidade || 0));
-      });
-    }
-
-    const { data: estData } = await supabase.from('estoque_cd_mensal').select('sku, estoque').eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
-    const mapaEstoqueCD = new Map();
-    if (estData) estData.forEach((e: any) => { const k = normalizarSku(e.sku); mapaEstoqueCD.set(k, (mapaEstoqueCD.get(k) || 0) + Number(e.estoque || 0)); });
-
-    const mapaAgrupado = new Map<string, any>();
-    const trocasJaProcessadas = new Set<string>();
-
-    // Datas das vendas válidas por SKU (para o ritmo "N vendas em D dias")
-    const colData = colDataVendas.trim().toUpperCase();
-    const mapaDias = new Map<string, Map<number, number>>();
-    const registrarDia = (skuKey: string, qtd: number, linha: any, linhaPai?: any) => {
-      if (!colData) return;
-      let dia = parseDiaVenda(linha?.[colData]);
-      if (dia === null && linhaPai) dia = parseDiaVenda(linhaPai?.[colData]);
-      if (dia === null) return;
-      const m = mapaDias.get(skuKey) || new Map<number, number>();
-      m.set(dia, (m.get(dia) || 0) + qtd);
-      mapaDias.set(skuKey, m);
-    };
-
-    let r = startRow;
-    while (r < matrizUsada.length) {
-      const row = matrizUsada[r];
-      if (!row) { r++; continue; }
-
-      const idPedido = String(row[colPedido] || "").trim();
-      const textoStatus = temColunaPacote ? String(row[colPacote] || "").trim() : "";
-      const statusLower = textoStatus.toLowerCase();
-
-      // Pula linha-mãe de alteração original (o valor foi associado à troca)
-      if (statusLower.includes("solicitação de alteração")) {
-        r++;
-        continue;
-      }
-
-      const isTroca = statusLower.includes("troca");
-      const matchPacote = temColunaPacote ? textoStatus.match(/^pacote\s*(?:de)?\s*(\d+)/i) : null;
-
-      // Forma de entrega Flex
-      const formaEntregaTexto = temColunaEntrega ? String(row[colEntrega] || "") : "";
-      const isFlex = ehEnvioComTaxa(formaEntregaTexto);
-
-      // CANCELADO: a informação está no próprio status (coluna D). Linha cancelada não é venda:
-      // não entra PDV (receita) nem o abatimento do custo (CMV) do SKU.
-      const isCanceladaOuDevolvida = !isTroca && statusCancelado(textoStatus);
-
-      if (isCanceladaOuDevolvida) {
-        r++;
-        continue;
-      }
-
-      // CASO 1: TROCA DE PRODUTO (Custo e faturamento computados 1x)
-      if (isTroca) {
-        const skuOrig = String(row[colSku] || "").trim();
-        const skuKey = normalizarSku(skuOrig);
-
-        if (skuKey) {
-          const chaveTroca = `${idPedido}_${skuKey}`;
-
-          if (!trocasJaProcessadas.has(chaveTroca)) {
-            trocasJaProcessadas.add(chaveTroca);
-
-            const infoOrig = pedidosAlteracaoMap.get(idPedido);
-            
-            if (infoOrig) {
-              let receitaTroca = parseNumero(row[colPdv]);
-              if (receitaTroca === 0) receitaTroca = infoOrig.receita;
-
-              let liquidoTroca = infoOrig.liquido;
-              if (isFlex && !infoOrig.isFlex) {
-                liquidoTroca -= taxaFlexUnit;
-              }
-
-              registrarDia(skuKey, 1, row);
-              if (mapaAgrupado.has(skuKey)) {
-                const exist = mapaAgrupado.get(skuKey);
-                exist.receitaBruta += receitaTroca;
-                exist.liquidoML += liquidoTroca;
-                exist.qtdVendida += 1;
-              } else {
-                mapaAgrupado.set(skuKey, {
-                  sku: skuOrig,
-                  skuKey: skuKey,
-                  receitaBruta: receitaTroca,
-                  liquidoML: liquidoTroca,
-                  qtdVendida: 1
-                });
-              }
-            }
-          }
-        }
-        r++;
-        continue;
-      }
-
-      // CASO 2: PRODUTO EM CARRINHO (DESCONSIDERA A LINHA DO PACOTE E RECALCULA TAXAS VIA MLB)
-      if (matchPacote) {
-        const qtdItensPacote = parseInt(matchPacote[1], 10);
-
-        for (let k = 1; k <= qtdItensPacote; k++) {
-          if (r + k < matrizUsada.length) {
-            const chRow = matrizUsada[r + k];
-            // Cada item do carrinho tem o seu próprio status: item cancelado sai (sem PDV e sem custo)
-            if (!chRow || statusCancelado(temColunaPacote ? chRow[colPacote] : "")) continue;
-            const chSkuOrig = String(chRow[colSku] || "").trim();
-            const chSkuKey = normalizarSku(chSkuOrig);
-            const chMlbCod = String(chRow[colMlb] || "").trim().toUpperCase();
-            const chQtd = Math.max(1, parseNumero(chRow[colQtd]) || 1);
-            const chPdvUnit = parseNumero(chRow[colPdv]);
-            const chReceitaTotalItem = chPdvUnit * chQtd;
-
-            if (chSkuKey) {
-              // 1. Busca regras do anúncio por MLB ou por SKU
-              const mlRegra = regrasMlMlbMap.get(chMlbCod) || regrasMlSkuMap.get(chSkuKey);
-
-              // 2. Comissão do MLB
-              const comissaoPct = mlRegra && Number(mlRegra.comissao) > 0 ? Number(mlRegra.comissao) : (Number(comissaoPadrao) || 19);
-              
-              // 3. Validação dos R$ 79,00
-              let tarifaFixaItem = 0;
-              let freteTotalItem = 0;
-
-              if (chPdvUnit < 79.00) {
-                // Abaixo de R$ 79: desconta a tarifa fixa (R$ 6,50 do ML)
-                tarifaFixaItem = 6.50 * chQtd;
-              } else {
-                // A partir de R$ 79: consulta peso real e dimensões cadastradas no MLB e debita frete da matriz
-                const pesoReal = mlRegra && Number(mlRegra.peso_real) > 0 ? Number(mlRegra.peso_real) : (Number(mlRegra?.peso) || 2.0);
-                const altura = mlRegra && Number(mlRegra.altura) > 0 ? Number(mlRegra.altura) : 10;
-                const largura = mlRegra && Number(mlRegra.largura) > 0 ? Number(mlRegra.largura) : 10;
-                const comprimento = mlRegra && Number(mlRegra.comprimento) > 0 ? Number(mlRegra.comprimento) : 10;
-
-                const freteUnitario = calcularFreteML(chPdvUnit, pesoReal, altura, largura, comprimento);
-                freteTotalItem = freteUnitario * chQtd;
-              }
-
-              const comissaoTotalItem = (chReceitaTotalItem * (comissaoPct / 100)) + tarifaFixaItem;
-
-              // Líquido recalculado do item sem superfaturamento de carrinho
-              let liquidoCalculadoItem = chReceitaTotalItem - comissaoTotalItem - freteTotalItem;
-
-              if (isFlex) {
-                liquidoCalculadoItem -= taxaFlexUnit;
-              }
-
-              registrarDia(chSkuKey, chQtd, chRow, row);
-              if (mapaAgrupado.has(chSkuKey)) {
-                const exist = mapaAgrupado.get(chSkuKey);
-                exist.receitaBruta += chReceitaTotalItem;
-                exist.liquidoML += liquidoCalculadoItem;
-                exist.qtdVendida += chQtd;
-              } else {
-                mapaAgrupado.set(chSkuKey, {
-                  sku: chSkuOrig,
-                  skuKey: chSkuKey,
-                  receitaBruta: chReceitaTotalItem,
-                  liquidoML: liquidoCalculadoItem,
-                  qtdVendida: chQtd
-                });
-              }
-            }
-          }
-        }
-
-        r += (qtdItensPacote + 1);
-      } else {
-        // CASO 3: VENDA AVULSA PADRÃO
-        const skuOriginal = String(row[colSku] || "").trim();
-        const skuKey = normalizarSku(skuOriginal);
-
-        if (!skuKey || skuKey === "sku" || skuKey === "total") {
-          r++;
-          continue;
-        }
-
-        const qtdLinha = Math.max(1, parseNumero(row[colQtd]) || 1);
-        const pdvCelula = parseNumero(row[colPdv]);
-        // Coluna PDV com o valor total da linha: o preço da unidade é a linha ÷ quantidade
-        let pdvUnit = modoFormulaRegras && pdvTotalLinha ? pdvCelula / qtdLinha : pdvCelula;
-        let receitaBrutaLinha = pdvUnit * qtdLinha;
-
-        if (receitaBrutaLinha === 0 && colRecPacote && !modoFormulaRegras) {
-          receitaBrutaLinha = parseNumero(row[colRecPacote]);
-        }
-
-        let liquidoLinha = 0;
-
-        if (modoFormulaRegras) {
-          // CANAIS FORA DO ML: PDV, SKU e Qtd nas colunas informadas + fórmula de vendas (igual à aba Regras)
-          // Faixas de preço, tarifa fixa e frete valem para UMA unidade (ex.: Amazon só cobra frete se a unidade passa de R$ 79).
-          // Fórmula sem QTD: calcula o líquido de 1 unidade e multiplica pela quantidade; com QTD, ela já devolve o total da linha.
-          const calc = formulaUsaQuantidade(formulaVendas, colQtd)
-            ? avaliarFormulaCanal(formulaVendas, pdvUnit, qtdLinha, colPdv, colQtd)
-            : (() => { const u = avaliarFormulaCanal(formulaVendas, pdvUnit, 1, colPdv, colQtd); return u === null ? null : u * qtdLinha; })();
-          // resultado inválido numa linha (ex.: negativo): mesmo critério do dashboard, PDV − 16%
-          liquidoLinha = calc !== null ? calc : Math.max(0, receitaBrutaLinha * 0.84);
-          if (isFlex) liquidoLinha -= taxaFlexUnit;   // envio com taxa definido na Configuração do Canal (opcional)
-        } else {
-          // MERCADO LIVRE: Coluna T com abatimento de Flex
-          liquidoLinha = parseNumero(row[colLiquido]);
-          if (isFlex) {
-            liquidoLinha -= taxaFlexUnit;
-          }
-        }
-
-        registrarDia(skuKey, qtdLinha, row);
-        if (mapaAgrupado.has(skuKey)) {
-          const exist = mapaAgrupado.get(skuKey);
-          exist.receitaBruta += receitaBrutaLinha;
-          exist.liquidoML += liquidoLinha;
-          exist.qtdVendida += qtdLinha;
-        } else {
-          mapaAgrupado.set(skuKey, {
-            sku: skuOriginal,
-            skuKey: skuKey,
-            receitaBruta: receitaBrutaLinha,
-            liquidoML: liquidoLinha,
-            qtdVendida: qtdLinha
-          });
-        }
-        r++;
-      }
-    }
-
-    // Consolidação Financeira Final
-    const resultados = Array.from(mapaAgrupado.values()).map((item: any) => {
-      const skuKey = item.skuKey;
-      const custoData = custosMap.get(skuKey);
-      const custoUnitario = Number(custoData?.custo_unitario || 0);
-      const produtoNome = custoData?.produto || "Produto Desconhecido";
-      
-      const estoqueCD = mapaEstoqueCD.get(skuKey) || 0;
-      const estoqueCentral = tinyMap.get(skuKey) || 0;
-
-      const devolucoesTotais = mapaDevContagem.get(skuKey) || 0;
-      const vendasTotais = Math.max(mapaVendasAbc.get(skuKey) || 0, item.qtdVendida);
-      const taxaDevolucao = vendasTotais > 0 ? (devolucoesTotais / vendasTotais) * 100 : 0;
-
-      let lucroRs = 0;
-      let margemPct = 0;
-
-      if (item.qtdVendida > 0) {
-        const custoProdutoTotal = custoUnitario * item.qtdVendida;
-        const impostoTotal = item.receitaBruta * (impostoPct / 100);
-        const embalagemTotal = modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0;
-
-        // FÓRMULA FINAL: LÍQUIDO RECALCULADO - CUSTO - IMPOSTO - EMBALAGEM
-        lucroRs = item.liquidoML - custoProdutoTotal - impostoTotal - embalagemTotal;
-        margemPct = item.receitaBruta > 0 ? (lucroRs / item.receitaBruta) * 100 : 0;
-      }
-
-      const tarifaFreteSoma = item.receitaBruta - item.liquidoML;
-
-      // Indicadores Logísticos
-      const vmd = item.qtdVendida / 30;
-      const coberturaAtual = vmd > 0 ? (estoqueCD / vmd) : (estoqueCD > 0 ? 999 : 0);
-      let sugestaoEnvioBruta = Math.ceil((vmd * metaDias) - estoqueCD);
-      if (sugestaoEnvioBruta < 0) sugestaoEnvioBruta = 0;
-
-      let statusEstoque = "";
-      if (coberturaAtual <= 10 && vmd > 0) statusEstoque = "Ruptura Iminente";
-      else if (coberturaAtual > 60 && estoqueCD > 5) statusEstoque = "Risco de Aging";
-      else if (vmd === 0 && estoqueCD > 0) statusEstoque = "Estoque Parado";
-      else statusEstoque = "Saudável";
-
-      // Devolução alta (limite definido na Configuração do Canal): não recomenda o envio.
-      // Só vale com amostra mínima de vendas, para 1 devolução em 1 venda não bloquear o item.
-      const devAlta = devolucoesTotais > 0 && vendasTotais >= amostraMinDev && taxaDevolucao >= limiteDevolucao;
-      const ritmo = classificarRitmo(regrasRitmo, item.qtdVendida, mapaDias.get(skuKey) || null, diasDoMesRef(mesSelecionado));
-
-      let statusEnvio = "";
-      let qtdEnviar = sugestaoEnvioBruta;
-      if (sugestaoEnvioBruta > 0 && devAlta) {
-        statusEnvio = `🚫 Não Enviar (Devolução ${taxaDevolucao.toFixed(1)}%)`;
-        qtdEnviar = 0;
-      } else if (sugestaoEnvioBruta > 0) {
-        if (estoqueCentral >= sugestaoEnvioBruta) statusEnvio = "✅ Enviar Agora";
-        else if (estoqueCentral > 0 && estoqueCentral < sugestaoEnvioBruta) {
-          statusEnvio = "⚠️ Enviar Parcial";
-          qtdEnviar = estoqueCentral; 
-        } else {
-          statusEnvio = "❌ Falta no Central";
-          qtdEnviar = 0;
-        }
-      } else {
-        statusEnvio = "⏸️ Não Enviar";
-      }
-
-      let diagnostico = "";
-      if (margemPct <= 0) {
-        diagnostico = "❌ Prejuízo (Sem Futuro)";
-      } else if (taxaDevolucao >= limiteDevolucao && devolucoesTotais > 0) {
-        diagnostico = "⛔ Alta Devolução (Sem Futuro)";
-      } else if (margemPct >= metaMargemPromissora && item.qtdVendida >= metaVendasMin && taxaDevolucao < limiteDevolucao) {
-        diagnostico = "🌟 Promissor (Escalar)";
-      } else if (margemPct < 10) {
-        diagnostico = "⚠️ Margem Baixa (Atenção)";
-      } else {
-        diagnostico = "✅ Regular (Manter)";
-      }
-
-      return {
-        canal: canalSelecionado, mes_referencia: mesSelecionado, sku: removerSufixoFba(item.sku), produto: produtoNome,
-        qtd_vendida: item.qtdVendida, receita_bruta: item.receitaBruta, estoque_cd: estoqueCD, armazenagem: 0,
-        estoque_central: estoqueCentral, custo_produto: custoUnitario * item.qtdVendida, imposto: item.receitaBruta * (impostoPct / 100),
-        tarifa_frete: tarifaFreteSoma, embalagem: modoLogistica === "padrao" ? (embalagemUnit * item.qtdVendida) : 0, 
-        lucro_liquido: lucroRs, margem_pct: margemPct,
-        vmd: Number(vmd.toFixed(2)), cobertura_dias: Number(coberturaAtual.toFixed(1)), sugestao_envio: qtdEnviar,
-        status_estoque: statusEstoque, status_envio: statusEnvio, taxa_devolucao: taxaDevolucao,
-        qtd_devolucoes: devolucoesTotais, diagnostico: diagnostico,
-        ritmo_vendas: ritmo.status, ritmo_nivel: ritmo.nivel, ritmo_por_data: ritmo.porData, dev_atencao: taxaDevolucao >= limiteAtencaoDev && devolucoesTotais > 0
-      };
-    });
-
-    setDadosProcessados(resultados.sort((a: any, b: any) => b.receita_bruta - a.receita_bruta));
+    setDadosProcessados(res.resultados);
     setLoading(false);
   };
 
   const salvarDadosNoBanco = async () => {
     if (dadosProcessados.length === 0) return;
     setSalvando(true);
-    const tabela = modoLogistica === "full" ? "full_lancamentos" : "vendas_padrao_lancamentos";
-    
-    await supabase.from(tabela).delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
-    
-    let payloadFormatado: any[] = [];
-
-    if (modoLogistica === "padrao") {
-      payloadFormatado = dadosProcessados.map((item: any) => ({
-        canal: item.canal,
-        mes_referencia: item.mes_referencia,
-        sku: item.sku,
-        produto: item.produto,
-        qtd_vendida: item.qtd_vendida,
-        receita_bruta: item.receita_bruta,
-        custo_produto: item.custo_produto,
-        imposto: item.imposto,
-        tarifa_frete: item.tarifa_frete,
-        embalagem: item.embalagem || 0,
-        lucro_liquido: item.lucro_liquido,
-        margem_pct: item.margem_pct,
-        taxa_devolucao: item.taxa_devolucao || 0,
-        qtd_devolucoes: item.qtd_devolucoes || 0,
-        diagnostico: item.diagnostico || "",
-        ritmo_vendas: item.ritmo_vendas || ""
-      }));
+    const res = await gravarAnaliseFull(supabase, modoLogistica, canalSelecionado, mesSelecionado, dadosProcessados);
+    if (res.erro) {
+      alert("Erro ao gravar resultados no banco: " + res.erro);
     } else {
-      payloadFormatado = dadosProcessados.map((item: any) => ({
-        canal: item.canal,
-        mes_referencia: item.mes_referencia,
-        sku: item.sku,
-        produto: item.produto,
-        qtd_vendida: item.qtd_vendida,
-        receita_bruta: item.receita_bruta,
-        estoque_cd: item.estoque_cd || 0,
-        armazenagem: item.armazenagem || 0,
-        estoque_central: item.estoque_central || 0,
-        custo_produto: item.custo_produto,
-        imposto: item.imposto,
-        tarifa_frete: item.tarifa_frete,
-        lucro_liquido: item.lucro_liquido,
-        margem_pct: item.margem_pct,
-        vmd: item.vmd || 0,
-        cobertura_dias: item.cobertura_dias || 0,
-        sugestao_envio: item.sugestao_envio || 0,
-        status_estoque: item.status_estoque || "",
-        status_envio: item.status_envio || "",
-        taxa_devolucao: item.taxa_devolucao || 0,
-        qtd_devolucoes: item.qtd_devolucoes || 0,
-        ritmo_vendas: item.ritmo_vendas || ""
-      }));
-    }
-
-    let res = await supabase.from(tabela).insert(payloadFormatado);
-    if (res.error && /taxa_devolucao|qtd_devolucoes|ritmo_vendas/i.test(res.error.message)) {
-      // Migrations das colunas de devolução/ritmo ainda não executadas: grava o restante e avisa
-      const semNovas = payloadFormatado.map((linha: any) => {
-        const copia = { ...linha };
-        delete copia.ritmo_vendas;
-        if (modoLogistica === "full") { delete copia.taxa_devolucao; delete copia.qtd_devolucoes; }
-        return copia;
-      });
-      res = await supabase.from(tabela).insert(semNovas);
-      if (!res.error) alert("Análise gravada, mas SEM o campo de ritmo" + (modoLogistica === "full" ? " e de devolução" : "") + ": execute no Supabase as migrations 20261104090000_full_lancamentos_devolucao_ritmo.sql e 20261104120000_prazos_armazenagem_por_canal.sql.");
-    }
-    
-    if (res.error) {
-      alert("Erro ao gravar resultados no banco: " + res.error.message);
-    } else {
-      if (modoLogistica === "full") {
-        // Vendas válidas do mês (cancelados já ficaram de fora) dão baixa nos lotes enviados ao Full, do mais antigo ao mais novo (FIFO)
-        const vendasMes = dadosProcessados
-          .filter((i: any) => Number(i.qtd_vendida) > 0)
-          .map((i: any) => ({ canal: canalSelecionado, mes_referencia: mesSelecionado, sku: normalizarSku(i.sku), qtd: Math.round(Number(i.qtd_vendida)) }));
-        const del = await supabase.from("fulfillment_vendas_mes").delete().eq("canal", canalSelecionado).eq("mes_referencia", mesSelecionado);
-        if (!del.error && vendasMes.length > 0) {
-          for (let i = 0; i < vendasMes.length; i += 500) await supabase.from("fulfillment_vendas_mes").insert(vendasMes.slice(i, i + 500));
-        }
-        await recalcularFifo();
-      }
+      if (res.aviso) alert("Análise gravada com aviso: " + res.aviso);
+      if (modoLogistica === "full") await carregarLotes();
       alert(`✅ Análise gravada com sucesso!`);
       setMatrizVendas([]);
       setDadosProcessados([]);
