@@ -8,7 +8,6 @@ import { useRouter } from "next/navigation";
 import { lerArquivoComoMatriz, lerArquivoComoLinhas } from "../../lib/lerArquivo";
 import { removerSufixoFba } from "../../lib/fulfillment";
 import { registrarSkusNaBaseCadastrada, linhaAvisoCadastro } from "../../lib/cadastros";
-import { lerRepassesPorPedido, normalizarPedidoDash } from "../../lib/repasseRealLogica";
 
 async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo?: string, eqValor?: any) {
   let todos: any[] = [];
@@ -308,12 +307,6 @@ export default function UpdatesPage() {
   const [canaisDashList, setCanaisDashList] = useState<string[]>([
     "Mercado Livre 1", "Mercado Livre 2", "Amazon", "Magalu", "Shopee", "TikTok", "Shein", "Netshoes", "Site", "Clube Hebraica", "Clube Paineiras", "Centauro"
   ]);
-  // Repasse REAL do TikTok (extrato): segunda planilha do canal. O PDV continua vindo das vendas; aqui só entra o repasse.
-  const CHAVE_CFG_REPASSE = "bestfit_repasse_tiktok_cfg";
-  const [cfgRepasse, setCfgRepasse] = useState({ linha: "1", colPedido: "A", colRepasse: "G", colStatus: "N", ignorar: "cancelado" });
-  const [repasseOcupado, setRepasseOcupado] = useState(false);
-  const [repasseMsg, setRepasseMsg] = useState<{ tipo: "ok" | "erro" | "info"; linhas: string[] } | null>(null);
-  useEffect(() => { try { const x = JSON.parse(localStorage.getItem(CHAVE_CFG_REPASSE) || "null"); if (x) setCfgRepasse((a) => ({ ...a, ...x })); } catch { /* sem memória: usa o padrão */ } }, []);
   const [colunaIdFaturados, setColunaIdFaturados] = useState("AI");
   const [colunaDataFaturados, setColunaDataFaturados] = useState("D");
   const [colunaIdSite, setColunaIdSite] = useState("A");
@@ -1297,69 +1290,6 @@ export default function UpdatesPage() {
     reader.readAsArrayBuffer(file);
   };
 
-  const canalTikTok = () => canaisDashList.find((c) => /tiktok/i.test(c)) || "TikTok";
-  const brlRepasse = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-
-  const handleSubirRepasseTikTok = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    const iPed = letraParaIndice(cfgRepasse.colPedido), iRep = letraParaIndice(cfgRepasse.colRepasse);
-    const usaStatus = cfgRepasse.colStatus.trim() !== "";
-    const iStatus = usaStatus ? letraParaIndice(cfgRepasse.colStatus) : -1;
-    const linhaInicial = parseInt(cfgRepasse.linha, 10);
-    if (iPed < 0 || iRep < 0 || iPed === iRep) return setRepasseMsg({ tipo: "erro", linhas: ["Informe as letras das colunas do ID do pedido e do repasse (diferentes entre si)."] });
-    if (usaStatus && iStatus < 0) return setRepasseMsg({ tipo: "erro", linhas: ["Coluna do status inválida: use só a letra (ex.: N)."] });
-    if (!usaStatus && cfgRepasse.ignorar.trim()) return setRepasseMsg({ tipo: "erro", linhas: ["Você escreveu o que ignorar, mas não informou a coluna do status."] });
-    if (!(linhaInicial >= 1)) return setRepasseMsg({ tipo: "erro", linhas: ["A linha inicial deve ser 1 ou mais."] });
-    try { localStorage.setItem(CHAVE_CFG_REPASSE, JSON.stringify(cfgRepasse)); } catch { /* sem localStorage: só não lembra */ }
-
-    setRepasseOcupado(true); setRepasseMsg(null);
-    try {
-      const canal = canalTikTok();
-      const linhas = await lerArquivoComoLinhas(file);
-      const leitura = lerRepassesPorPedido(linhas, { linhaInicial, colPedido: iPed, colRepasse: iRep, colStatus: iStatus, ignorarStatus: cfgRepasse.ignorar });
-      if (leitura.pedidos.length === 0) {
-        return setRepasseMsg({ tipo: "erro", linhas: ["Nenhum pedido com repasse foi encontrado.", `Confira a linha inicial e as colunas: ID do pedido na ${cfgRepasse.colPedido.toUpperCase()} e repasse na ${cfgRepasse.colRepasse.toUpperCase()}.`] });
-      }
-      const agora = new Date().toISOString();
-      const registros = leitura.pedidos.map((p) => ({ canal, id_pedido: p.id_pedido, repasse: p.repasse, linhas_extrato: p.linhas.length, mes_referencia: mesAlvoDash, arquivo: file.name, atualizado_em: agora }));
-      for (let k = 0; k < registros.length; k += 500) {
-        const { error } = await supabase.from("repasses_pedidos").upsert(registros.slice(k, k + 500), { onConflict: "canal,id_pedido" });
-        if (error) throw new Error(error.message);
-      }
-      // conferência: quantos pedidos de venda do TikTok ficaram com repasse real
-      const vendas = await fetchTodosRegistros("vendas_canais", "id_pedido, mes_referencia", "canal", canal);
-      const salvos = await fetchTodosRegistros("repasses_pedidos", "id_pedido", "canal", canal);
-      const comReal = new Set(salvos.map((x: any) => normalizarPedidoDash(x.id_pedido)));
-      const idsVendas = new Set(vendas.map((v: any) => normalizarPedidoDash(v.id_pedido)));
-      const pedidosMes = new Set(vendas.filter((v: any) => v.mes_referencia === mesAlvoDash).map((v: any) => normalizarPedidoDash(v.id_pedido)));
-      const foraDasVendas = leitura.pedidos.filter((p) => !idsVendas.has(p.id_pedido)).length;
-      const mesSemReal = Array.from(pedidosMes).filter((id) => !comReal.has(id)).length;
-      const total = leitura.pedidos.reduce((a, p) => a + p.repasse, 0);
-      const msg = [`✅ Repasse real de ${leitura.pedidos.length} pedido(s) do ${canal} salvo (${brlRepasse(total)} no total). O dashboard já passa a usar esse valor no lugar da fórmula.`];
-      const multi = leitura.pedidos.filter((p) => p.linhas.length > 1).length;
-      if (multi) msg.push(`${multi} pedido(s) de carrinho (várias linhas no extrato) tiveram os repasses somados.`);
-      if (leitura.ignoradasStatus.length) msg.push(`${leitura.ignoradasStatus.length} linha(s) ignorada(s) pelo status “${cfgRepasse.ignorar.trim()}” (coluna ${cfgRepasse.colStatus.trim().toUpperCase()}): não receberam repasse real.`);
-      if (usaStatus && cfgRepasse.ignorar.trim() && leitura.ignoradasStatus.length === 0) msg.push(`Nenhuma linha tinha “${cfgRepasse.ignorar.trim()}” na coluna ${cfgRepasse.colStatus.trim().toUpperCase()}. Confira se é a coluna certa.`);
-      if (leitura.semRepasse.length) msg.push(`⚠️ ${leitura.semRepasse.length} linha(s) com ID de pedido mas repasse vazio ou ilegível (ex.: linha ${leitura.semRepasse[0].linha}).`);
-      if (foraDasVendas) msg.push(`⚠️ ${foraDasVendas} pedido(s) do extrato não estão nas vendas do ${canal} (suba as vendas deste mês também). Ficam guardados e valem quando as vendas entrarem.`);
-      msg.push(pedidosMes.size ? `Pedidos de venda do ${canal} em ${mesAlvoDash}: ${pedidosMes.size}, ${mesSemReal} ainda sem repasse real (esses continuam pela fórmula estimada).` : `Não há vendas do ${canal} em ${mesAlvoDash} na base.`);
-      setRepasseMsg({ tipo: foraDasVendas || leitura.semRepasse.length ? "info" : "ok", linhas: msg });
-    } catch (err: any) {
-      setRepasseMsg({ tipo: "erro", linhas: ["Erro ao salvar o repasse: " + (err?.message || err)] });
-    } finally {
-      setRepasseOcupado(false);
-    }
-  };
-
-  const apagarRepassesTikTok = async () => {
-    const canal = canalTikTok();
-    if (!confirm(`Apagar os repasses reais do ${canal} de [${mesAlvoDash}]? O dashboard volta a usar a fórmula estimada para esses pedidos.`)) return;
-    const { error } = await supabase.from("repasses_pedidos").delete().eq("canal", canal).eq("mes_referencia", mesAlvoDash);
-    setRepasseMsg(error ? { tipo: "erro", linhas: ["Não consegui apagar: " + error.message] } : { tipo: "ok", linhas: [`Repasses reais do ${canal} de ${mesAlvoDash} apagados.`] });
-  };
-
   const apagarDadosPorTipo = async (tabela: string) => {
     if (!confirm(`Deseja limpar os registros de [${tabela}] para o mês [${mesAlvoDash}]?`)) return;
     setLoading(true);
@@ -1384,7 +1314,6 @@ export default function UpdatesPage() {
       await supabase.from('vendas_canais').delete().neq('id', 0);
       await supabase.from('faturados').delete().neq('id', 0);
       await supabase.from('tarifas_site').delete().neq('id', 0);
-      await supabase.from('repasses_pedidos').delete().neq('id', 0);
       alert("✅ Bases limpas com sucesso!");
       carregarVendasPendentes();
     } catch (err: any) {
@@ -2178,49 +2107,6 @@ export default function UpdatesPage() {
                     <input type="file" onChange={handleSubirTarifasSite} className="hidden" />
                   </label>
                 </div>
-              </div>
-            </div>
-
-            {/* PASSO 2B: REPASSE REAL DO TIKTOK (segunda planilha do canal) */}
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 max-w-3xl" data-card-repasse-tiktok>
-              <div>
-                <h3 className="text-sm font-black text-cyan-300 uppercase tracking-wider">Passo 2b: Repasse real do TikTok (extrato)</h3>
-                <p className="text-[11px] text-slate-400 mt-1">Segunda planilha do TikTok. O <b className="text-slate-200">PDV</b> continua vindo da planilha de vendas (Passo 2) e é nele que o imposto é calculado. Aqui entra só o <b className="text-slate-200">repasse</b> de cada pedido: o dashboard passa a usá-lo no lugar da fórmula estimada, e o lucro fica <span className="font-mono text-slate-300">repasse real − CMV − imposto</span>. Pedido de carrinho (várias linhas com o mesmo ID) tem os repasses somados. Subir de novo atualiza os pedidos já salvos.</p>
-              </div>
-              {repasseMsg && (
-                <div data-repasse-msg className={`p-3 rounded-xl border text-xs font-semibold space-y-1 ${repasseMsg.tipo === "erro" ? "border-rose-900/60 bg-rose-950/40 text-rose-300" : repasseMsg.tipo === "ok" ? "border-emerald-900/60 bg-emerald-950/40 text-emerald-300" : "border-amber-900/60 bg-amber-950/40 text-amber-300"}`}>
-                  {repasseMsg.linhas.map((l, i) => <p key={i} className={i === 0 ? "" : "font-medium opacity-90"}>{l}</p>)}
-                </div>
-              )}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha inicial</label>
-                  <input type="number" min={1} value={cfgRepasse.linha} onChange={(e) => setCfgRepasse({ ...cfgRepasse, linha: e.target.value })} data-repasse-linha className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono outline-none" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. ID do pedido</label>
-                  <input type="text" maxLength={3} value={cfgRepasse.colPedido} onChange={(e) => setCfgRepasse({ ...cfgRepasse, colPedido: e.target.value.toUpperCase() })} data-repasse-col-pedido className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. do repasse</label>
-                  <input type="text" maxLength={3} value={cfgRepasse.colRepasse} onChange={(e) => setCfgRepasse({ ...cfgRepasse, colRepasse: e.target.value.toUpperCase() })} data-repasse-col-repasse className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-emerald-400 font-mono font-bold text-center uppercase outline-none" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. do status</label>
-                  <input type="text" maxLength={3} value={cfgRepasse.colStatus} onChange={(e) => setCfgRepasse({ ...cfgRepasse, colStatus: e.target.value.toUpperCase() })} data-repasse-col-status placeholder="opcional" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-mono font-bold text-center uppercase outline-none" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Ignorar se contiver</label>
-                  <input type="text" value={cfgRepasse.ignorar} onChange={(e) => setCfgRepasse({ ...cfgRepasse, ignorar: e.target.value })} data-repasse-ignorar placeholder="cancelado; devolvido" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none" />
-                </div>
-              </div>
-              <p className="text-[10px] text-slate-500">Sem acento/maiúscula; “;” separa termos. As linhas ignoradas não recebem repasse real. Observações e cabeçalho do extrato são pulados sozinhos. Mês de referência: <span className="font-mono uppercase text-emerald-400">{mesAlvoDash}</span> (o mesmo seletor do Passo 2).</p>
-              <div className="flex flex-wrap items-center gap-3">
-                <label className={`block text-center bg-cyan-700 hover:bg-cyan-600 transition text-white font-bold text-xs py-2.5 px-5 rounded-lg shadow ${repasseOcupado ? "opacity-60 pointer-events-none" : "cursor-pointer"}`}>
-                  <span>{repasseOcupado ? "Salvando…" : "Subir repasse do TikTok (Excel/CSV)"}</span>
-                  <input type="file" accept=".xlsx,.xls,.csv,.txt" data-repasse-upload disabled={repasseOcupado} onChange={handleSubirRepasseTikTok} className="hidden" />
-                </label>
-                <button type="button" onClick={apagarRepassesTikTok} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">Apagar repasses reais ({mesAlvoDash})</button>
               </div>
             </div>
 

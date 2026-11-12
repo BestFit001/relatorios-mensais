@@ -4,7 +4,6 @@ import { supabase } from '@/lib/supabase';
 import Navbar from '@/app/components/Navbar';
 import { avaliarFormulaPorUnidade as avaliarFormulaRepasse } from '@/lib/formulaRepasse';
 import { DESCONTAR_FRETE_ADS_NO_LUCRO, mesDoEnvio } from '@/lib/regrasLucro';
-import { criarRepasseReal } from '@/lib/repasseRealLogica';
 
 const TABELAS_SUPABASE = [
   'vendas_canais',
@@ -18,7 +17,6 @@ const TABELAS_SUPABASE = [
   'cancelados',
   'ads_faturamento_canal',
   'plp_pedidos',
-  'repasses_pedidos',
   'usuarios_permissoes'
 ] as const;
 
@@ -207,8 +205,6 @@ export default function PainelExecutivoPage() {
 
   const channelRules = database.config_regras_canais || [];
   const sales = database.vendas_canais || [];
-  // Repasse REAL do extrato do canal (hoje TikTok): vale no lugar da fórmula estimada
-  const repasseRealDe = useMemo(() => criarRepasseReal(database.repasses_pedidos, sales), [database.repasses_pedidos, sales]);
   const products = database.tabela_custos_skus || [];
   const goals = database.tb_metas || [];
   const cancelados = database.cancelados || [];
@@ -361,10 +357,6 @@ export default function PainelExecutivoPage() {
         repasseLiquido = Math.max(0, (precoVenda * qtd) - ((precoVenda * qtd) * 0.16));
       }
 
-      // Repasse real do extrato do canal (se foi enviado) vale no lugar da fórmula
-      const repasseReal = repasseRealDe(s);
-      if (repasseReal !== null) repasseLiquido = repasseReal;
-
       const nomeCanal = normalizarTexto(s.canal);
       if ((nomeCanal.includes('site') || nomeCanal.includes('loja virtual')) && tarifasSiteMap[ped]) {
          const taxaVindi = parseCurrency(tarifasSiteMap[ped]);
@@ -381,7 +373,7 @@ export default function PainelExecutivoPage() {
         data_faturamento: fatInfo ? fatInfo.data_faturamento : (s.data_faturamento || '')
       };
     });
-  }, [sales, mesRefFormatos, produtosCustoMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules, repasseRealDe]);
+  }, [sales, mesRefFormatos, produtosCustoMap, tarifasSiteMap, faturadosMap, canaisOficiais, channelRules]);
 
   const previousMonthSales = useMemo(() => {
     return (sales || []).map((s: any) => ({

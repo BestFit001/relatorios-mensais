@@ -6,7 +6,6 @@ import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "./components/Navbar";
 import { avaliarFormulaPorUnidade } from "../lib/formulaRepasse";
-import { criarRepasseReal } from "../lib/repasseRealLogica";
 import { diasDoPeriodo } from "../lib/cobertura";
 import CoberturaEstoque from "./components/CoberturaEstoque";
 import { padraoDePreco } from "@/lib/padraoPreco";
@@ -120,7 +119,6 @@ export default function CurvaABCPage() {
   const [plp, setPlp] = useState<any[]>([]);
   const [tarifasSite, setTarifasSite] = useState<any[]>([]);
   const [regrasCanais, setRegrasCanais] = useState<any[]>([]);
-  const [repassesReais, setRepassesReais] = useState<any[]>([]);   // repasse real do extrato do canal (hoje TikTok)
 
   // Filtros
   const [dateFilter, setDateFilter] = useState("MES");
@@ -181,7 +179,7 @@ export default function CurvaABCPage() {
     setLoading(true);
     const e: string[] = [];
     try {
-      const [v, f, c, d, k, p, t, rc, rr] = await Promise.all([
+      const [v, f, c, d, k, p, t, rc] = await Promise.all([
         fetchTodos("vendas_canais", "id, id_pedido, sku, canal, produto, preco_venda, repasse_liquido, quantidade", e),
         fetchTodos("faturados", "id, id_pedido, data_faturamento", e),
         fetchTodos("tabela_custos_skus", "id, sku, marca, produto, custo_unitario", e),
@@ -190,9 +188,8 @@ export default function CurvaABCPage() {
         fetchTodos("plp_pedidos", "id, numero_pedido, valor_frete", e),
         fetchTodos("tarifas_site", "id, id_pedido, valor_tarifa", e),
         fetchTodos("config_regras_canais", "id, canal, col_pdv, col_quantidade, formula_excel", e),
-        fetchTodos("repasses_pedidos", "id, canal, id_pedido, repasse", e),
       ]);
-      setVendas(v); setFaturados(f); setCustosLista(c); setDevolucoes(d); setCancelados(k); setPlp(p); setTarifasSite(t); setRegrasCanais(rc); setRepassesReais(rr);
+      setVendas(v); setFaturados(f); setCustosLista(c); setDevolucoes(d); setCancelados(k); setPlp(p); setTarifasSite(t); setRegrasCanais(rc);
     } catch (err: any) {
       e.push(String(err?.message || err));
     } finally {
@@ -259,7 +256,6 @@ export default function CurvaABCPage() {
         || (n.includes("magalu") || n.includes("magazine") ? regrasCanais.find((r) => normalizarTexto(r.canal).includes("magalu")) : undefined);
     };
 
-    const repasseRealDe = criarRepasseReal(repassesReais, vendas);
     const linhas: any[] = [];
     const chaves = new Set<string>();
     let sem = 0;
@@ -283,8 +279,6 @@ export default function CurvaABCPage() {
       if (isNaN(repasseLinha) || repasseLinha <= 0 || (precoLinha > 0 && repasseLinha > precoLinha * qtdLinha * 1.5)) {
         repasseLinha = Math.max(0, precoLinha - precoLinha * 0.16);
       }
-      const repasseReal = repasseRealDe(s);   // repasse real do extrato do canal vale no lugar da fórmula
-      if (repasseReal !== null) repasseLinha = repasseReal;
       linhas.push({
         ped: s.id_pedido, pedN, chave, canal: s.canal, sku: custosMap[skuNorm]?.skuOriginal || s.sku, skuNorm,
         qtd: qtdLinha, preco: precoLinha, repasse: repasseLinha,
@@ -303,7 +297,7 @@ export default function CurvaABCPage() {
       itens.forEach((i) => { i.extra = total * (soma > 0 ? i.preco / soma : 1 / itens.length); });
     });
     return { linhasBase: linhas, semFaturamento: sem, chavesVendas: chaves };
-  }, [vendas, faturados, plp, tarifasSite, cancelados, custosMap, regrasCanais, repassesReais]);
+  }, [vendas, faturados, plp, tarifasSite, cancelados, custosMap, regrasCanais]);
 
   // ----- Análise principal (respeita canal, período, marca e pesquisa) -----
   const analise = useMemo(() => {
