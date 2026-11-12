@@ -604,6 +604,49 @@ export async function gravarAnaliseFull(db: any, modo: ModoFull, canal: string, 
   return { aviso };
 }
 
+/**
+ * O relatório do Full é gravado quando a planilha de vendas sobe (Uploads). Se o estoque do CD for enviado depois (ou mudar),
+ * refaz só os campos de reposição (estoque, cobertura, sugestão de envio) das linhas já gravadas, sem precisar subir as vendas de novo.
+ */
+export async function reaplicarEstoqueFull(db: any, canal: string, mes: string, cfgSalvo: any, tinyMap: Map<string, number>): Promise<{ atualizados: number; erro?: string }> {
+  const { data: regras } = await db.from("config_regras_canais").select("*");
+  const regra = (regras || []).find((r: any) => normTexto(r.canal) === normTexto(canal));
+  const cfg = resolverConfigFull(canal, regra, cfgSalvo);
+  const metaDias = Number(cfg.metaDias) || 45;
+  const limiteDev = Number(String(cfg.tetoDev).replace(",", ".")) || 10;
+  const amostraMin = Number(cfg.minVendasDev) || 0;
+  const { data: linhas, error } = await db.from("full_lancamentos").select("*").eq("canal", canal).eq("mes_referencia", mes);
+  if (error) return { atualizados: 0, erro: error.message };
+  if (!linhas || linhas.length === 0) return { atualizados: 0 };
+  const { data: est } = await db.from("estoque_cd_mensal").select("sku, estoque").eq("canal", canal).eq("mes_referencia", mes);
+  const estoqueCD = new Map<string, number>();
+  (est || []).forEach((e: any) => { const k = normalizarSku(e.sku); estoqueCD.set(k, (estoqueCD.get(k) || 0) + Number(e.estoque || 0)); });
+  const novas = linhas.map((r: any) => {
+    const k = normalizarSku(r.sku);
+    const qtd = Number(r.qtd_vendida) || 0; const cd = estoqueCD.get(k) || 0; const central = tinyMap.get(k) || 0;
+    const taxa = Number(r.taxa_devolucao) || 0; const dev = Number(r.qtd_devolucoes) || 0;
+    const vendasTotais = taxa > 0 ? Math.max(qtd, (dev / taxa) * 100) : qtd;
+    const vmd = qtd / 30;
+    const cobertura = vmd > 0 ? cd / vmd : (cd > 0 ? 999 : 0);
+    const bruta = Math.max(0, Math.ceil(vmd * metaDias - cd));
+    let statusEstoque = "Saudável";
+    if (cobertura <= 10 && vmd > 0) statusEstoque = "Ruptura Iminente";
+    else if (cobertura > 60 && cd > 5) statusEstoque = "Risco de Aging";
+    else if (vmd === 0 && cd > 0) statusEstoque = "Estoque Parado";
+    const devAlta = dev > 0 && vendasTotais >= amostraMin && taxa >= limiteDev;
+    let statusEnvio = "⏸️ Não Enviar"; let enviar = bruta;
+    if (bruta > 0 && devAlta) { statusEnvio = `🚫 Não Enviar (Devolução ${taxa.toFixed(1)}%)`; enviar = 0; }
+    else if (bruta > 0) {
+      if (central >= bruta) statusEnvio = "✅ Enviar Agora";
+      else if (central > 0) { statusEnvio = "⚠️ Enviar Parcial"; enviar = central; }
+      else { statusEnvio = "❌ Falta no Central"; enviar = 0; }
+    }
+    return { ...r, estoque_cd: cd, estoque_central: central, vmd: Number(vmd.toFixed(2)), cobertura_dias: Number(cobertura.toFixed(1)), sugestao_envio: enviar, status_estoque: statusEstoque, status_envio: statusEnvio };
+  });
+  const g = await gravarAnaliseFull(db, "full", canal, mes, novas);
+  return g.erro ? { atualizados: 0, erro: g.erro } : { atualizados: novas.length };
+}
+
 /* ------------------------------------------------------------------ */
 /* Configuração guardada no banco (vale para quem sobe a planilha)       */
 /* ------------------------------------------------------------------ */

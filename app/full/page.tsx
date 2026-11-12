@@ -29,7 +29,7 @@ import { lerArquivoComoMatriz } from "../../lib/lerArquivo";
 import { formulaUsaQuantidade } from "../../lib/formulaRepasse";
 
 import Recomendacoes from "./Recomendacoes";
-import { normalizarSku, parseNumero, verificarDataNoPeriodo, carregarBasesFull, calcularFull, gravarAnaliseFull, resolverConfigFull, aplicarLayoutML, lerConfigFullDb, salvarConfigFullDb, type ConfigFull } from "../../lib/fullMotor";
+import { normalizarSku, parseNumero, verificarDataNoPeriodo, carregarBasesFull, calcularFull, gravarAnaliseFull, resolverConfigFull, aplicarLayoutML, lerConfigFullDb, salvarConfigFullDb, reaplicarEstoqueFull, type ConfigFull } from "../../lib/fullMotor";
 
 const formatarMoeda = (valor: number) => "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -40,7 +40,7 @@ export default function LogisticaPage() {
 
   // A Logística Própria saiu da tela: o Full é o único modo. A análise fora do Full é gravada pelo upload de vendas e alimenta as Recomendações.
   const modoLogistica = "full" as "full" | "padrao";
-  const [subAba, setSubAba] = useState<"estoque" | "vendas" | "relatorio" | "recomendacoes" | "config">("vendas");
+  const [subAba, setSubAba] = useState<"estoque" | "relatorio" | "recomendacoes" | "config">("relatorio");
 
   const [canais, setCanais] = useState<string[]>([]);
   const [canalSelecionado, setCanalSelecionado] = useState("");
@@ -354,38 +354,6 @@ export default function LogisticaPage() {
       custoEmbalagem, formulaCanal, formulaVendas, margemMinimaPromissora, vendasMinimasPromissoras, tetoMaxDevolucao, colDataVendas, regrasRitmo,
       pctDevAtencao, minVendasDev, colIdFull, textoIdFull, statusConsiderar, statusIgnorar, pdvTotalLinha, linhaEstoque, colSkuEstoque, colQtdEstoque, linhaRemessa, colSkuRemessa, colQtdRemessa]);
 
-  const handleUploadVendas = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    {
-      try {
-        const matrix = await lerArquivoComoMatriz(file);
-        setMatrizVendas(matrix);
-        setDadosProcessados([]);
-
-        // Relatório do ML tem 66 ou 67 colunas (as letras deslocam). Confere o cabeçalho e ajusta os campos.
-        if (formulaCanal !== "formula_regras") {
-          const det = detectarColunasML(matrix as any[]);
-          if (det) {
-            setLinhaVendas(String(det.linhaInicial));
-            setColPedidoVendas(det.pedido);
-            setColCarrinhoVendas(det.status);
-            setColSkuVendas(det.sku);
-            setColMlbVendas(det.mlb);
-            setColQtdVendas(det.unidades);
-            setColPdvVendas(det.pdv);
-            setColLiquidoVendas(det.total);
-            setColReceitaPacote(det.receita);
-            setColEntregaVendas(det.formaEntrega);
-            setColDataVendas(det.data);
-            if (colIdFull.trim() && normTexto(textoIdFull).includes("full")) setColIdFull(det.formaEntrega);   // a modalidade é lida pelo cabeçalho "Forma de entrega"
-            setLayoutDetectado(`Colunas conferidas pelo cabeçalho (${det.layout}): SKU ${det.sku} · PDV ${det.pdv} · Qtd ${det.unidades} · Status ${det.status}`);
-          } else setLayoutDetectado("");
-        }
-      } catch (err: any) { alert("Erro ao ler o ficheiro: " + err.message); }
-    }
-  };
-
   const handleUploadRemessa = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -490,8 +458,12 @@ export default function LogisticaPage() {
     else {
       // Linhas antigas gravadas com o sufixo -fba (agora o SKU é salvo sem ele) seriam contadas em duplicidade
       await supabase.from('estoque_cd_mensal').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado).or('sku.ilike.%-fba,sku.ilike.%-f');
-      alert(`✅ Estoque do CD atualizado com sucesso!`);
-      setPreviewEstoque([]); setMatrizEstoque([]); setSubAba("vendas"); 
+      // O relatório já gravado (vindo do upload de vendas) refaz estoque, cobertura e sugestão de envio com o estoque novo
+      const re = await reaplicarEstoqueFull(supabase, canalSelecionado, mesSelecionado, montarConfig(), tinyMap);
+      if (re.erro) alert("Estoque salvo, mas não consegui atualizar o relatório: " + re.erro);
+      await carregarHistoricoGravado();
+      alert(`✅ Estoque do CD atualizado com sucesso!${re.atualizados ? ` Relatório do Full recalculado (${re.atualizados} SKUs).` : ""}`);
+      setPreviewEstoque([]); setMatrizEstoque([]); setSubAba("relatorio"); 
     }
     setSalvando(false);
   };
@@ -502,43 +474,6 @@ export default function LogisticaPage() {
     const { error } = await supabase.from('estoque_cd_mensal').delete().eq('canal', canalSelecionado).eq('mes_referencia', mesSelecionado);
     if (error) alert("Erro ao limpar estoque: " + error.message);
     else { alert("🗑️ Estoque limpo com sucesso!"); setPreviewEstoque([]); setMatrizEstoque([]); }
-    setSalvando(false);
-  };
-
-  // Motor compartilhado (lib/fullMotor.ts): o mesmo que o upload de vendas do Mercado Livre usa para alimentar o Full
-  const executarMotorGeral = async () => {
-    if (matrizVendas.length === 0) return alert("Suba a planilha de Vendas primeiro.");
-    setLoading(true);
-    salvarConfiguracoes();
-    const bases = await carregarBasesFull(supabase, canalSelecionado, mesSelecionado, { custosMap, regrasMlSkuMap, regrasMlMlbMap, tinyMap });
-    const res = calcularFull({ cfg: montarConfig() as ConfigFull, modo: modoLogistica, matriz: matrizVendas, canal: canalSelecionado, mes: mesSelecionado, bases });
-    if (res.erro) {
-      setLoading(false);
-      if (res.erro.tipo === "formula") setSubAba("config");
-      return alert(res.erro.texto);
-    }
-    if (res.filtro.ativo) {
-      setLayoutDetectado(`Identificação do Full ativa (coluna ${colIdFull.toUpperCase()} contém "${textoIdFull}"): ${res.filtro.mantidas} linhas consideradas, ${res.filtro.ignoradas} ignoradas (${modoLogistica === "full" ? "não são Full" : "são Full"}).`);
-    }
-    setDadosProcessados(res.resultados);
-    setLoading(false);
-  };
-
-  const salvarDadosNoBanco = async () => {
-    if (dadosProcessados.length === 0) return;
-    setSalvando(true);
-    const res = await gravarAnaliseFull(supabase, modoLogistica, canalSelecionado, mesSelecionado, dadosProcessados);
-    if (res.erro) {
-      alert("Erro ao gravar resultados no banco: " + res.erro);
-    } else {
-      if (res.aviso) alert("Análise gravada com aviso: " + res.aviso);
-      if (modoLogistica === "full") await carregarLotes();
-      alert(`✅ Análise gravada com sucesso!`);
-      setMatrizVendas([]);
-      setDadosProcessados([]);
-      carregarHistoricoGravado();
-      setSubAba("relatorio");
-    }
     setSalvando(false);
   };
 
@@ -689,17 +624,14 @@ export default function LogisticaPage() {
               📦 1. Upload Estoque do CD
             </button>
           )}
-          <button onClick={() => setSubAba("vendas")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "vendas" ? (modoLogistica === "full" ? "bg-purple-600 text-white" : "bg-indigo-600 text-white") : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
-            ⚡ {modoLogistica === "full" ? "2. Motor de Reposição" : "1. Motor de Diagnóstico"}
-          </button>
           <button onClick={() => setSubAba("relatorio")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "relatorio" ? "bg-emerald-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
-            📊 {modoLogistica === "full" ? "3. Ranking e Relatório" : "2. Veredicto e Relatório"}
+            📊 2. Ranking e Relatório
           </button>
           <button onClick={() => setSubAba("recomendacoes")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "recomendacoes" ? "bg-fuchsia-600 text-white shadow-fuchsia-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
-            💡 4. Recomendações
+            💡 3. Recomendações
           </button>
           <button onClick={() => setSubAba("config")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "config" ? "bg-cyan-600 text-white shadow-cyan-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
-            ⚙️ Configuração do Canal
+            ⚙️ 4. Configuração do Canal
           </button>
         </div>
 
@@ -979,6 +911,22 @@ export default function LogisticaPage() {
                   </div>
                 </div>
 
+                {/* IMPOSTO E COBERTURA */}
+                <div className="mt-5 pt-4 border-t border-slate-800/80">
+                  <h4 className="text-[10px] font-black text-emerald-300 uppercase tracking-wider mb-1">Imposto e cobertura</h4>
+                  <p className="text-[10px] text-slate-500 mb-3">Usados quando a planilha de vendas é subida em Uploads: o imposto sai da receita de cada SKU e a meta de cobertura define a quantidade sugerida para envio.</p>
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-emerald-300 uppercase mb-1">Imposto (%)</label>
+                      <input type="number" value={aliquotaImposto} onChange={e => { setAliquotaImposto(e.target.value); setCfgSalva(false); }} className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-center text-emerald-300 font-bold outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-indigo-300 uppercase mb-1">Meta cobertura (dias)</label>
+                      <input type="number" value={metaDiasCobertura} onChange={e => { setMetaDiasCobertura(e.target.value); setCfgSalva(false); }} className="w-full bg-slate-900 border border-indigo-600/50 rounded-lg p-2 text-xs font-mono text-center text-indigo-300 font-bold outline-none" />
+                    </div>
+                  </div>
+                </div>
+
                 {/* STATUS DOS PEDIDOS */}
                 <div className="mt-5 pt-4 border-t border-slate-800/80">
                   <h4 className="text-[10px] font-black text-rose-300 uppercase tracking-wider mb-1">Status dos pedidos</h4>
@@ -1082,92 +1030,9 @@ export default function LogisticaPage() {
               </div>
 
               <div className="flex justify-end">
-                <button type="button" onClick={() => setSubAba("vendas")} className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">← Voltar ao Motor</button>
+                <button type="button" onClick={() => setSubAba("relatorio")} className="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">← Voltar ao Relatório</button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* ABA VENDAS / MOTOR */}
-        {subAba === "vendas" && (
-          <div className="space-y-6 animate-in fade-in zoom-in duration-300">
-            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className={`text-lg font-bold flex items-center gap-2 ${modoLogistica === "full" ? "text-purple-400" : "text-indigo-400"}`}>
-                  <span>⚡ Cruzamento e Motor ({modoLogistica === "full" ? "Reposição" : "Diagnóstico"})</span>
-                </h2>
-              </div>
-
-              {/* FILTROS SUPERIORES DE CUSTOS E VALIDAÇÃO */}
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-4">
-                <div className="md:col-span-2">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Ficheiro de Vendas Brutas (Excel/CSV):</label>
-                  <input type="file" onChange={handleUploadVendas} className={`w-full bg-slate-950 border border-slate-700 file:border-0 file:text-white file:text-xs file:font-bold file:py-2.5 file:px-4 file:rounded-lg file:mr-4 file:cursor-pointer rounded-xl p-1.5 text-xs text-slate-300 cursor-pointer ${modoLogistica === "full" ? "file:bg-purple-600" : "file:bg-indigo-600"}`} />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Imposto (%):</label>
-                  <input type="number" value={aliquotaImposto} onChange={e => setAliquotaImposto(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-emerald-400 outline-none" />
-                </div>
-                {modoLogistica === "full" ? (
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Meta Cobertura (Dias):</label>
-                    <input type="number" value={metaDiasCobertura} onChange={e => setMetaDiasCobertura(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-indigo-400 outline-none" />
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Custo Embalagem (R$):</label>
-                    <input type="number" step="0.01" value={custoEmbalagem} onChange={e => setCustoEmbalagem(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-mono text-center text-rose-400 outline-none" />
-                  </div>
-                )}
-              </div>
-
-              {/* RESUMO DA CONFIGURAÇÃO DO CANAL (edição na aba Configuração do Canal) */}
-              <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 mb-6 flex flex-wrap items-center justify-between gap-4">
-                <div className="text-xs text-slate-300 leading-relaxed space-y-1">
-                  <div>
-                    <span className="font-bold text-cyan-400">⚙️ {canalSelecionado}: </span>
-                    {formulaCanal === "ml_recalculo" ? "Mercado Livre (líquido da coluna " + colLiquidoVendas + " + recálculo de carrinhos via MLB)" : <>Fórmula de vendas <code className="text-emerald-300">{formulaVendas || "— não definida —"}</code></>}
-                  </div>
-                  <div className="text-[11px] text-slate-500 font-mono">
-                    Linha {linhaVendas} · SKU {colSkuVendas} · Qtd {colQtdVendas} · PDV {colPdvVendas}
-                    {formulaCanal === "ml_recalculo" ? ` · MLB ${colMlbVendas}` : ""}
-                    {colCarrinhoVendas ? ` · Status ${colCarrinhoVendas}` : ""}
-                    {modoLogistica === "padrao" && colEntregaVendas && textoEntrega ? ` · Entrega ${colEntregaVendas} (“${textoEntrega}” = −R$ ${taxaFlex})` : ""}
-                  </div>
-                  {layoutDetectado && <div className="text-[10px] text-emerald-400">✔ {layoutDetectado}</div>}
-                  <div className="text-[10px] text-slate-500">
-                    {formulaCanal === "formula_regras"
-                      ? "Status “cancelado” (se a coluna de status estiver configurada) remove a linha do PDV e do custo."
-                      : "Status “cancelado” na coluna D remove a linha: sem PDV e sem abatimento do custo (vale também para cada item dentro de um pacote)."}
-                  </div>
-                </div>
-                <button type="button" onClick={() => setSubAba("config")} className="bg-cyan-700/80 hover:bg-cyan-600 text-white font-bold px-4 py-2 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer whitespace-nowrap">⚙️ Configuração do Canal</button>
-              </div>
-
-              <div className="flex justify-end gap-3">
-                <button onClick={executarMotorGeral} disabled={matrizVendas.length === 0 || loading} className={`py-3 px-6 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg ${matrizVendas.length === 0 ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 text-white cursor-pointer'}`}>
-                  {loading ? "A Cruzar..." : "1. Processar na Tela"}
-                </button>
-                {dadosProcessados.length > 0 && (
-                  <button onClick={salvarDadosNoBanco} disabled={salvando} className={`py-3 px-6 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer shadow-lg text-white ${modoLogistica === "full" ? "bg-purple-600 hover:bg-purple-500 shadow-purple-900/40" : "bg-indigo-600 hover:bg-indigo-500 shadow-indigo-900/40"}`}>
-                    {salvando ? "A Gravar..." : "2. Gravar Análise no Banco"}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {dadosProcessados.length > 0 && (
-              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl p-6 text-center animate-in zoom-in duration-300">
-                 <h3 className="text-xl font-black text-emerald-400 mb-2">Relatório Processado com Sucesso!</h3>
-                 <p className="text-sm text-slate-400 mb-4">
-                   {formulaCanal === "ml_recalculo"
-                     ? "O motor recalculou os pacotes com base nas regras do MLB, aplicou a regra dos R$ 79,00 e removeu os cancelados e devoluções, "
-                     : "O motor aplicou a fórmula de vendas do canal e removeu os cancelados e devoluções, "}
-                   consolidando <strong>{dadosProcessados.length} SKUs</strong>.
-                 </p>
-                 <p className="text-xs text-slate-500">Clique em "Gravar Análise no Banco" para armazenar os dados e ir para o Relatório Oficial.</p>
-              </div>
-            )}
           </div>
         )}
 
