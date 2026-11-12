@@ -6,6 +6,7 @@ import Navbar from "../components/Navbar";
 import { buscarTudo } from "../../lib/buscarTudo";
 import ConfigMapaCadastros from "../components/ConfigMapaCadastros";
 import CanaisDoMapa from "../components/CanaisDoMapa";
+import SkusPorCanal from "../components/SkusPorCanal";
 import { canaisSemRepeticao, canalTemCadastro, normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
 
 // ───────────────────────── utilidades ─────────────────────────
@@ -103,7 +104,7 @@ export default function MapeamentoPage() {
   const [ocultos, setOcultos] = useState<Set<string>>(new Set());   // canais ocultos no painel (nome normalizado)
   const [itens, setItens] = useState<ItemCadastro[]>([]);
 
-  const [subAba, setSubAba] = useState<"progresso" | "graficos" | "config">("progresso");
+  const [subAba, setSubAba] = useState<"progresso" | "skus" | "graficos" | "config">("progresso");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroEstoque, setFiltroEstoque] = useState("ComEstoque");
   const [pesquisaSku, setPesquisaSku] = useState("");
@@ -319,6 +320,9 @@ export default function MapeamentoPage() {
           <button data-subaba="progresso" onClick={() => setSubAba("progresso")} className={classeAba(subAba === "progresso")}>
             Progresso por canal
           </button>
+          <button data-subaba="skus" onClick={() => setSubAba("skus")} className={classeAba(subAba === "skus")}>
+            SKUs por canal
+          </button>
           <button data-subaba="graficos" onClick={() => setSubAba("graficos")} className={classeAba(subAba === "graficos")}>
             Gráficos
           </button>
@@ -367,6 +371,9 @@ export default function MapeamentoPage() {
         {subAba !== "config" && !loading && (
           <CanaisDoMapa canais={canais} ocultos={ocultos} normalizar={normalizarNomeCanal} onAlternar={alternarCanal} onAdicionar={adicionarCanalManual} />
         )}
+
+        {/* ═════════════ SUB-ABA: SKUs POR CANAL ═════════════ */}
+        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} />}
 
         {/* ═════════════ SUB-ABA: GRÁFICOS ═════════════ */}
         {subAba === "graficos" && (
