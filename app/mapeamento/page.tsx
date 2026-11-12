@@ -246,6 +246,19 @@ export default function MapeamentoPage() {
     return null;
   }, [canais, carregar]);
 
+  // Marca um SKU como cadastrado em um canal (clique no ❌ da sub-aba "SKUs por canal"): grava na base e atualiza a tela sem recarregar
+  const registrarCadastro = useCallback(async (sku: string, canal: string): Promise<string | null> => {
+    const { error } = await supabase.from("mapeamento_canais_skus").upsert({ canal, sku, presente: true }, { onConflict: "canal,sku" });
+    if (error) return "Não consegui gravar o cadastro: " + error.message;
+    const idx = canais.findIndex((c) => c === canal);
+    if (idx >= 0) setItens((prev) => prev.map((it) => {
+      if (it.sku !== sku) return it;
+      const pres = it.pres.slice(); pres[idx] = true;   // cópia: o vetor "vazio" é compartilhado entre SKUs sem cadastro
+      return { ...it, pres };
+    }));
+    return null;
+  }, [canais]);
+
   const { filtrados, progresso } = useMemo(() => {
     const lista: ItemCadastro[] = [];
     const contagem = new Array(canais.length).fill(0);
@@ -373,7 +386,7 @@ export default function MapeamentoPage() {
         )}
 
         {/* ═════════════ SUB-ABA: SKUs POR CANAL ═════════════ */}
-        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} />}
+        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} />}
 
         {/* ═════════════ SUB-ABA: GRÁFICOS ═════════════ */}
         {subAba === "graficos" && (
