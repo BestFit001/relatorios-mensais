@@ -12,7 +12,7 @@ const URLS_NOME = (c: string): string | null => URLS[c]?.nome ?? null;
 export const MAX_IMPORTADOS = 300;
 
 export interface PayloadLimpo {
-  tipo: "categoria" | "anuncio" | "ranking";
+  tipo: "categoria" | "anuncio" | "ranking" | "atualizacao";
   paginaUrl: string;
   nomeCategoria: string | null;
   anuncios: AnuncioRaspado[];
@@ -38,7 +38,7 @@ export function sanitizarPayload(bruto: unknown, canal: string = "mercadolivre")
   if (!p || typeof p !== "object" || p.v !== 1 || !Array.isArray(p.anuncios)) {
     throw new ErroValidacao("Texto de importação inválido. Cole exatamente o que o favorito copiou.");
   }
-  const tipo = p.tipo === "anuncio" ? "anuncio" : p.tipo === "categoria" ? "categoria" : p.tipo === "ranking" ? "ranking" : null;
+  const tipo = p.tipo === "anuncio" ? "anuncio" : p.tipo === "categoria" ? "categoria" : p.tipo === "ranking" ? "ranking" : p.tipo === "atualizacao" ? "atualizacao" : null;
   if (!tipo) throw new ErroValidacao("Texto de importação inválido (tipo desconhecido).");
   if (canalDoPayload(p) !== canal) {
     const lido = URLS_NOME(canalDoPayload(p));

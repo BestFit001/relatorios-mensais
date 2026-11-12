@@ -8,6 +8,7 @@ import { urlsDoCanal, URLS } from "./urls";
 import { atualizarPrecosMeusDeImportacao } from "./comparativos";
 import { atualizarRanking, movimentoRanking } from "./ranking";
 import { eventoDaLeitura, originalValido, type EventoPreco } from "./precos";
+import { TITULO_PENDENTE, ehCategoriaPrioritaria, urlCategoriaPrioritaria } from "./prioritarios";
 
 export const PAGINAS_POR_CATEGORIA = 2;
 const nomeCanal = (id: string) => URLS[id]?.nome ?? id;
@@ -118,20 +119,24 @@ async function registrarCapturas(db: SupabaseClient, hoje: string, lista: { a: a
   const atualizacoes: { id: string; campos: Record<string, unknown> }[] = [];
   const agora = new Date().toISOString();
   for (const { a, cap, extra } of lista) {
-    const vendasDia = calcularVendasNoDia(cap.total_vendas, totalBase(a, hoje));
+    // leitura sem o total de vendas (ou sem preço) no mesmo dia: mantém o que já estava gravado em vez de apagar
+    const mesmoDia = a.ultima_captura === hoje;
+    const mantemTotal = cap.total_vendas == null && mesmoDia;
+    const vendasDia = mantemTotal ? (a.ultimas_vendas_dia ?? null) : calcularVendasNoDia(cap.total_vendas, totalBase(a, hoje));
     const original = originalValido(cap.preco, cap.preco_original);
     // toda mudança do preço "Por" é registrada com a hora da leitura (várias no mesmo dia, se for o caso)
     const anterior = a.ultimo_preco == null || a.ultimo_preco === "" ? null : Number(a.ultimo_preco);
     const ev = eventoDaLeitura(a.id, Number.isFinite(anterior as number) ? anterior : null, cap.preco, cap.preco_original, agora);
     if (ev) eventos.push(ev);
-    historico.push({ anuncio_id: a.id, data_captura: hoje, preco: cap.preco, preco_original: original, total_vendas_acumulado: cap.total_vendas, vendas_no_dia: vendasDia, vendas_aproximado: cap.vendas_aproximado, capturado_em: agora });
+    const precoGravar = cap.preco ?? (mesmoDia && a.ultimo_preco != null && a.ultimo_preco !== "" ? Number(a.ultimo_preco) : null);
+    historico.push({ anuncio_id: a.id, data_captura: hoje, preco: precoGravar, preco_original: cap.preco != null ? original : (mesmoDia ? (a.ultimo_preco_original ?? null) : null), total_vendas_acumulado: mantemTotal ? (a.ultimo_total_vendas ?? null) : cap.total_vendas, vendas_no_dia: vendasDia, vendas_aproximado: mantemTotal ? Boolean(a.ultimo_aproximado) : cap.vendas_aproximado, capturado_em: agora });
     atualizacoes.push({ id: a.id, campos: {
       ...(extra || {}),
       lido_em: agora,
       ...(cap.preco != null ? { ultimo_preco: cap.preco, ultimo_preco_original: original } : {}),
       ...(ev && ev.preco_anterior != null ? { preco_anterior: ev.preco_anterior, preco_mudou_em: agora } : {}),
       ...(cap.total_vendas != null ? { ultimo_total_vendas: cap.total_vendas, ultimo_aproximado: cap.vendas_aproximado } : {}), // sem número novo, mantém o último como base
-      ultimas_vendas_dia: vendasDia,
+      ...(mantemTotal ? {} : { ultimas_vendas_dia: vendasDia }),
       ultima_captura: hoje,
     } });
   }
@@ -255,6 +260,9 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
   const hoje = hojeSP();
   const urls = urlsDoCanal(canal);
 
+  // atualização de preços de anúncios que já estão no painel (de qualquer categoria): não cria nem muda categoria
+  if (p.tipo === "atualizacao") return atualizarPorId(db, canal, p.anuncios, p.descartados);
+
   let categoria: { id: string; nome: string; ativo?: boolean };
   if (p.tipo === "anuncio" || p.tipo === "ranking") {
     if (!entrada.categoria_id) throw new ErroValidacao("Escolha a categoria (aba) em que os anúncios devem entrar.");
@@ -324,5 +332,120 @@ export async function importarDoNavegador(db: SupabaseClient, entrada: { payload
   }
   // se um dos anúncios lidos é o MEU de algum comparativo, o meu preço também é atualizado
   const precosMeusAtualizados = await atualizarPrecosMeusDeImportacao(db, p.anuncios);
-  return { categoria, tipo: p.tipo, recebidos: p.anuncios.length, novos: criados, atualizados: atualizar.length, desativadosIgnorados, descartados: p.descartados, precosMeusAtualizados, ranking, mudancasPreco };
+  return { categoria, tipo: p.tipo as "categoria" | "anuncio" | "ranking", recebidos: p.anuncios.length, novos: criados, atualizados: atualizar.length, desativadosIgnorados, descartados: p.descartados, precosMeusAtualizados, ranking, mudancasPreco };
+}
+
+export interface ResultadoAtualizacao {
+  categoria: null; tipo: "atualizacao"; recebidos: number; novos: 0; atualizados: number; desativadosIgnorados: number; descartados: number;
+  naoEncontrados: number; semPreco: number; precosMeusAtualizados: number; mudancasPreco: number;
+  ranking: { lidos: 0; subiram: 0; cairam: 0; iguais: 0; entraram: 0; sairam: 0 };
+}
+
+/**
+ * Importa a leitura feita pelo favorito "Atualizar preços": cada anúncio lido é procurado pelo id (MLB…) entre os anúncios do canal,
+ * em QUALQUER categoria (inclusive os do Monitoramento prioritário). Anúncio que não existe no painel é ignorado: aqui não se cadastra nada.
+ */
+async function atualizarPorId(db: SupabaseClient, canal: string, lidos: AnuncioRaspado[], descartados: number): Promise<ResultadoAtualizacao> {
+  const hoje = hojeSP();
+  const { data: cats, error: ec } = await db.from("categorias").select("id").eq("canal", canal);
+  falha("listar categorias", ec);
+  const idsCat = (cats || []).map((c: any) => c.id);
+  const porMlb = new Map(lidos.map((a) => [a.mlb_id, a]));
+  const linhas: any[] = [];
+  if (idsCat.length) {
+    for (const lote of em(Array.from(porMlb.keys()), 100)) {
+      const { data, error } = await db.from("anuncios")
+        .select("id,mlb_id,ativo,categoria_id,ultima_captura,ultimo_total_vendas,ultimas_vendas_dia,ultimo_preco,ultimo_preco_original,ultimo_aproximado")
+        .in("mlb_id", lote).in("categoria_id", idsCat);
+      falha("buscar anúncios", error);
+      linhas.push(...(data || []));
+    }
+  }
+  const achados = new Set<string>();
+  const atualizar: { a: any; cap: Captura; extra: Record<string, unknown> }[] = [];
+  let desativadosIgnorados = 0, semPreco = 0;
+  for (const ex of linhas) {
+    const a = porMlb.get(ex.mlb_id)!;
+    achados.add(ex.mlb_id);
+    if (!ex.ativo) { desativadosIgnorados++; continue; }
+    if (a.preco == null) semPreco++;
+    atualizar.push({ a: ex, cap: { preco: a.preco, preco_original: a.preco_original ?? null, total_vendas: a.total_vendas, vendas_aproximado: a.vendas_aproximado },
+      extra: { titulo: a.titulo, url_anuncio: a.url_anuncio, ...(a.vendedor ? { vendedor: a.vendedor } : {}), ...(a.marca ? { marca: a.marca } : {}), ...(a.url_imagem ? { url_imagem: a.url_imagem } : {}), ...(a.vendas_mes != null ? { ultimo_vendas_mes: a.vendas_mes } : {}) } });
+  }
+  const { mudancasPreco } = await registrarCapturas(db, hoje, atualizar);
+  const precosMeusAtualizados = await atualizarPrecosMeusDeImportacao(db, lidos);
+  return {
+    categoria: null, tipo: "atualizacao", recebidos: lidos.length, novos: 0, atualizados: atualizar.length, desativadosIgnorados, descartados,
+    naoEncontrados: lidos.filter((a) => !achados.has(a.mlb_id)).length, semPreco, precosMeusAtualizados, mudancasPreco,
+    ranking: { lidos: 0, subiram: 0, cairam: 0, iguais: 0, entraram: 0, sairam: 0 },
+  };
+}
+
+export const MAX_PRIORITARIOS_POR_VEZ = 50;
+
+/**
+ * Monitoramento prioritário: o usuário cola links diretos de anúncios. O que já existe no painel (em qualquer categoria) só é marcado como
+ * prioritário (e reativado, se estava desativado); o que é novo entra na categoria escondida, com título provisório até a primeira leitura
+ * (o servidor não lê o Mercado Livre: a leitura vem do favorito "Atualizar preços").
+ */
+export async function adicionarPrioritarios(db: SupabaseClient, entrada: { canal?: string; urls: string[] }) {
+  const canal = entrada.canal || "mercadolivre";
+  const urls = urlsDoCanal(canal);
+  const linhas = Array.from(new Set(entrada.urls.map((u) => String(u).trim()).filter(Boolean)));
+  if (!linhas.length) throw new ErroValidacao("Cole pelo menos um link de anúncio (um por linha).");
+  if (linhas.length > MAX_PRIORITARIOS_POR_VEZ) throw new ErroValidacao(`Links demais de uma vez (máximo ${MAX_PRIORITARIOS_POR_VEZ}).`);
+
+  const validos = new Map<string, string>();
+  const invalidos: { url: string; motivo: string }[] = [];
+  for (const l of linhas) {
+    try { const r = urls.validarUrlAnuncio(l); if (!validos.has(r.mlb_id)) validos.set(r.mlb_id, r.url); }
+    catch (e: any) { invalidos.push({ url: l.slice(0, 200), motivo: e?.message || "link inválido" }); }
+  }
+  if (!validos.size) throw new ErroValidacao(`Nenhum link válido. ${invalidos[0]?.motivo ?? ""}`.trim());
+
+  const { data: cats, error: ec } = await db.from("categorias").select("id").eq("canal", canal);
+  falha("listar categorias", ec);
+  const idsCat = (cats || []).map((c: any) => c.id);
+  const existentes: any[] = [];
+  if (idsCat.length) {
+    for (const lote of em(Array.from(validos.keys()), 100)) {
+      const { data, error } = await db.from("anuncios").select("id,mlb_id,ativo,prioritario").in("mlb_id", lote).in("categoria_id", idsCat);
+      falha("buscar anúncios", error);
+      existentes.push(...(data || []));
+    }
+  }
+  let marcados = 0, jaEram = 0, reativados = 0;
+  const comLinha = new Set<string>();
+  for (const ex of existentes) {
+    comLinha.add(ex.mlb_id);
+    if (ex.prioritario && ex.ativo) { jaEram++; continue; }
+    const { error } = await db.from("anuncios").update({ prioritario: true, ativo: true }).eq("id", ex.id);
+    falha("marcar anúncio", error);
+    if (!ex.ativo) reativados++; else marcados++;
+  }
+
+  const novos = Array.from(validos.entries()).filter(([id]) => !comLinha.has(id));
+  if (novos.length) {
+    const { data: cat, error } = await db.from("categorias")
+      .upsert({ nome: "Monitoramento prioritário", canal, url_origem: urlCategoriaPrioritaria(canal), ativo: true }, { onConflict: "canal,url_origem" })
+      .select("id").single();
+    falha("gravar categoria dos prioritários", error);
+    const { error: e2 } = await db.from("anuncios").upsert(
+      novos.map(([mlb_id, url]) => ({ categoria_id: cat!.id, mlb_id, titulo: `${mlb_id}${TITULO_PENDENTE}`, url_anuncio: url, ativo: true, manual: true, prioritario: true, ultimo_aproximado: false })),
+      { onConflict: "categoria_id,mlb_id", ignoreDuplicates: true });
+    falha("gravar anúncios prioritários", e2);
+  }
+  return { adicionados: novos.length, marcados, reativados, jaEram, invalidos };
+}
+
+/** Marca/desmarca como prioritário. Tirar da lista um anúncio que só existe por causa dela (categoria escondida) também o desativa. */
+export async function definirPrioritario(db: SupabaseClient, anuncio_id: string, prioritario: boolean) {
+  const { data: a, error } = await db.from("anuncios").select("id,categoria_id").eq("id", anuncio_id).maybeSingle();
+  falha("buscar anúncio", error);
+  if (!a) throw new ErroValidacao("Anúncio não encontrado.");
+  const { data: c, error: e2 } = await db.from("categorias").select("url_origem").eq("id", a.categoria_id).maybeSingle();
+  falha("buscar categoria", e2);
+  const soDaLista = !prioritario && ehCategoriaPrioritaria(c?.url_origem);
+  const { error: e3 } = await db.from("anuncios").update({ prioritario, ...(soDaLista ? { ativo: false } : {}) }).eq("id", anuncio_id);
+  falha("atualizar anúncio", e3);
 }

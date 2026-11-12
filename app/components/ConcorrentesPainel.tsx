@@ -20,9 +20,12 @@ import { HistoricoPrecoModal, PrecoDePor, SeloMudanca } from "./concorrentes/Pre
 import Favoritos from "./concorrentes/Favoritos";
 import ComparativoForm from "./concorrentes/ComparativoForm";
 import ComparativoLista, { type ComparativoComAnuncio } from "./concorrentes/ComparativoLista";
+import AtualizarPeloNavegador, { resumoAtualizacao } from "./concorrentes/AtualizarPeloNavegador";
+import Prioritarios from "./concorrentes/Prioritarios";
+import { ehCategoriaPrioritaria } from "../../lib/concorrentes/prioritarios";
 
 type Ordem = "vendas_dia" | "total" | "mes" | "preco" | "titulo" | "ranking";
-type Vista = "anuncios" | "mudancas" | "favoritos" | "comparativo";
+type Vista = "anuncios" | "mudancas" | "favoritos" | "comparativo" | "prioritario";
 
 /** Painel de UM canal (Mercado Livre, Shopee ou Amazon): categorias importadas pelo favorito, anúncios, favoritos, mudanças de preço e comparativo. */
 export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?: string }) {
@@ -30,6 +33,11 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
   const ehML = canal === "mercadolivre", ehAmazon = canal === "amazon";
   const temRanking = canal !== "shopee";
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  // a categoria escondida dos prioritários não é uma aba de categoria, mas os anúncios dela contam como do canal
+  const [idsEscondidas, setIdsEscondidas] = useState<string[]>([]);
+  const [prioritariosTodos, setPrioritariosTodos] = useState<Anuncio[]>([]);
+  const [carregandoPrio, setCarregandoPrio] = useState(true);
+  const [atualizarAberto, setAtualizarAberto] = useState(false);
   const [categoriaId, setCategoriaId] = useState<string | null>(null);
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [vista, setVista] = useState<Vista>("anuncios");
@@ -84,7 +92,9 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
   const carregarCategorias = useCallback(async (escolher?: string) => {
     const { data, error } = await supabase.from("categorias").select("*").eq("canal", canal).order("criado_em", { ascending: true });
     if (error) { setErro(`Não consegui ler as categorias: ${error.message}`); setCarregando(false); return; }
-    const lista = (data || []) as Categoria[];
+    const todas = (data || []) as Categoria[];
+    const lista = todas.filter((c) => !ehCategoriaPrioritaria(c.url_origem));
+    setIdsEscondidas(todas.filter((c) => ehCategoriaPrioritaria(c.url_origem)).map((c) => c.id));
     setCategorias(lista);
     setImportarAberto((aberto) => aberto || lista.length === 0);
     setCategoriaId((atual) => escolher || (atual && lista.some((c) => c.id === atual) ? atual : lista[0]?.id ?? null));
@@ -123,6 +133,15 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
     finally { setCarregandoFav(false); }
   }, [carregarHistorico]);
 
+  const carregarPrioritarios = useCallback(async () => {
+    try {
+      const lista = (await buscarTudo("anuncios", COLUNAS_ANUNCIO, (q) => q.eq("prioritario", true))).map(lerAnuncio);
+      setPrioritariosTodos(lista);
+      carregarHistorico(lista.map((a) => a.id));
+    } catch (e: any) { setErro(`Não consegui ler os anúncios prioritários: ${e.message}`); }
+    finally { setCarregandoPrio(false); }
+  }, [carregarHistorico]);
+
   const carregarComparativos = useCallback(async () => {
     try {
       const linhas = (await buscarTudo("comparativos", "*")).map(lerComparativo);
@@ -138,12 +157,13 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
     finally { setCarregandoComp(false); }
   }, []);
 
-  useEffect(() => { carregarCategorias(); carregarFavoritos(); carregarComparativos(); }, [carregarCategorias, carregarFavoritos, carregarComparativos]);
+  useEffect(() => { carregarCategorias(); carregarFavoritos(); carregarComparativos(); if (ehML) carregarPrioritarios(); else setCarregandoPrio(false); }, [carregarCategorias, carregarFavoritos, carregarComparativos, carregarPrioritarios, ehML]);
   useEffect(() => { setAnuncios([]); setPagina(1); setBusca(""); if (categoriaId) carregarAnuncios(categoriaId); }, [categoriaId, carregarAnuncios]);
   useEffect(() => { setPagina(1); }, [busca, ordem, mostrarInativos, tamanho, soFavoritos, soRanking]);
 
   // favoritos e comparativos são de todos os canais no banco; cada aba mostra só os do seu canal
-  const idsDoCanal = useMemo(() => new Set(categorias.map((c) => c.id)), [categorias]);
+  const idsDoCanal = useMemo(() => new Set([...categorias.map((c) => c.id), ...idsEscondidas]), [categorias, idsEscondidas]);
+  const prioritarios = useMemo(() => prioritariosTodos.filter((a) => idsDoCanal.has(a.categoria_id)), [prioritariosTodos, idsDoCanal]);
   const favoritos = useMemo(() => favoritosTodos.filter((a) => idsDoCanal.has(a.categoria_id)), [favoritosTodos, idsDoCanal]);
   const comparativos = useMemo(() => comparativosTodos.filter((c) => c.anuncio && idsDoCanal.has(c.anuncio.categoria_id)), [comparativosTodos, idsDoCanal]);
   const categoria = categorias.find((c) => c.id === categoriaId) || null;
@@ -202,6 +222,7 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
     try {
       const r = await chamar("importar", "POST", { texto: textoImport, canal, categoria_id: categoriaId, nome: nomeImport || undefined });
       setTextoImport(""); setNomeImport("");
+      if (r.tipo === "atualizacao") { await recarregarTudo(); avisar("ok", `Atualização: ${resumoAtualizacao(r)}`); return; }
       await carregarCategorias(r.categoria.id);
       await carregarAnuncios(r.categoria.id);
       carregarFavoritos(); carregarComparativos();
@@ -217,6 +238,12 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
       avisar("ok", `${r.tipo === "anuncio" ? "Anúncio importado" : r.tipo === "ranking" ? `Mais vendidos em “${r.categoria.nome}”` : `Categoria “${r.categoria.nome}”`}: ${partes.join(", ")}.`);
     } catch (e: any) { avisar("erro", e.message); }
     finally { setImportando(false); }
+  };
+
+  /** Depois de uma atualização pelo navegador: relê categoria atual, prioritários e favoritos (o histórico vem junto). */
+  const recarregarTudo = async () => {
+    await carregarCategorias(categoriaId || undefined);
+    await Promise.all([categoriaId ? carregarAnuncios(categoriaId) : Promise.resolve(), carregarFavoritos(), carregarComparativos(), ehML ? carregarPrioritarios() : Promise.resolve()]);
   };
 
   const copiarFavorito = async () => {
@@ -245,6 +272,7 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
     const favorito = !a.favorito;
     const troca = (l: Anuncio[]) => l.map((x) => (x.id === a.id ? { ...x, favorito } : x));
     setAnuncios(troca); // otimista
+    setPrioritariosTodos(troca);
     if (!favorito) setFavoritosTodos((l) => l.filter((x) => x.id !== a.id)); else setFavoritosTodos((l) => (l.some((x) => x.id === a.id) ? troca(l) : [...l, { ...a, favorito }]));
     try { await chamar("anuncios", "PATCH", { id: a.id, favorito }); carregarFavoritos(); }
     catch (e: any) { setAnuncios((l) => l.map((x) => (x.id === a.id ? { ...x, favorito: a.favorito } : x))); carregarFavoritos(); avisar("erro", e.message); }
@@ -288,13 +316,14 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
       let ok = 0, falhas = 0, mudancas = 0, ultimoErro = "";
       for (let rodada = 0; rodada < 12; rodada++) { // a rota trabalha em lotes dentro do limite de tempo; repete até acabar
         const r = await chamar("capturar", "POST", { categoria_id: categoriaId });
-        if (r.manual) { avisar("erro", 'O servidor está em modo manual: atualize usando "Importar do navegador".'); setAtualizando(null); return; }
+        if (r.manual) { avisar("erro", 'O servidor está em modo manual (não lê o Mercado Livre): use “Atualizar pelo navegador”.'); setAtualizarAberto(true); setAtualizando(null); return; }
         ok += r.ok; falhas += r.falhas; mudancas += r.mudancasPreco || 0; if (r.erros?.[0]) ultimoErro = r.erros[0].motivo;
         if (r.pendentes === 0 || r.processados === 0) break; // acabou, ou a rodada não avançou
         setAtualizando(`Capturando… ${ok + falhas} anúncio(s) processados`);
       }
       await carregarAnuncios(categoriaId);
-      avisar(falhas && !ok ? "erro" : "ok", `${ok} anúncio(s) atualizados${mudancas ? `, ${mudancas} mudança(s) de preço registrada(s)` : ""}${falhas ? `, ${falhas} com falha` : ""}.${ultimoErro ? ` Motivo: ${ultimoErro}` : ""}`);
+      if (falhas) setAtualizarAberto(true);
+      avisar(falhas && !ok ? "erro" : "ok", `${ok} anúncio(s) atualizados${mudancas ? `, ${mudancas} mudança(s) de preço registrada(s)` : ""}${falhas ? `, ${falhas} com falha` : ""}.${ultimoErro ? ` Motivo: ${ultimoErro}` : ""}${falhas ? " O servidor não consegue ler o Mercado Livre: use “Atualizar pelo navegador” (abaixo), que lê os mesmos anúncios pelo seu navegador." : ""}`);
     } catch (e: any) { avisar("erro", e.message); }
     finally { setAtualizando(null); }
   };
@@ -348,8 +377,8 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
         </div>
       </details>
 
-      {carregando ? <p className="text-xs text-slate-500">Carregando…</p> : categorias.length === 0 ? (
-        <div className={`${caixa} p-10 text-center text-sm text-slate-400`}>Nenhuma categoria cadastrada ainda. Abra uma busca ou categoria {ehML ? "do Mercado Livre" : ehAmazon ? "da Amazon" : "da Shopee"}, clique no favorito e cole acima o texto que ele copiar.</div>
+      {carregando ? <p className="text-xs text-slate-500">Carregando…</p> : categorias.length === 0 && !ehML ? (
+        <div className={`${caixa} p-10 text-center text-sm text-slate-400`}>Nenhuma categoria cadastrada ainda. Abra uma busca ou categoria {ehAmazon ? "da Amazon" : "da Shopee"}, clique no favorito e cole acima o texto que ele copiar.</div>
       ) : (
         <>
           {/* Sub-abas */}
@@ -359,6 +388,7 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
               ["mudancas", "📉 Mudanças de preço", null],
               ["favoritos", "★ Favoritos", favoritos.length],
               ["comparativo", "⚖️ Comparativo", comparativos.length],
+              ...(ehML ? [["prioritario", "⭐ Monitoramento prioritário", prioritarios.filter((a) => a.ativo).length] as [Vista, string, number | null]] : []),
             ] as [Vista, string, number | null][]).map(([id, rotulo, n]) => (
               <button key={id} role="tab" aria-selected={vista === id} data-vista={id} onClick={() => setVista(id)}
                 className={`px-4 py-2 text-xs font-black tracking-wide cursor-pointer border-b-2 -mb-px transition-colors ${vista === id ? "border-indigo-500 text-white" : "border-transparent text-slate-500 hover:text-slate-200"}`}>
@@ -378,6 +408,14 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
                 </button>
               ))}
             </div>
+          )}
+
+          {vista === "prioritario" && ehML && (
+            <Prioritarios canal={canal} anuncios={prioritarios} historico={historico} eventos={eventos} hoje={hoje} carregando={carregandoPrio || carregandoHist} acoes={acoes} avisar={avisar} onRecarregar={recarregarTudo} />
+          )}
+
+          {(vista === "anuncios" || vista === "mudancas") && !categoria && (
+            <div className={`${caixa} p-10 text-center text-sm text-slate-400`} data-sem-categoria>Nenhuma categoria cadastrada ainda. Abra uma busca ou categoria do Mercado Livre, clique no favorito e cole acima o texto que ele copiar. Para acompanhar anúncios específicos, use a aba “Monitoramento prioritário”.</div>
           )}
 
           {vista === "mudancas" && categoria && (
@@ -417,6 +455,8 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
                 ))}
               </div>
 
+              {ehML && <AtualizarPeloNavegador canal={canal} anuncios={ativos} aberto={atualizarAberto} onAbrir={setAtualizarAberto} onAviso={avisar} onImportado={recarregarTudo} />}
+
               <div className="grid gap-5 grid-cols-[minmax(0,1fr)] xl:grid-cols-[minmax(0,1fr)_340px] items-start">
                 {/* Tabela de anúncios */}
                 <section className={`${caixa} p-4 space-y-3`} data-tabela-anuncios>
@@ -441,6 +481,7 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
                     </label>
                     <div className="ml-auto flex flex-wrap gap-2">
                       {ehML && <button data-acao="atualizar" onClick={atualizarAgora} disabled={!!atualizando} className={`${botao} bg-emerald-700 text-white hover:bg-emerald-600`}>↻ Atualizar agora</button>}
+                      {ehML && <button data-acao="atualizar-navegador" onClick={() => setAtualizarAberto((v) => !v)} className={`${botao} bg-slate-800 text-emerald-300 hover:bg-slate-700`}>🔄 Atualizar pelo navegador</button>}
                       <button data-acao="pausar" onClick={pausarCategoria} className={`${botao} bg-slate-800 text-slate-300 hover:bg-slate-700`}>{categoria.ativo ? "Pausar categoria" : "Retomar categoria"}</button>
                     </div>
                   </div>

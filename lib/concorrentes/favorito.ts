@@ -1,8 +1,65 @@
+// Leitura de um anúncio do Mercado Livre (página aberta ou HTML baixado): compartilhada pelos favoritos "Capturar anúncios" e "Atualizar preços".
+export const FUNCOES_ANUNCIO_ML = String.raw`
+  function limpa(t) { return (t || "").replace(/\s+/g, " ").trim(); }
+  function texto(el) { return el ? limpa(el.textContent) : ""; }
+  function vendas(t) { var m = /(\+?\s*\d[\d.,]*\s*(?:mil|k|milh(?:ão|ao|ões|oes))?\s*vendid[oa]s?)/i.exec(t || "") || /(vendid[oa]s?\s*:?\s*\d[\d.,]*\s*(?:mil|k)?)(?![\d\wÀ-ÿ])/i.exec(t || ""); return m ? limpa(m[1]) : null; }
+  function idMLB(u) { var m = /[?&#]wid=(MLB-?\d{6,})/i.exec(u) || /MLB-?(\d{6,})/i.exec(u); if (!m) return null; return "MLB" + /\d{6,}/.exec(m[0])[0]; }
+  function produtoLD(d) {
+    d = d || document;
+    var achado = null;
+    function busca(o) {
+      if (!o) return null;
+      if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) { var r = busca(o[i]); if (r) return r; } return null; }
+      if (o["@type"] === "Product") return o;
+      return busca(o["@graph"]);
+    }
+    Array.prototype.forEach.call(d.querySelectorAll('script[type="application/ld+json"]'), function (s) {
+      try { var r = busca(JSON.parse(s.textContent)); if (r && !achado) achado = r; } catch (e) {}
+    });
+    return achado;
+  }
+  function precoML(raiz) {
+    if (!raiz) return null;
+    var blocos = Array.prototype.slice.call(raiz.querySelectorAll(".andes-money-amount"));
+    var atual = raiz.querySelector(".poly-price__current .andes-money-amount, .ui-search-price__second-line .andes-money-amount") || blocos.filter(function (b) { return !b.classList.contains("andes-money-amount--previous"); })[0];
+    if (!atual) return null;
+    var f = atual.querySelector(".andes-money-amount__fraction"); if (!f) return null;
+    var c = atual.querySelector(".andes-money-amount__cents");
+    var n = Number(texto(f).replace(/\./g, "") + (c ? "." + texto(c) : ""));
+    return isFinite(n) ? n : null;
+  }
+  function precoOriginalML(raiz) {
+    if (!raiz) return null;
+    var b = raiz.querySelector(".andes-money-amount--previous"); if (!b) return null;
+    var f = b.querySelector(".andes-money-amount__fraction"); if (!f) return null;
+    var c = b.querySelector(".andes-money-amount__cents");
+    var n = Number(texto(f).replace(/\./g, "") + (c ? "." + texto(c) : ""));
+    return isFinite(n) ? n : null;
+  }
+  function lerAnuncioML(doc, url) {
+    var ld = produtoLD(doc) || {};
+    var of = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+    var titulo = limpa(ld.name) || texto(doc.querySelector("h1.ui-pdp-title"));
+    if (!titulo) throw new Error("Não consegui ler o título do anúncio. Abra a página do anúncio e tente de novo.");
+    var pr = of && of.price != null ? Number(of.price) : precoML(doc.querySelector(".ui-pdp-price__second-line"));
+    var imgLd = Array.isArray(ld.image) ? ld.image[0] : ld.image;
+    var og = doc.querySelector('meta[property="og:image"]');
+    var vend1 = texto(doc.querySelector(".ui-pdp-seller__header__title, .ui-pdp-seller__link-trigger-button")).replace(/^(vendido\s+)?por\s+/i, "");
+    var marca1 = limpa(typeof ld.brand === "object" && ld.brand ? ld.brand.name : ld.brand);
+    if (!marca1) { Array.prototype.forEach.call(doc.querySelectorAll("tr"), function (tr) { var th = tr.querySelector("th"), td = tr.querySelector("td"); if (!marca1 && th && td && /^marca$/i.test(texto(th))) marca1 = texto(td); }); }
+    return {
+      mlb_id: idMLB(url), titulo: titulo, vendedor: vend1 || null, marca: marca1 || null, url: url,
+      imagem: imgLd || (og && og.content) || null, preco: isFinite(pr) ? pr : null, preco_original: precoOriginalML(doc.querySelector(".ui-pdp-price")),
+      vendas_texto: vendas(texto(doc.querySelector(".ui-pdp-subtitle")) || texto(doc.querySelector(".ui-pdp-header")))
+    };
+  }
+`;
+
 // Favorito (bookmarklet) "Capturar anúncios": roda DENTRO do navegador do usuário, na página do Mercado Livre, Shopee, Amazon
 // ou nos resultados do Google (Shopping), lê o que está na tela e mostra um texto (JSON) para colar no painel.
 // Não envia nada sozinho e não usa senha: o navegador já está logado e não é bloqueado como o servidor.
 // Deve ser JS puro e autocontido (sem comentários "//": o código vai numa linha só dentro do favorito).
-export const FAVORITO_JS = String.raw`(async function () {
+export const FAVORITO_JS = String.raw`(async function () {${FUNCOES_ANUNCIO_ML}
   var ID = "cb-import-box";
   var antigo = document.getElementById(ID); if (antigo) antigo.remove();
   var caixa = document.createElement("div"); caixa.id = ID;
@@ -11,10 +68,7 @@ export const FAVORITO_JS = String.raw`(async function () {
   function esc(t) { return String(t).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
   function tela(html) { caixa.innerHTML = html; }
   function status(t) { tela("<b>Monitor de concorrentes</b><div style='margin-top:6px'>" + esc(t) + "</div>"); }
-  function limpa(t) { return (t || "").replace(/\s+/g, " ").trim(); }
-  function texto(el) { return el ? limpa(el.textContent) : ""; }
   function espera(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
-  function vendas(t) { var m = /(\+?\s*\d[\d.,]*\s*(?:mil|k|milh(?:ão|ao|ões|oes))?\s*vendid[oa]s?)/i.exec(t || "") || /(vendid[oa]s?\s*:?\s*\d[\d.,]*\s*(?:mil|k)?)(?![\d\wÀ-ÿ])/i.exec(t || ""); return m ? limpa(m[1]) : null; }
   function compras(t) { var m = /((?:mais\s+de\s+)?\+?\s*\d[\d.,]*\s*(?:mil|milh(?:ão|ao|ões|oes))?\s*\+?\s*(?:compra(?:s|dos?)|vendid[oa]s?)\s+(?:no|nos|em)\s+(?:[úu]ltimos?\s+30\s+dias|(?:[úu]ltimo\s+)?m[eê]s(?:\s+passado)?))/i.exec(t || ""); return m ? limpa(m[1]) : null; }
   function folhas(el) {
     if (!el) return "";
@@ -22,7 +76,6 @@ export const FAVORITO_JS = String.raw`(async function () {
     while ((n = w.nextNode())) { var t = limpa(n.nodeValue); if (t) out.push(t); }
     return out.join(" | ");
   }
-  function idMLB(u) { var m = /[?&#]wid=(MLB-?\d{6,})/i.exec(u) || /MLB-?(\d{6,})/i.exec(u); if (!m) return null; return "MLB" + /\d{6,}/.exec(m[0])[0]; }
   function idAmazon(u) { var m = /\/(?:dp|gp\/product|gp\/aw\/d|product|d)\/([A-Z0-9]{10})(?:[/?#]|$)/i.exec(u || ""); return m ? m[1].toUpperCase() : null; }
   function idShopee(u) { var a = /-i\.(\d+)\.(\d+)(?:[/?#]|$)/.exec(u || ""); if (a) return a[1] + "." + a[2]; var b = /\/product\/(\d+)\/(\d+)(?:[/?#]|$)/.exec(u || ""); return b ? b[1] + "." + b[2] : null; }
   function riscado(e) { for (var x = e, i = 0; x && x.nodeType === 1 && i < 4; x = x.parentElement, i++) { try { if (/line-through/.test(getComputedStyle(x).textDecorationLine || "")) return true; } catch (er) {} } return false; }
@@ -77,19 +130,6 @@ export const FAVORITO_JS = String.raw`(async function () {
     for (var k = 0; k < cand.length; k++) { if (cand[k] && cand[k].indexOf("data:") !== 0) return cand[k]; }
     return null;
   }
-  function produtoLD() {
-    var achado = null;
-    function busca(o) {
-      if (!o) return null;
-      if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) { var r = busca(o[i]); if (r) return r; } return null; }
-      if (o["@type"] === "Product") return o;
-      return busca(o["@graph"]);
-    }
-    Array.prototype.forEach.call(document.querySelectorAll('script[type="application/ld+json"]'), function (s) {
-      try { var r = busca(JSON.parse(s.textContent)); if (r && !achado) achado = r; } catch (e) {}
-    });
-    return achado;
-  }
   function precoDoLD(ld) { var of = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers; if (!of) return null; var p = of.price != null ? of.price : of.lowPrice; var n = Number(p); return p != null && isFinite(n) ? n : null; }
   async function rolar() {
     var y0 = window.scrollY;
@@ -109,24 +149,6 @@ export const FAVORITO_JS = String.raw`(async function () {
     if (!titulo) return null;
     var vend = texto(el.querySelector(".poly-component__seller, .ui-search-official-store-label")).replace(/^(vendido\s+)?por\s+/i, "");
     return { mlb_id: id, titulo: titulo, vendedor: vend || null, marca: texto(el.querySelector(".poly-component__brand")) || null, url: href, imagem: imagem(el), preco: precoML(el), preco_original: precoOriginalML(el), vendas_texto: vendas(el.textContent), posicao: posicaoTag(el.textContent) };
-  }
-  function precoML(raiz) {
-    if (!raiz) return null;
-    var blocos = Array.prototype.slice.call(raiz.querySelectorAll(".andes-money-amount"));
-    var atual = raiz.querySelector(".poly-price__current .andes-money-amount, .ui-search-price__second-line .andes-money-amount") || blocos.filter(function (b) { return !b.classList.contains("andes-money-amount--previous"); })[0];
-    if (!atual) return null;
-    var f = atual.querySelector(".andes-money-amount__fraction"); if (!f) return null;
-    var c = atual.querySelector(".andes-money-amount__cents");
-    var n = Number(texto(f).replace(/\./g, "") + (c ? "." + texto(c) : ""));
-    return isFinite(n) ? n : null;
-  }
-  function precoOriginalML(raiz) {
-    if (!raiz) return null;
-    var b = raiz.querySelector(".andes-money-amount--previous"); if (!b) return null;
-    var f = b.querySelector(".andes-money-amount__fraction"); if (!f) return null;
-    var c = b.querySelector(".andes-money-amount__cents");
-    var n = Number(texto(f).replace(/\./g, "") + (c ? "." + texto(c) : ""));
-    return isFinite(n) ? n : null;
   }
   function juntarEm(mapa, lista, chave) {
     return function (item) {
@@ -164,21 +186,8 @@ export const FAVORITO_JS = String.raw`(async function () {
     var ehRanking = /^\/mais-vendidos/i.test(location.pathname);
     if (!ehLista && !ehRanking && idMLB(location.href)) {
       status("Lendo o anúncio…");
-      var ld = produtoLD() || {};
-      var of = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
-      var titulo = limpa(ld.name) || texto(document.querySelector("h1.ui-pdp-title"));
-      if (!titulo) throw new Error("Não consegui ler o título do anúncio. Abra a página do anúncio e tente de novo.");
-      var pr = of && of.price != null ? Number(of.price) : precoML(document.querySelector(".ui-pdp-price__second-line"));
-      var imgLd = Array.isArray(ld.image) ? ld.image[0] : ld.image;
-      var og = document.querySelector('meta[property="og:image"]');
-      var vend1 = texto(document.querySelector(".ui-pdp-seller__header__title, .ui-pdp-seller__link-trigger-button")).replace(/^(vendido\s+)?por\s+/i, "");
-      var marca1 = limpa(typeof ld.brand === "object" && ld.brand ? ld.brand.name : ld.brand);
-      if (!marca1) { Array.prototype.forEach.call(document.querySelectorAll("tr"), function (tr) { var th = tr.querySelector("th"), td = tr.querySelector("td"); if (!marca1 && th && td && /^marca$/i.test(texto(th))) marca1 = texto(td); }); }
-      return { v: 1, canal: "mercadolivre", tipo: "anuncio", pagina_url: location.href, coletado_em: new Date().toISOString(), anuncios: [{
-        mlb_id: idMLB(location.href), titulo: titulo, vendedor: vend1 || null, marca: marca1 || null, url: location.href,
-        imagem: imgLd || (og && og.content) || null, preco: isFinite(pr) ? pr : null, preco_original: precoOriginalML(document.querySelector(".ui-pdp-price")),
-        vendas_texto: vendas(texto(document.querySelector(".ui-pdp-subtitle")) || texto(document.querySelector(".ui-pdp-header")))
-      }] };
+      var um = lerAnuncioML(document, location.href);
+      return { v: 1, canal: "mercadolivre", tipo: "anuncio", pagina_url: location.href, coletado_em: new Date().toISOString(), anuncios: [um] };
     }
     var PAGINAS = 2, todos = [], vistos = {}, doc = document, base = location.href;
     for (var p = 1; p <= PAGINAS; p++) {

@@ -46,10 +46,20 @@ O total de vendas só vem se a listagem do ML mostrar "N vendidos" no cartão; s
 
 Na tela, “Cadastrar categoria pelo servidor” e “Testar conexão” ficam num bloco fechado “Avançado”: só servem se o servidor conseguir ler o Mercado Livre (proxy pago ou API).
 
+## Atualizar pelo navegador e Monitoramento prioritário
+O servidor não lê o ML, mas o navegador do usuário lê. Segundo favorito, **"Atualizar preços"** (`atualizar.ts`; reaproveita `lerAnuncioML` de `favorito.ts`, que lê uma página aberta ou um HTML baixado):
+1. O painel copia a **lista** dos anúncios ativos (`atualizacao.ts` → `montarLista`: `{v:1,tipo:"lista",itens:[{mlb_id,url}]}`). `urlParaLeitura` reconstrói o endereço: link de rastreio (`click1…`) vira `produto.mercadolivre.com.br/MLB-<id>`; página de catálogo (`/p/…`) sem a oferta escolhida ganha `?wid=<mlb_id>`.
+2. Numa página do ML, o favorito lê a lista (área de transferência, ou colando num campo), abre cada anúncio **do mesmo endereço** (`fetch` com a sessão do usuário + `DOMParser`; 3 por vez) e copia `{tipo:"atualizacao",anuncios:[…]}`. O navegador não deixa `www.` ler `produto.` (CORS): quem está em outro endereço fica de fora e o favorito avisa para repetir lá (a mesma lista serve).
+3. O painel importa (`/api/concorrentes/importar`, `importarDoNavegador` → `atualizarPorId`): procura cada `mlb_id` entre os anúncios do canal, **em qualquer categoria**, e grava preço Por/De, evento de mudança de preço (`precos_eventos`), histórico do dia, título/vendedor/imagem e o **link corrigido**. Não cria anúncio nem categoria; desconhecidos e desativados são ignorados. Se a leitura não trouxe total de vendas ou preço, o que já estava gravado no dia é mantido (`registrarCapturas`).
+- **Monitoramento prioritário** (sub-aba só do ML): o usuário cola links diretos (um por linha) → `POST /api/concorrentes/prioritarios` (`adicionarPrioritarios`). Anúncio que já existe em alguma categoria só recebe `anuncios.prioritario = true` (e é reativado); o novo entra na categoria **escondida** `prioritario://mercadolivre` (`prioritarios.ts`; não aparece como aba de categoria), com título provisório "… (aguardando a primeira leitura)" até a primeira leitura. Tirar da lista (`PATCH anuncios {prioritario:false}`) desativa o que só existia por causa dela.
+- Links: `normalizarUrlAnuncio` agora (a) troca link de rastreio `click1…` pelo endereço de destino ou pelo canônico do id e (b) mantém o `wid` que vem depois do `#` (links das listagens), senão a página mostrava a oferta em destaque do catálogo, não a do anúncio. A migração `20261112100000` corrigiu os links já guardados.
+- Limite honesto: a atualização depende de alguém clicar no favorito (o navegador do usuário é quem lê). O cron do servidor continua tentando, mas só funciona com proxy/API. Em página de catálogo o preço lido é o da oferta indicada pelo `wid`; se o ML ignorar o `wid`, o preço vem da oferta em destaque.
+
 ## Sub-abas da tela
 - **Anúncios**: tabela por categoria, ★ favorito, marca, total em faixa (“+5.000”), média/dia estimada, selo ▼/▲ de mudança de preço (30 dias).
 - **Mudanças de preço**: cada vez que o preço de uma captura difere do da captura anterior (período 7/30/90 dias, só quedas/altas, só favoritos). Só enxerga os dias em que houve captura.
 - **Favoritos**: anúncios com ★ de todas as categorias (preço atual, mín–máx, evolução, total, média/dia).
+- **Monitoramento prioritário** (só Mercado Livre): links diretos de anúncios, preço Por/De, preço anterior, última leitura e as mudanças de preço deles (reaproveita a tabela de Mudanças).
 - **Comparativo** (⚖️ no anúncio do concorrente): link do meu anúncio + SKU. Se o MLB está em `ml_anuncios_regras`, SKU, conta (1/2) e Clássico/Premium vêm de lá. Mostra os dois preços, comissão, tarifa fixa, frete estimado, imposto de 9%, o MEU custo (`tabela_custos_skus`, ou o custo digitado) e o lucro líquido/margem de cada lado. O meu preço é digitado, lido pelo favorito na página do meu anúncio, ou atualizado sozinho quando uma importação traz o mesmo MLB.
 
 ## Ranking "Mais vendidos"

@@ -63,9 +63,24 @@ export function normalizarUrlAnuncio(bruta: string): { url: string; mlb_id: stri
   const u = analisar(bruta);
   const mlb_id = idDoAnuncio(u.toString());
   if (!mlb_id) throw new ErroValidacao("Não achei o código do anúncio (MLB…) nesse link. Cole o endereço da página do anúncio.");
-  const wid = /[?&]wid=(MLB-?\d+)/i.exec(u.search);
+  // Link de rastreio de anúncio patrocinado (click1.mercadolivre.com.br/mclics/…): o endereço de verdade está no parâmetro "url"
+  // (ou só o id sobrou). Guardar o link de rastreio sem a query só redirecionava, e o link muda; vale o link canônico.
+  if (/^click\d*\./i.test(u.hostname)) {
+    for (const k of ["url", "go", "redirect_url"]) {
+      const alvo = u.searchParams.get(k);
+      if (alvo && /^https?:\/\//i.test(alvo)) { try { const r = normalizarUrlAnuncio(alvo); if (!/^click\d*\./i.test(new URL(r.url).hostname)) return r; } catch { /* tenta o próximo */ } }
+    }
+    return { url: urlCanonicaDoAnuncio(mlb_id), mlb_id };
+  }
+  // o "wid" (oferta escolhida dentro de uma página de catálogo) vem na query ou depois do "#" (links das listagens)
+  const wid = /[?&#]wid=(MLB-?\d+)/i.exec(`${u.search}${u.hash}`);
   const limpa = `${u.protocol}//${u.hostname}${u.pathname}${wid ? `?wid=${wid[1]}` : ""}`;
   return { url: limpa, mlb_id };
+}
+
+/** Página pública de um anúncio a partir do id (o Mercado Livre redireciona para o endereço com o título). */
+export function urlCanonicaDoAnuncio(mlb_id: string): string {
+  return `https://produto.mercadolivre.com.br/MLB-${mlb_id.replace(/^MLB-?/i, "")}`;
 }
 
 /** Aceita a imagem só se for https (a tela usa direto no <img>). */

@@ -10,17 +10,18 @@ export interface Anuncio {
   ultimas_vendas_dia: number | null; ultima_captura: string | null;
   ultimo_preco_original: number | null; preco_anterior: number | null; preco_mudou_em: string | null;
   ranking_posicao: number | null; ranking_anterior: number | null; ranking_data: string | null; ranking_data_anterior: string | null;
+  prioritario: boolean; lido_em: string | null;
 }
 export interface Comparativo {
   id: string; anuncio_id: string; sku: string; meu_url: string | null; meu_mlb_id: string | null; meu_titulo: string | null;
   meu_preco: number | null; meu_preco_em: string | null; canal_meu: string; canal_concorrente: string; custo_manual: number | null; criado_em: string;
 }
 
-export const COLUNAS_ANUNCIO = "id,categoria_id,mlb_id,titulo,vendedor,marca,url_anuncio,url_imagem,ativo,manual,favorito,ultimo_preco,ultimo_total_vendas,ultimo_vendas_mes,ultimo_aproximado,ultimas_vendas_dia,ultima_captura,ultimo_preco_original,preco_anterior,preco_mudou_em,ranking_posicao,ranking_anterior,ranking_data,ranking_data_anterior";
+export const COLUNAS_ANUNCIO = "id,categoria_id,mlb_id,titulo,vendedor,marca,url_anuncio,url_imagem,ativo,manual,favorito,ultimo_preco,ultimo_total_vendas,ultimo_vendas_mes,ultimo_aproximado,ultimas_vendas_dia,ultima_captura,ultimo_preco_original,preco_anterior,preco_mudou_em,ranking_posicao,ranking_anterior,ranking_data,ranking_data_anterior,prioritario,lido_em";
 
 const nm = (v: unknown): number | null => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 /** Linha do banco -> Anuncio com números de verdade (o banco pode devolver numeric como texto). */
-export const lerAnuncio = (r: any): Anuncio => ({ ...r, ultimo_preco: nm(r.ultimo_preco), ultimo_total_vendas: nm(r.ultimo_total_vendas), ultimo_vendas_mes: nm(r.ultimo_vendas_mes), ultimas_vendas_dia: nm(r.ultimas_vendas_dia), ultimo_preco_original: nm(r.ultimo_preco_original), preco_anterior: nm(r.preco_anterior), preco_mudou_em: r.preco_mudou_em ?? null, favorito: Boolean(r.favorito), ultimo_aproximado: Boolean(r.ultimo_aproximado), ranking_posicao: nm(r.ranking_posicao), ranking_anterior: nm(r.ranking_anterior), ranking_data: r.ranking_data ?? null, ranking_data_anterior: r.ranking_data_anterior ?? null });
+export const lerAnuncio = (r: any): Anuncio => ({ ...r, ultimo_preco: nm(r.ultimo_preco), ultimo_total_vendas: nm(r.ultimo_total_vendas), ultimo_vendas_mes: nm(r.ultimo_vendas_mes), ultimas_vendas_dia: nm(r.ultimas_vendas_dia), ultimo_preco_original: nm(r.ultimo_preco_original), preco_anterior: nm(r.preco_anterior), preco_mudou_em: r.preco_mudou_em ?? null, favorito: Boolean(r.favorito), prioritario: Boolean(r.prioritario), lido_em: r.lido_em ?? null, ultimo_aproximado: Boolean(r.ultimo_aproximado), ranking_posicao: nm(r.ranking_posicao), ranking_anterior: nm(r.ranking_anterior), ranking_data: r.ranking_data ?? null, ranking_data_anterior: r.ranking_data_anterior ?? null });
 export const lerComparativo = (r: any): Comparativo => ({ ...r, meu_preco: nm(r.meu_preco), custo_manual: nm(r.custo_manual) });
 
 export const brl = (v: number | null | undefined) => (v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
