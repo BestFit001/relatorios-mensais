@@ -58,6 +58,61 @@ function GradePermissoes({ selecionadas, onToggle, compacto = false }: { selecio
   );
 }
 
+/** Configurações do painel: liga/desliga o aviso "Aba em construção, deseja continuar?" por página (tabela abas_em_construcao). */
+function ConfigAbasConstrucao() {
+  const [ativas, setAtivas] = useState<Set<string>>(new Set());
+  const [carregado, setCarregado] = useState(false);
+  const [erro, setErro] = useState("");
+  const [salvando, setSalvando] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase.from("abas_em_construcao").select("rota, ativo");
+      if (error) setErro("Não consegui ler as configurações (a migration 20261112180000_abas_em_construcao.sql já foi executada no Supabase?): " + error.message);
+      else setAtivas(new Set((data || []).filter((r: any) => r.ativo).map((r: any) => String(r.rota))));
+      setCarregado(true);
+    })();
+  }, []);
+
+  const alternar = async (rota: string) => {
+    const novo = !ativas.has(rota);
+    setSalvando(rota); setErro("");
+    const { error } = await supabase.from("abas_em_construcao").upsert({ rota, ativo: novo, atualizado_em: new Date().toISOString() }, { onConflict: "rota" });
+    if (error) setErro("Erro ao salvar: " + error.message);
+    else setAtivas((a) => { const n = new Set(a); if (novo) n.add(rota); else n.delete(rota); return n; });
+    setSalvando(null);
+  };
+
+  const grupos = SECOES_MENU.map((s) => ({ titulo: s.titulo, itens: s.rotas.filter((r) => r.id !== "/admin" && r.id !== "/analise-mercado") })).filter((g) => g.itens.length > 0);
+  return (
+    <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8" data-config-construcao>
+      <h2 className="text-lg font-bold text-white mb-1">⚙️ Configurações — Aviso de aba em construção</h2>
+      <p className="text-xs text-slate-400 mb-4">
+        As abas marcadas abrem com o fundo embaçado e a pergunta <strong className="text-slate-200">“Aba em construção, deseja continuar?”</strong> (Sim libera a página; Não volta ao Início). A mudança vale na hora, para todos os usuários.
+      </p>
+      {erro && <p className="text-xs text-rose-300 mb-3">{erro}</p>}
+      {!carregado ? <p className="text-xs text-slate-500">Carregando…</p> : (
+        <div className="space-y-3">
+          {grupos.map((g) => (
+            <div key={g.titulo}>
+              <p className="text-[10px] font-black text-amber-300 uppercase tracking-wider mb-1.5">{g.titulo}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                {g.itens.map((r) => (
+                  <label key={r.id} className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-slate-200 bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 hover:border-slate-700 transition-colors">
+                    <input type="checkbox" data-construcao={r.id} checked={ativas.has(r.id)} disabled={salvando === r.id} onChange={() => alternar(r.id)} className="accent-amber-500" />
+                    <span className="truncate">{r.nome}</span>
+                    {ativas.has(r.id) && <span className="ml-auto text-[9px] text-amber-300 font-bold uppercase">🚧 em construção</span>}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
@@ -228,6 +283,9 @@ export default function AdminPage() {
             </div>
           </div>
         </div>
+
+        {/* CONFIGURAÇÕES */}
+        <ConfigAbasConstrucao />
 
         {/* CADASTRO DE NOVO UTILIZADOR */}
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">

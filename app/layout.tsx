@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import AlertaTarefasGlobal from "./components/AlertaTarefasGlobal";
+import AvisoConstrucao from "./components/AvisoConstrucao";
 
 export const metadata: Metadata = {
   title: "Hub Best Fit",
@@ -23,6 +24,7 @@ export default function RootLayout({
       <body className="antialiased bg-[#07090e] text-slate-100">
         {children}
         <AlertaTarefasGlobal />
+        <AvisoConstrucao />
       </body>
     </html>
   );
