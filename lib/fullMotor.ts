@@ -678,7 +678,7 @@ export async function alimentarFullPeloUpload(db: any, p: { canal: string; mes: 
   const usouPadrao = !salvoFull ? " (configuração padrão; ajuste em Full > Configuração do Canal)" : "";
   return {
     ok: true,
-    texto: `Full ${canal} ${mes}: ${f.resultados.length} SKUs e ${unidades} un. vendidas em ${f.filtro.mantidas} linhas "${ident.textoIdFull}"; ${foraSkus} SKUs fora do Full para as recomendações${g1.aviso ? ` — ${g1.aviso}` : ""}${avisoFora}${usouPadrao}.`,
+    texto: `Full ${canal} ${mes}: ${f.resultados.length} SKUs e ${unidades} un. vendidas (${f.filtro.mantidas} linhas "${ident.textoIdFull}" lidas; status descartados ficam fora); ${foraSkus} SKUs fora do Full para as recomendações${g1.aviso ? ` — ${g1.aviso}` : ""}${avisoFora}${usouPadrao}.`,
     full: { skus: f.resultados.length, unidades, linhasFull: f.filtro.mantidas, descartadas: f.filtro.ignoradas },
     fora: { skus: foraSkus },
   };

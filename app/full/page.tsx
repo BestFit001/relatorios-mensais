@@ -28,6 +28,7 @@ import { ehMercadoLivre } from "../../lib/tarifacao";
 import { lerArquivoComoMatriz } from "../../lib/lerArquivo";
 import { formulaUsaQuantidade } from "../../lib/formulaRepasse";
 
+import Recomendacoes from "./Recomendacoes";
 import { normalizarSku, parseNumero, verificarDataNoPeriodo, carregarBasesFull, calcularFull, gravarAnaliseFull, resolverConfigFull, aplicarLayoutML, lerConfigFullDb, salvarConfigFullDb, type ConfigFull } from "../../lib/fullMotor";
 
 const formatarMoeda = (valor: number) => "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -37,8 +38,9 @@ export default function LogisticaPage() {
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
-  const [modoLogistica, setModoLogistica] = useState<"full" | "padrao">("padrao");
-  const [subAba, setSubAba] = useState<"estoque" | "vendas" | "relatorio" | "config">("vendas");
+  // A Logística Própria saiu da tela: o Full é o único modo. A análise fora do Full é gravada pelo upload de vendas e alimenta as Recomendações.
+  const modoLogistica = "full" as "full" | "padrao";
+  const [subAba, setSubAba] = useState<"estoque" | "vendas" | "relatorio" | "recomendacoes" | "config">("vendas");
 
   const [canais, setCanais] = useState<string[]>([]);
   const [canalSelecionado, setCanalSelecionado] = useState("");
@@ -642,25 +644,9 @@ export default function LogisticaPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Logística Integrada</h1>
-            <p className="text-sm font-medium text-slate-400">Motor de Análise para Modalidade Full/FBA e Própria</p>
+            <p className="text-sm font-medium text-slate-400">Motor de Análise do Full/FBA e recomendações de novos produtos</p>
           </div>
           <Navbar />
-        </div>
-
-        {/* TOGGLE MODALIDADE */}
-        <div className="flex flex-wrap gap-4 mb-8 border-b border-slate-800 pb-6">
-          <button 
-            onClick={() => { setModoLogistica("full"); setSubAba("vendas"); setDadosProcessados([]); }} 
-            className={`px-8 py-3.5 rounded-xl font-black text-sm tracking-wider cursor-pointer transition-all ${modoLogistica === "full" ? "bg-purple-600 text-white shadow-lg shadow-purple-900/40" : "bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800"}`}
-          >
-            ⚡ Logística Full / FBA
-          </button>
-          <button 
-            onClick={() => { setModoLogistica("padrao"); setSubAba("vendas"); setDadosProcessados([]); }} 
-            className={`px-8 py-3.5 rounded-xl font-black text-sm tracking-wider cursor-pointer transition-all ${modoLogistica === "padrao" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/40" : "bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800"}`}
-          >
-            📦 Logística Própria (Padrão)
-          </button>
         </div>
 
         {/* PARÂMETROS GLOBAIS COMUNS */}
@@ -708,6 +694,9 @@ export default function LogisticaPage() {
           </button>
           <button onClick={() => setSubAba("relatorio")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "relatorio" ? "bg-emerald-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
             📊 {modoLogistica === "full" ? "3. Ranking e Relatório" : "2. Veredicto e Relatório"}
+          </button>
+          <button onClick={() => setSubAba("recomendacoes")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "recomendacoes" ? "bg-fuchsia-600 text-white shadow-fuchsia-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
+            💡 4. Recomendações
           </button>
           <button onClick={() => setSubAba("config")} className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${subAba === "config" ? "bg-cyan-600 text-white shadow-cyan-900/30" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
             ⚙️ Configuração do Canal
@@ -835,6 +824,10 @@ export default function LogisticaPage() {
         )}
 
         {/* ABA CONFIGURAÇÃO DO CANAL */}
+        {subAba === "recomendacoes" && (
+          <Recomendacoes canal={canalSelecionado} mes={mesSelecionado} regra={regrasCanais.find((r: any) => normTexto(r.canal) === normTexto(canalSelecionado))} tinyMap={tinyMap} custosMap={custosMap} />
+        )}
+
         {subAba === "config" && (
           <div className="space-y-6 animate-in fade-in zoom-in duration-300">
             <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
@@ -982,6 +975,25 @@ export default function LogisticaPage() {
                       {colIdFull.trim() && textoIdFull.trim()
                         ? <span className="text-violet-300 font-bold">Ativo: {modoLogistica === "full" ? "só entram linhas" : "saem as linhas"} com “{textoIdFull}” na coluna {colIdFull.toUpperCase()}.</span>
                         : <span>Desativado: nenhuma linha é filtrada.</span>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* STATUS DOS PEDIDOS */}
+                <div className="mt-5 pt-4 border-t border-slate-800/80">
+                  <h4 className="text-[10px] font-black text-rose-300 uppercase tracking-wider mb-1">Status dos pedidos</h4>
+                  <p className="text-[10px] text-slate-500 mb-3">
+                    O status é lido na coluna “Status/Pacote” (campo acima). Informe os termos separados por vírgula; vale se o status <strong className="text-slate-300">contém</strong> o termo, sem diferenciar maiúsculas e acentos.
+                    Pedidos Full não dependem de faturamento na planilha: entram todos os que tiverem um status válido. Cancelados já são sempre descartados.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-emerald-300 uppercase mb-1" title="Em branco = todos os status valem (menos os ignorados)">Considerar somente os status (opcional)</label>
+                      <input type="text" value={statusConsiderar} onChange={e => { setStatusConsiderar(e.target.value); setCfgSalva(false); }} placeholder="ex.: entregue, a caminho, pronto para envio" className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2 text-xs font-mono text-emerald-300 font-bold outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-rose-300 uppercase mb-1">Desconsiderar os status</label>
+                      <input type="text" value={statusIgnorar} onChange={e => { setStatusIgnorar(e.target.value); setCfgSalva(false); }} placeholder="ex.: cancelada, vamos te devolver" className="w-full bg-slate-900 border border-rose-600/50 rounded-lg p-2 text-xs font-mono text-rose-300 font-bold outline-none" />
                     </div>
                   </div>
                 </div>

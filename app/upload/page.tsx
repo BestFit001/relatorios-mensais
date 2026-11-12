@@ -7,6 +7,7 @@ import Navbar from "../components/Navbar";
 import { useRouter } from "next/navigation";
 import { lerArquivoComoMatriz, lerArquivoComoLinhas } from "../../lib/lerArquivo";
 import { removerSufixoFba } from "../../lib/fulfillment";
+import { alimentarFullPeloUpload, mesDoFull } from "../../lib/fullMotor";
 import { registrarSkusNaBaseCadastrada, linhaAvisoCadastro } from "../../lib/cadastros";
 import { montarConfigLives, ehCanalDasLives, ehModalLive, lerLinhaLive, montarRegistroLive, normalizarSkuLive } from "../../lib/livesVendas";
 
@@ -853,6 +854,17 @@ export default function UpdatesPage() {
         const isAmazon = canalNorm.includes("amazon");
         const isSite = canalNorm.includes("site");
 
+        // Mercado Livre: a mesma planilha alimenta o relatório do Full (pedidos "Mercado Envios Full") e a base das recomendações.
+        // Os pedidos do Full têm nota fiscal própria (não aparecem nos faturados), então entram sem exigir faturamento.
+        let msgFull = "";
+        if (isML) {
+          try {
+            const matrizFull = await lerArquivoComoMatriz(file);
+            const rFull = await alimentarFullPeloUpload(supabase, { canal: canalAlvoDash, mes: mesDoFull(mesUpload, anoUpload), matriz: matrizFull });
+            if (rFull.texto) msgFull = `• ${rFull.texto}`;
+          } catch (errFull: any) { msgFull = `• Full: não consegui atualizar (${errFull?.message || errFull}).`; }
+        }
+
         // Status (cancelado), Nota Fiscal e Data do pedido configurados para este canal
         const cfgI = cfgImportAtual;
         let idxStatus = letraParaIndice(cfgI.colStatus);
@@ -893,7 +905,7 @@ export default function UpdatesPage() {
         });
         
         if (!isFisico && idsFaturadosSet.size === 0 && idxNF < 0) {
-          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado na tabela 'faturados' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro (ou informe a coluna da Nota Fiscal nesta planilha).`);
+          alert(`⚠️ ATENÇÃO: Nenhum pedido faturado encontrado na tabela 'faturados' para o mês [${mesAlvoDash}]. Suba os faturados no Passo 1 primeiro (ou informe a coluna da Nota Fiscal nesta planilha).${msgFull ? `\n\n${msgFull}` : ""}`);
           setLoading(false);
           return;
         }
@@ -1253,6 +1265,7 @@ export default function UpdatesPage() {
         if (isFisico) linhasMsg.push(`• Linha de total da planilha ignorada: ${ignoradosTotalClube > 0 ? 'sim' : 'não encontrada'}`);
         if (avisoCadastro) linhasMsg.push(avisoCadastro);
         if (msgLives) linhasMsg.push(msgLives);
+        if (msgFull) linhasMsg.push(msgFull);
         if (foraDoMesData > 0 && mesesDosPedidos.size > 0) {
           const lista = Array.from(mesesDosPedidos.entries()).sort().map(([k, n]) => `${nomeDoMes(k)} (${n})`).join(", ");
           linhasMsg.push(`• Meses encontrados nas datas dos pedidos: ${lista}. O mês escolhido nesta tela é ${nomeDoMes(`${anoUpload}-${mesUpload}`)}. Se a planilha for de outro mês, troque o mês acima e envie de novo.`);

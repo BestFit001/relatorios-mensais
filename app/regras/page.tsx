@@ -50,6 +50,14 @@ export default function RegrasPage() {
   // Armazenagem no Full: o prazo varia de canal para canal
   const [diasAlertaArm, setDiasAlertaArm] = useState('90');
   const [diasCobrancaArm, setDiasCobrancaArm] = useState('120');
+  // Recomendações (aba Full): quando um SKU vendido fora do Full merece ser enviado
+  const [recVendasMin, setRecVendasMin] = useState('5');
+  const [recLucroMin, setRecLucroMin] = useState('100');
+  const [recMargemMin, setRecMargemMin] = useState('12');
+  const [recDevMax, setRecDevMax] = useState('5');
+  const [recDiasCobertura, setRecDiasCobertura] = useState('30');
+  const [recExigirEstoque, setRecExigirEstoque] = useState(true);
+  const [recMargemRever, setRecMargemRever] = useState('5');
   const [colunasFoco, setColunasFoco] = useState({
     idPedido: 'A',
     sku: 'B',
@@ -140,6 +148,13 @@ export default function RegrasPage() {
       setLogoUrl(regraDb.logo_url || '');
       setDiasAlertaArm(String(regraDb.dias_alerta_armazenagem ?? 90));
       setDiasCobrancaArm(String(regraDb.dias_cobranca_armazenagem ?? 120));
+      setRecVendasMin(String(regraDb.rec_vendas_min ?? 5));
+      setRecLucroMin(String(regraDb.rec_lucro_min ?? 100));
+      setRecMargemMin(String(regraDb.rec_margem_min ?? 12));
+      setRecDevMax(String(regraDb.rec_dev_max ?? 5));
+      setRecDiasCobertura(String(regraDb.rec_dias_cobertura ?? 30));
+      setRecExigirEstoque(regraDb.rec_exigir_estoque !== false);
+      setRecMargemRever(String(regraDb.rec_margem_rever ?? 5));
       setColunasFoco({
         idPedido: regraDb.col_id_pedido || 'A',
         sku: regraDb.col_sku || 'B',
@@ -200,20 +215,27 @@ export default function RegrasPage() {
         col_pdv: colunasFoco.precoVenda.toUpperCase(),
         col_quantidade: colunasFoco.quantidade.toUpperCase(),
         dias_alerta_armazenagem: alertaArm,
-        dias_cobranca_armazenagem: cobrancaArm
+        dias_cobranca_armazenagem: cobrancaArm,
+        rec_vendas_min: Math.max(0, parseInt(recVendasMin, 10) || 0),
+        rec_lucro_min: Number(String(recLucroMin).replace(',', '.')) || 0,
+        rec_margem_min: Number(String(recMargemMin).replace(',', '.')) || 0,
+        rec_dev_max: Number(String(recDevMax).replace(',', '.')) || 0,
+        rec_dias_cobertura: Math.max(1, parseInt(recDiasCobertura, 10) || 30),
+        rec_exigir_estoque: recExigirEstoque,
+        rec_margem_rever: Number(String(recMargemRever).replace(',', '.')) || 0
       };
       let { error: erroRegra } = await supabase.from('config_regras_canais').upsert([registroRegra], { onConflict: 'canal' });
 
       // Migration dos prazos de armazenagem ainda não executada: salva o restante e avisa
       let faltouMigration = false;
-      if (erroRegra && /dias_alerta_armazenagem|dias_cobranca_armazenagem/i.test(erroRegra.message)) {
+      if (erroRegra && /dias_alerta_armazenagem|dias_cobranca_armazenagem|rec_/i.test(erroRegra.message)) {
         faltouMigration = true;
-        const { dias_alerta_armazenagem, dias_cobranca_armazenagem, ...semPrazos } = registroRegra;
+        const { dias_alerta_armazenagem, dias_cobranca_armazenagem, rec_vendas_min, rec_lucro_min, rec_margem_min, rec_dev_max, rec_dias_cobertura, rec_exigir_estoque, rec_margem_rever, ...semPrazos } = registroRegra;
         ({ error: erroRegra } = await supabase.from('config_regras_canais').upsert([semPrazos], { onConflict: 'canal' }));
       }
 
       if (erroRegra) throw new Error("Erro ao salvar regras: " + erroRegra.message);
-      if (faltouMigration) alert("Regras salvas, mas os prazos de armazenagem NÃO foram gravados: execute a migration 20261104120000_prazos_armazenagem_por_canal.sql no Supabase.");
+      if (faltouMigration) alert("Regras salvas, mas os prazos de armazenagem e os parâmetros das recomendações NÃO foram gravados: execute as migrations 20261104120000_prazos_armazenagem_por_canal.sql e 20261112150000_full_alimentado_pelo_upload_e_recomendacoes.sql no Supabase.");
 
       const { error: erroMeta } = await supabase.from('tb_metas').upsert([{
         canal: canalSelecionado,
@@ -562,6 +584,44 @@ export default function RegrasPage() {
                   </div>
                   <p className="sm:col-span-2 text-[11px] text-slate-400">
                     Na aba Fulfillment, o lote enviado ao Full gera o aviso “faltam X dias” a partir do primeiro prazo e passa a “em cobrança” no segundo. Cada canal pode ter um prazo diferente (padrão: 90 e 120).
+                  </p>
+                </div>
+              </div>
+
+              {/* RECOMENDAÇÕES DO FULL (aba Full > Recomendações) */}
+              <div className="space-y-3 pt-2">
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Recomendações do Full — quando vale enviar um produto:</label>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                  <div>
+                    <span className="block text-[10px] font-bold text-fuchsia-400 mb-1">Vendas mínimas no mês (un.)</span>
+                    <input type="number" min={0} value={recVendasMin} onChange={e => setRecVendasMin(e.target.value)} className="w-full bg-slate-900 border border-fuchsia-600/50 rounded-lg p-2.5 text-xs text-fuchsia-300 font-mono font-bold text-center outline-none" />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-emerald-400 mb-1">Lucro líquido mínimo no mês (R$)</span>
+                    <input type="number" min={0} step="0.01" value={recLucroMin} onChange={e => setRecLucroMin(e.target.value)} className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2.5 text-xs text-emerald-300 font-mono font-bold text-center outline-none" />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-emerald-400 mb-1">Margem líquida mínima (%)</span>
+                    <input type="number" min={0} step="0.1" value={recMargemMin} onChange={e => setRecMargemMin(e.target.value)} className="w-full bg-slate-900 border border-emerald-600/50 rounded-lg p-2.5 text-xs text-emerald-300 font-mono font-bold text-center outline-none" />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-rose-400 mb-1">Devolução máxima (%)</span>
+                    <input type="number" min={0} step="0.1" value={recDevMax} onChange={e => setRecDevMax(e.target.value)} className="w-full bg-slate-900 border border-rose-600/50 rounded-lg p-2.5 text-xs text-rose-300 font-mono font-bold text-center outline-none" />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-cyan-400 mb-1">Cobrir quantos dias de venda</span>
+                    <input type="number" min={1} value={recDiasCobertura} onChange={e => setRecDiasCobertura(e.target.value)} className="w-full bg-slate-900 border border-cyan-600/50 rounded-lg p-2.5 text-xs text-cyan-300 font-mono font-bold text-center outline-none" />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-amber-400 mb-1">Rever no Full se a margem for menor que (%)</span>
+                    <input type="number" step="0.1" value={recMargemRever} onChange={e => setRecMargemRever(e.target.value)} className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-2.5 text-xs text-amber-300 font-mono font-bold text-center outline-none" />
+                  </div>
+                  <label className="col-span-2 flex items-center gap-2 text-[11px] text-slate-300 font-bold cursor-pointer">
+                    <input type="checkbox" checked={recExigirEstoque} onChange={e => setRecExigirEstoque(e.target.checked)} className="accent-fuchsia-500 w-4 h-4" />
+                    Só recomendar produto com estoque na Sede
+                  </label>
+                  <p className="col-span-2 lg:col-span-4 text-[11px] text-slate-400">
+                    A aba Full &gt; Recomendações cruza as vendas do mês que NÃO foram Full (vindas do upload de vendas do Mercado Livre) com estas regras: o SKU precisa atingir vendas, lucro e margem mínimos e ter devolução abaixo do teto. A quantidade sugerida cobre os dias informados. SKUs que já estão no Full com margem abaixo do limite de revisão aparecem em “Rever no Full”.
                   </p>
                 </div>
               </div>
