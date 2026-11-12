@@ -7,6 +7,8 @@ import { buscarTudo } from "../../lib/buscarTudo";
 import ConfigMapaCadastros from "../components/ConfigMapaCadastros";
 import CanaisDoMapa from "../components/CanaisDoMapa";
 import SkusPorCanal from "../components/SkusPorCanal";
+import { carregarPaiManual, salvarPaiManual } from "../../lib/skuPaiDb";
+import { normalizarSkuPai, paiPadrao } from "../../lib/skuPai";
 import { canaisSemRepeticao, canalTemCadastro, normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
 
 // ───────────────────────── utilidades ─────────────────────────
@@ -103,6 +105,7 @@ export default function MapeamentoPage() {
   const [canais, setCanais] = useState<string[]>([]);
   const [ocultos, setOcultos] = useState<Set<string>>(new Set());   // canais ocultos no painel (nome normalizado)
   const [itens, setItens] = useState<ItemCadastro[]>([]);
+  const [paiManual, setPaiManual] = useState<Map<string, string>>(new Map());   // ajustes do SKU pai (sku normalizado -> pai)
 
   const [subAba, setSubAba] = useState<"progresso" | "skus" | "graficos" | "config">("progresso");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
@@ -160,6 +163,7 @@ export default function MapeamentoPage() {
 
       setCanais(listaCanais);
       setItens(resultado);
+      setPaiManual(await carregarPaiManual());
     } catch (e: any) {
       setErro(e?.message || "Erro ao carregar os cadastros.");
     } finally {
@@ -258,6 +262,19 @@ export default function MapeamentoPage() {
     }));
     return null;
   }, [canais]);
+
+  // Ajuste do SKU pai (botão "editar pai" da sub-aba SKUs por canal): grava na base e atualiza a tela
+  const editarPai = useCallback(async (skus: string[], pai: string): Promise<string | null> => {
+    const erro = await salvarPaiManual(skus, pai);
+    if (erro) return erro;
+    const novo = normalizarSkuPai(pai);
+    setPaiManual((m) => {
+      const n = new Map(m);
+      for (const sku of skus) { const k = normalizarSkuPai(sku); if (paiPadrao(k) === novo) n.delete(k); else n.set(k, novo); }
+      return n;
+    });
+    return null;
+  }, []);
 
   const { filtrados, progresso } = useMemo(() => {
     const lista: ItemCadastro[] = [];
@@ -386,7 +403,7 @@ export default function MapeamentoPage() {
         )}
 
         {/* ═════════════ SUB-ABA: SKUs POR CANAL ═════════════ */}
-        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} />}
+        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} paiManual={paiManual} onEditarPai={editarPai} />}
 
         {/* ═════════════ SUB-ABA: GRÁFICOS ═════════════ */}
         {subAba === "graficos" && (

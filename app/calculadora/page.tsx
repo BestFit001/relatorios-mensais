@@ -1,10 +1,12 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 import { lerArquivoComoLinhas } from "../../lib/lerArquivo";
+import { carregarPaiManual } from "../../lib/skuPaiDb";
+import { paiDoSku, normalizarSkuPai, custoDoPai, type RegraCustoPai } from "../../lib/skuPai";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -64,6 +66,15 @@ function parsePorcentagem(valor: any): number {
 const formatarMoeda = (valor: number) =>
   "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+interface LinhaReversa {
+  sku: string; anuncio: string; pdv: number | null; custo: number | null; comissaoPct: number | null; valorComissao: number | null;
+  tarifaFixa: number | null; frete: number | null; imposto: number | null; rebate: number; lucro: number | null; margem: number | null; obs: string;
+}
+interface ResultadoReversa {
+  nomeArquivo: string; canal: string; linhas: LinhaReversa[]; total: number; calculados: number; semCusto: number; semPreco: number; prejuizo: number;
+  margemMedia: number;
+}
+
 export default function CalculadoraPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -90,6 +101,16 @@ export default function CalculadoraPage() {
   const [canaisSelecionados, setCanaisSelecionados] = useState<string[]>([]);
 
   const [subAba, setSubAba] = useState<"calculadora" | "lote">("calculadora");
+  // SKU pai (informação central do app: 5 primeiros dígitos + ajustes manuais do Mapa de Cadastros)
+  const [paiManual, setPaiManual] = useState<Map<string, string>>(new Map());
+  const [regraCustoPai, setRegraCustoPai] = useState<RegraCustoPai>("maior");
+  const [mapaMlb, setMapaMlb] = useState<Map<string, any>>(new Map());   // anúncio (MLB) -> comissão e medidas
+  // Margem reversa em lote (planilha de anúncios com o preço de venda)
+  const [canalReversa, setCanalReversa] = useState("Mercado Livre 1 Clássico");
+  const [filtroRev, setFiltroRev] = useState<"todos" | "prejuizo" | "pendentes">("todos");
+  const [processandoRev, setProcessandoRev] = useState(false);
+  const [erroRev, setErroRev] = useState("");
+  const [resultadoRev, setResultadoRev] = useState<ResultadoReversa | null>(null);
   // correção de custo (lápis) do produto buscado
   const [editandoCusto, setEditandoCusto] = useState(false);
   const [custoEdit, setCustoEdit] = useState("");
@@ -103,6 +124,53 @@ export default function CalculadoraPage() {
   const [processandoLote, setProcessandoLote] = useState(false);
   const [resultadoLote, setResultadoLote] = useState<{ nomeArquivo: string; canal: string; margem: number; linhas: any[][]; total: number; calculados: number; semCusto: number; inviaveis: number } | null>(null);
   const [erroLote, setErroLote] = useState("");
+
+  // SKU pai -> SKUs filhos (base de custos + anúncios). O pai segue a mesma regra do Mapa de Cadastros (5 dígitos + ajustes manuais).
+  const filhosPorPai = useMemo(() => {
+    const grupos = new Map<string, Set<string>>();
+    const add = (k: string) => {
+      if (!k) return;
+      const pai = paiDoSku(k, paiManual);
+      if (!pai) return;
+      const g = grupos.get(pai); if (g) g.add(k); else grupos.set(pai, new Set([k]));
+    };
+    custosMap.forEach((_v, k) => add(k));
+    mapeamentoMl1.forEach((_v, k) => add(k));
+    mapeamentoMl2.forEach((_v, k) => add(k));
+    const out = new Map<string, string[]>();
+    grupos.forEach((set, pai) => out.set(pai, Array.from(set).sort()));
+    return out;
+  }, [custosMap, mapeamentoMl1, mapeamentoMl2, paiManual]);
+
+  // Anúncios de um SKU; para a chave de um pai ("pai:12345") junta os anúncios de todos os filhos.
+  const anunciosDe = (mapa: Map<string, any[]>, chave: string): any[] => {
+    if (chave.startsWith("pai:")) {
+      const filhos = filhosPorPai.get(chave.slice(4)) || [];
+      return filhos.flatMap((f) => mapa.get(f) || []);
+    }
+    return mapa.get(chave) || [];
+  };
+
+  // O texto digitado/na planilha é um SKU ou um SKU pai? Devolve a chave de cálculo e o custo (do SKU, ou do pai pela regra escolhida).
+  const resolverCodigo = (texto: any): { tipo: "sku" | "pai"; chave: string; custo: number; filhos: string[]; custosFilhos: number[]; naBase: boolean } | null => {
+    const k = normalizarSku(texto);
+    if (!k) return null;
+    if (k.length < 10) {
+      const pai = normalizarSkuPai(texto);
+      const filhos = filhosPorPai.get(pai);
+      if (filhos && filhos.length > 0) {
+        const custosFilhos = filhos.map((f) => Number(custosTodos.get(f)?.custo_unitario || 0));
+        return { tipo: "pai", chave: "pai:" + pai, custo: custoDoPai(custosFilhos, regraCustoPai), filhos, custosFilhos, naBase: true };
+      }
+    }
+    const info = custosTodos.get(k);
+    return { tipo: "sku", chave: k, custo: info ? Number(info.custo_unitario || 0) : 0, filhos: [], custosFilhos: [], naBase: Boolean(info) };
+  };
+
+  // trocou a regra do custo do pai: atualiza o produto que está na tela
+  useEffect(() => {
+    setProdutoEncontrado((p: any) => (p?.isPai ? { ...p, custo_unitario: custoDoPai(p.custosFilhos || [], regraCustoPai) } : p));
+  }, [regraCustoPai]);
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -191,6 +259,17 @@ export default function CalculadoraPage() {
 
     const mapaMl1 = new Map();
     const mapaMl2 = new Map();
+    const porMlb = new Map<string, any>();
+    allMlRegras.forEach((m: any) => {
+      const id = String(m.mlb || m.anuncio || "").trim().toUpperCase();
+      if (!id) return;
+      porMlb.set(id, {
+        sku: String(m.sku || "").trim(),
+        comissao: parsePorcentagem(m.comissao), peso_real: Number(m.peso_real || 2.0), altura: Number(m.altura || 10),
+        largura: Number(m.largura || 10), comprimento: Number(m.comprimento || 10),
+      });
+    });
+    setMapaMlb(porMlb);
 
     allMlRegras.forEach((m: any) => {
       const k = skuValido(m.sku) ? normalizarSku(m.sku) : "";
@@ -219,6 +298,8 @@ export default function CalculadoraPage() {
     setMapeamentoMl1(mapaMl1);
     setMapeamentoMl2(mapaMl2);
 
+    setPaiManual(await carregarPaiManual());
+
     const { data: tarifacaoData } = await supabase.from("config_regras_tarifacao").select("*");
     if (tarifacaoData) {
       setRegrasTarifacao(tarifacaoData);
@@ -229,11 +310,28 @@ export default function CalculadoraPage() {
 
   const handleBuscarProduto = () => {
     const key = normalizarSku(skuBusca);
-    if (!key || key.length < 10) {
-      alert("Digite um SKU válido com pelo menos 10 dígitos.");
+    setEditandoCusto(false); setAvisoCusto(null);
+    // SKU pai (menos de 10 dígitos): precifica o grupo todo, com o custo escolhido (maior, média ou menor) e os anúncios de todos os filhos
+    if (key && key.length < 10) {
+      const cod = resolverCodigo(skuBusca);
+      if (cod?.tipo === "pai") {
+        const pai = cod.chave.slice(4);
+        const primeiro = custosTodos.get(cod.filhos.find((f) => custosTodos.has(f)) || "");
+        setProdutoEncontrado({
+          sku: pai, isPai: true, pai, chave: cod.chave, filhos: cod.filhos, custosFilhos: cod.custosFilhos,
+          produto: `SKU pai ${pai} — ${cod.filhos.length} SKU(s) filho(s)`,
+          marca: primeiro?.marca || marcaFiltro || "BEST FIT",
+          custo_unitario: cod.custo,
+        });
+        return;
+      }
+      alert("Digite um SKU com pelo menos 10 dígitos ou um SKU pai que exista na base (ex.: 20345).");
       return;
     }
-    setEditandoCusto(false); setAvisoCusto(null);
+    if (!key || key.length < 10) {
+      alert("Digite um SKU válido com pelo menos 10 dígitos, ou o SKU pai.");
+      return;
+    }
     const match = custosMap.get(key);
     if (match) {
       setProdutoEncontrado(match);
@@ -331,7 +429,7 @@ export default function CalculadoraPage() {
   const calcularPdvIdealCanal = (canalNome: string, skuKey: string, custoProduto: number, margemPct: number, valRebate: number) => {
     const impostoPercent = 0.09;
     const cLower = canalNome.toLowerCase();
-    const anunciosSku = (cLower.includes("mercado livre 2") ? mapeamentoMl2 : mapeamentoMl1).get(skuKey) || [];
+    const anunciosSku = anunciosDe(cLower.includes("mercado livre 2") ? mapeamentoMl2 : mapeamentoMl1, skuKey);
     let comissaoPct = 0.14;
     let temMlbEncontrado = false;
     let refAnuncio: any = null;
@@ -422,14 +520,14 @@ export default function CalculadoraPage() {
         if (!texto) return;
         if (idx === 0 && !/\d/.test(texto)) return;   // cabeçalho ("SKU", "Código"...)
         total++;
-        const info = custosTodos.get(normalizarSku(texto));
-        const custo = info ? Number(info.custo_unitario) : 0;
-        if (!info || !(custo > 0)) {
+        const cod = resolverCodigo(texto);
+        const custo = cod ? cod.custo : 0;
+        if (!cod || !(custo > 0)) {
           semCusto++;
           saida.push([texto, "sem custo na base"]);
           return;
         }
-        const r = calcularPdvIdealCanal(canalLote, normalizarSku(texto), custo, margem, valRebate);
+        const r = calcularPdvIdealCanal(canalLote, cod.chave, custo, margem, valRebate);
         if (r.inviavel || !(r.pdv > 0)) {
           inviaveis++;
           saida.push([texto, "margem inviável para o canal"]);
@@ -466,14 +564,122 @@ export default function CalculadoraPage() {
     XLSX.writeFile(wb, `${resultadoLote.nomeArquivo}_PDV_${canalArq}_margem${String(resultadoLote.margem).replace(".", ",")}.xlsx`);
   };
 
+  // Margem de UM anúncio num canal, dado o preço de venda. Anúncio (MLB) conhecido no Mercado Livre usa a comissão e as medidas dele.
+  const calcularMargemReversa = (canalNome: string, chave: string, custo: number, pdv: number, valRebate: number, mlbInfo: any | null) => {
+    const imposto = 0.09;
+    const cLower = canalNome.toLowerCase();
+    let comissaoPct = 0.14, tarifaFixa = 0, frete = 0;
+    if (cLower.includes("mercado livre")) {
+      const anuncios = chave ? anunciosDe(cLower.includes("mercado livre 2") ? mapeamentoMl2 : mapeamentoMl1, chave) : [];
+      const premium = cLower.includes("premium");
+      let ref: any = null;
+      if (mlbInfo) {
+        ref = mlbInfo;
+        comissaoPct = mlbInfo.comissao > 0 ? mlbInfo.comissao / 100 : (premium ? 0.19 : 0.14);
+      } else {
+        const m = premium ? anuncios.find((a: any) => a.comissao > 14) : anuncios.find((a: any) => a.comissao > 0 && a.comissao <= 14);
+        comissaoPct = m ? m.comissao / 100 : (premium ? 0.19 : 0.14);
+        ref = m || anuncios[0] || null;
+      }
+      const peso = ref && Number(ref.peso_real) > 0 ? Number(ref.peso_real) : 2.0;
+      const alt = ref && Number(ref.altura) > 0 ? Number(ref.altura) : 10;
+      const larg = ref && Number(ref.largura) > 0 ? Number(ref.largura) : 10;
+      const comp = ref && Number(ref.comprimento) > 0 ? Number(ref.comprimento) : 10;
+      tarifaFixa = pdv < 79.0 ? 6.5 : 0;
+      frete = calcularFreteML(pdv, peso, alt, larg, comp);
+    } else {
+      const regra = obterRegraCanalDaTabela(canalNome, pdv);
+      comissaoPct = Number(regra.comissao || 14) / 100;
+      tarifaFixa = Number(regra.tarifa_fixa || 0);
+      frete = Number(regra.frete || 0);
+    }
+    const valorComissao = pdv * comissaoPct;
+    const valorImposto = pdv * imposto;
+    const lucro = pdv - (custo + valorComissao + tarifaFixa + frete + valorImposto) + valRebate;
+    return { comissaoPct: comissaoPct * 100, valorComissao, tarifaFixa, frete, valorImposto, lucro, margem: pdv > 0 ? (lucro / pdv) * 100 : 0 };
+  };
+
+  // Planilha com os anúncios e o preço de venda -> margem de cada anúncio no canal escolhido
+  const handleUploadReversa = async (file: File) => {
+    setErroRev(""); setResultadoRev(null); setFiltroRev("todos");
+    if (!canalReversa) { setErroRev("Selecione o canal."); return; }
+    setProcessandoRev(true);
+    try {
+      const arq = await lerArquivoComoLinhas(file);
+      if (!arq || arq.length === 0) { setErroRev("A planilha está vazia."); return; }
+      const norm = (v: any) => String(v ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const cab = (arq[0] || []).map(norm);
+      const iPreco = cab.findIndex((h) => /preco|pdv|valor de venda|price/.test(h));
+      const iMlb = cab.findIndex((h) => /mlb|anuncio|item ?id|id do item/.test(h));
+      const iSkuC = cab.findIndex((h) => /^(sku|codigo|cod\b|referencia|ref\b|sku pai)/.test(h) || h === "pai");
+      const temCab = iPreco >= 0 || iMlb >= 0 || iSkuC >= 0;
+      let iSku = iSkuC, iPrecoF = iPreco;
+      let inicio = 1;
+      if (temCab) {
+        if (iPrecoF < 0) { setErroRev("Não achei a coluna do preço de venda (cabeçalho com \"Preço\", \"PDV\" ou \"Valor de venda\")."); return; }
+        if (iSku < 0 && iMlb < 0) { setErroRev("Não achei a coluna do SKU nem a do anúncio (cabeçalho \"SKU\" ou \"MLB\")."); return; }
+      } else {
+        iSku = 0; iPrecoF = 1; inicio = /\d/.test(String((arq[0] || [])[1] ?? "")) ? 0 : 1;   // sem cabeçalho: A = SKU/MLB, B = preço
+      }
+      const valRebate = parseNumero(rebatesCanais[canalReversa] || "0");
+      const txt = (v: any) => String(v ?? "").trim();
+      const linhas: LinhaReversa[] = [];
+      let total = 0, calculados = 0, semCusto = 0, semPreco = 0, prejuizo = 0, somaMargem = 0;
+
+      for (let i = inicio; i < arq.length; i++) {
+        const l = arq[i] || [];
+        let skuTxt = iSku >= 0 ? txt(l[iSku]) : "";
+        const rawMlb = iMlb >= 0 ? txt(l[iMlb]) : "";
+        let mlb = (rawMlb.toUpperCase().match(/MLB\d+/) || [""])[0];
+        if (!mlb && /^MLB\d+$/i.test(skuTxt)) { mlb = skuTxt.toUpperCase(); skuTxt = ""; }
+        if (!skuTxt && !mlb) continue;
+        total++;
+        const pdv = parseNumero(l[iPrecoF]);
+        const info = mlb ? mapaMlb.get(mlb) : undefined;
+        if (!skuTxt && info?.sku) skuTxt = info.sku;
+        const cod = skuTxt ? resolverCodigo(skuTxt) : null;
+        const custo = cod && cod.custo > 0 ? cod.custo : 0;
+        const base: LinhaReversa = { sku: skuTxt, anuncio: mlb, pdv: pdv > 0 ? pdv : null, custo: custo > 0 ? custo : null, comissaoPct: null, valorComissao: null, tarifaFixa: null, frete: null, imposto: null, rebate: valRebate, lucro: null, margem: null, obs: "" };
+        if (!(pdv > 0)) { semPreco++; linhas.push({ ...base, obs: "sem preço" }); continue; }
+        if (!(custo > 0)) { semCusto++; linhas.push({ ...base, obs: skuTxt ? (cod?.tipo === "pai" ? "pai sem custo nos filhos" : "sem custo na base") : "anúncio sem SKU na base" }); continue; }
+        const r = calcularMargemReversa(canalReversa, cod!.chave, custo, pdv, valRebate, info || null);
+        calculados++; somaMargem += r.margem; if (r.margem < 0) prejuizo++;
+        const obs = [cod!.tipo === "pai" ? `custo do pai (${regraCustoPai})` : "", mlb && !info ? "MLB fora da base: regra do canal" : ""].filter(Boolean).join("; ");
+        linhas.push({ ...base, comissaoPct: r.comissaoPct, valorComissao: r.valorComissao, tarifaFixa: r.tarifaFixa, frete: r.frete, imposto: r.valorImposto, lucro: r.lucro, margem: r.margem, obs });
+      }
+      if (total === 0) { setErroRev("Não encontrei anúncios/SKUs na planilha."); return; }
+      setResultadoRev({ nomeArquivo: file.name.replace(/\.[^.]+$/, ""), canal: canalReversa, linhas, total, calculados, semCusto, semPreco, prejuizo, margemMedia: calculados > 0 ? somaMargem / calculados : 0 });
+    } catch (e: any) {
+      setErroRev("Não consegui ler a planilha: " + (e?.message || e));
+    } finally {
+      setProcessandoRev(false);
+    }
+  };
+
+  const baixarResultadoReversa = () => {
+    if (!resultadoRev) return;
+    const cab = ["Anúncio (MLB)", "SKU", "Preço de venda", "Custo", "Comissão %", "Comissão R$", "Tarifa fixa", "Frete", "Imposto 9%", "Rebate", "Lucro R$", "Margem %", "Observação"];
+    const dados = resultadoRev.linhas.map((l) => [l.anuncio, l.sku, l.pdv, l.custo, l.comissaoPct === null ? null : l.comissaoPct / 100, l.valorComissao, l.tarifaFixa, l.frete, l.imposto, l.rebate || null, l.lucro, l.margem === null ? null : l.margem / 100, l.obs]);
+    const ws = XLSX.utils.aoa_to_sheet([cab, ...dados]);
+    for (let r = 1; r <= dados.length; r++) {
+      for (const c of [0, 1]) { const cel = ws[XLSX.utils.encode_cell({ r, c })]; if (cel) { cel.t = "s"; cel.v = String(cel.v); } }
+      for (const c of [2, 3, 5, 6, 7, 8, 9, 10]) { const cel = ws[XLSX.utils.encode_cell({ r, c })]; if (cel && cel.t === "n") cel.z = "0.00"; }
+      for (const c of [4, 11]) { const cel = ws[XLSX.utils.encode_cell({ r, c })]; if (cel && cel.t === "n") cel.z = "0.0%"; }
+    }
+    ws["!cols"] = [{ wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 9 }, { wch: 11 }, { wch: 9 }, { wch: 11 }, { wch: 10 }, { wch: 32 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Margem");
+    XLSX.writeFile(wb, `${resultadoRev.nomeArquivo}_margem_${resultadoRev.canal.replace(/[^a-zA-Z0-9]+/g, "_")}.xlsx`);
+  };
+
   const calcularResultadosCanais = () => {
     if (!produtoEncontrado) return [];
 
     const impostoPercent = 0.09;
-    const skuKey = normalizarSku(produtoEncontrado.sku);
+    const skuKey = produtoEncontrado.chave || normalizarSku(produtoEncontrado.sku);
 
-    const anunciosMl1 = mapeamentoMl1.get(skuKey) || [];
-    const anunciosMl2 = mapeamentoMl2.get(skuKey) || [];
+    const anunciosMl1 = anunciosDe(mapeamentoMl1, skuKey);
+    const anunciosMl2 = anunciosDe(mapeamentoMl2, skuKey);
 
     return canaisConfig
       .filter((canalNome) => canaisSelecionados.includes(canalNome))
@@ -639,6 +845,21 @@ export default function CalculadoraPage() {
 
   const resultadosCanais = calcularResultadosCanais();
 
+  const seletorRegraPai = (
+    <label className="flex items-center gap-2 text-[11px] text-slate-400">
+      <span className="font-bold uppercase text-[10px]">Custo do SKU pai =</span>
+      <select value={regraCustoPai} onChange={(e) => { setRegraCustoPai(e.target.value as RegraCustoPai); setResultadoLote(null); setResultadoRev(null); }} data-regra-custo-pai
+        className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-200 outline-none cursor-pointer">
+        <option value="maior">maior custo dos filhos</option>
+        <option value="media">custo médio dos filhos</option>
+        <option value="menor">menor custo dos filhos</option>
+      </select>
+    </label>
+  );
+
+  const linhasRevVisiveis = (resultadoRev?.linhas || []).filter((l) =>
+    filtroRev === "todos" ? true : filtroRev === "prejuizo" ? (l.margem !== null && l.margem < 0) : l.margem === null);
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -694,14 +915,14 @@ export default function CalculadoraPage() {
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU(s) — Digite o SKU (&gt;= 10 dig):</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SKU ou SKU pai (5 dígitos):</label>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={skuBusca}
                   onChange={(e) => setSkuBusca(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleBuscarProduto()}
-                  placeholder="Ex: 20345042233"
+                  placeholder="Ex: 20345042233 ou 20345"
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-purple-500"
                 />
                 <button
@@ -810,6 +1031,87 @@ export default function CalculadoraPage() {
           </div>
         </div>
 
+        {modoCalculo === "reversa" && (
+          <div className="bg-slate-900/90 p-6 rounded-2xl border border-purple-500/30 shadow-xl space-y-4" data-reversa-lote>
+            <div>
+              <h2 className="text-sm font-black text-white">📤 Margem de todos os anúncios (planilha)</h2>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Suba uma planilha com o <strong>SKU</strong> (ou SKU pai) e/ou o <strong>anúncio (MLB)</strong> e o <strong>preço de venda</strong> de cada anúncio. Reconheço as colunas pelo cabeçalho
+                (&quot;SKU&quot;, &quot;MLB&quot;, &quot;Preço&quot;); sem cabeçalho, a coluna A é o SKU/MLB e a B o preço. No Mercado Livre, anúncio cadastrado usa a comissão e as medidas dele; fora disso vale a regra do canal.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+              <div>
+                <label className="block text-[10px] font-bold text-sky-400 uppercase mb-1">Canal:</label>
+                <select value={canalReversa} onChange={(e) => { setCanalReversa(e.target.value); setResultadoRev(null); }} data-reversa-canal
+                  className="w-full bg-slate-950 border border-sky-600/50 rounded-xl p-2.5 text-xs font-bold text-sky-300 outline-none cursor-pointer">
+                  {canaisConfig.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de anúncios (xlsx, xls, csv...):</label>
+                <input type="file" data-reversa-arquivo disabled={processandoRev || loading}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadReversa(f); e.target.value = ""; }}
+                  className="w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-purple-600 file:text-white file:font-bold file:cursor-pointer cursor-pointer" />
+              </div>
+              <div>{seletorRegraPai}</div>
+            </div>
+            {parseNumero(rebatesCanais[canalReversa] || "0") > 0 && (
+              <p className="text-[11px] text-purple-300">Rebate de R$ {parseNumero(rebatesCanais[canalReversa]).toFixed(2)} informado em {canalReversa} será somado ao lucro de cada anúncio.</p>
+            )}
+            {processandoRev && <p className="text-xs text-slate-400">Calculando...</p>}
+            {erroRev && <p className="text-xs font-bold text-rose-400" data-reversa-erro>{erroRev}</p>}
+            {resultadoRev && (
+              <div className="space-y-3" data-reversa-resultado>
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl p-4">
+                  <div className="text-xs text-slate-300 space-y-0.5">
+                    <p><strong className="text-white">{resultadoRev.total}</strong> anúncio(s) lidos · <strong className="text-emerald-400">{resultadoRev.calculados}</strong> com margem calculada em {resultadoRev.canal}
+                      {resultadoRev.calculados > 0 && <> · margem média <strong className="text-emerald-400">{resultadoRev.margemMedia.toFixed(1)}%</strong></>}</p>
+                    {resultadoRev.prejuizo > 0 && <p className="text-rose-400"><strong>{resultadoRev.prejuizo}</strong> com margem negativa (prejuízo)</p>}
+                    {resultadoRev.semCusto > 0 && <p className="text-amber-400"><strong>{resultadoRev.semCusto}</strong> sem custo na base</p>}
+                    {resultadoRev.semPreco > 0 && <p className="text-amber-400"><strong>{resultadoRev.semPreco}</strong> sem preço de venda</p>}
+                  </div>
+                  <button type="button" onClick={baixarResultadoReversa} data-reversa-baixar
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow">
+                    ⬇️ Baixar planilha com as margens
+                  </button>
+                </div>
+                <div className="flex gap-2 text-[11px]">
+                  {([["todos", "Todos"], ["prejuizo", "Só prejuízo"], ["pendentes", "Pendentes (sem custo/preço)"]] as const).map(([k, t]) => (
+                    <button key={k} type="button" onClick={() => setFiltroRev(k)} data-filtro-rev={k}
+                      className={`px-3 py-1 rounded-lg font-bold border cursor-pointer ${filtroRev === k ? "bg-purple-600/30 text-purple-200 border-purple-500/60" : "bg-slate-950 text-slate-400 border-slate-800"}`}>{t}</button>
+                  ))}
+                  <span className="text-slate-500 self-center">{linhasRevVisiveis.length > 200 ? "mostrando 200 na tela (a planilha leva todos)" : `${linhasRevVisiveis.length} linha(s)`}</span>
+                </div>
+                <div className="overflow-x-auto border border-slate-800 rounded-xl max-h-[420px] overflow-y-auto">
+                  <table className="w-full text-[11px] font-mono">
+                    <thead className="bg-slate-950 text-slate-400 uppercase text-[9px] sticky top-0">
+                      <tr>{["Anúncio", "SKU", "Preço", "Custo", "Comissão", "Tarifa", "Frete", "Imposto", "Lucro", "Margem", "Obs."].map((h) => <th key={h} className="px-2 py-2 text-left">{h}</th>)}</tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/70">
+                      {linhasRevVisiveis.slice(0, 200).map((l, i) => (
+                        <tr key={i} data-linha-rev className="text-slate-300">
+                          <td className="px-2 py-1.5 text-sky-300">{l.anuncio || "—"}</td>
+                          <td className="px-2 py-1.5">{l.sku || "—"}</td>
+                          <td className="px-2 py-1.5">{l.pdv === null ? "—" : formatarMoeda(l.pdv)}</td>
+                          <td className="px-2 py-1.5 text-rose-300">{l.custo === null ? "—" : formatarMoeda(l.custo)}</td>
+                          <td className="px-2 py-1.5">{l.comissaoPct === null ? "—" : `${l.comissaoPct.toFixed(1)}%`}</td>
+                          <td className="px-2 py-1.5">{l.tarifaFixa === null ? "—" : formatarMoeda(l.tarifaFixa)}</td>
+                          <td className="px-2 py-1.5">{l.frete === null ? "—" : formatarMoeda(l.frete)}</td>
+                          <td className="px-2 py-1.5">{l.imposto === null ? "—" : formatarMoeda(l.imposto)}</td>
+                          <td className={`px-2 py-1.5 font-bold ${l.lucro !== null && l.lucro < 0 ? "text-rose-400" : "text-emerald-400"}`}>{l.lucro === null ? "—" : formatarMoeda(l.lucro)}</td>
+                          <td className={`px-2 py-1.5 font-bold ${l.margem !== null && l.margem < 0 ? "text-rose-400" : "text-emerald-400"}`} data-margem-rev>{l.margem === null ? "—" : `${l.margem.toFixed(2)}%`}</td>
+                          <td className="px-2 py-1.5 text-amber-300">{l.obs}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {produtoEncontrado && (
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -842,7 +1144,7 @@ export default function CalculadoraPage() {
               ) : (
                 <span className="flex items-center gap-2">
                   <span className="text-xs font-mono font-bold text-rose-400" data-custo-calc-valor>{formatarMoeda(produtoEncontrado.custo_unitario)}</span>
-                  {produtoNaBase && (
+                  {produtoNaBase && !produtoEncontrado.isPai && (
                     <button type="button" onClick={abrirEdicaoCusto} data-editar-custo-calc title="Corrigir o custo deste produto na base"
                       className="text-sm leading-none cursor-pointer hover:scale-110 transition-transform">✏️</button>
                   )}
@@ -853,7 +1155,18 @@ export default function CalculadoraPage() {
               <span className="block text-[9px] font-bold text-emerald-400 uppercase">Status do Item</span>
               <span className="text-xs font-bold text-emerald-300">LINHA NORMAL (Ativo)</span>
             </div>
-            {!produtoNaBase && (
+            {produtoEncontrado.isPai && (
+              <div className="basis-full flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3" data-produto-pai>
+                <p className="text-[11px] text-slate-400">
+                  Precificando pelo <strong className="text-indigo-300">SKU pai</strong>: {(produtoEncontrado.custosFilhos || []).filter((c: number) => c > 0).length} de {(produtoEncontrado.filhos || []).length} filhos têm custo
+                  {(produtoEncontrado.custosFilhos || []).some((c: number) => c > 0) && (
+                    <> (menor {formatarMoeda(custoDoPai(produtoEncontrado.custosFilhos, "menor"))} · média {formatarMoeda(custoDoPai(produtoEncontrado.custosFilhos, "media"))} · maior {formatarMoeda(custoDoPai(produtoEncontrado.custosFilhos, "maior"))})</>
+                  )}. Os anúncios de todos os filhos são considerados.
+                </p>
+                {seletorRegraPai}
+              </div>
+            )}
+            {!produtoNaBase && !produtoEncontrado.isPai && (
               <p className="basis-full text-[11px] text-amber-400" data-sku-fora-base>SKU fora da base de custos: o cálculo usa um custo padrão só para simular. Cadastre o SKU em Uploads &gt; Custos por SKU para corrigir o custo.</p>
             )}
             {avisoCusto && (
@@ -962,7 +1275,7 @@ export default function CalculadoraPage() {
           <div>
             <h2 className="text-sm font-black text-white">📑 Precificação em lote (planilha de SKUs)</h2>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Suba uma planilha com os SKUs na <strong>coluna A</strong>, escolha o canal e a margem. A calculadora aplica a regra do canal (comissão, tarifa, frete e imposto de 9%)
+              Suba uma planilha com os SKUs (ou SKUs pai) na <strong>coluna A</strong>, escolha o canal e a margem. A calculadora aplica a regra do canal (comissão, tarifa, frete e imposto de 9%)
               e devolve uma planilha com o SKU na coluna A e o <strong>PDV</strong> na coluna B. SKU sem custo na aba de custos recebe &quot;sem custo na base&quot;.
             </p>
           </div>
@@ -999,6 +1312,7 @@ export default function CalculadoraPage() {
               />
             </div>
           </div>
+          <div>{seletorRegraPai}</div>
           {parseNumero(rebatesCanais[canalLote] || "0") > 0 && (
             <p className="text-[11px] text-purple-300">Rebate de R$ {parseNumero(rebatesCanais[canalLote]).toFixed(2)} informado em {canalLote} será considerado no cálculo.</p>
           )}
