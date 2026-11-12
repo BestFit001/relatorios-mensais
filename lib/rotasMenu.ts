@@ -42,7 +42,6 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/dimensoes-peso", nome: "Dimensões e Peso" },
     { id: "/plp", nome: "PLPs (Expedição)" },
     { id: "/checagem-cancelados", nome: "Checagem de Cancelados" },
-    { id: "/consulta-liquida", nome: "Consulta líquida" },
     { id: "/apresentacao-time", nome: "Apresentação Time" },
   ] },
   { titulo: "Compras", submenu: false, rotas: [{ id: "/compras", nome: "Compras" }] },

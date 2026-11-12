@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { lerArquivoComoMatriz, lerArquivoComoLinhas } from "../../lib/lerArquivo";
 import { removerSufixoFba } from "../../lib/fulfillment";
 import { registrarSkusNaBaseCadastrada, linhaAvisoCadastro } from "../../lib/cadastros";
+import { montarConfigLives, ehCanalDasLives, ehModalLive, lerLinhaLive, montarRegistroLive, normalizarSkuLive } from "../../lib/livesVendas";
 
 async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo?: string, eqValor?: any) {
   let todos: any[] = [];
@@ -903,8 +904,9 @@ export default function UpdatesPage() {
           .eq('canal', canalAlvoDash)
           .maybeSingle();
 
-        const custosBanco = await fetchTodosRegistros('tabela_custos_skus', 'sku, produto');
+        const custosBanco = await fetchTodosRegistros('tabela_custos_skus', 'sku, produto, custo_unitario');
         const mapaProdutos = new Map();
+        const custosLivesMap = new Map<string, any>();
         const skusBaseSet = new Set();
         custosBanco.forEach((c: any) => {
           const sNorm = normalizarSku(c.sku);
@@ -913,6 +915,8 @@ export default function UpdatesPage() {
             mapaProdutos.set(sNorm, pVal);
             skusBaseSet.add(sNorm);
           }
+          const sLive = normalizarSkuLive(c.sku);
+          if (sLive) custosLivesMap.set(sLive, c);
         });
 
         const colIdDef = regraData?.col_id_pedido || 'A';
@@ -936,6 +940,15 @@ export default function UpdatesPage() {
         const idxDescricao = !regraData?.col_descricao && idxNomeCentauro >= 0
           ? idxNomeCentauro
           : letraParaIndice(regraData?.col_descricao || (isAmazon ? 'K' : (isSite ? 'BE' : (canalNorm.includes("centauro") ? 'M' : 'D'))));
+
+        // Lives: a mesma planilha de vendas alimenta a aba Lives. Só entram as linhas faturadas (as mesmas que viram venda aqui),
+        // não canceladas, cujo "modal de venda" indica live; o vendedor vem da coluna configurada na aba Lives.
+        const { data: cfgLivesRows } = await supabase.from('config_regras_tiny').select('campo, coluna').like('campo', 'live_%');
+        const { data: regrasLivesRows } = await supabase.from('config_regras_canais').select('canal, formula_excel, col_pdv');
+        const cfgLivesBase = montarConfigLives(cfgLivesRows, regrasLivesRows);
+        const cfgLives = ehCanalDasLives(cfgLivesBase, canalAlvoDash) ? cfgLivesBase : null;
+        const livesNovas: any[] = [];
+        const modaisVistos = new Map<string, number>();
 
         const novasVendas = [];
         let totalImportados = 0;
@@ -1007,6 +1020,20 @@ export default function UpdatesPage() {
           const statusTxt = idxStatus >= 0 ? textoSemAcento(row[idxStatus]) : "";
           const cancelado = idxStatus >= 0 && !!textoCancel && statusTxt.includes(textoCancel);
           if (cancelado) totalCancelados++;
+
+          if (cfgLives && !cancelado) {
+            const ll = lerLinhaLive(row, cfgLives);
+            if (ll.sku) {
+              const chaveModal = ll.modal || "(vazio)";
+              modaisVistos.set(chaveModal, (modaisVistos.get(chaveModal) || 0) + 1);
+              if (ehModalLive(ll.modal, cfgLives.textoLive)) {
+                livesNovas.push({
+                  ...montarRegistroLive(ll, cfgLives, custosLivesMap.get(normalizarSkuLive(ll.sku))),
+                  canal: canalAlvoDash, mes_referencia: mesAlvoDash, id_pedido: idFormatado,
+                });
+              }
+            }
+          }
 
           const descRaw = idxDescricao >= 0 && row[idxDescricao] !== undefined ? String(row[idxDescricao]).trim() : '';
 
@@ -1153,6 +1180,7 @@ export default function UpdatesPage() {
         }
 
         let canceladosGravados = 0;
+        let msgLives = "";
         let avisoCadastro = "";
         if (novasVendas.length > 0) {
           // SKUs vendidos que ainda não constam na base de cadastrados entram lá (estoque 0, sem mexer nos que já existem)
@@ -1178,6 +1206,29 @@ export default function UpdatesPage() {
           }
           canceladosGravados = listaCancelados.length;
 
+          // Lives do canal/mês: refeitas a cada upload de vendas. As linhas antigas (subidas à mão na aba Lives, sem canal nem mês)
+          // só saem quando esta planilha traz vendas de live, para não duplicar nem perder o histórico por engano.
+          if (cfgLives) {
+            try {
+              const { error: erroLimpaLives } = await supabase.from('vendas_lives_separadas').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
+              if (erroLimpaLives) throw erroLimpaLives;
+              if (livesNovas.length > 0) {
+                const { error: erroLimpaAntigas } = await supabase.from('vendas_lives_separadas').delete().is('mes_referencia', null);
+                if (erroLimpaAntigas) throw erroLimpaAntigas;
+                for (let k = 0; k < livesNovas.length; k += 500) {
+                  const { error } = await supabase.from('vendas_lives_separadas').insert(livesNovas.slice(k, k + 500));
+                  if (error) throw error;
+                }
+              }
+              const vendedores = new Set(livesNovas.map((v: any) => v.vendedor).filter(Boolean));
+              const topModais = Array.from(modaisVistos.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([m, n]) => `${m} (${n})`).join(", ");
+              msgLives = `• Lives (coluna ${cfgLives.colModal} contém "${cfgLives.textoLive}"): ${livesNovas.length} linhas, ${vendedores.size} vendedor(es) pela coluna ${cfgLives.colVendedor}. Modais encontrados: ${topModais || "nenhum"}.`;
+              if (livesNovas.length === 0) msgLives += " Nenhuma venda de live: confira a coluna e o texto em Lives > Configurações.";
+            } catch (errLives: any) {
+              msgLives = `⚠️ As vendas foram salvas, mas as lives não: ${errLives?.message || errLives}`;
+            }
+          }
+
           // Pedidos faturados pela Nota Fiscal da planilha (Site) passam a constar em 'faturados' para o dashboard enxergá-los
           const idsNovos = Array.from(novosFaturados.keys());
           for (let k = 0; k < idsNovos.length; k += 100) {
@@ -1201,6 +1252,7 @@ export default function UpdatesPage() {
         if (foraDoMesData > 0) linhasMsg.push(`• Fora do mês escolhido (pela data do pedido): ${foraDoMesData}`);
         if (isFisico) linhasMsg.push(`• Linha de total da planilha ignorada: ${ignoradosTotalClube > 0 ? 'sim' : 'não encontrada'}`);
         if (avisoCadastro) linhasMsg.push(avisoCadastro);
+        if (msgLives) linhasMsg.push(msgLives);
         if (foraDoMesData > 0 && mesesDosPedidos.size > 0) {
           const lista = Array.from(mesesDosPedidos.entries()).sort().map(([k, n]) => `${nomeDoMes(k)} (${n})`).join(", ");
           linhasMsg.push(`• Meses encontrados nas datas dos pedidos: ${lista}. O mês escolhido nesta tela é ${nomeDoMes(`${anoUpload}-${mesUpload}`)}. Se a planilha for de outro mês, troque o mês acima e envie de novo.`);
@@ -1298,6 +1350,7 @@ export default function UpdatesPage() {
         await supabase.from('faturados').delete().eq('mes_referencia', mesAlvoDash);
       } else if (tabela === 'vendas') {
         await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
+        await supabase.from('vendas_lives_separadas').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
       }
       alert(`✅ Registros de ${tabela} limpos.`);
       carregarVendasPendentes();

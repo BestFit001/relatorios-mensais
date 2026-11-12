@@ -8,39 +8,7 @@ import * as XLSX from "xlsx";
 import { letrasDaFormula, avaliarFormulaLive } from "@/lib/formulaLive";
 import { detectarOrdemData, interpretarDataHora, dataIsoParaBr, type ItemAnalise } from "@/lib/analiseLives";
 import AnaliseDesempenho from "./AnaliseDesempenho";
-
-function colunaParaIndice(letra: string): number {
-  let l = letra.trim().toUpperCase();
-  let num = 0;
-  for (let i = 0; i < l.length; i++) {
-    num = num * 26 + (l.charCodeAt(i) - 64);
-  }
-  return num - 1;
-}
-
-function normalizarSku(valor: any): string {
-  if (valor === null || valor === undefined) return "";
-  let s = String(valor).trim().replace(/^['"]/, "");
-  if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  s = s.replace(/^["']|["']$/g, "").trim();
-  if (/e\+/i.test(s)) {
-    try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
-  }
-  return s.toLowerCase();
-}
-
-function parseNumeroBruto(valor: any): number {
-  if (valor === null || valor === undefined || valor === "") return 0;
-  if (typeof valor === "number") return valor;
-  let s = String(valor).replace(/R\$/g, "").replace(/BRL/g, "").replace(/\$/g, "").replace(/\s/g, "").trim();
-  if (s.includes(",") && s.includes(".")) {
-    s = s.replace(/\./g, "").replace(",", ".");
-  } else if (s.includes(",")) {
-    s = s.replace(",", ".");
-  }
-  const num = parseFloat(s);
-  return isNaN(num) ? 0 : num;
-}
+import { colunaParaIndice, normalizarSkuLive as normalizarSku, parseNumeroBruto, formatarDataCurta, PADRAO_COL_MODAL, PADRAO_COL_VENDEDOR, PADRAO_TEXTO_LIVE } from "@/lib/livesVendas";
 
 function parseDataParaTimestamp(dataStr: any): number | null {
   if (!dataStr) return null;
@@ -73,18 +41,7 @@ function parseDataParaTimestamp(dataStr: any): number | null {
   return isNaN(d.getTime()) ? null : d.setHours(0, 0, 0, 0);
 }
 
-function formatarDataCurta(dataStr: any): string {
-  if (!dataStr) return "";
-  const s = String(dataStr).trim();
-  if (s.includes("/")) return s.split(" ")[0];
-  try {
-    const d = new Date(s);
-    if (!isNaN(d.getTime())) {
-      return d.toLocaleDateString("pt-BR");
-    }
-  } catch {}
-  return s.split(" ")[0];
-}
+const SEM_VENDEDOR = "__sem_vendedor__";
 
 const formatarMoeda = (valor: number) =>
   "R$ " + (Number(valor) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -97,13 +54,15 @@ export default function RelatorioLivesPage() {
   const [modoPainel, setModoPainel] = useState<"detalhado" | "compacto">("detalhado");
 
   // Configurações
-  const [linhaInicial, setLinhaInicial] = useState("3");
   const [colunaSku, setColunaSku] = useState("H");
   const [colunaStatus, setColunaStatus] = useState("C");
   const [colunaRepasse, setColunaRepasse] = useState("X");
   const [colunaPdv, setColunaPdv] = useState("N");
   const [colunaRebate, setColunaRebate] = useState("");   // rebate dos pedidos (subsídio do TikTok): vazio = não usa
   const [colunaData, setColunaData] = useState("AD");
+  const [colunaModal, setColunaModal] = useState(PADRAO_COL_MODAL);   // modal de venda (a venda foi feita via live?)
+  const [textoModal, setTextoModal] = useState(PADRAO_TEXTO_LIVE);     // texto que identifica live nessa coluna
+  const [colunaVendedor, setColunaVendedor] = useState(PADRAO_COL_VENDEDOR);
   const [colunaCustosLive, setColunaCustosLive] = useState("F");
   const [colunaRoiLive, setColunaRoiLive] = useState("K");
   const [percentualImposto, setPercentualImposto] = useState("9");
@@ -124,6 +83,7 @@ export default function RelatorioLivesPage() {
   // Filtros
   const [buscaSku, setBuscaSku] = useState("");
   const [filtroMes, setFiltroMes] = useState("");
+  const [filtroVendedor, setFiltroVendedor] = useState("");
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
 
@@ -166,13 +126,15 @@ export default function RelatorioLivesPage() {
       const { data: configData } = await supabase.from("config_regras_tiny").select("*").like("campo", "live_%");
       if (configData && configData.length > 0) {
         configData.forEach((cfg: any) => {
-          if (cfg.campo === "live_linha_inicial") setLinhaInicial(cfg.coluna);
           if (cfg.campo === "live_col_sku") setColunaSku(cfg.coluna);
           if (cfg.campo === "live_col_status") setColunaStatus(cfg.coluna);
           if (cfg.campo === "live_col_repasse") setColunaRepasse(cfg.coluna);
           if (cfg.campo === "live_col_pdv") setColunaPdv(cfg.coluna);
           if (cfg.campo === "live_col_rebate") setColunaRebate(String(cfg.coluna || ""));
           if (cfg.campo === "live_col_data") setColunaData(cfg.coluna);
+          if (cfg.campo === "live_col_modal") setColunaModal(String(cfg.coluna || PADRAO_COL_MODAL));
+          if (cfg.campo === "live_texto_modal") setTextoModal(String(cfg.coluna || PADRAO_TEXTO_LIVE));
+          if (cfg.campo === "live_col_vendedor") setColunaVendedor(String(cfg.coluna || PADRAO_COL_VENDEDOR));
           if (cfg.campo === "live_col_custo_live") setColunaCustosLive(cfg.coluna);
           if (cfg.campo === "live_col_roi_live") setColunaRoiLive(cfg.coluna);
           if (cfg.campo === "live_imposto") setPercentualImposto(cfg.coluna);
@@ -211,7 +173,9 @@ export default function RelatorioLivesPage() {
           pdv: v.pdv,
           data: v.data_venda,
           dataHora: v.data_hora || "",
-          productName: v.nome_produto
+          productName: v.nome_produto,
+          vendedor: String(v.vendedor || "").trim(),
+          idPedido: v.id_pedido || "",
         })));
       }
 
@@ -233,13 +197,15 @@ export default function RelatorioLivesPage() {
       await supabase.from("config_regras_tiny").delete().like("campo", "live_%");
 
       const configs = [
-        { campo: "live_linha_inicial", coluna: String(linhaInicial) },
         { campo: "live_col_sku", coluna: String(colunaSku) },
         { campo: "live_col_status", coluna: String(colunaStatus) },
         { campo: "live_col_repasse", coluna: String(colunaRepasse) },
         { campo: "live_col_pdv", coluna: String(colunaPdv) },
         ...(colunaRebate.trim() ? [{ campo: "live_col_rebate", coluna: colunaRebate.trim().toUpperCase() }] : []),
         { campo: "live_col_data", coluna: String(colunaData) },
+        { campo: "live_col_modal", coluna: String(colunaModal).trim().toUpperCase() || PADRAO_COL_MODAL },
+        { campo: "live_texto_modal", coluna: String(textoModal).trim() || PADRAO_TEXTO_LIVE },
+        { campo: "live_col_vendedor", coluna: String(colunaVendedor).trim().toUpperCase() || PADRAO_COL_VENDEDOR },
         { campo: "live_col_custo_live", coluna: String(colunaCustosLive) },
         { campo: "live_col_roi_live", coluna: String(colunaRoiLive) },
         { campo: "live_imposto", coluna: String(percentualImposto) },
@@ -291,105 +257,6 @@ export default function RelatorioLivesPage() {
     const preco = letraDoPreco();
     const r = avaliarFormulaLive(f, (l) => (l === preco ? valorPago : Number(variaveis[l]) || 0), valorPago, 1);
     return r === null ? valorPago : r;
-  };
-
-  const handleFileUploadVendas = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setLoading(true);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const buffer = evt.target?.result;
-        const wb = XLSX.read(buffer, { type: "array", cellDates: true, raw: false });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
-
-        const startRow = Math.max(0, parseInt(linhaInicial) - 1);
-        const idxSku = colunaParaIndice(colunaSku);
-        const idxStatus = colunaParaIndice(colunaStatus);
-        const idxRepasse = colunaParaIndice(colunaRepasse);
-        const idxPdv = colunaParaIndice(colunaPdv);
-        const idxRebate = colunaRebate.trim() ? colunaParaIndice(colunaRebate) : -1;
-        const idxData = colunaParaIndice(colunaData);
-        const idxNomeProd = colunaParaIndice("I");
-
-        const formulaCanal = formulaDoCanal();
-        const letrasExtras = letrasDaFormula(formulaCanal).filter((l) => l !== letraDoPreco());
-        const novasLinhas: any[] = [];
-        for (let i = startRow; i < rawData.length; i++) {
-          const row = rawData[i];
-          if (!row || row.length === 0) continue;
-
-          const variaveis: Record<string, number> = {};
-          letrasExtras.forEach((l) => {
-            const col = String(mapaExtras[l] || "").trim();
-            variaveis[l] = col ? parseNumeroBruto(row[colunaParaIndice(col)]) : 0;
-          });
-
-          novasLinhas.push({
-            sku: String(row[idxSku] || "").trim(),
-            status: String(row[idxStatus] || "").trim(),
-            valorPago: parseNumeroBruto(row[idxRepasse]),
-            variaveis,
-            rebate: idxRebate >= 0 ? Math.max(0, parseNumeroBruto(row[idxRebate])) : 0,
-            pdv: parseNumeroBruto(row[idxPdv]),
-            data: String(row[idxData] || "").trim(),
-            dataHora: String(row[idxData] || "").trim(),
-            productName: String(row[idxNomeProd] || "Produto Live").trim(),
-          });
-        }
-
-        await supabase.from(TABELA_DESTINO_LIVES).delete().neq("id", 0);
-
-        const registrosParaSalvar = novasLinhas.map(row => {
-          const skuNorm = normalizarSku(row.sku);
-          const custoObj = custosMap.get(skuNorm);
-          const custoUnit = custoObj ? parseNumeroBruto(custoObj.custo_unitario ?? custoObj.custo ?? 0) : 0;
-          const nomeProd = custoObj ? (custoObj.produto || custoObj.descricao || row.productName) : row.productName;
-          
-          // Repasse = valor pago menos taxas e tarifas (fórmula do canal na aba Regras) + rebate do pedido (subsídio do TikTok)
-          const repasseLinha = repasseDaLinha(row.valorPago, row.variaveis) + (row.rebate || 0);
-          const impVal = row.valorPago * (parseFloat(percentualImposto) / 100 || 0);
-          const comVal = row.valorPago * (parseFloat(percentualComissao) / 100 || 0);
-          const liq = repasseLinha - custoUnit - impVal - comVal;
-          const vPdv = row.pdv > 0 ? row.pdv : row.valorPago;
-          const pctPdv = vPdv > 0 ? (liq / vPdv) * 100 : 0;
-
-          return {
-            sku: row.sku,
-            nome_produto: nomeProd,
-            repasse: repasseLinha,
-            valor_pago: row.valorPago,
-            rebate: row.rebate || 0,
-            variaveis: row.variaveis,
-            pdv: vPdv,
-            custo: custoUnit,
-            imposto: impVal,
-            comissao_vendedora: comVal,
-            liquidez: liq,
-            percentual_lucro_pdv: pctPdv,
-            data_venda: formatarDataCurta(row.data),
-            data_hora: String(row.dataHora || row.data || "").trim(),
-            status: row.status
-          };
-        });
-
-        for (let i = 0; i < registrosParaSalvar.length; i += 500) {
-          const lote = registrosParaSalvar.slice(i, i + 500);
-          await supabase.from(TABELA_DESTINO_LIVES).insert(lote);
-        }
-
-        setDadosBrutos(novasLinhas);
-        setPaginaAtual(1);
-        alert(`✅ Sucesso! ${novasLinhas.length} registos de lives salvos na tabela isolada (${TABELA_DESTINO_LIVES}).`);
-      } catch (err: any) {
-        alert("Erro ao processar planilha: " + err.message);
-      }
-      setLoading(false);
-    };
-    reader.readAsArrayBuffer(file);
   };
 
   const handleFileUploadCustosRoi = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -458,6 +325,7 @@ export default function RelatorioLivesPage() {
     const dataPagamento = row.data;
     const dh = interpretarDataHora(row.dataHora || row.data, ordemData);
     const statusVenda = String(row.status || "").trim().toLowerCase();
+    const vendedor = String(row.vendedor || "").trim();
 
     const custoObj = custosMap.get(skuNorm);
     const custoUnitario = custoObj ? parseNumeroBruto(custoObj.custo_unitario ?? custoObj.custo ?? 0) : 0;
@@ -494,9 +362,13 @@ export default function RelatorioLivesPage() {
       minuto: dh ? dh.minuto : null,
       timestamp,
       status: statusVenda,
+      vendedor,
+      idPedido: String(row.idPedido || ""),
     };
   }).filter(item => {
     if (!item.skuNorm) return false;
+
+    if (filtroVendedor === SEM_VENDEDOR ? item.vendedor !== "" : (filtroVendedor && item.vendedor !== filtroVendedor)) return false;
 
     const statusLimpo = item.status.replace(/[\u0300-\u036f]/g, "").toLowerCase();
     const statusValido = statusPermitidos.some(st => statusLimpo.includes(st.toLowerCase()));
@@ -595,6 +467,9 @@ export default function RelatorioLivesPage() {
     );
   }
 
+  const vendedoresBase = Array.from(new Set(dadosBrutos.map((r) => String(r.vendedor || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const haSemVendedor = dadosBrutos.some((r) => !String(r.vendedor || "").trim());
+
   const barraFiltros = (
       <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800/80 shadow-xl flex flex-wrap gap-4 items-end">
         <div className="flex-1 min-w-[220px]">
@@ -606,6 +481,19 @@ export default function RelatorioLivesPage() {
             placeholder="Ex: 22652042281 ou Garrafa..."
             className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-mono text-white outline-none focus:border-indigo-500"
           />
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-emerald-400 uppercase mb-1">Vendedor:</label>
+          <select
+            value={filtroVendedor}
+            onChange={(e) => { setFiltroVendedor(e.target.value); setPaginaAtual(1); }}
+            className="bg-slate-950 border border-emerald-900/60 rounded-xl p-2.5 text-xs text-emerald-300 outline-none font-mono min-w-[150px]"
+          >
+            <option value="">Todos</option>
+            {vendedoresBase.map((v) => <option key={v} value={v}>{v}</option>)}
+            {haSemVendedor && <option value={SEM_VENDEDOR}>(sem vendedor)</option>}
+          </select>
         </div>
 
         <div>
@@ -640,7 +528,7 @@ export default function RelatorioLivesPage() {
 
         <button
           type="button"
-          onClick={() => { setBuscaSku(""); setFiltroMes(""); setDataInicio(""); setDataFim(""); setPaginaAtual(1); }}
+          onClick={() => { setBuscaSku(""); setFiltroMes(""); setFiltroVendedor(""); setDataInicio(""); setDataFim(""); setPaginaAtual(1); }}
           className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-4 py-2.5 rounded-xl text-xs uppercase cursor-pointer"
         >
           Limpar Filtros
@@ -655,7 +543,7 @@ export default function RelatorioLivesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Relatório de Vendas via LIVES</h1>
-            <p className="text-sm font-medium text-slate-400">Salvo na tabela isolada ({TABELA_DESTINO_LIVES}) — Sem interferir no Dashboard</p>
+            <p className="text-sm font-medium text-slate-400">Alimentada pelo upload de vendas ({TABELA_DESTINO_LIVES}); aqui só falta subir a planilha de Ads</p>
           </div>
           <Navbar />
         </div>
@@ -689,17 +577,11 @@ export default function RelatorioLivesPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <label className="text-[11px] text-indigo-400 font-bold">1. Planilha Vendas:</label>
-              <input
-                type="file"
-                accept=".xlsx, .xls, .csv"
-                onChange={handleFileUploadVendas}
-                className="bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-slate-300 outline-none file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white cursor-pointer"
-              />
+            <div className="text-[11px] text-indigo-300 font-bold max-w-[320px]" title="Uploads > Updates e Alimenta Dashboard > Vendas do canal">
+              1. Vendas: vêm sozinhas do upload de vendas do {canalRegras} (só faturados)
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-[11px] text-cyan-400 font-bold">2. Planilha Métricas/Custo/ROI:</label>
+              <label className="text-[11px] text-cyan-400 font-bold">2. Planilha de Ads (Métricas/Custo/ROI):</label>
               <input
                 type="file"
                 accept=".xlsx, .xls, .csv"
@@ -729,7 +611,7 @@ export default function RelatorioLivesPage() {
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-lg font-bold text-white uppercase tracking-wider">⚙️ Configurações e Mapeamento Completo</h2>
-                <p className="text-xs text-slate-400 mt-1">Defina as colunas e salve no Supabase.</p>
+                <p className="text-xs text-slate-400 mt-1">Defina as colunas da planilha de vendas do canal e salve no Supabase. Valem para o próximo upload de vendas.</p>
               </div>
               <button
                 type="button"
@@ -741,16 +623,6 @@ export default function RelatorioLivesPage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 bg-slate-950 p-6 rounded-xl border border-slate-800/80">
-              <div>
-                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Linha Inicial dos Dados (Vendas):</label>
-                <input
-                  type="number"
-                  value={linhaInicial}
-                  onChange={(e) => setLinhaInicial(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold"
-                />
-              </div>
-
               <div>
                 <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna SKU (Letra):</label>
                 <input
@@ -801,6 +673,40 @@ export default function RelatorioLivesPage() {
                   className="w-full bg-slate-900 border border-emerald-700/60 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
                 />
                 <p className="text-[10px] text-slate-500 mt-1">É o desconto que o TikTok subsidia e que não sai de você: o valor é somado ao repasse (depois das taxas e tarifas da fórmula). Vale para as próximas planilhas enviadas.</p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Modal de Venda — como a venda foi feita (Letra):</label>
+                <input
+                  type="text"
+                  value={colunaModal}
+                  onChange={(e) => setColunaModal(e.target.value)}
+                  placeholder="BG"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Texto que identifica uma venda de live nessa coluna:</label>
+                <input
+                  type="text"
+                  value={textoModal}
+                  onChange={(e) => setTextoModal(e.target.value)}
+                  placeholder="live"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">Basta conter o texto (sem diferenciar maiúsculas e acentos). Vários termos: separe por vírgula. O upload de vendas mostra os valores encontrados na coluna.</p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Coluna Vendedor — quem gerou a venda (Letra):</label>
+                <input
+                  type="text"
+                  value={colunaVendedor}
+                  onChange={(e) => setColunaVendedor(e.target.value)}
+                  placeholder="BH"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none font-mono font-bold uppercase"
+                />
               </div>
 
               <div>
@@ -882,7 +788,7 @@ export default function RelatorioLivesPage() {
               )}
               {letrasDaFormula(formulaDoCanal()).filter((l) => l !== letraDoPreco()).map((l) => (
                 <div key={l}>
-                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Coluna da planilha de lives para a variável {l} da fórmula (vazio = 0):</label>
+                  <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Coluna da planilha de vendas para a variável {l} da fórmula (vazio = a própria coluna {l}):</label>
                   <input
                     type="text"
                     value={mapaExtras[l] || ""}
@@ -1014,6 +920,7 @@ export default function RelatorioLivesPage() {
                           <td className="p-3">
                             <span className="font-mono text-indigo-400 block">{item.sku}</span>
                             <span className="text-slate-300 font-medium truncate block max-w-[280px]">{item.nomeProduto}</span>
+                            {item.vendedor && <span className="text-[10px] text-emerald-400 font-bold block">Vendedor: {item.vendedor}</span>}
                           </td>
                           <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.valorPago)}</td>
                           <td className="p-3 text-right font-mono text-rose-300">- {formatarMoeda(item.tarifas)}</td>
