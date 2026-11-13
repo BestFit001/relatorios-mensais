@@ -226,18 +226,17 @@ export default function RelatorioLivesPage() {
     }
   };
 
+  // Zera só o que veio das planilhas do Adsense (custo e ROI das lives). As vendas das lives continuam intactas.
   const limparBaseSupabase = async () => {
-    if (!confirm("⚠️ Deseja limpar toda a base de Vendas e Métricas de Lives gravada na tabela isolada?")) return;
+    if (!confirm("Deseja apagar os dados das planilhas do Adsense das lives (custo e ROI)?\n\nAs vendas das lives NÃO serão apagadas.")) return;
     setLoading(true);
     try {
-      await supabase.from(TABELA_DESTINO_LIVES).delete().neq("id", 0);
-      await supabase.from("metricas_lives").delete().neq("id", 0);
-      setDadosBrutos([]);
+      const { error } = await supabase.from("metricas_lives").delete().neq("id", 0);
+      if (error) throw error;
       setCustosLiveBrutos([]);
-      setPaginaAtual(1);
-      alert("✅ Base isolada de lives limpa com sucesso!");
+      alert("✅ Dados do Adsense das lives apagados. As vendas foram mantidas.");
     } catch (err: any) {
-      alert("Erro ao limpar base: " + err.message);
+      alert("Erro ao apagar os dados do Adsense: " + err.message);
     }
     setLoading(false);
   };
@@ -618,7 +617,7 @@ export default function RelatorioLivesPage() {
                 onClick={limparBaseSupabase}
                 className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase cursor-pointer transition-all shadow-md"
               >
-                🗑️ Limpar Base Inteira
+                🗑️ Zerar planilhas do Adsense
               </button>
             </div>
 
