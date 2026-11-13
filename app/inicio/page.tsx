@@ -6,9 +6,11 @@ import Navbar from "../components/Navbar";
 import Avatar from "../components/Avatar";
 import { calcularResumoCanais, TABELAS_RESUMO, type ResumoCanal } from "../../lib/resumoCanais";
 import {
-  agoraSP, concluiu, statusPorResponsavel, vencimento, estaAtrasada, ehCiclica, textoCiclo,
+  agoraSP, concluiu, statusPorResponsavel, vencimento, estaAtrasada, ehCiclica, textoCiclo, emFolga,
   textoAntecedencia, hhmm, diferencaDias, DIAS_SEMANA, inicioCiclo, ocorreNoDia, addDias, diaDaSemana, type Conclusao,
 } from "../../lib/tarefas";
+import { nomeFeriado, feriadosExtras, diaUtilAPartirDe } from "../../lib/diasUteis";
+import { carregarFeriadosExtras, salvarFeriadosExtras } from "../../lib/diasUteisDb";
 import { compartilharNoChat } from "../../lib/chatCliente";
 import { nomeDeExibicao, useNomes } from "../../lib/nomes";
 import { registrarPush, temAssinaturaAtiva, suportaPush } from "../../lib/push";
@@ -75,6 +77,9 @@ export default function InicioPage() {
   const [mesModo, setMesModo] = useState<"atual" | "anterior">("atual");
   const [analistaFiltro, setAnalistaFiltro] = useState("TODOS");
   const [painelAdmin, setPainelAdmin] = useState(false);
+  const [feriadosTexto, setFeriadosTexto] = useState("");      // feriados extras das tarefas cíclicas (texto salvo)
+  const [feriadosRascunho, setFeriadosRascunho] = useState<string | null>(null);
+  const [feriadosMsg, setFeriadosMsg] = useState("");
   // Olhinho "Ocultar informações": esconde faturamento, metas, % líquido e os cards dos canais (sobram só notificações e tarefas)
   const [ocultarInfo, setOcultarInfo] = useState(false);
   useEffect(() => { try { setOcultarInfo(localStorage.getItem("inicio_ocultar_info") === "1"); } catch { /* sem armazenamento */ } }, []);
@@ -103,7 +108,7 @@ export default function InicioPage() {
     titulo: "", descricao: "", prioridade: "Média",
     tipo: "prazo" as "prazo" | "ciclica",
     data_entrega: "", hora_entrega: "",
-    ciclo: "diaria" as "diaria" | "semanal", ciclo_dia_semana: 1,
+    ciclo: "diaria" as "diaria" | "semanal" | "mensal", ciclo_dia_semana: 1,
     responsaveis: [] as string[],
     avisoValor: "5", avisoUnidade: "1" as "1" | "60" | "1440",   // minutos / horas / dias
   };
@@ -237,6 +242,7 @@ export default function InicioPage() {
     ]);
     if (m.error || t.error || c.error || a.error) { setFaltaMigration(true); return; }
     setFaltaMigration(false);
+    setFeriadosTexto(await carregarFeriadosExtras(supabase));   // antes das tarefas: o cálculo de dias úteis já usa os feriados extras
     setMapeamentos(m.data || []);
     // linhas antigas repetidas (uma por analista) ficam escondidas: a tarefa agora é uma só, com vários responsáveis
     setTarefas((t.data || []).filter((x: any) => !x.legado).map((x: any) => ({ ...x, responsaveis: (x.responsaveis || []).map((e: string) => String(e).trim().toLowerCase()) })));
@@ -315,14 +321,15 @@ export default function InicioPage() {
     return st.length > 0 && st.every((s) => s.concluida);
   };
 
-  const qtdAndamento = minhasTarefas.filter((t: any) => !tarefaFeita(t)).length;
-  const qtdConcluidas = minhasTarefas.filter((t: any) => tarefaFeita(t)).length;
+  // diária em fim de semana/feriado fica de folga: não é pendência nem concluída (só aparece em "Todas")
+  const qtdAndamento = minhasTarefas.filter((t: any) => !emFolga(t, hojeData) && !tarefaFeita(t)).length;
+  const qtdConcluidas = minhasTarefas.filter((t: any) => !emFolga(t, hojeData) && tarefaFeita(t)).length;
   const chaveVenc = (t: any) => {
     const v = vencimento(t, hojeData);
     return v.data ? `${v.data} ${v.hora || "23:59"}` : "9999-12-31 23:59";
   };
   const tarefasFiltradas = useMemo(() => {
-    const base = minhasTarefas.filter((t: any) => (aba === "andamento" ? !tarefaFeita(t) : aba === "concluidas" ? tarefaFeita(t) : true));
+    const base = minhasTarefas.filter((t: any) => (aba === "andamento" ? !emFolga(t, hojeData) && !tarefaFeita(t) : aba === "concluidas" ? !emFolga(t, hojeData) && tarefaFeita(t) : true));
     return base.slice().sort((a: any, b: any) => {
       const fa = tarefaFeita(a), fb = tarefaFeita(b);
       if (fa !== fb) return fa ? 1 : -1;
@@ -389,7 +396,7 @@ export default function InicioPage() {
       titulo: t.titulo || "", descricao: t.descricao || "", prioridade: t.prioridade || "Média",
       tipo: ehCiclica(t) ? "ciclica" : "prazo",
       data_entrega: t.data_entrega ? String(t.data_entrega).slice(0, 10) : "", hora_entrega: hhmm(t.hora_entrega),
-      ciclo: t.ciclo === "semanal" ? "semanal" : "diaria", ciclo_dia_semana: Number.isInteger(t.ciclo_dia_semana) ? Number(t.ciclo_dia_semana) : 1,
+      ciclo: (t.ciclo === "semanal" || t.ciclo === "mensal" ? t.ciclo : "diaria") as "diaria" | "semanal" | "mensal", ciclo_dia_semana: Number.isInteger(t.ciclo_dia_semana) ? Number(t.ciclo_dia_semana) : 1,
       responsaveis: [...(t.responsaveis || [])],
       avisoValor: m > 0 ? String(m / Number(unidade)) : "", avisoUnidade: unidade,
     });
@@ -582,7 +589,7 @@ export default function InicioPage() {
     });
 
     // Tarefas pendentes que estão atrasadas ou vencem nos próximos 2 dias (cíclicas pendentes aparecem no dia do vencimento)
-    minhasTarefas.filter((t: any) => !tarefaFeita(t)).forEach((t: any) => {
+    minhasTarefas.filter((t: any) => !emFolga(t, hoje) && !tarefaFeita(t)).forEach((t: any) => {
       const v = vencimento(t, hoje);
       if (!v.data) return;
       let dias = diferencaDias(hoje, v.data);
@@ -668,7 +675,7 @@ export default function InicioPage() {
     const d = new Date(Date.UTC(a, m - 1 + delta, 1));
     setMesCal(d.toISOString().slice(0, 7)); setDiaSel(null);
   };
-  const rotuloPapel = (papel: string | null) => (papel === "renova" ? "renova hoje" : papel === "vence" ? "vence hoje" : papel === "diaria" ? "diária" : "entrega");
+  const rotuloPapel = (papel: string | null) => (papel === "renova" ? "renova hoje" : papel === "vence" ? "vence hoje" : papel === "diaria" ? "diária" : papel === "mensal" ? "mensal · 1º dia útil" : "entrega");
 
   const renderCalendario = () => {
     const [ano, mes] = mesCal.split("-").map(Number);
@@ -702,7 +709,7 @@ export default function InicioPage() {
               <button key={dia} type="button" data-dia={dia} onClick={() => setDiaSel(sel ? null : dia)}
                 className={`text-left min-h-[5.5rem] rounded-lg border p-1.5 cursor-pointer transition-all overflow-hidden ${sel ? "border-indigo-400 bg-indigo-950/40" : ehHoje ? "border-cyan-600 bg-cyan-950/20" : "border-slate-800 bg-slate-950/60 hover:border-slate-600"} ${foraDoMes ? "opacity-40" : ""}`}>
                 <div className="flex items-center justify-between">
-                  <span className={`text-[11px] font-black ${ehHoje ? "text-cyan-300" : "text-slate-300"}`}>{Number(dia.slice(8))}</span>
+                  <span className={`text-[11px] font-black ${ehHoje ? "text-cyan-300" : "text-slate-300"}`}>{Number(dia.slice(8))}{nomeFeriado(dia) && <span data-feriado={dia} title={nomeFeriado(dia) || ""} className="ml-1 text-[8px] font-bold text-amber-400">feriado</span>}</span>
                   {lista.length > 0 && <span data-dia-total className={`text-[9px] font-bold px-1.5 rounded ${pendentes === 0 ? "bg-emerald-900/50 text-emerald-300" : dia < hojeData ? "bg-rose-900/50 text-rose-300" : "bg-amber-900/40 text-amber-300"}`}>{pendentes === 0 ? "✔" : pendentes}</span>}
                 </div>
                 <div className="mt-1 space-y-0.5">
@@ -879,16 +886,17 @@ export default function InicioPage() {
                   <>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Repetir</label>
-                      <select data-ciclo value={novaTarefa.ciclo} onChange={(e) => setNovaTarefa({ ...novaTarefa, ciclo: e.target.value as "diaria" | "semanal" })} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none cursor-pointer">
-                        <option value="diaria">Todo dia</option>
+                      <select data-ciclo value={novaTarefa.ciclo} onChange={(e) => setNovaTarefa({ ...novaTarefa, ciclo: e.target.value as "diaria" | "semanal" | "mensal" })} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none cursor-pointer">
+                        <option value="diaria">Todo dia útil</option>
                         <option value="semanal">Toda semana</option>
+                        <option value="mensal">Todo mês (1º dia útil)</option>
                       </select>
                     </div>
                     {novaTarefa.ciclo === "semanal" && (
                       <div>
                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Renova toda</label>
                         <select data-dia-semana value={novaTarefa.ciclo_dia_semana} onChange={(e) => setNovaTarefa({ ...novaTarefa, ciclo_dia_semana: Number(e.target.value) })} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none cursor-pointer">
-                          {[1, 2, 3, 4, 5, 6, 0].map((d) => <option key={d} value={d}>{DIAS_SEMANA[d]}</option>)}
+                          {[1, 2, 3, 4, 5, ...([0, 6].includes(novaTarefa.ciclo_dia_semana) ? [novaTarefa.ciclo_dia_semana] : [])].map((d) => <option key={d} value={d}>{DIAS_SEMANA[d]}{d === 0 || d === 6 ? " (passa para o próximo dia útil)" : ""}</option>)}
                         </select>
                       </div>
                     )}
@@ -902,8 +910,10 @@ export default function InicioPage() {
               {novaTarefa.tipo === "ciclica" && (
                 <p className="text-[10px] text-slate-500">
                   {novaTarefa.ciclo === "diaria"
-                    ? "Volta como pendente todo dia e vence no próprio dia."
-                    : `Volta como pendente toda ${DIAS_SEMANA[novaTarefa.ciclo_dia_semana]} e vence no último dia da semana (${DIAS_SEMANA[(novaTarefa.ciclo_dia_semana + 6) % 7]}).`}
+                    ? "Volta como pendente todo dia útil (segunda a sexta, sem feriados) e vence no próprio dia. Fim de semana e feriado ficam de folga."
+                    : novaTarefa.ciclo === "mensal"
+                      ? "Volta como pendente e é avisada no 1º dia útil de cada mês (e vence nele). Continua pendente até alguém concluir."
+                      : `Volta como pendente toda ${DIAS_SEMANA[novaTarefa.ciclo_dia_semana]} (se for feriado, no próximo dia útil) e vence no último dia útil antes da renovação seguinte.`}
                 </p>
               )}
 
@@ -976,6 +986,28 @@ export default function InicioPage() {
                     </div>
                   );
                 })}
+              </div>
+
+              <div data-feriados-extras className="mt-5 pt-4 border-t border-slate-800">
+                <h3 className="text-xs font-black text-cyan-300 uppercase tracking-wider mb-1">📅 Feriados das tarefas cíclicas</h3>
+                <p className="text-[10px] text-slate-500 mb-2">
+                  As cíclicas só valem de segunda a sexta. Os feriados nacionais já estão no sistema. Inclua aqui o que mais a equipe não trabalha (Carnaval, Corpus Christi, feriado municipal), uma data por linha, como 16/02/2027.
+                </p>
+                <textarea data-feriados-texto rows={3} value={feriadosRascunho ?? feriadosTexto} onChange={(e) => { setFeriadosRascunho(e.target.value); setFeriadosMsg(""); }}
+                  placeholder={"16/02/2027\n17/02/2027"} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-cyan-500" />
+                <div className="flex items-center gap-3 mt-2">
+                  <button type="button" data-salvar-feriados disabled={feriadosRascunho === null}
+                    onClick={async () => {
+                      const texto = feriadosRascunho ?? "";
+                      const erro = await salvarFeriadosExtras(supabase, texto);
+                      if (erro) { setFeriadosMsg(erro); return; }
+                      setFeriadosTexto(texto.trim()); setFeriadosRascunho(null);
+                      setTarefas((prev) => [...prev]);   // recalcula as tarefas com os novos feriados
+                      setFeriadosMsg(`Salvo: ${feriadosExtras().length} data(s) extra(s) valendo.`);
+                    }}
+                    className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-bold py-1.5 px-4 rounded-lg text-[11px] cursor-pointer">Salvar feriados</button>
+                  {feriadosMsg && <span data-feriados-msg className="text-[11px] text-slate-400">{feriadosMsg}</span>}
+                </div>
               </div>
             </div>
           </div>
@@ -1242,7 +1274,8 @@ export default function InicioPage() {
                 const v = vencimento(t, hoje);
                 const cicl = ehCiclica(t);
                 const feita = tarefaFeita(t);
-                const atrasada = !feita && estaAtrasada(t, hoje, hojeInfo.hora);
+                const folga = emFolga(t, hoje);
+                const atrasada = !feita && !folga && estaAtrasada(t, hoje, hojeInfo.hora);
                 const resp = statusPorResponsavel(t, conclusoes, hoje);
                 const meuEmail = usuario.email;
                 const souResp = (t.responsaveis || []).includes(meuEmail);
@@ -1251,7 +1284,7 @@ export default function InicioPage() {
                 return (
                   <div key={t.id} data-tarefa={t.id} className={`flex items-start gap-3 border rounded-xl p-3 ${feita ? "border-emerald-900/40 bg-emerald-950/10" : atrasada ? "border-rose-800/60 bg-rose-950/20" : "border-slate-800 bg-slate-950/60"}`}>
                     {souResp && (
-                      <input type="checkbox" data-minha-conclusao checked={minhaFeita} onChange={() => alternarConclusao(t, meuEmail)} title={minhaFeita ? "Reabrir a minha parte" : "Marcar a minha parte como concluída"} className="mt-1 w-4 h-4 accent-emerald-500 cursor-pointer flex-shrink-0" />
+                      <input type="checkbox" data-minha-conclusao checked={minhaFeita} disabled={folga} onChange={() => alternarConclusao(t, meuEmail)} title={minhaFeita ? "Reabrir a minha parte" : "Marcar a minha parte como concluída"} className="mt-1 w-4 h-4 accent-emerald-500 cursor-pointer flex-shrink-0" />
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
@@ -1266,7 +1299,7 @@ export default function InicioPage() {
                           const podeMexer = isAdmin || r.email === meuEmail;
                           const nome = nomeDoEmail(r.email).split(" ")[0];
                           return (
-                            <button key={r.email} type="button" data-status={`${r.email}:${r.concluida ? "concluida" : "pendente"}`} disabled={!podeMexer}
+                            <button key={r.email} type="button" data-status={`${r.email}:${r.concluida ? "concluida" : "pendente"}`} disabled={!podeMexer || folga}
                               onClick={() => alternarConclusao(t, r.email)}
                               title={podeMexer ? (r.concluida ? "Clique para reabrir" : "Clique para marcar como concluída") : undefined}
                               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border ${podeMexer ? "cursor-pointer" : "cursor-default"} ${r.concluida ? "bg-emerald-950/50 text-emerald-300 border-emerald-800/60" : "bg-amber-950/40 text-amber-300 border-amber-800/50"}`}>
@@ -1278,7 +1311,9 @@ export default function InicioPage() {
 
                       <div className="flex flex-wrap items-center gap-2 mt-2 text-[10px]">
                         <span className={`px-2 py-0.5 rounded border font-bold ${corPrioridade(t.prioridade)}`}>{t.prioridade}</span>
-                        {cicl ? (
+                        {folga ? (
+                          <span data-folga className="text-slate-400">{textoCiclo(t)} · de folga hoje ({nomeFeriado(hoje) || "fim de semana"}) · volta {dataBR(diaUtilAPartirDe(hoje))}</span>
+                        ) : cicl ? (
                           <span className={atrasada ? "text-rose-300 font-bold" : "text-slate-400"}>{textoCiclo(t)} · vence {v.data === hoje ? "hoje" : dataBR(v.data)}{v.hora ? ` às ${v.hora}` : ""}{atrasada ? " (atrasada)" : ""}</span>
                         ) : (
                           <span className={atrasada ? "text-rose-300 font-bold" : "text-slate-400"}>Entrega: {v.data ? dataBR(v.data) : "sem prazo"}{v.hora ? ` às ${v.hora}` : ""}{atrasada ? " (atrasada)" : ""}</span>

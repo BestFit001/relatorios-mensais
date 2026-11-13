@@ -6,6 +6,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { buscarTudo } from "../../lib/buscarTudo";
+import { supabase } from "../../lib/supabase";
+import { carregarFeriadosExtras } from "../../lib/diasUteisDb";
 import { concluiu, deveAlertar, chaveAlerta, hhmm, agoraSP, type Conclusao } from "../../lib/tarefas";
 import { prepararSom, tocarAlerta } from "../../lib/som";
 import { registrarPush, temAssinaturaAtiva, suportaPush } from "../../lib/push";
@@ -128,7 +130,7 @@ export default function AlertaTarefasGlobal() {
       if (ocupado) return;
       ocupado = true;
       try {
-        const [tarefas, conclusoes] = await Promise.all([buscarTudo("home_tarefas", "*"), buscarTudo("home_tarefas_conclusoes", "*")]);
+        const [tarefas, conclusoes] = await Promise.all([buscarTudo("home_tarefas", "*"), buscarTudo("home_tarefas_conclusoes", "*"), carregarFeriadosExtras(supabase)]);
         if (!vivo) return;
         if (suportaPush() && Notification.permission === "granted") temPushRef.current = await temAssinaturaAtiva();
         const agora = new Date();

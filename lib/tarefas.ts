@@ -1,5 +1,8 @@
-// Regras das tarefas da tela inicial: prazo (data e hora) ou cíclica (diária / semanal), status por responsável e alertas.
+// Regras das tarefas da tela inicial: prazo (data e hora) ou cíclica (diária / semanal / mensal), status por responsável e alertas.
+// As cíclicas só valem em DIAS ÚTEIS (segunda a sexta, sem feriados): a diária não aparece em fim de semana nem feriado, a semanal
+// renova no dia escolhido (ou no próximo dia útil) e vence no último dia útil do ciclo, e a mensal renova e vence no 1º dia útil do mês.
 // Tudo em horário de Brasília (America/Sao_Paulo, UTC-3, sem horário de verão desde 2019).
+import { ehDiaUtil, diaUtilAPartirDe, diaUtilAnteriorA, primeiroDiaUtilDoMes, mesAnterior } from "./diasUteis";
 
 export const FUSO = "America/Sao_Paulo";
 /** "Ciclo" usado pelas tarefas de prazo (que não renovam): uma única conclusão vale para sempre. */
@@ -9,7 +12,7 @@ export const DIAS_SEMANA = ["domingo", "segunda-feira", "terça-feira", "quarta-
 export interface TarefaBase {
   id: number | string;
   tipo?: string | null;               // 'prazo' | 'ciclica'
-  ciclo?: string | null;              // 'diaria' | 'semanal'
+  ciclo?: string | null;              // 'diaria' | 'semanal' | 'mensal'
   ciclo_dia_semana?: number | null;   // 0 = domingo ... 6 = sábado
   data_entrega?: string | null;       // YYYY-MM-DD
   hora_entrega?: string | null;       // HH:MM[:SS]
@@ -36,15 +39,36 @@ export function diaDaSemana(iso: string): number {
   return new Date(utcDia(iso)).getUTCDay();
 }
 
-export const ehCiclica = (t: TarefaBase) => t.tipo === "ciclica" && (t.ciclo === "diaria" || t.ciclo === "semanal");
+export const ehCiclica = (t: TarefaBase) => t.tipo === "ciclica" && (t.ciclo === "diaria" || t.ciclo === "semanal" || t.ciclo === "mensal");
 
-/** Início do ciclo vigente: hoje (diária) ou o último dia de renovação (semanal). Tarefa de prazo usa o ciclo fixo. */
+const diaAlvoSemanal = (t: TarefaBase) => (Number.isInteger(t.ciclo_dia_semana) ? Number(t.ciclo_dia_semana) : 1);
+
+/** Ciclo semanal que contém `hoje`: renovação (dia escolhido, ou o próximo dia útil se ele for fim de semana/feriado) e vencimento (último dia útil antes da próxima renovação). */
+function cicloSemanal(alvo: number, hoje: string): { inicio: string; vence: string } {
+  const atras = (diaDaSemana(hoje) - alvo + 7) % 7;
+  let nominal = addDias(hoje, -atras);
+  if (diaUtilAPartirDe(nominal) > hoje) nominal = addDias(nominal, -7);   // a renovação deste ciclo ainda não chegou (ex.: segunda feriado)
+  const inicio = diaUtilAPartirDe(nominal);
+  const proximo = diaUtilAPartirDe(addDias(nominal, 7));
+  const vence = diaUtilAnteriorA(proximo);
+  return { inicio, vence: vence < inicio ? inicio : vence };
+}
+
+/** Mensal: o ciclo começa (e vence) no 1º dia útil do mês. */
+function inicioMensal(hoje: string): string {
+  const doMes = primeiroDiaUtilDoMes(hoje.slice(0, 7));
+  return doMes <= hoje ? doMes : primeiroDiaUtilDoMes(mesAnterior(hoje.slice(0, 7)));
+}
+
+/** A tarefa diária não vale em fim de semana nem feriado: nesses dias ela fica de folga (sem pendência, atraso ou alerta). */
+export const emFolga = (t: TarefaBase, dia: string) => ehCiclica(t) && t.ciclo === "diaria" && !ehDiaUtil(dia);
+
+/** Início do ciclo vigente: hoje (diária), a última renovação (semanal) ou o 1º dia útil do mês (mensal). Tarefa de prazo usa o ciclo fixo. */
 export function inicioCiclo(t: TarefaBase, hoje: string): string {
   if (!ehCiclica(t)) return CICLO_FIXO;
   if (t.ciclo === "diaria") return hoje;
-  const alvo = Number.isInteger(t.ciclo_dia_semana) ? Number(t.ciclo_dia_semana) : 1;
-  const atras = (diaDaSemana(hoje) - alvo + 7) % 7;
-  return addDias(hoje, -atras);
+  if (t.ciclo === "mensal") return inicioMensal(hoje);
+  return cicloSemanal(diaAlvoSemanal(t), hoje).inicio;
 }
 
 export const hhmm = (h?: string | null) => (h ? String(h).slice(0, 5) : "");
@@ -52,13 +76,16 @@ export const hhmm = (h?: string | null) => (h ? String(h).slice(0, 5) : "");
 /**
  * Vencimento da ocorrência vigente.
  * - prazo: data_entrega (+ hora, se houver)
- * - diária: hoje (+ hora)
- * - semanal: último dia do ciclo (renovação + 6 dias) (+ hora)
+ * - diária: hoje, só em dia útil (+ hora); em fim de semana/feriado não há vencimento
+ * - semanal: último dia útil do ciclo (+ hora)
+ * - mensal: o 1º dia útil do mês (+ hora)
  */
 export function vencimento(t: TarefaBase, hoje: string): { data: string | null; hora: string | null; ms: number | null } {
   let data: string | null = null;
   if (ehCiclica(t)) {
-    data = t.ciclo === "diaria" ? hoje : addDias(inicioCiclo(t, hoje), 6);
+    if (t.ciclo === "diaria") data = ehDiaUtil(hoje) ? hoje : null;
+    else if (t.ciclo === "mensal") data = inicioMensal(hoje);
+    else data = cicloSemanal(diaAlvoSemanal(t), hoje).vence;
   } else if (t.data_entrega) {
     data = String(t.data_entrega).slice(0, 10);
   }
@@ -67,12 +94,12 @@ export function vencimento(t: TarefaBase, hoje: string): { data: string | null; 
   return { data, hora, ms };
 }
 
-/** Texto curto da regra de repetição, ex.: "Diária" ou "Semanal (renova toda segunda-feira)". */
+/** Texto curto da regra de repetição, ex.: "Diária (dias úteis)" ou "Semanal (renova toda segunda-feira)". */
 export function textoCiclo(t: TarefaBase): string {
   if (!ehCiclica(t)) return "";
-  if (t.ciclo === "diaria") return "Diária (renova todo dia)";
-  const d = Number.isInteger(t.ciclo_dia_semana) ? Number(t.ciclo_dia_semana) : 1;
-  return `Semanal (renova toda ${DIAS_SEMANA[d]})`;
+  if (t.ciclo === "diaria") return "Diária (dias úteis)";
+  if (t.ciclo === "mensal") return "Mensal (1º dia útil do mês)";
+  return `Semanal (renova toda ${DIAS_SEMANA[diaAlvoSemanal(t)]}, dia útil)`;
 }
 
 export function concluiu(t: TarefaBase, email: string, conclusoes: Conclusao[], hoje: string): boolean {
@@ -119,18 +146,19 @@ export const refAlerta = (t: TarefaBase, hoje: string) => `${inicioCiclo(t, hoje
 /** Chave local (navegador) de "este alerta desta ocorrência para este usuário" (para não repetir). */
 export const chaveAlerta = (t: TarefaBase, email: string, hoje: string) => `alerta_tarefa_${t.id}_${refAlerta(t, hoje)}_${email.trim().toLowerCase()}`;
 
-/** A tarefa ocorre neste dia do calendário? (prazo: no dia da entrega; diária: todo dia a partir da criação; semanal: no dia em que renova e no dia em que vence) */
-export function ocorreNoDia(t: TarefaBase & { created_at?: string | null }, dia: string): { ocorre: boolean; papel: "entrega" | "diaria" | "renova" | "vence" | null } {
+/** A tarefa ocorre neste dia do calendário? (prazo: no dia da entrega; diária: dias úteis; semanal: na renovação e no vencimento; mensal: no 1º dia útil do mês) */
+export function ocorreNoDia(t: TarefaBase & { created_at?: string | null }, dia: string): { ocorre: boolean; papel: "entrega" | "diaria" | "renova" | "vence" | "mensal" | null } {
   if (!ehCiclica(t)) {
     const d = t.data_entrega ? String(t.data_entrega).slice(0, 10) : null;
     return d === dia ? { ocorre: true, papel: "entrega" } : { ocorre: false, papel: null };
   }
   const criada = t.created_at ? String(t.created_at).slice(0, 10) : null;
   if (criada && dia < criada) return { ocorre: false, papel: null };
-  if (t.ciclo === "diaria") return { ocorre: true, papel: "diaria" };
+  if (t.ciclo === "diaria") return ehDiaUtil(dia) ? { ocorre: true, papel: "diaria" } : { ocorre: false, papel: null };
+  if (t.ciclo === "mensal") return inicioMensal(dia) === dia ? { ocorre: true, papel: "mensal" } : { ocorre: false, papel: null };
   const ini = inicioCiclo(t, dia);
   if (ini === dia) return { ocorre: true, papel: "renova" };
-  if (addDias(ini, 6) === dia) return { ocorre: true, papel: "vence" };
+  if (vencimento(t, dia).data === dia) return { ocorre: true, papel: "vence" };
   return { ocorre: false, papel: null };
 }
 

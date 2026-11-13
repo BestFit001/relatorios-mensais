@@ -1,5 +1,6 @@
 // Envio dos alertas de tarefa (roda no servidor, chamado a cada minuto pelo relógio do banco).
 import { agoraSP, concluiu, deveAlertar, refAlerta, hhmm, type Conclusao } from "./tarefas";
+import { carregarFeriadosExtras } from "./diasUteisDb";
 
 export interface PayloadPush { titulo: string; corpo: string; tag: string; url: string }
 export type EnviarPush = (assinatura: { endpoint: string; p256dh: string; auth: string }, payload: PayloadPush) => Promise<{ ok: boolean; gone?: boolean; erro?: string }>;
@@ -23,6 +24,7 @@ export async function processarAlertas(supabase: any, enviar: EnviarPush, agora:
     lerTudo(supabase, "home_tarefas"),
     lerTudo(supabase, "home_tarefas_conclusoes"),
     lerTudo(supabase, "push_assinaturas"),
+    carregarFeriadosExtras(supabase),   // feriados extras do admin: cíclicas não alertam em dia de folga
   ]);
 
   const porEmail = new Map<string, any[]>();
