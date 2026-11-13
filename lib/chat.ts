@@ -1,3 +1,4 @@
+import { nomeDeExibicao } from "./nomesBase";
 // Chat interno: tipos e funções puras (a tela é app/components/ChatInterno.tsx; o servidor é lib/chatServidor.ts).
 export const SALA_GERAL_ID = "00000000-0000-4000-8000-000000000001";
 export const DIAS_HISTORICO = 7;
@@ -12,11 +13,9 @@ export type SalaChat = {
   membros: { email: string; papel: "admin" | "membro" }[]; nao_lidas: number; ultima: { texto: string; de: string; em: string } | null;
 };
 
-/** Nome para exibir (o cadastro só tem e-mail): "ana.silva@x.com" -> "Ana Silva". */
+/** Nome para exibir: o definido pelo admin ou, sem ele, o que vem do e-mail ("ana.silva@x.com" -> "Ana Silva"). */
 export function nomeDoEmail(email: string): string {
-  const parte = String(email || "").split("@")[0];
-  const nome = parte.split(/[._\-\s]+/).filter(Boolean).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
-  return nome || email;
+  return nomeDeExibicao(email);
 }
 
 /** Nome da conversa para quem está olhando: geral, nome do grupo ou a outra pessoa da conversa direta. */

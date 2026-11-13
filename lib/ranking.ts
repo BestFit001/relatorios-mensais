@@ -1,6 +1,7 @@
 // Ranking de analistas: junta os canais de cada analista (home_responsaveis_canais) e soma os números do mês.
 // Os valores de cada canal vêm de calcularResumoCanais (mesmos números do Dashboard e do Início).
 import type { ResumoCanal } from "./resumoCanais";
+import { nomeDeExibicao } from "./nomesBase";
 
 export const normTxt = (v: any) => String(v ?? "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ");
 /** Magalu e Magazine Luiza são o mesmo canal. */
@@ -29,8 +30,7 @@ export function totalizar(canais: ResumoCanal[], cadastros: (canal: string) => n
 
 export interface AnalistaRanking { email: string | null; nome: string; canais: ResumoCanal[]; total: Totais }
 
-export const nomeDoEmail = (email: string) =>
-  String(email || "").split("@")[0].split(/[._-]/).filter(Boolean).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ") || email;
+export const nomeDoEmail = (email: string) => nomeDeExibicao(email);
 
 /**
  * Agrupa os canais por analista. Canal com mais de um responsável aparece para cada um deles (cada analista vê o canal inteiro).

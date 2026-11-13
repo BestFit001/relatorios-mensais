@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
+import { MAX_NOME, nomeDoEmailPadrao, nomePersonalizado, salvarNome, useNomes } from "../../lib/nomes";
 import { ROTAS_DISPONIVEIS, SECOES_MENU, ROTA_INICIO, nomeDaRota } from "../../lib/rotasMenu";
 
 const rotasDisponiveis = ROTAS_DISPONIVEIS;
@@ -114,6 +115,7 @@ function ConfigAbasConstrucao() {
 }
 
 export default function AdminPage() {
+  useNomes();
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [perfil, setPerfil] = useState("compras");
@@ -124,6 +126,7 @@ export default function AdminPage() {
 
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [novoPerfil, setNovoPerfil] = useState("");
+  const [novoNome, setNovoNome] = useState("");
   const [editandoPaginas, setEditandoPaginas] = useState<string[]>([]);
 
   const [tamanhoDb, setTamanhoDb] = useState({ mb: 0, percentual: 0 });
@@ -212,6 +215,7 @@ export default function AdminPage() {
 
   const iniciarEdicao = (u: any) => {
     setEditandoId(u.id);
+    setNovoNome(nomePersonalizado(u.email) || "");
     setNovoPerfil(u.perfil || "compras");
     setEditandoPaginas(u.paginas_permitidas || []);
   };
@@ -226,7 +230,9 @@ export default function AdminPage() {
 
     if (error) alert("Erro ao atualizar: " + error.message);
     else {
-      alert("✅ Permissões atualizadas com sucesso!");
+      const emailEditado = usuarios.find((u) => u.id === id)?.email || "";
+      const erroNome = emailEditado ? await salvarNome(emailEditado, novoNome) : null;
+      alert(erroNome ? "✅ Permissões atualizadas, mas não consegui salvar o nome: " + erroNome : "✅ Usuário atualizado com sucesso!");
       
       const logado = JSON.parse(localStorage.getItem("usuario_logado") || "{}");
       if (logado.id === id || logado.email === usuarios.find(u => u.id === id)?.email) {
@@ -362,7 +368,7 @@ export default function AdminPage() {
             <table className="w-full text-left text-xs border-collapse">
               <thead className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[11px]">
                 <tr>
-                  <th className="p-4">E-mail</th>
+                  <th className="p-4">Usuário</th>
                   <th className="p-4 w-32">Perfil</th>
                   <th className="p-4">Abas Permitidas</th>
                   <th className="p-4 text-center w-36">Ações</th>
@@ -379,9 +385,26 @@ export default function AdminPage() {
 
                     return (
                       <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="p-4 font-semibold text-slate-200">{u.email}</td>
+                        <td className="p-4 align-top">
+                          {isEditing ? (
+                            <div className="space-y-2 min-w-[220px]">
+                              <label className="block text-[11px] font-semibold text-slate-400">Nome do usuário
+                                <input type="text" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} maxLength={MAX_NOME} data-editar-nome
+                                  placeholder={nomeDoEmailPadrao(u.email)}
+                                  className="mt-1 w-full border border-slate-600 rounded-lg p-1.5 bg-slate-950 text-white text-xs font-normal outline-none focus:border-indigo-500" />
+                              </label>
+                              <p className="text-[10px] text-slate-500">Aparece no chat, no Início, no Ranking e nas tarefas. Em branco, usa o nome do e-mail.</p>
+                              <div className="text-[11px] text-slate-500 break-all">{u.email}</div>
+                            </div>
+                          ) : (
+                            <>
+                              {nomePersonalizado(u.email) && <div className="font-semibold text-white" data-nome-usuario>{nomePersonalizado(u.email)}</div>}
+                              <div className={nomePersonalizado(u.email) ? "text-[11px] text-slate-400" : "font-semibold text-slate-200"}>{u.email}</div>
+                            </>
+                          )}
+                        </td>
                         
-                        <td className="p-4 font-bold">
+                        <td className="p-4 font-bold align-top">
                           {isEditing ? (
                             <select 
                               value={novoPerfil} 
@@ -398,7 +421,7 @@ export default function AdminPage() {
                           )}
                         </td>
 
-                        <td className="p-4 text-slate-300">
+                        <td className="p-4 text-slate-300 align-top">
                           {isEditing ? (
                             <div className="max-w-2xl"><GradePermissoes compacto selecionadas={editandoPaginas} onToggle={toggleEditandoPagina} /></div>
                           ) : (
@@ -408,7 +431,7 @@ export default function AdminPage() {
                           )}
                         </td>
 
-                        <td className="p-4 text-center">
+                        <td className="p-4 text-center align-top">
                           {isEditing ? (
                             <div className="flex flex-col gap-1.5 items-center justify-center">
                               <button onClick={() => salvarEdicao(u.id)} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase cursor-pointer transition-all shadow-sm">
@@ -420,7 +443,7 @@ export default function AdminPage() {
                             </div>
                           ) : (
                             <div className="flex items-center justify-center gap-2">
-                              <button onClick={() => iniciarEdicao(u)} title="Editar Permissões" className="bg-slate-800 hover:bg-indigo-950/60 text-slate-300 hover:text-indigo-400 border border-slate-700 hover:border-indigo-900/50 p-2 rounded-lg cursor-pointer transition-all">
+                              <button onClick={() => iniciarEdicao(u)} title="Editar nome e permissões" className="bg-slate-800 hover:bg-indigo-950/60 text-slate-300 hover:text-indigo-400 border border-slate-700 hover:border-indigo-900/50 p-2 rounded-lg cursor-pointer transition-all">
                                 ✏️
                               </button>
                               <button onClick={() => excluirUsuario(u.id, u.email)} title="Excluir Utilizador" className="bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-900/50 p-2 rounded-lg cursor-pointer transition-all">

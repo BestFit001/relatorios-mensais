@@ -1,6 +1,7 @@
 // Avatar de cada pessoa: um personagem (emoji sobre um fundo colorido) ou uma foto de perfil.
 // Fica salvo em config_regras_tiny (campo "avatar_<e-mail>"), a mesma tabela de configurações que o app já usa; não precisa de tabela nova.
 import { supabase } from "./supabase";
+import { nomePersonalizado } from "./nomesBase";
 
 export type AvatarConfig = { tipo: "personagem"; id: string } | { tipo: "foto"; url: string };
 
@@ -31,7 +32,7 @@ export function corPadrao(email: string): string {
   return CORES_PADRAO[h % CORES_PADRAO.length];
 }
 export function iniciais(email: string): string {
-  const parte = String(email || "").split("@")[0].split(/[._\-\s]+/).filter(Boolean);
+  const parte = (nomePersonalizado(email) || String(email || "").split("@")[0]).split(/[._\-\s]+/).filter(Boolean);
   return ((parte[0]?.[0] || "?") + (parte[1]?.[0] || "")).toUpperCase();
 }
 

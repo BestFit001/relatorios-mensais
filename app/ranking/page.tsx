@@ -1,6 +1,7 @@
 "use client";
 // Ranking de analistas: progressão, cadastros, liquidez, ticket médio, mais vendidos por canal e ads, por mês fechado, últimos 7/15/30 dias ou período personalizado, com comparação.
 import React, { useEffect, useMemo, useState } from "react";
+import { useNomes } from "../../lib/nomes";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
@@ -153,6 +154,7 @@ function SeletorPeriodo({ rotulo, valor, onChange, prefixo, opcoesMes, comAnteri
 const rotuloMesDoPeriodo = (m: string) => resolverPeriodo({ tipo: "mes", mes: m, inicio: "", fim: "" }).rotulo;
 
 export default function RankingPage() {
+  useNomes();
   const router = useRouter();
   const [pronto, setPronto] = useState(false);
   const [carregando, setCarregando] = useState(true);

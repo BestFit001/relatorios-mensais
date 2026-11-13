@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { nomePersonalizado, useNomes } from "../../lib/nomes";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -18,6 +19,7 @@ const ICONES_SECAO: Record<string, LucideIcon> = {
 };
 
 export default function Navbar() {
+  useNomes();
   const router = useRouter();
   const pathname = usePathname();
   const [paginasPermitidas, setPaginasPermitidas] = useState<string[]>([]);
@@ -233,7 +235,8 @@ export default function Navbar() {
             <div className="hub-usuario">
               {emailUsuario && <button type="button" onClick={abrirEscolhaDeAvatar} data-meu-avatar title="Escolher meu avatar (personagem ou foto)" className="cursor-pointer rounded-full shrink-0" style={{ background: "none", border: 0, padding: 0 }}><Avatar email={emailUsuario} tamanho={34} /></button>}
               <div className="hub-usuario-info">
-                <div className="hub-usuario-email">{emailUsuario || "Utilizador"}</div>
+                {nomePersonalizado(emailUsuario) && <div className="hub-usuario-nome">{nomePersonalizado(emailUsuario)}</div>}
+                <div className="hub-usuario-email" data-usuario-email>{emailUsuario || "Utilizador"}</div>
                 <span className="hub-perfil">{perfilUsuario}</span>
               </div>
             </div>

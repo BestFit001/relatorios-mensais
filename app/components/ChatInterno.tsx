@@ -4,6 +4,7 @@
 // Tudo passa pela API do servidor (lib/chatServidor.ts), que confere quem é a pessoa e se ela participa da conversa.
 // "Tempo real": aviso instantâneo por broadcast do Supabase (só um "tem novidade", sem conteúdo) + consulta de reserva a cada poucos segundos.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNomes } from "../../lib/nomes";
 import { usePathname } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { tocarAlerta } from "../../lib/som";
@@ -20,6 +21,7 @@ type Modal = null | "grupo" | "membros" | "tarefa" | "compartilhar" | "config";
 type Tarefa = { id: number | string; titulo: string; prazo?: string };
 
 export default function ChatInterno() {
+  useNomes();
   const pathname = usePathname();
   const [email, setEmail] = useState("");
   const [aberto, setAberto] = useState(false);

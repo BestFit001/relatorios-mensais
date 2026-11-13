@@ -10,6 +10,7 @@ import {
   textoAntecedencia, hhmm, diferencaDias, DIAS_SEMANA, inicioCiclo, ocorreNoDia, addDias, diaDaSemana, type Conclusao,
 } from "../../lib/tarefas";
 import { compartilharNoChat } from "../../lib/chatCliente";
+import { nomeDeExibicao, useNomes } from "../../lib/nomes";
 import { registrarPush, temAssinaturaAtiva, suportaPush } from "../../lib/push";
 import { correcoesVisiveis, correcaoConcluida, podeMarcarCanal, type Correcao, type CorrecaoCanal } from "../../lib/videoCorrecoes";
 import { foraDePromocao, type PromoValidade, type MarcaPromovido } from "../../lib/foraPromocao";
@@ -28,8 +29,7 @@ const moeda = (v: number) => "R$ " + (v || 0).toLocaleString("pt-BR", { minimumF
 const pct = (v: number) => (v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
 const hojeSP = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
 const dataBR = (iso?: string | null) => (iso ? String(iso).slice(0, 10).split("-").reverse().join("/") : "—");
-const nomeDoEmail = (email: string) =>
-  String(email || "").split("@")[0].split(/[._-]/).filter(Boolean).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
+const nomeDoEmail = (email: string) => nomeDeExibicao(email);
 
 async function buscarTudo(tabela: string): Promise<any[]> {
   const todas: any[] = [];
@@ -46,6 +46,7 @@ async function buscarTudo(tabela: string): Promise<any[]> {
 type Notificacao = { id: string; tipo: "full" | "devolucao" | "tarefa" | "promocao" | "correcao"; nivel: "critico" | "atencao" | "info"; titulo: string; detalhe: string; canal?: string };
 
 export default function InicioPage() {
+  useNomes();
   const router = useRouter();
   const [usuario, setUsuario] = useState<{ email: string; perfil: string } | null>(null);
   const [carregando, setCarregando] = useState(true);

@@ -1,9 +1,11 @@
 "use client";
 // Avatar redondo de uma pessoa (personagem, foto ou iniciais). Atualiza sozinho quando alguém troca o avatar.
 import React, { useEffect, useState } from "react";
+import { useNomes } from "../../lib/nomes";
 import { carregarAvatares, avatarEmCache, corPadrao, iniciais, personagemPorId, EVENTO_AVATAR } from "../../lib/avatar";
 
 export default function Avatar({ email, tamanho = 32, className = "" }: { email: string; tamanho?: number; className?: string }) {
+  useNomes();
   const chave = String(email || "").trim().toLowerCase();
   const [cfg, setCfg] = useState(() => avatarEmCache(chave));
   const [fotoQuebrada, setFotoQuebrada] = useState(false);
