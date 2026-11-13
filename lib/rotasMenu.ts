@@ -60,6 +60,7 @@ export const SECOES_MENU: SecaoMenu[] = [
   { titulo: "Compras", icone: "🛒", submenu: false, rotas: [{ id: "/compras", nome: "Compras" }] },
   { titulo: "Gestão", icone: "📅", submenu: true, rotas: [
     { id: "/agenda", nome: "Agenda" },
+    { id: "/kpi", nome: "KPIs e variável" },
   ] },
   { titulo: "Configurações", icone: "⚙️", submenu: true, rotas: [
     { id: "/regras", nome: "Regras Gerais" },
