@@ -9,7 +9,7 @@ import { lerArquivoComoMatriz, lerArquivoComoLinhas } from "../../lib/lerArquivo
 import { removerSufixoFba } from "../../lib/fulfillment";
 import { alimentarFullPeloUpload, mesDoFull } from "../../lib/fullMotor";
 import { registrarSkusNaBaseCadastrada, linhaAvisoCadastro } from "../../lib/cadastros";
-import { montarConfigLives, ehCanalDasLives, ehModalLive, lerLinhaLive, montarRegistroLive, normalizarSkuLive } from "../../lib/livesVendas";
+import { detectarColunaDataLive, montarConfigLives, ehCanalDasLives, ehModalLive, lerLinhaLive, montarRegistroLive, normalizarSkuLive } from "../../lib/livesVendas";
 
 async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo?: string, eqValor?: any) {
   let todos: any[] = [];
@@ -959,6 +959,9 @@ export default function UpdatesPage() {
         const { data: regrasLivesRows } = await supabase.from('config_regras_canais').select('canal, formula_excel, col_pdv');
         const cfgLivesBase = montarConfigLives(cfgLivesRows, regrasLivesRows);
         const cfgLives = ehCanalDasLives(cfgLivesBase, canalAlvoDash) ? cfgLivesBase : null;
+        // Data e hora do pedido: confere se a coluna configurada traz datas; se não, acha a coluna certa pelo título ou pelo conteúdo.
+        const colDataLive = cfgLives ? detectarColunaDataLive(json, cfgLives.colData) : null;
+        if (cfgLives && colDataLive) cfgLives.colData = colDataLive.letra;
         const livesNovas: any[] = [];
         const modaisVistos = new Map<string, number>();
 
@@ -1235,6 +1238,10 @@ export default function UpdatesPage() {
               const vendedores = new Set(livesNovas.map((v: any) => v.vendedor).filter(Boolean));
               const topModais = Array.from(modaisVistos.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([m, n]) => `${m} (${n})`).join(", ");
               msgLives = `• Lives (coluna ${cfgLives.colModal} contém "${cfgLives.textoLive}"): ${livesNovas.length} linhas, ${vendedores.size} vendedor(es) pela coluna ${cfgLives.colVendedor}. Modais encontrados: ${topModais || "nenhum"}.`;
+              const comData = livesNovas.filter((v: any) => v.data_hora).length;
+              const comHora = livesNovas.filter((v: any) => /\d{1,2}:\d{2}/.test(String(v.data_hora || ""))).length;
+              msgLives += ` Data e hora do pedido lidas da coluna ${cfgLives.colData}${colDataLive && colDataLive.origem !== "configurada" ? " (achada automaticamente)" : ""}: ${comData} com data, ${comHora} com hora.`;
+              if (livesNovas.length > 0 && comData < livesNovas.length) msgLives += " ⚠️ Há vendas sem data: confira a coluna de data em Lives > Configurações.";
               if (livesNovas.length === 0) msgLives += " Nenhuma venda de live: confira a coluna e o texto em Lives > Configurações.";
             } catch (errLives: any) {
               msgLives = `⚠️ As vendas foram salvas, mas as lives não: ${errLives?.message || errLives}`;

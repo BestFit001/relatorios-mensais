@@ -187,3 +187,45 @@ export function montarRegistroLive(
     vendedor: l.vendedor,
   };
 }
+
+// ---------------------------------------------------------------- coluna de data e hora do pedido
+const ehDataTexto = (t: string) => /^\d{4}[\/.\-]\d{1,2}[\/.\-]\d{1,2}/.test(t) || /^\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/.test(t);
+const temHoraTexto = (t: string) => /\d{1,2}:\d{2}/.test(t);
+const indiceParaLetra = (i: number) => { let s = ""; let n = i + 1; while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); } return s; };
+
+/**
+ * Acha a coluna com a data e a hora do pedido na planilha de vendas. Confia na letra configurada quando ela realmente traz datas;
+ * se vier vazia ou com outra coisa, procura pelo título da coluna (pagamento, criação, data, hora...) e, por último, pelo conteúdo.
+ */
+export function detectarColunaDataLive(linhas: any[][], letraConfigurada: string): { letra: string; origem: "configurada" | "titulo" | "conteudo" | "nenhuma"; temHora: boolean } {
+  const corpo = (linhas || []).slice(1, 401).filter((l) => Array.isArray(l) && l.some((c) => String(c ?? "").trim() !== ""));
+  if (corpo.length === 0) return { letra: letraConfigurada, origem: "nenhuma", temHora: false };
+  const largura = Math.max(...corpo.map((l) => l.length), (linhas[0] || []).length);
+  const stats = Array.from({ length: largura }, (_, i) => {
+    let datas = 0, horas = 0;
+    for (const l of corpo) {
+      const v = l[i];
+      const ehSerial = typeof v === "number" && v > 30000 && v < 70000;
+      const t = textoDaData(v);
+      if (ehSerial || (typeof v !== "number" && ehDataTexto(t))) { datas++; if (temHoraTexto(t)) horas++; }
+    }
+    return { datas, horas, razao: datas / corpo.length };
+  });
+  const ok = (i: number) => i >= 0 && i < stats.length && stats[i].razao >= 0.5;
+  const iCfg = colunaParaIndice(letraConfigurada);
+  if (ok(iCfg)) return { letra: indiceParaLetra(iCfg), origem: "configurada", temHora: stats[iCfg].horas > 0 };
+
+  const cab = (linhas[0] || []).map((c: any) => semAcento(c));
+  const prioridades = [/pag|paid|payment/, /cria|creat|order time|hora do pedido|data do pedido|pedido/, /data|date|time|hora|hour/];
+  for (const re of prioridades) {
+    const achadas = cab.map((c, i) => (re.test(c) && ok(i) ? i : -1)).filter((i) => i >= 0);
+    if (achadas.length) {
+      const melhor = achadas.sort((a, b) => stats[b].horas - stats[a].horas)[0];
+      return { letra: indiceParaLetra(melhor), origem: "titulo", temHora: stats[melhor].horas > 0 };
+    }
+  }
+  let melhor = -1;
+  stats.forEach((s, i) => { if (s.razao >= 0.8 && (melhor < 0 || s.horas > stats[melhor].horas)) melhor = i; });
+  if (melhor >= 0) return { letra: indiceParaLetra(melhor), origem: "conteudo", temHora: stats[melhor].horas > 0 };
+  return { letra: letraConfigurada, origem: "nenhuma", temHora: false };
+}
