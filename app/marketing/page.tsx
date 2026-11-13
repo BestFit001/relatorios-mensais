@@ -349,7 +349,7 @@ export default function MarketingPage() {
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Marketing — Hub Best Fit</h1>
+            <h1 className="text-2xl font-black text-white tracking-tight">Redes Sociais</h1>
             <p className="text-sm font-medium text-slate-400">Calendário de postagens com suporte a carrossel de imagens e múltiplos formatos</p>
           </div>
           <Navbar />

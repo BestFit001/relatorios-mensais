@@ -1,5 +1,5 @@
 "use client";
-// Relatórios > Vídeos: controle de clipes/vídeos por SKU Pai e canal.
+// Marketing > Vídeos E-commerce: controle de clipes/vídeos por SKU Pai e canal.
 // Antes era a sub-aba "Vídeos / Clipes" de Produtos & Vídeos (hoje "Novos Cadastros"); a lógica é a mesma.
 import React, { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
@@ -283,7 +283,7 @@ export default function VideosPage() {
       <div className="max-w-[98%] mx-auto space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Vídeos</h1>
+            <h1 className="text-2xl font-black text-white tracking-tight">Vídeos E-commerce</h1>
             <p className="text-sm font-medium text-slate-400">Controle de clipes/vídeos padronizados por SKU Pai e por canal</p>
           </div>
           <Navbar />

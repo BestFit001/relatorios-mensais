@@ -245,9 +245,9 @@ export default function AjustesSitePage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1">
-              <span>Marketing</span> <span>/</span> <span className="text-indigo-400">Ajustes no Site</span>
+              <span>Marketing</span> <span>/</span> <span className="text-indigo-400">Site</span>
             </div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Painel de Ajustes de Catálogo</h1>
+            <h1 className="text-2xl font-black text-white tracking-tight">Site — ajustes de catálogo</h1>
             <p className="text-xs text-slate-400">Controle de melhorias de Descrição, Vídeo, Imagens e Título por SKU</p>
           </div>
           <Navbar />

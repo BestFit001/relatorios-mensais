@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { ROTAS_DISPONIVEIS } from "@/lib/rotasMenu";
+import { ROTAS_DISPONIVEIS, SECOES_MENU, secaoDoCaminho } from "@/lib/rotasMenu";
 import Avatar from "./Avatar";
 import { abrirEscolhaDeAvatar } from "./EscolherAvatar";
 
@@ -20,44 +20,11 @@ export default function Navbar() {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
-  // Sincroniza dinamicamente a aba aberta na barra lateral com a rota atual
+  // Mantém aberta, na barra lateral, a seção da página atual
   useEffect(() => {
     if (!pathname) return;
-
-    if (pathname === "/dashboard" || pathname === "/executivo") {
-      setMenuExpandido("dashboard");
-    } else if (pathname.startsWith("/marketing")) {
-      setMenuExpandido("marketing");
-    } else if (pathname.startsWith("/promocoes")) {
-      setMenuExpandido("promocoes");
-    } else if (
-      pathname.startsWith("/calculadora") || 
-      pathname.startsWith("/produtos") || 
-      pathname.startsWith("/padronizacao") || 
-      pathname.startsWith("/dimensoes-peso") || 
-      pathname.startsWith("/plp") ||
-      pathname.startsWith("/checagem-cancelados") ||
-      pathname.startsWith("/apresentacao-time")
-    ) {
-      setMenuExpandido("ferramentas");
-    } else if (
-      pathname.startsWith("/regras") || 
-      pathname.startsWith("/upload") || 
-      pathname.startsWith("/admin")
-    ) {
-      setMenuExpandido("config");
-    } else if (
-      pathname === "/" || 
-      pathname.startsWith("/mapeamento") || 
-      pathname.startsWith("/ads") || 
-      pathname.startsWith("/devolucoes") || 
-      pathname.startsWith("/full") || 
-      pathname.startsWith("/lives") ||
-      pathname.startsWith("/analise-mercado") ||
-      pathname.startsWith("/concorrentes")
-    ) {
-      setMenuExpandido("relatorios");
-    }
+    const secao = secaoDoCaminho(pathname);
+    if (secao) setMenuExpandido(secao);
   }, [pathname]);
 
   useEffect(() => {
@@ -232,407 +199,43 @@ export default function Navbar() {
             {sidebarAberta && <span className="truncate">Início</span>}
           </Link>
 
-          {/* DASHBOARD (SIMPLIFICADO & EXECUTIVO) */}
-          {(temPermissao("/dashboard") || temPermissao("/executivo")) && (
-            <div>
-              <button
-                onClick={() => toggleSecao("dashboard")}
-                title="Dashboard"
-                className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname === "/dashboard" || pathname === "/executivo"
-                    ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
-                    : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-                }`}
-              >
-                <span className="flex items-center gap-3">
-                  <span className="text-sm flex-shrink-0">📊</span> 
-                  {sidebarAberta && <span className="truncate">Dashboard</span>}
-                </span>
-                {sidebarAberta && (
-                  <span className={`transform transition-transform text-[9px] ${menuExpandido === "dashboard" ? "rotate-180" : ""}`}>
-                    ▼
+          {/* SEÇÕES (geradas a partir de lib/rotasMenu.ts: mesma lista do Painel Admin) */}
+          {SECOES_MENU.map((secao) => {
+            const visiveis = secao.rotas.filter((r) => !r.oculta && temPermissao(r.id));
+            if (visiveis.length === 0) return null;
+            const ativa = secao.rotas.some((r) => !r.oculta && (r.id === "/" ? pathname === "/" : pathname === r.id));
+            if (!secao.submenu) {
+              const r = visiveis[0];
+              return (
+                <Link key={secao.titulo} href={r.id} title={r.nome}
+                  className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${pathname === r.id ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold" : "text-slate-400 hover:text-white hover:bg-slate-900/60"}`}>
+                  <span className="text-sm flex-shrink-0">{secao.icone}</span>
+                  {sidebarAberta && <span className="truncate">{r.nome}</span>}
+                </Link>
+              );
+            }
+            return (
+              <div key={secao.titulo} data-secao-menu={secao.titulo}>
+                <button onClick={() => toggleSecao(secao.titulo)} title={secao.titulo}
+                  className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${ativa ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40" : "text-slate-400 hover:text-white hover:bg-slate-900/60"}`}>
+                  <span className="flex items-center gap-3">
+                    <span className="text-sm flex-shrink-0">{secao.icone}</span>
+                    {sidebarAberta && <span className="truncate">{secao.titulo}</span>}
                   </span>
+                  {sidebarAberta && <span className={`transform transition-transform text-[9px] ${menuExpandido === secao.titulo ? "rotate-180" : ""}`}>▼</span>}
+                </button>
+                {sidebarAberta && menuExpandido === secao.titulo && (
+                  <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
+                    {visiveis.map((r) => (
+                      <Link key={r.id} href={r.id} className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === r.id ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
+                        {r.prefixo ? `${r.prefixo} ` : ""}{r.rotulo || r.nome}
+                      </Link>
+                    ))}
+                  </div>
                 )}
-              </button>
-
-              {sidebarAberta && menuExpandido === "dashboard" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
-                  {temPermissao("/dashboard") && (
-                    <Link 
-                      href="/dashboard" 
-                      className={`block px-2.5 py-1.5 rounded-lg transition-all ${
-                        pathname === "/dashboard" 
-                          ? "text-indigo-400 font-bold bg-indigo-950/60" 
-                          : "text-slate-400 hover:text-white"
-                      }`}
-                    >
-                      Simplificado
-                    </Link>
-                  )}
-                  {temPermissao("/executivo") && (
-                    <Link 
-                      href="/executivo" 
-                      className={`block px-2.5 py-1.5 rounded-lg transition-all ${
-                        pathname === "/executivo" 
-                          ? "text-indigo-400 font-bold bg-indigo-950/60" 
-                          : "text-slate-400 hover:text-white"
-                      }`}
-                    >
-                      Executivo
-                    </Link>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* REPUTAÇÃO DOS CANAIS */}
-          {temPermissao("/reputacao") && (
-            <Link
-              href="/reputacao"
-              title="Reputação dos Canais"
-              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
-                pathname === "/reputacao" 
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold" 
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-              }`}
-            >
-              <span className="text-sm flex-shrink-0">⭐</span>
-              {sidebarAberta && <span className="truncate">Reputação</span>}
-            </Link>
-          )}
-
-          {/* RANKING DE ANALISTAS */}
-          {temPermissao("/ranking") && (
-            <Link
-              href="/ranking"
-              title="Ranking de analistas"
-              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
-                pathname === "/ranking"
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-              }`}
-            >
-              <span className="text-sm flex-shrink-0">🏆</span>
-              {sidebarAberta && <span className="truncate">Ranking</span>}
-            </Link>
-          )}
-
-          {/* MARKETING (POSTAGENS & AJUSTES NO SITE) */}
-          {(temPermissao("/marketing") || temPermissao("/marketing/ajustes")) && (
-            <div>
-              <button
-                onClick={() => toggleSecao("marketing")}
-                title="Marketing"
-                className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname?.startsWith("/marketing")
-                    ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
-                    : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-                }`}
-              >
-                <span className="flex items-center gap-3">
-                  <span className="text-sm flex-shrink-0">📣</span>
-                  {sidebarAberta && <span className="truncate">Marketing</span>}
-                </span>
-                {sidebarAberta && (
-                  <span className={`transform transition-transform text-[9px] ${menuExpandido === "marketing" ? "rotate-180" : ""}`}>
-                    ▼
-                  </span>
-                )}
-              </button>
-
-              {sidebarAberta && menuExpandido === "marketing" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
-                  {temPermissao("/marketing") && (
-                    <Link 
-                      href="/marketing" 
-                      className={`block px-2.5 py-1.5 rounded-lg transition-all ${
-                        pathname === "/marketing" 
-                          ? "text-indigo-400 font-bold bg-indigo-950/60" 
-                          : "text-slate-400 hover:text-white"
-                      }`}
-                    >
-                      Postagens
-                    </Link>
-                  )}
-                  {temPermissao("/marketing/ajustes") && (
-                    <Link 
-                      href="/marketing/ajustes" 
-                      className={`block px-2.5 py-1.5 rounded-lg transition-all ${
-                        pathname === "/marketing/ajustes" 
-                          ? "text-indigo-400 font-bold bg-indigo-950/60" 
-                          : "text-slate-400 hover:text-white"
-                      }`}
-                    >
-                      Ajustes no Site
-                    </Link>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* RELATÓRIOS E OPERAÇÃO */}
-          {(temPermissao("/") || temPermissao("/mapeamento") || temPermissao("/ads") || temPermissao("/devolucoes") || temPermissao("/full") || temPermissao("/lives") || temPermissao("/videos") || temPermissao("/analise-mercado") || temPermissao("/concorrentes")) && (
-            <div>
-              <button
-                onClick={() => toggleSecao("relatorios")}
-                title="Relatórios"
-                className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname === "/" || pathname === "/mapeamento" || pathname === "/ads" || pathname === "/devolucoes" || pathname === "/full" || pathname === "/lives" || pathname === "/videos" || pathname === "/analise-mercado" || pathname === "/concorrentes"
-                    ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
-                    : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-                }`}
-              >
-                <span className="flex items-center gap-3">
-                  <span className="text-sm flex-shrink-0">📈</span> 
-                  {sidebarAberta && <span className="truncate">Relatórios</span>}
-                </span>
-                {sidebarAberta && (
-                  <span className={`transform transition-transform text-[9px] ${menuExpandido === "relatorios" ? "rotate-180" : ""}`}>
-                    ▼
-                  </span>
-                )}
-              </button>
-
-              {sidebarAberta && menuExpandido === "relatorios" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
-                  {temPermissao("/") && (
-                    <Link href="/" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Curva ABC
-                    </Link>
-                  )}
-                  {temPermissao("/mapeamento") && (
-                    <Link href="/mapeamento" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/mapeamento" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Mapa de Cadastros
-                    </Link>
-                  )}
-                  {temPermissao("/ads") && (
-                    <Link href="/ads" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/ads" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Adsense
-                    </Link>
-                  )}
-                  {temPermissao("/devolucoes") && (
-                    <Link href="/devolucoes" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/devolucoes" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Devoluções
-                    </Link>
-                  )}
-                  {temPermissao("/full") && (
-                    <Link href="/full" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/full" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Fulfillment
-                    </Link>
-                  )}
-                  {temPermissao("/lives") && (
-                    <Link href="/lives" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/lives" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Lives
-                    </Link>
-                  )}
-                  {temPermissao("/videos") && (
-                    <Link href="/videos" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/videos" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Vídeos
-                    </Link>
-                  )}
-                  {(temPermissao("/concorrentes") || temPermissao("/analise-mercado")) && (
-                    <Link href="/concorrentes" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/concorrentes" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Análise da concorrência
-                    </Link>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* PROMOÇÕES POR CANAL */}
-          {(temPermissao("/promocoes/ml") || temPermissao("/promocoes/shopee") || temPermissao("/promocoes/magalu") || temPermissao("/promocoes/tiktok")) && (
-            <div>
-              <button
-                onClick={() => toggleSecao("promocoes")}
-                title="Promoções"
-                className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname?.startsWith("/promocoes")
-                    ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
-                    : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-                }`}
-              >
-                <span className="flex items-center gap-3">
-                  <span className="text-sm flex-shrink-0">🏷️</span> 
-                  {sidebarAberta && <span className="truncate">Promoções</span>}
-                </span>
-                {sidebarAberta && (
-                  <span className={`transform transition-transform text-[9px] ${menuExpandido === "promocoes" ? "rotate-180" : ""}`}>
-                    ▼
-                  </span>
-                )}
-              </button>
-
-              {sidebarAberta && menuExpandido === "promocoes" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
-                  {temPermissao("/promocoes/ml") && (
-                    <Link href="/promocoes/ml" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/promocoes/ml" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      🟡 Mercado Livre
-                    </Link>
-                  )}
-                  {temPermissao("/promocoes/magalu") && (
-                    <Link href="/promocoes/magalu" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/promocoes/magalu" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      🔵 Magalu
-                    </Link>
-                  )}
-                  {temPermissao("/promocoes/shopee") && (
-                    <Link href="/promocoes/shopee" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/promocoes/shopee" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      🟠 Shopee
-                    </Link>
-                  )}
-                  {temPermissao("/promocoes/tiktok") && (
-                    <Link href="/promocoes/tiktok" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/promocoes/tiktok" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      ⚫ TikTok Shop
-                    </Link>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* FERRAMENTAS */}
-          {(temPermissao("/calculadora") || temPermissao("/produtos") || temPermissao("/padronizacao") || temPermissao("/dimensoes-peso") || temPermissao("/plp") || temPermissao("/checagem-cancelados") || temPermissao("/apresentacao-time")) && (
-            <div>
-              <button
-                onClick={() => toggleSecao("ferramentas")}
-                title="Ferramentas"
-                className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname === "/calculadora" || pathname === "/produtos" || pathname === "/padronizacao" || pathname === "/dimensoes-peso" || pathname === "/plp" || pathname === "/checagem-cancelados" || pathname === "/apresentacao-time"
-                    ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
-                    : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-                }`}
-              >
-                <span className="flex items-center gap-3">
-                  <span className="text-sm flex-shrink-0">🛠️</span> 
-                  {sidebarAberta && <span className="truncate">Ferramentas</span>}
-                </span>
-                {sidebarAberta && (
-                  <span className={`transform transition-transform text-[9px] ${menuExpandido === "ferramentas" ? "rotate-180" : ""}`}>
-                    ▼
-                  </span>
-                )}
-              </button>
-
-              {sidebarAberta && menuExpandido === "ferramentas" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
-                  {temPermissao("/calculadora") && (
-                    <Link href="/calculadora" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/calculadora" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Calculadora
-                    </Link>
-                  )}
-                  {temPermissao("/produtos") && (
-                    <Link href="/produtos" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/produtos" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Novos Cadastros
-                    </Link>
-                  )}
-                  {temPermissao("/padronizacao") && (
-                    <Link href="/padronizacao" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/padronizacao" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Padronização IA
-                    </Link>
-                  )}
-                  {temPermissao("/dimensoes-peso") && (
-                    <Link href="/dimensoes-peso" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/dimensoes-peso" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Dimensões e Peso
-                    </Link>
-                  )}
-                  {temPermissao("/plp") && (
-                    <Link href="/plp" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/plp" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      PLPs (Expedição)
-                    </Link>
-                  )}
-                  {temPermissao("/checagem-cancelados") && (
-                    <Link href="/checagem-cancelados" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/checagem-cancelados" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Checagem de Cancelados
-                    </Link>
-                  )}
-                  {temPermissao("/apresentacao-time") && (
-                    <Link href="/apresentacao-time" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/apresentacao-time" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Apresentação Time
-                    </Link>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* COMPRAS */}
-          {temPermissao("/compras") && (
-            <Link
-              href="/compras"
-              title="Compras"
-              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
-                pathname === "/compras"
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold"
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-              }`}
-            >
-              <span className="text-sm flex-shrink-0">🛒</span>
-              {sidebarAberta && <span className="truncate">Compras</span>}
-            </Link>
-          )}
-
-          {/* AGENDA */}
-          {temPermissao("/agenda") && (
-            <Link
-              href="/agenda"
-              title="Agenda"
-              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
-                pathname === "/agenda" 
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold" 
-                  : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-              }`}
-            >
-              <span className="text-sm flex-shrink-0">📅</span>
-              {sidebarAberta && <span className="truncate">Agenda</span>}
-            </Link>
-          )}
-
-          {/* CONFIGURAÇÕES & ADMIN */}
-          {(temPermissao("/regras") || temPermissao("/upload") || temPermissao("/admin")) && (
-            <div>
-              <button
-                onClick={() => toggleSecao("config")}
-                title="Configurações"
-                className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                  pathname === "/regras" || pathname === "/upload" || pathname === "/admin"
-                    ? "bg-indigo-950/40 text-indigo-400 font-bold border border-indigo-900/40"
-                    : "text-slate-400 hover:text-white hover:bg-slate-900/60"
-                }`}
-              >
-                <span className="flex items-center gap-3">
-                  <span className="text-sm flex-shrink-0">⚙️</span> 
-                  {sidebarAberta && <span className="truncate">Configurações</span>}
-                </span>
-                {sidebarAberta && (
-                  <span className={`transform transition-transform text-[9px] ${menuExpandido === "config" ? "rotate-180" : ""}`}>
-                    ▼
-                  </span>
-                )}
-              </button>
-
-              {sidebarAberta && menuExpandido === "config" && (
-                <div className="pl-7 space-y-1 mt-1 border-l border-slate-800/80 ml-3 py-1">
-                  {temPermissao("/regras") && (
-                    <Link href="/regras" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/regras" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Regras Gerais
-                    </Link>
-                  )}
-                  {temPermissao("/upload") && (
-                    <Link href="/upload" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/upload" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Uploads Base
-                    </Link>
-                  )}
-                  {temPermissao("/admin") && (
-                    <Link href="/admin" className={`block px-2.5 py-1.5 rounded-lg transition-all ${pathname === "/admin" ? "text-indigo-400 font-bold bg-indigo-950/60" : "text-slate-400 hover:text-white"}`}>
-                      Painel Admin
-                    </Link>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+              </div>
+            );
+          })}
 
         </div>
 

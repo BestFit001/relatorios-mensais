@@ -2,57 +2,81 @@
 // Usada pelo Painel Admin (marcar permissões) e pelo Navbar (o admin enxerga tudo).
 // Ao criar uma aba nova: acrescente aqui e coloque o link no Navbar.
 
-export interface RotaMenu { id: string; nome: string }
-export interface SecaoMenu { titulo: string; /** false = a aba fica solta no menu, sem submenu */ submenu: boolean; rotas: RotaMenu[] }
+export interface RotaMenu {
+  id: string; nome: string;
+  /** emoji antes do nome no submenu (ex.: as promoções por canal) */
+  prefixo?: string;
+  /** texto no menu lateral, quando diferente do nome usado nas permissões */
+  rotulo?: string;
+  /** true = só existe como permissão; não aparece como link no menu (ex.: aba que vive dentro de outra) */
+  oculta?: boolean;
+}
+export interface SecaoMenu { titulo: string; icone: string; /** false = a aba fica solta no menu, sem submenu */ submenu: boolean; rotas: RotaMenu[] }
 
 /** O Início (/inicio) aparece para qualquer usuário logado; não depende de permissão. */
 export const ROTA_INICIO: RotaMenu = { id: "/inicio", nome: "Início" };
 
 export const SECOES_MENU: SecaoMenu[] = [
-  { titulo: "Dashboard", submenu: true, rotas: [
+  { titulo: "Dashboard", icone: "📊", submenu: true, rotas: [
     { id: "/dashboard", nome: "Simplificado" },
     { id: "/executivo", nome: "Executivo" },
   ] },
-  { titulo: "Reputação", submenu: false, rotas: [{ id: "/reputacao", nome: "Reputação" }] },
-  { titulo: "Ranking", submenu: false, rotas: [{ id: "/ranking", nome: "Ranking" }] },
-  { titulo: "Marketing", submenu: true, rotas: [
-    { id: "/marketing", nome: "Postagens" },
-    { id: "/marketing/ajustes", nome: "Ajustes no Site" },
-  ] },
-  { titulo: "Relatórios", submenu: true, rotas: [
-    { id: "/", nome: "Curva ABC" },
-    { id: "/mapeamento", nome: "Mapa de Cadastros" },
+  { titulo: "Relatórios", icone: "📈", submenu: true, rotas: [
     { id: "/ads", nome: "Adsense" },
-    { id: "/devolucoes", nome: "Devoluções" },
+    { id: "/", nome: "Curva ABC" },
     { id: "/full", nome: "Fulfillment" },
+    { id: "/mapeamento", nome: "Mapa de Cadastros" },
+    { id: "/ranking", nome: "Ranking" },
+    { id: "/reputacao", nome: "Reputação" },
     { id: "/lives", nome: "Lives" },
-    { id: "/videos", nome: "Vídeos" },
-    { id: "/analise-mercado", nome: "Análise de mercado (aba da Análise da concorrência)" },
     { id: "/concorrentes", nome: "Análise da concorrência" },
+    { id: "/analise-mercado", nome: "Análise de mercado (aba da Análise da concorrência)", oculta: true },
   ] },
-  { titulo: "Promoções", submenu: true, rotas: [
-    { id: "/promocoes/ml", nome: "Mercado Livre" },
-    { id: "/promocoes/magalu", nome: "Magazine Luiza" },
-    { id: "/promocoes/shopee", nome: "Shopee" },
-    { id: "/promocoes/tiktok", nome: "TikTok Shop" },
+  { titulo: "Promoções", icone: "🏷️", submenu: true, rotas: [
+    { id: "/promocoes/ml", nome: "Mercado Livre", prefixo: "🟡" },
+    { id: "/promocoes/magalu", nome: "Magazine Luiza", rotulo: "Magalu", prefixo: "🔵" },
+    { id: "/promocoes/shopee", nome: "Shopee", prefixo: "🟠" },
+    { id: "/promocoes/tiktok", nome: "TikTok Shop", prefixo: "⚫" },
   ] },
-  { titulo: "Ferramentas", submenu: true, rotas: [
+  { titulo: "Ferramentas", icone: "🛠️", submenu: true, rotas: [
     { id: "/calculadora", nome: "Calculadora" },
     { id: "/produtos", nome: "Novos Cadastros" },
     { id: "/padronizacao", nome: "Padronização IA" },
-    { id: "/dimensoes-peso", nome: "Dimensões e Peso" },
-    { id: "/plp", nome: "PLPs (Expedição)" },
-    { id: "/checagem-cancelados", nome: "Checagem de Cancelados" },
-    { id: "/apresentacao-time", nome: "Apresentação Time" },
   ] },
-  { titulo: "Compras", submenu: false, rotas: [{ id: "/compras", nome: "Compras" }] },
-  { titulo: "Agenda", submenu: false, rotas: [{ id: "/agenda", nome: "Agenda" }] },
-  { titulo: "Configurações", submenu: true, rotas: [
+  { titulo: "Expedição", icone: "🚚", submenu: true, rotas: [
+    { id: "/devolucoes", nome: "Devoluções" },
+    { id: "/plp", nome: "PLPs" },
+    { id: "/dimensoes-peso", nome: "Dimensões e Peso" },
+  ] },
+  { titulo: "Marketing", icone: "📣", submenu: true, rotas: [
+    { id: "/marketing", nome: "Redes Sociais" },
+    { id: "/videos", nome: "Vídeos E-commerce" },
+    { id: "/apresentacao-time", nome: "Apresentação Time" },
+    { id: "/marketing/ajustes", nome: "Site" },
+  ] },
+  { titulo: "Financeiro", icone: "💰", submenu: true, rotas: [
+    { id: "/checagem-cancelados", nome: "Checagem de Cancelados" },
+  ] },
+  { titulo: "Compras", icone: "🛒", submenu: false, rotas: [{ id: "/compras", nome: "Compras" }] },
+  { titulo: "Gestão", icone: "📅", submenu: true, rotas: [
+    { id: "/agenda", nome: "Agenda" },
+  ] },
+  { titulo: "Configurações", icone: "⚙️", submenu: true, rotas: [
     { id: "/regras", nome: "Regras Gerais" },
     { id: "/upload", nome: "Uploads Base" },
     { id: "/admin", nome: "Painel Admin" },
   ] },
 ];
+
+/** Seção do menu à qual a página atual pertence (a rota mais específica vence: /marketing/ajustes antes de /marketing). */
+export function secaoDoCaminho(caminho: string): string | null {
+  let melhor: { titulo: string; tam: number } | null = null;
+  for (const s of SECOES_MENU) for (const r of s.rotas) {
+    const bate = r.id === "/" ? caminho === "/" : caminho === r.id || caminho.startsWith(r.id + "/");
+    if (bate && (!melhor || r.id.length > melhor.tam)) melhor = { titulo: s.titulo, tam: r.id.length };
+  }
+  return melhor ? melhor.titulo : null;
+}
 
 /** Todas as rotas que dependem de permissão, com o nome completo ("Relatórios › Curva ABC"). */
 export const ROTAS_DISPONIVEIS: RotaMenu[] = SECOES_MENU.flatMap((s) =>
