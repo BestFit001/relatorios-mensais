@@ -1,15 +1,16 @@
-// Chat interno: tipos e funções puras (a tela é app/components/ChatInterno.tsx).
-export const SALA_GERAL = "geral";
+// Chat interno: tipos e funções puras (a tela é app/components/ChatInterno.tsx; o servidor é lib/chatServidor.ts).
+export const SALA_GERAL_ID = "00000000-0000-4000-8000-000000000001";
 export const DIAS_HISTORICO = 7;
 export const MAX_TEXTO = 2000;
 
-export type MensagemChat = { id: string; sala: string; de_email: string; para_email: string | null; texto: string; criado_em: string };
-
-/** Sala da conversa direta entre dois e-mails: a mesma para os dois lados. */
-export function salaDireta(a: string, b: string): string {
-  const [x, y] = [a.trim().toLowerCase(), b.trim().toLowerCase()].sort();
-  return `dm:${x}|${y}`;
-}
+export type TipoMsg = "texto" | "imagem" | "tarefa" | "notificacao" | "produto";
+export type MensagemChat = {
+  id: string; sala_id: string; de_email: string; tipo: TipoMsg; texto: string | null; payload: any | null; criado_em: string; anexo_url: string | null;
+};
+export type SalaChat = {
+  id: string; tipo: "geral" | "dm" | "grupo"; nome: string | null; criado_em: string;
+  membros: { email: string; papel: "admin" | "membro" }[]; nao_lidas: number; ultima: { texto: string; de: string; em: string } | null;
+};
 
 /** Nome para exibir (o cadastro só tem e-mail): "ana.silva@x.com" -> "Ana Silva". */
 export function nomeDoEmail(email: string): string {
@@ -18,16 +19,13 @@ export function nomeDoEmail(email: string): string {
   return nome || email;
 }
 
-/** Instante a partir do qual a mensagem ainda vale (7 dias atrás). */
-export const limiteHistorico = (agora = Date.now()): number => agora - DIAS_HISTORICO * 24 * 60 * 60 * 1000;
-
-export const aindaVale = (m: { criado_em: string }, agora = Date.now()): boolean => new Date(m.criado_em).getTime() >= limiteHistorico(agora);
-
-/** A mensagem é para mim? (sala geral, ou conversa direta em que sou um dos lados) */
-export const mensagemRelevante = (m: MensagemChat, meuEmail: string): boolean => {
-  const eu = meuEmail.trim().toLowerCase();
-  return m.sala === SALA_GERAL || String(m.de_email).toLowerCase() === eu || String(m.para_email || "").toLowerCase() === eu;
-};
+/** Nome da conversa para quem está olhando: geral, nome do grupo ou a outra pessoa da conversa direta. */
+export function nomeDaSala(s: Pick<SalaChat, "tipo" | "nome" | "membros">, meuEmail: string): string {
+  if (s.tipo === "geral") return "Geral";
+  if (s.tipo === "grupo") return s.nome || "Grupo";
+  const outro = s.membros.find((m) => m.email.toLowerCase() !== meuEmail.toLowerCase());
+  return outro ? nomeDoEmail(outro.email) : "Conversa";
+}
 
 const FUSO = "America/Sao_Paulo";
 export const horaSP = (iso: string): string => new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: FUSO });
@@ -41,3 +39,8 @@ export function rotuloDia(iso: string, agora = new Date()): string {
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: FUSO });
 }
 export const chaveDia = (iso: string): string => diaSP(new Date(iso));
+
+/** Para onde levar quem clica num cartão de notificação compartilhado. */
+export function rotaDaNotificacao(tipo: string): string {
+  return tipo === "full" ? "/full" : tipo === "devolucao" ? "/devolucoes" : tipo === "promocao" ? "/promocoes/ml" : tipo === "correcao" ? "/videos" : "/inicio";
+}

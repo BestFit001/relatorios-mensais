@@ -8,6 +8,7 @@ import {
   agoraSP, concluiu, statusPorResponsavel, vencimento, estaAtrasada, ehCiclica, textoCiclo,
   textoAntecedencia, hhmm, diferencaDias, DIAS_SEMANA, inicioCiclo, ocorreNoDia, addDias, diaDaSemana, type Conclusao,
 } from "../../lib/tarefas";
+import { compartilharNoChat } from "../../lib/chatCliente";
 import { registrarPush, temAssinaturaAtiva, suportaPush } from "../../lib/push";
 import { correcoesVisiveis, correcaoConcluida, podeMarcarCanal, type Correcao, type CorrecaoCanal } from "../../lib/videoCorrecoes";
 import { foraDePromocao, type PromoValidade, type MarcaPromovido } from "../../lib/foraPromocao";
@@ -1036,8 +1037,13 @@ export default function InicioPage() {
                 <p className="text-xs text-emerald-400 font-bold">✅ Nada pendente por aqui.</p>
               ) : notifFiltradas.map((n) => (
                 <div key={n.id} className={`border rounded-xl p-3 ${corNivel(n.nivel)}`}>
-                  <div className="text-xs font-bold">{iconeTipo(n.tipo)} {n.titulo}</div>
-                  <div className="text-[11px] opacity-80 mt-0.5">{n.detalhe}</div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold">{iconeTipo(n.tipo)} {n.titulo}</div>
+                      <div className="text-[11px] opacity-80 mt-0.5">{n.detalhe}</div>
+                    </div>
+                    <button type="button" data-enviar-chat-notif title="Enviar esta notificação no chat" onClick={() => compartilharNoChat({ tipo: "notificacao", payload: { tipo: n.tipo, nivel: n.nivel, titulo: n.titulo, detalhe: n.detalhe, canal: n.canal } })} className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-600/60 bg-slate-900/50 text-slate-200 hover:text-white cursor-pointer">💬 Enviar no chat</button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1103,7 +1109,10 @@ export default function InicioPage() {
                       <input type="checkbox" data-minha-conclusao checked={minhaFeita} onChange={() => alternarConclusao(t, meuEmail)} title={minhaFeita ? "Reabrir a minha parte" : "Marcar a minha parte como concluída"} className="mt-1 w-4 h-4 accent-emerald-500 cursor-pointer flex-shrink-0" />
                     )}
                     <div className="min-w-0 flex-1">
-                      <div className={`text-sm font-bold ${feita ? "text-slate-500 line-through" : "text-white"}`}>{cicl && <span title={textoCiclo(t)}>🔁 </span>}{t.titulo}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className={`text-sm font-bold ${feita ? "text-slate-500 line-through" : "text-white"}`}>{cicl && <span title={textoCiclo(t)}>🔁 </span>}{t.titulo}</div>
+                        <button type="button" data-enviar-chat-tarefa title="Enviar esta tarefa no chat" onClick={() => compartilharNoChat({ tipo: "tarefa", tarefa_id: t.id })} className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white cursor-pointer">💬 Enviar no chat</button>
+                      </div>
                       {t.descricao && <div className="text-[11px] text-slate-400 mt-0.5 whitespace-pre-line">{t.descricao}</div>}
 
                       {/* status de cada responsável */}
