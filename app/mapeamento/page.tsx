@@ -41,6 +41,8 @@ interface ItemCadastro {
   status: string;
   grupo: Grupo;
   pres: boolean[]; // presença por canal (mesma ordem de `canais`)
+  nome: string;    // nome do produto (compras_produtos; na falta, a base de custos)
+  marca: string;   // marca (compras_produtos); vazio = sem marca informada
 }
 
 const fmtInt = (n: number) => n.toLocaleString("pt-BR");
@@ -122,12 +124,15 @@ export default function MapeamentoPage() {
     setErro("");
     try {
       // tudo em paralelo; só as colunas necessárias; só o que está presente (presente = true)
-      const [regras, tiny, status, mapas, cfgOcultos] = await Promise.all([
+      const [regras, tiny, status, mapas, cfgOcultos, prodCompras, prodCustos] = await Promise.all([
         supabase.from("config_regras_canais").select("canal").order("id"),
         buscarTudo("cadastros_base_tiny", "sku, estoque"),
         buscarTudo("status_skus_catalogo", "sku, status"),
         buscarTudo("mapeamento_canais_skus", "canal, sku", (q) => q.eq("presente", true)),
         supabase.from("config_regras_tiny").select("coluna").eq("campo", CAMPO_OCULTOS).maybeSingle(),
+        // nome e marca são complemento: se alguma tabela não responder, o mapa continua funcionando sem eles
+        buscarTudo("compras_produtos", "grade, produto, marca").catch(() => [] as any[]),
+        buscarTudo("tabela_custos_skus", "sku, produto").catch(() => [] as any[]),
       ]);
       if (regras.error) throw new Error(regras.error.message);
       setOcultos(new Set(String(cfgOcultos.data?.coluna ?? "").split(",").map((x) => x.trim()).filter(Boolean)));
@@ -154,13 +159,22 @@ export default function MapeamentoPage() {
         arr[i] = true;
       }
 
+      const nomePorSku = new Map<string, string>();
+      for (const c of prodCustos) { const k = normalizarSku(c.sku); const n = String(c.produto || "").trim(); if (k && n) nomePorSku.set(k, n); }
+      const marcaPorSku = new Map<string, string>();
+      for (const c of prodCompras) {
+        const k = normalizarSku(c.grade); if (!k) continue;
+        const n = String(c.produto || "").trim(); if (n) nomePorSku.set(k, n);   // o cadastro de compras tem o nome completo
+        const m = String(c.marca || "").trim(); if (m) marcaPorSku.set(k, m);
+      }
+
       const vazio = new Array(listaCanais.length).fill(false);
       const resultado: ItemCadastro[] = tiny.map((t: any) => {
         const skuNorm = normalizarSku(t.sku);
         const estoque = Number(t.estoque || 0);
         const st = mapaStatus.get(skuNorm) || "Normal";
         const grupo: Grupo = st === "Obsoleto" ? G_OBSOLETO : estoque > 0 ? G_COM_ESTOQUE : G_SEM_ESTOQUE;
-        return { sku: t.sku, skuNorm, estoque, status: st, grupo, pres: presencaPorSku.get(skuNorm) || vazio };
+        return { sku: t.sku, skuNorm, estoque, status: st, grupo, pres: presencaPorSku.get(skuNorm) || vazio, nome: nomePorSku.get(skuNorm) || "", marca: marcaPorSku.get(skuNorm) || "" };
       });
 
       setCanais(listaCanais);

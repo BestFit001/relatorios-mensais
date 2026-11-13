@@ -7,7 +7,7 @@ import Paginacao from "./Paginacao";
 import { paginar } from "../../lib/cadastroCanais";
 import { agruparPorPai, paiDoSku, paiProvavelDe4, validarPai, normalizarSkuPai } from "../../lib/skuPai";
 
-export interface SkuDoMapa { sku: string; skuNorm: string; estoque: number; status: string; pres: boolean[] }
+export interface SkuDoMapa { sku: string; skuNorm: string; estoque: number; status: string; pres: boolean[]; nome?: string; marca?: string }
 interface Props {
   itens: SkuDoMapa[]; visiveis: { canal: string; i: number }[]; loading: boolean;
   /** Grava o SKU como cadastrado no canal (devolve a mensagem de erro, ou null se deu certo). */
@@ -23,7 +23,9 @@ interface Props {
 
 type Marca = 0 | 1 | 2;   // 0 = sem filtro, 1 = cadastrado neste canal, 2 = NÃO cadastrado neste canal
 const fmtInt = (n: number) => n.toLocaleString("pt-BR");
-const normBusca = (v: string) => v.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+const normBusca = (v: string) => String(v ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+const SEM_MARCA = "__sem__";
+const rotuloMarca = (m: string) => (m ? m : "(sem marca)");
 
 export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, onCadastrarVarios, paraExclusao, paiManual, onEditarPai }: Props) {
   const [marcas, setMarcas] = useState<Record<string, Marca>>({});
@@ -31,6 +33,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
   const [estoque, setEstoque] = useState<"TODOS" | "COM" | "SEM">("TODOS");
   const [qtds, setQtds] = useState<Set<number>>(new Set());
   const [busca, setBusca] = useState("");
+  const [marcaSel, setMarcaSel] = useState("");   // "" = todas as marcas; SEM_MARCA = SKUs sem marca informada
   const [exclusao, setExclusao] = useState<"TODOS" | "EXCLUIR" | "MANTIDOS">("TODOS");
   const paraExcluir = (sku: string) => paraExclusao.has(normalizarSkuPai(sku));
   const [visao, setVisao] = useState<"ambos" | "pais" | "filhos">("ambos");   // pais e filhos | só pais | só filhos
@@ -54,6 +57,15 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
     [visiveis, marcas]
   );
 
+  // texto de busca de cada SKU (nome + marca, sem acento) e lista de marcas com quantidade de SKUs
+  const textoBusca = useMemo(() => new Map(itens.map((it) => [it.skuNorm, normBusca(`${it.nome || ""} ${it.marca || ""}`)])), [itens]);
+  const marcasDisponiveis = useMemo(() => {
+    const c = new Map<string, number>();
+    for (const it of itens) { const m = it.marca || ""; c.set(m, (c.get(m) || 0) + 1); }
+    return Array.from(c.entries()).sort((a, b) => (a[0] === "" ? 1 : b[0] === "" ? -1 : a[0].localeCompare(b[0], "pt-BR")));
+  }, [itens]);
+  const temMarca = marcasDisponiveis.some(([m]) => m !== "");
+
   // Todos os SKUs de cada pai (sem filtro): serve para o total de filhos e para o botão "editar pai"
   const filhosPorPai = useMemo(() => {
     const m = new Map<string, SkuDoMapa[]>();
@@ -62,25 +74,30 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
   }, [itens, paiManual]);
 
   // 1ª passada: tudo menos o filtro de quantidade (assim os botões 0, 1, 2… mostram quantos SKUs cada um traria)
-  const { base, histograma } = useMemo(() => {
+  const { base, histograma, matriz } = useMemo(() => {
     const lista: (SkuDoMapa & { cad: number })[] = [];
     const hist = new Array(totalCanais + 1).fill(0);
+    const porMarca = new Map<string, { total: number; pres: number[] }>();   // marca -> SKUs e SKUs cadastrados por canal (com todos os filtros, menos o de marca)
     for (const it of itens) {
       if (status !== "TODOS" && it.status !== status) continue;
       if (estoque === "COM" && !(it.estoque > 0)) continue;
       if (estoque === "SEM" && it.estoque > 0) continue;
       if (exclusao !== "TODOS" && paraExclusao.has(normalizarSkuPai(it.sku)) !== (exclusao === "EXCLUIR")) continue;
-      if (termos.length > 0 && !termos.some((t) => it.skuNorm.includes(t) || paiDoSku(it.sku, paiManual).includes(t))) continue;
+      if (termos.length > 0 && !termos.some((t) => it.skuNorm.includes(t) || paiDoSku(it.sku, paiManual).includes(t) || (textoBusca.get(it.skuNorm) || "").includes(t))) continue;
       let ok = true;
       for (const m of marcasAtivas) { if ((m.marca === 1) !== !!it.pres[m.i]) { ok = false; break; } }
       if (!ok) continue;
+      const mk = it.marca || "";
+      let reg = porMarca.get(mk); if (!reg) { reg = { total: 0, pres: new Array(visiveis.length).fill(0) }; porMarca.set(mk, reg); }
+      reg.total++; visiveis.forEach((v, k) => { if (it.pres[v.i]) reg!.pres[k]++; });
+      if (marcaSel && (marcaSel === SEM_MARCA ? mk !== "" : mk !== marcaSel)) continue;
       let cad = 0;
       for (const v of visiveis) if (it.pres[v.i]) cad++;
       hist[cad]++;
       lista.push({ ...it, cad });
     }
-    return { base: lista, histograma: hist };
-  }, [itens, visiveis, totalCanais, status, estoque, exclusao, paraExclusao, termos, marcasAtivas, paiManual]);
+    return { base: lista, histograma: hist, matriz: Array.from(porMarca.entries()).sort((a, b) => b[1].total - a[1].total) };
+  }, [itens, visiveis, totalCanais, status, estoque, exclusao, paraExclusao, termos, marcasAtivas, paiManual, textoBusca, marcaSel]);
 
   const filtrados = useMemo(() => (qtds.size === 0 ? base : base.filter((it) => qtds.has(it.cad))), [base, qtds]);
   const grupos = useMemo(() => agruparPorPai(filtrados, (it) => it.sku, paiManual), [filtrados, paiManual]);
@@ -91,8 +108,8 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
 
   const alternarMarca = (canal: string) => setMarcas((m) => ({ ...m, [canal]: (((m[canal] || 0) + 1) % 3) as Marca }));
   const alternarQtd = (n: number) => setQtds((s) => { const novo = new Set(s); if (novo.has(n)) novo.delete(n); else novo.add(n); return novo; });
-  const limpar = () => { setMarcas({}); setStatus("TODOS"); setEstoque("TODOS"); setExclusao("TODOS"); setQtds(new Set()); setBusca(""); setPagina(1); };
-  const haFiltro = marcasAtivas.length > 0 || status !== "TODOS" || estoque !== "TODOS" || exclusao !== "TODOS" || qtds.size > 0 || busca.trim() !== "";
+  const limpar = () => { setMarcas({}); setStatus("TODOS"); setEstoque("TODOS"); setExclusao("TODOS"); setQtds(new Set()); setBusca(""); setMarcaSel(""); setPagina(1); };
+  const haFiltro = marcasAtivas.length > 0 || status !== "TODOS" || estoque !== "TODOS" || exclusao !== "TODOS" || qtds.size > 0 || busca.trim() !== "" || marcaSel !== "";
 
   const confirmarCadastro = async () => {
     if (!perguntando) return;
@@ -127,9 +144,9 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
 
   const baixarCsv = () => {
     const esc = (v: any) => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const cab = ["SKU pai", "SKU", "Status", "Exclusão", "Estoque", "Canais cadastrados", "Total de canais", ...visiveis.map((v) => v.canal)];
+    const cab = ["SKU pai", "SKU", "Produto", "Marca", "Status", "Exclusão", "Estoque", "Canais cadastrados", "Total de canais", ...visiveis.map((v) => v.canal)];
     const ordenados = filhosOrdenados;
-    const linhas = ordenados.map((it) => [paiDoSku(it.sku, paiManual).toUpperCase(), it.sku, it.status, paraExcluir(it.sku) ? "Para exclusão" : "Mantido", it.estoque, it.cad, totalCanais, ...visiveis.map((v) => (it.pres[v.i] ? "Sim" : "Não"))]);
+    const linhas = ordenados.map((it) => [paiDoSku(it.sku, paiManual).toUpperCase(), it.sku, it.nome || "", it.marca || "", it.status, paraExcluir(it.sku) ? "Para exclusão" : "Mantido", it.estoque, it.cad, totalCanais, ...visiveis.map((v) => (it.pres[v.i] ? "Sim" : "Não"))]);
     const csv = "﻿" + [cab, ...linhas].map((l) => l.map(esc).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a"); a.href = url; a.download = "skus_por_canal.csv"; a.click();
@@ -155,7 +172,11 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
 
   const linhaSku = (it: SkuDoMapa & { cad: number }, recuo: boolean) => (
     <tr key={it.sku} className="hover:bg-slate-800/40 transition-colors">
-      <td className={`p-3.5 font-mono font-bold text-slate-200 ${recuo ? "pl-10" : ""}`}>{it.sku}</td>
+      <td className={`p-3.5 ${recuo ? "pl-10" : ""}`}>
+        <span className="block font-mono font-bold text-slate-200">{it.sku}</span>
+        {it.nome && <span data-nome-produto className="block text-[11px] font-medium text-slate-300 max-w-[360px] truncate" title={it.nome}>{it.nome}</span>}
+        {it.marca && <span data-marca-produto className="block text-[10px] font-bold text-indigo-300">{it.marca}</span>}
+      </td>
       {!agrupar && <td className="p-3.5 font-mono text-slate-400">{paiDoSku(it.sku, paiManual).toUpperCase()}</td>}
       <td className="p-3.5 text-center">
         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${it.status === "Obsoleto" ? "bg-rose-950/60 text-rose-400 border border-rose-900/50" : "bg-emerald-950/60 text-emerald-400 border border-emerald-900/50"}`}>{it.status}</span>
@@ -175,9 +196,18 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-5">
         <div className="flex flex-wrap items-end gap-4">
           <div className="flex-1 min-w-[260px]">
-            <label className={rotulo}>Pesquisar SKU ou SKU pai:</label>
-            <input type="text" value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} placeholder="Ex: 20872, SKU002..." className="border border-slate-700 rounded-xl p-2.5 w-full text-xs font-semibold bg-slate-950 text-white outline-none" />
+            <label className={rotulo}>Pesquisar SKU, SKU pai ou nome do produto:</label>
+            <input type="text" value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} placeholder="Ex: 20872, garrafa, farm..." className="border border-slate-700 rounded-xl p-2.5 w-full text-xs font-semibold bg-slate-950 text-white outline-none" />
           </div>
+          {temMarca && (
+            <div>
+              <label className={rotulo}>Marca:</label>
+              <select data-f="marca" value={marcaSel} onChange={(e) => { setMarcaSel(e.target.value); setPagina(1); }} className={campo + " max-w-[220px]"}>
+                <option value="">Todas as marcas</option>
+                {marcasDisponiveis.map(([m, n]) => <option key={m || SEM_MARCA} value={m || SEM_MARCA}>{rotuloMarca(m)} ({fmtInt(n)})</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label className={rotulo}>Status:</label>
             <select data-f="status" value={status} onChange={(e) => { setStatus(e.target.value as any); setPagina(1); }} className={campo}>
@@ -241,6 +271,40 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
         </div>
       </div>
 
+      {/* MARCAS POR CANAL */}
+      {temMarca && matriz.length > 0 && (
+        <details data-marcas-canal className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl group">
+          <summary className="p-5 cursor-pointer list-none flex flex-wrap items-center justify-between gap-2">
+            <span><span className="text-base font-bold text-white">Marcas por canal</span> <span className="text-xs text-slate-400">· quantos SKUs de cada marca estão cadastrados em cada canal (respeita os filtros acima, menos o de marca)</span></span>
+            <span className="text-xs font-bold text-indigo-300 group-open:hidden">Mostrar</span><span className="text-xs font-bold text-indigo-300 hidden group-open:inline">Ocultar</span>
+          </summary>
+          <div className="overflow-x-auto max-h-[60vh] border-t border-slate-800">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead className="bg-slate-950 sticky top-0 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
+                <tr><th className="p-3">Marca</th><th className="p-3 text-right">SKUs</th>{visiveis.map(({ canal }) => <th key={canal} className="p-3 text-center">{canal}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60">
+                {matriz.map(([m, r]) => (
+                  <tr key={m || SEM_MARCA} data-marca-linha={m || SEM_MARCA} className={marcaSel === (m || SEM_MARCA) ? "bg-indigo-950/30" : "hover:bg-slate-800/40"}>
+                    <td className="p-3"><button type="button" onClick={() => { setMarcaSel(marcaSel === (m || SEM_MARCA) ? "" : (m || SEM_MARCA)); setPagina(1); }} title="Clique para filtrar só esta marca" className="font-bold text-slate-100 hover:text-indigo-300 cursor-pointer text-left">{rotuloMarca(m)}</button></td>
+                    <td className="p-3 text-right font-mono text-slate-300">{fmtInt(r.total)}</td>
+                    {r.pres.map((n, k) => {
+                      const pct = r.total > 0 ? (n / r.total) * 100 : 0;
+                      return (
+                        <td key={k} data-celula-marca={`${m || SEM_MARCA}|${visiveis[k].canal}`} className="p-3 text-center font-mono" style={{ background: n === 0 ? "rgba(244,63,94,.10)" : `rgba(16,185,129,${0.08 + (pct / 100) * 0.32})` }}>
+                          <span className={n === 0 ? "text-rose-300 font-bold" : "text-emerald-200 font-bold"}>{fmtInt(n)}</span>
+                          <span className="block text-[10px] text-slate-400">{pct.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}%</span>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
       {/* RESULTADO */}
       <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
         <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
@@ -292,6 +356,15 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
                                 ) : (
                                   <div className="flex flex-wrap items-center gap-3">
                                     <span className="font-mono font-black text-indigo-300 text-sm">{g.pai.toUpperCase()}</span>
+                                    {(() => {
+                                      const todos = filhosPorPai.get(g.pai) || [];
+                                      const nome = todos.find((x) => x.nome)?.nome;
+                                      const marcasPai = Array.from(new Set(todos.map((x) => x.marca).filter(Boolean)));
+                                      return (<>
+                                        {nome && <span data-nome-pai className="text-xs font-semibold text-slate-200 max-w-[340px] truncate" title={nome}>{nome}</span>}
+                                        {marcasPai.map((m) => <span key={m} className="text-[10px] font-bold text-indigo-300 bg-indigo-950/50 border border-indigo-900/60 rounded px-2 py-0.5">{m}</span>)}
+                                      </>);
+                                    })()}
                                     <span className="text-[11px] text-slate-400">{g.itens.length === total ? `${total} ${total === 1 ? "filho" : "filhos"}` : `${g.itens.length} de ${total} filhos`}</span>
                                     {(() => { const n = (filhosPorPai.get(g.pai) || []).filter((it) => paraExcluir(it.sku)).length; return n > 0 ? <span data-tag-exclusao-pai className="text-[10px] font-bold text-amber-300 bg-amber-950/60 border border-amber-800/60 rounded px-2 py-0.5">Para exclusão: {n === total ? "todos" : `${n} de ${total}`}</span> : null; })()}
                                     {sug && <span className="text-[10px] font-bold text-amber-300 bg-amber-950/40 border border-amber-900/50 rounded px-2 py-0.5" title="SKUs de 10 dígitos costumam ter pai de 4 dígitos">⚠ pai pode ter 4 dígitos ({sug.toUpperCase()})</span>}
