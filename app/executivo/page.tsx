@@ -703,7 +703,7 @@ export default function PainelExecutivoPage() {
       const fullHeight = tableRef.current.scrollHeight;
 
       const blob = await toBlob(tableRef.current, {
-        backgroundColor: '#0f172a',
+        backgroundColor: '#0a0a0a',
         width: fullWidth,
         height: fullHeight,
         style: {

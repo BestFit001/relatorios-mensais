@@ -59,7 +59,7 @@ function GraficoLinhas({ pontos, linhas, formato, destaque, titulo }: { pontos: 
     <div data-evolucao>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" role="img" aria-label={titulo}>
         {[0, 1, 2, 3].map((i) => { const v = min + ((max - min) * i) / 3; return (
-          <g key={i}><line x1={PL} x2={W - PR} y1={y(v)} y2={y(v)} stroke="#1e293b" strokeWidth="1" /><text x={PL - 8} y={y(v) + 3} textAnchor="end" fontSize="10" fill="#64748b">{formatar(v, formato)}</text></g>
+          <g key={i}><line x1={PL} x2={W - PR} y1={y(v)} y2={y(v)} stroke="#262626" strokeWidth="1" /><text x={PL - 8} y={y(v) + 3} textAnchor="end" fontSize="10" fill="#64748b">{formatar(v, formato)}</text></g>
         ); })}
         {pontos.map((p, i) => <text key={p.chave} x={x(i)} y={H - 8} textAnchor="middle" fontSize="10" fill={p.chave === destaque ? "#e2e8f0" : "#64748b"}>{p.curto}</text>)}
         {linhas.map((l) => {
@@ -67,7 +67,7 @@ function GraficoLinhas({ pontos, linhas, formato, destaque, titulo }: { pontos: 
           return (
             <g key={l.id} data-linha={l.id}>
               <polyline points={pts.map(([a, b]) => `${a},${b}`).join(" ")} fill="none" stroke={l.cor} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-              {pts.map(([a, b], i) => <circle key={i} cx={a} cy={b} r="3.5" fill="#0f172a" stroke={l.cor} strokeWidth="2"><title>{`${l.rotulo} · ${pontos[i].rotulo}: ${formatar(l.valores[i], formato)}`}</title></circle>)}
+              {pts.map(([a, b], i) => <circle key={i} cx={a} cy={b} r="3.5" fill="#0a0a0a" stroke={l.cor} strokeWidth="2"><title>{`${l.rotulo} · ${pontos[i].rotulo}: ${formatar(l.valores[i], formato)}`}</title></circle>)}
             </g>
           );
         })}
@@ -88,7 +88,7 @@ function Sparkline({ pontos, valores, formato, cor }: { pontos: Ponto[]; valores
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-14" data-sparkline>
       <polyline points={valores.map((v, i) => `${x(i)},${y(v)}`).join(" ")} fill="none" stroke={cor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-      {valores.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r={i === valores.length - 1 ? 3.5 : 2.2} fill={i === valores.length - 1 ? cor : "#0f172a"} stroke={cor} strokeWidth="1.5"><title>{`${pontos[i].rotulo}: ${formatar(v, formato)}`}</title></circle>)}
+      {valores.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r={i === valores.length - 1 ? 3.5 : 2.2} fill={i === valores.length - 1 ? cor : "#0a0a0a"} stroke={cor} strokeWidth="1.5"><title>{`${pontos[i].rotulo}: ${formatar(v, formato)}`}</title></circle>)}
     </svg>
   );
 }

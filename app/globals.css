@@ -2,7 +2,7 @@
 
 /* ==========================================================================
    HUB BEST FIT — SISTEMA DE DESIGN
-   Ideia: painel de instrumentos, sóbrio e legível. Grafite neutro no escuro, papel frio no claro,
+   Ideia: painel de instrumentos, sóbrio e legível. Preto neutro no escuro, papel frio no claro,
    uma única cor de marca (índigo), tipografia IBM Plex (números tabulares) e cantos mais contidos.
    Como o site inteiro usa classes do Tailwind (slate, rounded, font-bold...), a base é redefinida
    aqui no tema: todas as telas herdam a nova paleta, fonte, cantos e pesos sem mexer em cada página.
@@ -11,29 +11,29 @@
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* neutros (escuro): grafite com um fio de azul, menos "azul-marinho" que o slate padrão */
-  --color-slate-50: #f5f7fa;
-  --color-slate-100: #e9edf3;
-  --color-slate-200: #d3dae4;
-  --color-slate-300: #aeb8c7;
-  --color-slate-400: #8c98ab;
-  --color-slate-500: #78849a;
-  --color-slate-600: #556074;
-  --color-slate-700: #38414f;
-  --color-slate-800: #262e3b;
-  --color-slate-900: #1a212c;
-  --color-slate-950: #11161e;
-  --color-gray-50: #f5f7fa;
-  --color-gray-100: #e9edf3;
-  --color-gray-200: #d3dae4;
-  --color-gray-300: #aeb8c7;
-  --color-gray-400: #8c98ab;
-  --color-gray-500: #78849a;
-  --color-gray-600: #556074;
-  --color-gray-700: #38414f;
-  --color-gray-800: #262e3b;
-  --color-gray-900: #1a212c;
-  --color-gray-950: #11161e;
+  /* neutros (escuro): preto e cinzas puros, sem tom de azul */
+  --color-slate-50: #fafafa;
+  --color-slate-100: #efefef;
+  --color-slate-200: #dadada;
+  --color-slate-300: #b5b5b5;
+  --color-slate-400: #949494;
+  --color-slate-500: #808080;
+  --color-slate-600: #626262;
+  --color-slate-700: #3b3b3b;
+  --color-slate-800: #262626;
+  --color-slate-900: #141414;
+  --color-slate-950: #0a0a0a;
+  --color-gray-50: #fafafa;
+  --color-gray-100: #efefef;
+  --color-gray-200: #dadada;
+  --color-gray-300: #b5b5b5;
+  --color-gray-400: #949494;
+  --color-gray-500: #808080;
+  --color-gray-600: #626262;
+  --color-gray-700: #3b3b3b;
+  --color-gray-800: #262626;
+  --color-gray-900: #141414;
+  --color-gray-950: #0a0a0a;
 
   /* marca: índigo um pouco mais fundo que o padrão */
   --color-indigo-400: #8f9cf5;
@@ -60,14 +60,14 @@
 
 :root {
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --bg: #0c1016;
-  --aside-bg: #0a0d12;
-  --surface: #161c26;
-  --line: #242c39;
-  --text: #e9edf3;
-  --text-2: #98a3b6;
-  --text-3: #78849a;
-  --hover: rgb(255 255 255 / 0.05);
+  --bg: #000000;
+  --aside-bg: #050505;
+  --surface: #121212;
+  --line: #262626;
+  --text: #f2f2f2;
+  --text-2: #aaaaaa;
+  --text-3: #8c8c8c;
+  --hover: rgb(255 255 255 / 0.06);
   --accent: #6573ee;
   --accent-soft: rgb(101 115 238 / 0.14);
   --accent-text: #b4bdfb;
@@ -115,6 +115,12 @@ h1 { letter-spacing: -0.02em; }
   outline-offset: 2px;
 }
 :where(input, select, textarea):focus-visible { outline-offset: 0; }
+
+/* Azul-marinho fixo (cores escritas direto nas telas) -> preto neutro, só no modo escuro */
+html:not(.light) .bg-\[\#07090e\], html:not(.light) .bg-\[\#0d0f18\], html:not(.light) .bg-\[\#0b0e14\] { background-color: var(--bg); }
+html:not(.light) .bg-\[\#131625\] { background-color: var(--surface); }
+html:not(.light) .bg-\[\#1b1f38\] { background-color: #1c1c1c; }
+html:not(.light) .hover\:bg-\[\#1b1f38\]\/50:hover { background-color: rgb(255 255 255 / 0.04); }
 
 /* Barras de rolagem discretas */
 * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-3) 45%, transparent) transparent; }
@@ -401,7 +407,7 @@ html.light .hub-aside { box-shadow: 1px 0 0 var(--line), 4px 0 16px rgb(16 24 40
 .login-form-lado { display: flex; align-items: center; justify-content: center; padding: 2rem 1.5rem; }
 @media (min-width: 1024px) {
   .login-raiz { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
-  .login-lado { display: flex; flex-direction: column; justify-content: space-between; padding: 2.5rem 3rem; background: #151a33; background-image: linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 40%), repeating-linear-gradient(0deg, transparent 0 47px, rgb(255 255 255 / 0.022) 47px 48px); color: #e7eafd; border-right: 1px solid rgb(255 255 255 / 0.06); }
+  .login-lado { display: flex; flex-direction: column; justify-content: space-between; padding: 2.5rem 3rem; background: #070707; background-image: linear-gradient(180deg, rgb(255 255 255 / 0.04), transparent 40%), repeating-linear-gradient(0deg, transparent 0 47px, rgb(255 255 255 / 0.025) 47px 48px); color: #f0f0f0; border-right: 1px solid rgb(255 255 255 / 0.08); }
 }
 .login-marca { display: flex; align-items: center; gap: 0.75rem; font-weight: 600; font-size: 1rem; letter-spacing: -0.01em; color: #fff; }
 .login-logo { width: 2.25rem; height: 2.25rem; border-radius: 0.5rem; background: #5b6cf2; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.25); }
@@ -409,8 +415,8 @@ html.light .hub-aside { box-shadow: 1px 0 0 var(--line), 4px 0 16px rgb(16 24 40
 .login-lista { list-style: none; margin: 2rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.875rem; max-width: 26rem; }
 .login-lista li { display: flex; flex-direction: column; gap: 2px; padding-left: 0.875rem; border-left: 2px solid #5b6cf2; }
 .login-lista strong { font-weight: 600; font-size: 0.9375rem; color: #fff; }
-.login-lista span { font-size: 0.8125rem; color: #aab2e6; }
-.login-rodape { font-size: 0.75rem; color: #8e97d4; margin: 0; }
+.login-lista span { font-size: 0.8125rem; color: #b4b4b4; }
+.login-rodape { font-size: 0.75rem; color: #8f8f8f; margin: 0; }
 html.light .login-form-lado { background: #fff; }
 
 /* cartões com degradê de pontas escuras (viram pastel no claro): texto normal, não branco */

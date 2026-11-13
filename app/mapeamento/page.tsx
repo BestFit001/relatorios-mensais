@@ -57,7 +57,7 @@ function Rosca({ valores, total }: { valores: number[]; total: number }) {
   let acumulado = 0;
   return (
     <svg viewBox="0 0 200 200" className="w-52 h-52 shrink-0" role="img" aria-label="Distribuição dos SKUs cadastrados">
-      <circle cx="100" cy="100" r={R} fill="none" stroke="#1e293b" strokeWidth="26" />
+      <circle cx="100" cy="100" r={R} fill="none" stroke="#262626" strokeWidth="26" />
       {total > 0 &&
         valores.map((v, i) => {
           if (v <= 0) return null;
