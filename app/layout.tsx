@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import AlertaTarefasGlobal from "./components/AlertaTarefasGlobal";
 import AvisoConstrucao from "./components/AvisoConstrucao";
+import ChatInterno from "./components/ChatInterno";
 
 export const metadata: Metadata = {
   title: "Hub Best Fit",
@@ -25,6 +26,7 @@ export default function RootLayout({
         {children}
         <AlertaTarefasGlobal />
         <AvisoConstrucao />
+        <ChatInterno />
       </body>
     </html>
   );
