@@ -1,5 +1,5 @@
 "use client";
-// Ranking de analistas: progressão, cadastros, liquidez, ticket médio, mais vendidos por canal e ads, mês a mês e comparando meses.
+// Ranking de analistas: progressão, cadastros, liquidez, ticket médio, mais vendidos por canal e ads, por mês fechado, últimos 7/15/30 dias ou período personalizado, com comparação.
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
@@ -7,9 +7,13 @@ import Navbar from "../components/Navbar";
 import Avatar from "../components/Avatar";
 import { calcularResumoCanais, TABELAS_RESUMO, type ResumoCanal } from "../../lib/resumoCanais";
 import {
-  METRICAS, MENOR_E_MELHOR, agruparPorAnalista, chaveCanal, classificar, formatar, mesesTerminandoEm, novosCadastrosPorMes, rotuloMes, rotuloMesCurto, totalizar, valorDa, variacao,
-  type AnalistaRanking, type Formato, type MetricaId, type Totais,
+  METRICAS, MENOR_E_MELHOR, agruparPorAnalista, chaveCanal, classificar, contarNoPeriodo, datasDeCadastro, formatar, mesesTerminandoEm, totalizar, valorDa, variacao,
+  type AnalistaRanking, type Formato, type MetricaId,
 } from "../../lib/ranking";
+import {
+  OPCOES_PERIODO, descreverPeriodo, hojeSP, janelasDeEvolucao, resolverComparacao, resolverPeriodo, unidadeEvolucao,
+  type PeriodoResolvido, type PeriodoSel, type TipoPeriodo,
+} from "../../lib/periodoRanking";
 
 async function buscarTudo(tabela: string): Promise<any[]> {
   const todas: any[] = [];
@@ -22,7 +26,7 @@ async function buscarTudo(tabela: string): Promise<any[]> {
   return todas;
 }
 
-const mesAtual = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }).slice(0, 7);
+const mesAtual = () => hojeSP().slice(0, 7);
 const CORES = ["#6366f1", "#10b981", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444", "#14b8a6"];
 const MEDALHAS = ["🥇", "🥈", "🥉"];
 
@@ -40,13 +44,15 @@ function Delta({ atual, anterior, metrica }: { atual: number; anterior: number |
 }
 
 type LinhaGrafico = { id: string; rotulo: string; cor: string; email?: string | null; valores: number[] };
+/** Um ponto do eixo: um mês ou uma janela de dias. */
+type Ponto = { chave: string; rotulo: string; curto: string };
 
-/** Gráfico de linhas (um ponto por mês). */
-function GraficoLinhas({ meses, linhas, formato, mesDestaque, titulo }: { meses: string[]; linhas: LinhaGrafico[]; formato: Formato; mesDestaque: string; titulo: string }) {
+/** Gráfico de linhas (um ponto por mês ou por janela de dias). */
+function GraficoLinhas({ pontos, linhas, formato, destaque, titulo }: { pontos: Ponto[]; linhas: LinhaGrafico[]; formato: Formato; destaque: string; titulo: string }) {
   const valores = linhas.flatMap((l) => l.valores);
   const max = Math.max(...valores, 1), min = Math.min(0, ...valores);
   const W = 720, H = 250, PL = 70, PR = 16, PT = 14, PB = 30;
-  const x = (i: number) => PL + (i * (W - PL - PR)) / Math.max(1, meses.length - 1);
+  const x = (i: number) => PL + (i * (W - PL - PR)) / Math.max(1, pontos.length - 1);
   const y = (v: number) => PT + (1 - (v - min) / (max - min || 1)) * (H - PT - PB);
   return (
     <div data-evolucao>
@@ -54,13 +60,13 @@ function GraficoLinhas({ meses, linhas, formato, mesDestaque, titulo }: { meses:
         {[0, 1, 2, 3].map((i) => { const v = min + ((max - min) * i) / 3; return (
           <g key={i}><line x1={PL} x2={W - PR} y1={y(v)} y2={y(v)} stroke="#1e293b" strokeWidth="1" /><text x={PL - 8} y={y(v) + 3} textAnchor="end" fontSize="10" fill="#64748b">{formatar(v, formato)}</text></g>
         ); })}
-        {meses.map((m, i) => <text key={m} x={x(i)} y={H - 8} textAnchor="middle" fontSize="10" fill={m === mesDestaque ? "#e2e8f0" : "#64748b"}>{rotuloMesCurto(m)}</text>)}
+        {pontos.map((p, i) => <text key={p.chave} x={x(i)} y={H - 8} textAnchor="middle" fontSize="10" fill={p.chave === destaque ? "#e2e8f0" : "#64748b"}>{p.curto}</text>)}
         {linhas.map((l) => {
           const pts = l.valores.map((v, i) => [x(i), y(v)] as const);
           return (
             <g key={l.id} data-linha={l.id}>
               <polyline points={pts.map(([a, b]) => `${a},${b}`).join(" ")} fill="none" stroke={l.cor} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-              {pts.map(([a, b], i) => <circle key={i} cx={a} cy={b} r="3.5" fill="#0f172a" stroke={l.cor} strokeWidth="2"><title>{`${l.rotulo} · ${rotuloMes(meses[i])}: ${formatar(l.valores[i], formato)}`}</title></circle>)}
+              {pts.map(([a, b], i) => <circle key={i} cx={a} cy={b} r="3.5" fill="#0f172a" stroke={l.cor} strokeWidth="2"><title>{`${l.rotulo} · ${pontos[i].rotulo}: ${formatar(l.valores[i], formato)}`}</title></circle>)}
             </g>
           );
         })}
@@ -73,7 +79,7 @@ function GraficoLinhas({ meses, linhas, formato, mesDestaque, titulo }: { meses:
 }
 
 /** Mini gráfico de um canal (cabe dentro do cartão). */
-function Sparkline({ meses, valores, formato, cor }: { meses: string[]; valores: number[]; formato: Formato; cor: string }) {
+function Sparkline({ pontos, valores, formato, cor }: { pontos: Ponto[]; valores: number[]; formato: Formato; cor: string }) {
   const max = Math.max(...valores, 1), min = Math.min(0, ...valores);
   const W = 220, H = 56, P = 6;
   const x = (i: number) => P + (i * (W - 2 * P)) / Math.max(1, valores.length - 1);
@@ -81,7 +87,7 @@ function Sparkline({ meses, valores, formato, cor }: { meses: string[]; valores:
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-14" data-sparkline>
       <polyline points={valores.map((v, i) => `${x(i)},${y(v)}`).join(" ")} fill="none" stroke={cor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-      {valores.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r={i === valores.length - 1 ? 3.5 : 2.2} fill={i === valores.length - 1 ? cor : "#0f172a"} stroke={cor} strokeWidth="1.5"><title>{`${rotuloMes(meses[i])}: ${formatar(v, formato)}`}</title></circle>)}
+      {valores.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r={i === valores.length - 1 ? 3.5 : 2.2} fill={i === valores.length - 1 ? cor : "#0f172a"} stroke={cor} strokeWidth="1.5"><title>{`${pontos[i].rotulo}: ${formatar(v, formato)}`}</title></circle>)}
     </svg>
   );
 }
@@ -104,6 +110,48 @@ function Barras({ titulo, itens, formato }: { titulo: string; itens: { id: strin
   );
 }
 
+/** Escolha do período: mês fechado, últimos 7/15/30 dias ou datas livres (na comparação, também "período anterior equivalente"). */
+function SeletorPeriodo({ rotulo, valor, onChange, prefixo, opcoesMes, comAnterior, resolvido }: {
+  rotulo: string; valor: PeriodoSel; onChange: (v: PeriodoSel) => void; prefixo: "a" | "b"; opcoesMes: string[]; comAnterior?: boolean; resolvido: PeriodoResolvido;
+}) {
+  const campo = "bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500 cursor-pointer block normal-case";
+  const mudar = (p: Partial<PeriodoSel>) => onChange({ ...valor, ...p });
+  const hoje = hojeSP();
+  return (
+    <div className="flex flex-wrap items-end gap-3" data-periodo={prefixo}>
+      <label className="text-[10px] font-bold uppercase text-slate-500 space-y-1 block">{rotulo}
+        <select value={valor.tipo} onChange={(e) => {
+          const tipo = e.target.value as TipoPeriodo;
+          // ao abrir "personalizado", já começa preenchido com o período que estava na tela
+          mudar(tipo === "custom" ? { tipo, inicio: valor.inicio || resolvido.inicio, fim: valor.fim || resolvido.fim } : { tipo });
+        }} data-tipo-periodo={prefixo} className={campo}>
+          {comAnterior && <option value="anterior">Período anterior equivalente</option>}
+          {OPCOES_PERIODO.map((o) => <option key={o.tipo} value={o.tipo}>{o.rotulo}</option>)}
+        </select>
+      </label>
+      {valor.tipo === "mes" && (
+        <label className="text-[10px] font-bold uppercase text-slate-500 space-y-1 block">Mês
+          <select value={valor.mes} onChange={(e) => mudar({ mes: e.target.value })} data-mes={prefixo} {...(prefixo === "a" ? { "data-mes-a": true } : { "data-mes-b": true })} className={campo}>
+            {opcoesMes.map((m) => <option key={m} value={m}>{rotuloMesDoPeriodo(m)}</option>)}
+          </select>
+        </label>
+      )}
+      {valor.tipo === "custom" && (
+        <>
+          <label className="text-[10px] font-bold uppercase text-slate-500 space-y-1 block">De
+            <input type="date" value={valor.inicio} max={hoje} onChange={(e) => mudar({ inicio: e.target.value })} data-data-inicio={prefixo} className={campo} />
+          </label>
+          <label className="text-[10px] font-bold uppercase text-slate-500 space-y-1 block">Até
+            <input type="date" value={valor.fim} max={hoje} onChange={(e) => mudar({ fim: e.target.value })} data-data-fim={prefixo} className={campo} />
+          </label>
+        </>
+      )}
+      <span className="text-[11px] text-slate-400 pb-2" data-periodo-texto={prefixo}>{descreverPeriodo(resolvido)}</span>
+    </div>
+  );
+}
+const rotuloMesDoPeriodo = (m: string) => resolverPeriodo({ tipo: "mes", mes: m, inicio: "", fim: "" }).rotulo;
+
 export default function RankingPage() {
   const router = useRouter();
   const [pronto, setPronto] = useState(false);
@@ -112,13 +160,13 @@ export default function RankingPage() {
   const [mapeamentos, setMapeamentos] = useState<{ email: string; canal: string }[]>([]);
   const [cadCanal, setCadCanal] = useState<Map<string, number>>(new Map());
   const [catalogo, setCatalogo] = useState(0);
-  const [novosPorMes, setNovosPorMes] = useState<Map<string, number>>(new Map());
-  const [mesA, setMesA] = useState(mesAtual());
+  const [datasNovos, setDatasNovos] = useState<string[]>([]);
+  const [selA, setSelA] = useState<PeriodoSel>(() => ({ tipo: "mes", mes: mesAtual(), inicio: "", fim: "" }));
   const [comparar, setComparar] = useState(false);
-  const [mesB, setMesB] = useState(() => mesesTerminandoEm(mesAtual(), 2)[0]);
+  const [selB, setSelB] = useState<PeriodoSel>(() => ({ tipo: "anterior", mes: mesesTerminandoEm(mesAtual(), 2)[0], inicio: "", fim: "" }));
   const [metrica, setMetrica] = useState<MetricaId>("faturado");
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
-  const [serie, setSerie] = useState<{ mes: string; canais: ResumoCanal[] }[] | null>(null);
+  const [serie, setSerie] = useState<{ chave: string; rotulo: string; curto: string; canais: ResumoCanal[] }[] | null>(null);
   const [sel, setSel] = useState<string[]>([]);                 // canais escolhidos para comparar: "<e-mail>|<canal>"
   const [metSel, setMetSel] = useState<MetricaId>("faturado");   // métrica do gráfico de evolução dos canais escolhidos
   const [erro, setErro] = useState("");
@@ -147,7 +195,7 @@ export default function RankingPage() {
         ]);
         const m = new Map<string, number>();
         contagens.forEach(([c, n]) => m.set(chaveCanal(c), (m.get(chaveCanal(c)) || 0) + n));
-        setCadCanal(m); setCatalogo(cat.count || 0); setNovosPorMes(novosCadastrosPorMes(novos));
+        setCadCanal(m); setCatalogo(cat.count || 0); setDatasNovos(datasDeCadastro(novos));
       } catch (e: any) { setErro(e?.message || String(e)); }
       setCarregando(false);
     })();
@@ -158,10 +206,14 @@ export default function RankingPage() {
   const guardarSel = (l: string[]) => { setSel(l); try { localStorage.setItem("ranking_canais_sel", JSON.stringify(l)); } catch { /* ignora */ } };
 
   const cadastrosDe = (canal: string) => cadCanal.get(chaveCanal(canal)) || 0;
-  const calcular = (mes: string): ResumoCanal[] => { try { return db.vendas_canais ? calcularResumoCanais(db, mes) : []; } catch (e) { console.error(e); return []; } };
+  const calcular = (p: PeriodoResolvido): ResumoCanal[] => { try { return db.vendas_canais ? calcularResumoCanais(db, p.mesIso, new Date(), p.datas) : []; } catch (e) { console.error(e); return []; } };
 
-  const resumoA = useMemo(() => calcular(mesA), [db, mesA]);                                  // eslint-disable-line react-hooks/exhaustive-deps
-  const resumoB = useMemo(() => (comparar ? calcular(mesB) : []), [db, mesB, comparar]);       // eslint-disable-line react-hooks/exhaustive-deps
+  // períodos escolhidos (A e, se ligado, B). A chave muda só quando as datas mudam, para não recalcular à toa
+  const hoje = hojeSP();
+  const pA = useMemo(() => resolverPeriodo(selA, hoje), [selA, hoje]);
+  const pB = useMemo(() => resolverComparacao(selB, pA, hoje), [selB, pA, hoje]);
+  const resumoA = useMemo(() => calcular(pA), [db, pA.chave]);                                  // eslint-disable-line react-hooks/exhaustive-deps
+  const resumoB = useMemo(() => (comparar ? calcular(pB) : []), [db, pB.chave, comparar]);       // eslint-disable-line react-hooks/exhaustive-deps
   const listaA = useMemo(() => agruparPorAnalista(resumoA, mapeamentos, cadastrosDe), [resumoA, mapeamentos, cadCanal]);  // eslint-disable-line react-hooks/exhaustive-deps
   const listaB = useMemo(() => agruparPorAnalista(resumoB, mapeamentos, cadastrosDe), [resumoB, mapeamentos, cadCanal]);  // eslint-disable-line react-hooks/exhaustive-deps
   const ranking = useMemo(() => classificar(listaA, metrica), [listaA, metrica]);
@@ -171,17 +223,16 @@ export default function RankingPage() {
   const deB = (email: string | null) => (comparar ? listaB.find((a) => a.email === email)?.total ?? null : null);
   const canalB = (canal: string) => (comparar ? resumoB.find((c) => chaveCanal(c.canal) === chaveCanal(canal)) || null : null);
 
-  // evolução: 6 meses terminando no mês escolhido (calculada depois da tela principal, para não travar)
+  // evolução: 6 meses (ou 6 períodos do mesmo tamanho) terminando no período escolhido, calculada depois da tela principal para não travar
   useEffect(() => {
     if (!db.vendas_canais) return;
     setSerie(null);
     const t = setTimeout(() => {
-      const meses = mesesTerminandoEm(mesA, 6);
-      setSerie(meses.map((mes) => ({ mes, canais: mes === mesA ? resumoA : calcular(mes) })));
+      setSerie(janelasDeEvolucao(pA, 6).map((p) => ({ chave: p.chave, rotulo: p.rotulo, curto: p.curto, canais: p.chave === pA.chave ? resumoA : calcular(p) })));
     }, 60);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, mesA]);
+  }, [db, pA.chave]);
 
   const opcoesMes = useMemo(() => mesesTerminandoEm(mesAtual(), 18).reverse(), []);
   const metricaInfo = METRICAS.find((m) => m.id === metrica)!;
@@ -194,13 +245,14 @@ export default function RankingPage() {
   const seletor = "bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500 cursor-pointer";
 
   // ---- evolução dos analistas e dos canais (6 meses)
-  const mesesSerie = serie ? serie.map((p) => p.mes) : [];
+  const pontosSerie: Ponto[] = serie ? serie.map(({ chave, rotulo, curto }) => ({ chave, rotulo, curto })) : [];
+  const unidade = unidadeEvolucao(pA);
   const totaisDoMes = (p: { canais: ResumoCanal[] }, email: string) => agruparPorAnalista(p.canais, mapeamentos, cadastrosDe).find((a) => a.email === email)?.total;
   const valorCanalNoMes = (p: { canais: ResumoCanal[] }, canal: string, m: MetricaId) => { const c = p.canais.find((x) => chaveCanal(x.canal) === chaveCanal(canal)); return c ? valorDa(totalizar([c], cadastrosDe), m) : 0; };
   const grafico = () => {
-    if (!serie) return <p className="text-xs text-slate-500 py-10 text-center">Calculando a evolução dos últimos 6 meses…</p>;
+    if (!serie) return <p className="text-xs text-slate-500 py-10 text-center">Calculando a evolução…</p>;
     const linhas: LinhaGrafico[] = ranking.map((a, k) => ({ id: a.email!, rotulo: a.nome, email: a.email, cor: CORES[k % CORES.length], valores: serie.map((p) => { const t = totaisDoMes(p, a.email!); return t ? valorDa(t, metrica) : 0; }) }));
-    return <GraficoLinhas meses={mesesSerie} linhas={linhas} formato={metricaInfo.formato} mesDestaque={mesA} titulo={`Evolução de ${metricaInfo.rotulo} por analista`} />;
+    return <GraficoLinhas pontos={pontosSerie} linhas={linhas} formato={metricaInfo.formato} destaque={pA.chave} titulo={`Evolução de ${metricaInfo.rotulo} por analista`} />;
   };
 
   // ---- canais escolhidos para comparar
@@ -216,10 +268,10 @@ export default function RankingPage() {
     return MENOR_E_MELHOR.includes(m) ? Math.min(...vs) : Math.max(...vs);
   };
   const graficoCanais = () => {
-    if (!serie) return <p className="text-xs text-slate-500 py-10 text-center">Calculando a evolução dos últimos 6 meses…</p>;
+    if (!serie) return <p className="text-xs text-slate-500 py-10 text-center">Calculando a evolução…</p>;
     const mi = METRICAS.find((m) => m.id === metSel)!;
     const linhas: LinhaGrafico[] = escolhidos.map((o) => ({ id: o.chave, rotulo: `${o.canal} · ${o.nome.split(" ")[0]}`, email: o.email, cor: o.cor, valores: serie.map((p) => valorCanalNoMes(p, o.canal, metSel)) }));
-    return <GraficoLinhas meses={mesesSerie} linhas={linhas} formato={mi.formato} mesDestaque={mesA} titulo={`Evolução de ${mi.rotulo} dos canais escolhidos`} />;
+    return <GraficoLinhas pontos={pontosSerie} linhas={linhas} formato={mi.formato} destaque={pA.chave} titulo={`Evolução de ${mi.rotulo} dos canais escolhidos`} />;
   };
 
   const blocoCanais = (a: AnalistaRanking, chave: string) => (
@@ -245,15 +297,15 @@ export default function RankingPage() {
             </div>
             {metrica !== "cadastros" && (
               <div className="mt-3" data-evolucao-canal={c.canal}>
-                <p className="text-[10px] font-bold uppercase text-slate-500">📈 Evolução · {metricaInfo.rotulo} · 6 meses</p>
-                {serie ? <Sparkline meses={mesesSerie} valores={serie.map((p) => valorCanalNoMes(p, c.canal, metrica))} formato={metricaInfo.formato} cor="#818cf8" /> : <p className="text-[11px] text-slate-600 py-3">Calculando…</p>}
+                <p className="text-[10px] font-bold uppercase text-slate-500">📈 Evolução · {metricaInfo.rotulo} · {unidade}</p>
+                {serie ? <Sparkline pontos={pontosSerie} valores={serie.map((p) => valorCanalNoMes(p, c.canal, metrica))} formato={metricaInfo.formato} cor="#818cf8" /> : <p className="text-[11px] text-slate-600 py-3">Calculando…</p>}
               </div>
             )}
             <div className={`mt-4 grid gap-4 ${cb ? "grid-cols-2" : "grid-cols-1"}`}>
-              {[{ rotulo: rotuloMes(mesA), lista: c.topProdutos }, ...(cb ? [{ rotulo: rotuloMes(mesB), lista: cb.topProdutos }] : [])].map((col, i) => (
+              {[{ rotulo: pA.rotulo, lista: c.topProdutos }, ...(cb ? [{ rotulo: pB.rotulo, lista: cb.topProdutos }] : [])].map((col, i) => (
                 <div key={i} data-top-produtos>
                   <p className="text-[10px] font-bold uppercase text-slate-500 mb-1.5">🔥 Mais vendidos · {col.rotulo}</p>
-                  {col.lista.length === 0 ? <p className="text-[11px] text-slate-600">Sem vendas no mês.</p> : (
+                  {col.lista.length === 0 ? <p className="text-[11px] text-slate-600">Sem vendas no período.</p> : (
                     <ol className="space-y-1">
                       {col.lista.slice(0, 5).map((p, k) => (
                         <li key={p.sku + k} className="flex items-start gap-2 text-[11px]">
@@ -287,28 +339,27 @@ export default function RankingPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">🏆 Ranking de analistas</h1>
-            <p className="text-sm text-slate-400">Resultado de cada analista nos seus canais, mês a mês. Os valores são os mesmos do Dashboard.</p>
+            <p className="text-sm text-slate-400">Resultado de cada analista nos seus canais, por mês fechado ou por período. No mês fechado os valores são os mesmos do Dashboard.</p>
           </div>
           <Navbar />
         </div>
 
         {/* controles */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-end gap-4" data-controles>
-          <label className="text-[10px] font-bold uppercase text-slate-500 space-y-1 block">Mês
-            <select value={mesA} onChange={(e) => setMesA(e.target.value)} data-mes-a className={seletor + " block normal-case"}>{opcoesMes.map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}</select>
-          </label>
-          <button type="button" onClick={() => setComparar((v) => !v)} data-comparar className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer border ${comparar ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:text-white"}`}>⚖️ {comparar ? "Comparando com…" : "Comparar com outro mês"}</button>
-          {comparar && (
-            <label className="text-[10px] font-bold uppercase text-slate-500 space-y-1 block">Mês de comparação
-              <select value={mesB} onChange={(e) => setMesB(e.target.value)} data-mes-b className={seletor + " block normal-case"}>{opcoesMes.filter((m) => m !== mesA).map((m) => <option key={m} value={m}>{rotuloMes(m)}</option>)}</select>
-            </label>
-          )}
+          <SeletorPeriodo rotulo="Período" valor={selA} onChange={setSelA} prefixo="a" opcoesMes={opcoesMes} resolvido={pA} />
+          <button type="button" onClick={() => setComparar((v) => !v)} data-comparar className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer border ${comparar ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:text-white"}`}>⚖️ {comparar ? "Comparando com…" : "Comparar com outro período"}</button>
+          {comparar && <SeletorPeriodo rotulo="Comparar com" valor={selB} onChange={setSelB} prefixo="b" opcoesMes={opcoesMes} comAnterior resolvido={pB} />}
           <label className="text-[10px] font-bold uppercase text-slate-500 space-y-1 block">Classificar por
             <select value={metrica} onChange={(e) => setMetrica(e.target.value as MetricaId)} data-metrica className={seletor + " block normal-case"}>{METRICAS.map((m) => <option key={m.id} value={m.id}>{m.rotulo}</option>)}</select>
           </label>
           <p className="text-[11px] text-slate-500 flex-1 min-w-[220px]">{metricaInfo.dica}.</p>
         </div>
 
+        {(pA.tipo !== "mes" || (comparar && pB.tipo !== "mes")) && (
+          <p className="text-[11px] text-slate-400 -mt-3 px-1" data-aviso-periodo>
+            Em períodos que não são mês fechado: vendas, devoluções e frete Flex entram pela data de cada um; Ads e metas (lançados por mês) entram proporcionais aos dias do período; lojas físicas só entram quando o mês inteiro está dentro do período. Os números podem diferir um pouco do Dashboard, que fecha por mês.
+          </p>
+        )}
         {erro && <p className="text-xs text-rose-400">Erro ao carregar: {erro}</p>}
         {carregando ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os números dos canais…</p> : (
           <>
@@ -317,8 +368,8 @@ export default function RankingPage() {
               {(["faturado", "lucro", "liquidez", "ticket", "pedidos", "ads"] as MetricaId[]).map(kpi)}
               <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4" title="Produtos novos cadastrados na aba Novos Cadastros, pela data do cadastro">
                 <p className="text-[10px] font-bold uppercase text-slate-500">Novos produtos cadastrados</p>
-                <p className="text-lg font-black text-white" data-novos-cadastros>{(novosPorMes.get(mesA) || 0).toLocaleString("pt-BR")}</p>
-                {comparar && <Delta atual={novosPorMes.get(mesA) || 0} anterior={novosPorMes.get(mesB) || 0} metrica="pedidos" />}
+                <p className="text-lg font-black text-white" data-novos-cadastros>{contarNoPeriodo(datasNovos, pA.inicio, pA.fim).toLocaleString("pt-BR")}</p>
+                {comparar && <Delta atual={contarNoPeriodo(datasNovos, pA.inicio, pA.fim)} anterior={contarNoPeriodo(datasNovos, pB.inicio, pB.fim)} metrica="pedidos" />}
               </div>
             </div>
 
@@ -342,7 +393,7 @@ export default function RankingPage() {
 
             {/* tabela de classificação */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 overflow-x-auto" data-tabela-ranking>
-              <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider mb-1">Classificação · {rotuloMes(mesA)}{comparar ? ` × ${rotuloMes(mesB)}` : ""}</h2>
+              <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider mb-1">Classificação · {pA.rotulo}{comparar ? ` × ${pB.rotulo}` : ""}</h2>
               <p className="text-[11px] text-slate-500 mb-4">Clique no título de uma coluna para classificar por ela. Cada analista soma os canais pelos quais é responsável (definido nos cartões do Início).</p>
               {ranking.length === 0 ? (
                 <p className="text-xs text-amber-300">Nenhum analista tem canais vinculados ainda. Vincule os canais aos analistas na tela Início.</p>
@@ -384,8 +435,8 @@ export default function RankingPage() {
             {/* evolução */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5">
               <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider mb-1">📈 Progressão · {metricaInfo.rotulo}</h2>
-              <p className="text-[11px] text-slate-500 mb-3">Últimos 6 meses até {rotuloMes(mesA)}. Troque a métrica em “Classificar por”.</p>
-              {metrica === "cadastros" ? <p className="text-xs text-slate-500 py-8 text-center">Cadastros não têm histórico por mês. Escolha outra métrica para ver a progressão.</p> : grafico()}
+              <p className="text-[11px] text-slate-500 mb-3">{unidade.charAt(0).toUpperCase() + unidade.slice(1)} até {pA.rotulo.split(" a ").pop()}. Troque a métrica em “Classificar por”.</p>
+              {metrica === "cadastros" ? <p className="text-xs text-slate-500 py-8 text-center">Cadastros não têm histórico. Escolha outra métrica para ver a progressão.</p> : grafico()}
             </div>
 
             {/* comparar canais */}
@@ -444,7 +495,7 @@ export default function RankingPage() {
                     <div className="flex flex-wrap items-center gap-3 mb-2">
                       <h3 className="text-xs font-black text-slate-300 uppercase tracking-wider">📈 Evolução dos canais escolhidos</h3>
                       <select value={metSel} onChange={(e) => setMetSel(e.target.value as MetricaId)} data-metrica-canais className={seletor}>{METRICAS.filter((m) => m.id !== "cadastros").map((m) => <option key={m.id} value={m.id}>{m.rotulo}</option>)}</select>
-                      <span className="text-[11px] text-slate-500">Últimos 6 meses até {rotuloMes(mesA)}</span>
+                      <span className="text-[11px] text-slate-500">{unidade.charAt(0).toUpperCase() + unidade.slice(1)} até {pA.rotulo.split(" a ").pop()}</span>
                     </div>
                     {graficoCanais()}
                   </div>

@@ -59,17 +59,17 @@ export function agruparPorAnalista(resumo: ResumoCanal[], mapeamentos: { email: 
 export type MetricaId = "faturado" | "lucro" | "margemBruta" | "liquidez" | "ticket" | "pedidos" | "unidades" | "ads" | "roas" | "progressoMeta" | "cadastros";
 export type Formato = "moeda" | "pct" | "num" | "x";
 export const METRICAS: { id: MetricaId; rotulo: string; formato: Formato; dica: string }[] = [
-  { id: "faturado", rotulo: "Faturamento", formato: "moeda", dica: "Vendas faturadas no mês, já abatidas devoluções e cancelamentos" },
+  { id: "faturado", rotulo: "Faturamento", formato: "moeda", dica: "Vendas faturadas no período, já abatidas devoluções e cancelamentos" },
   { id: "lucro", rotulo: "Lucro líquido", formato: "moeda", dica: "Repasse − custo dos produtos − imposto (regra atual do Dashboard; ads e frete aparecem à parte)" },
   { id: "margemBruta", rotulo: "Margem bruta", formato: "pct", dica: "Repasse líquido do canal ÷ faturamento bruto (antes de custo dos produtos e imposto)" },
   { id: "liquidez", rotulo: "Margem líquida", formato: "pct", dica: "Liquidez: lucro líquido ÷ faturamento bruto (o % líquido dos cartões do Início)" },
   { id: "ticket", rotulo: "Ticket médio", formato: "moeda", dica: "Faturamento bruto ÷ número de pedidos" },
-  { id: "pedidos", rotulo: "Pedidos", formato: "num", dica: "Pedidos faturados no mês" },
-  { id: "unidades", rotulo: "Unidades", formato: "num", dica: "Itens vendidos no mês" },
-  { id: "ads", rotulo: "Investimento em Ads", formato: "moeda", dica: "Gasto lançado na aba Adsense para o mês" },
+  { id: "pedidos", rotulo: "Pedidos", formato: "num", dica: "Pedidos faturados no período" },
+  { id: "unidades", rotulo: "Unidades", formato: "num", dica: "Itens vendidos no período" },
+  { id: "ads", rotulo: "Investimento em Ads", formato: "moeda", dica: "Gasto lançado na aba Adsense (em períodos fora do mês fechado, proporcional aos dias)" },
   { id: "roas", rotulo: "Retorno dos Ads", formato: "x", dica: "Faturamento ÷ investimento em Ads (quantos reais vendidos para cada R$ 1 investido)" },
-  { id: "progressoMeta", rotulo: "% da meta", formato: "pct", dica: "Faturamento ÷ meta do mês" },
-  { id: "cadastros", rotulo: "Cadastros", formato: "num", dica: "SKUs marcados como cadastrados nos canais do analista (posição de hoje; não varia por mês)" },
+  { id: "progressoMeta", rotulo: "% da meta", formato: "pct", dica: "Faturamento ÷ meta (em períodos fora do mês fechado, a meta é proporcional aos dias)" },
+  { id: "cadastros", rotulo: "Cadastros", formato: "num", dica: "SKUs marcados como cadastrados nos canais do analista (posição de hoje; não varia por período)" },
 ];
 /** Métricas em que um valor menor é melhor (para pintar a variação). */
 export const MENOR_E_MELHOR: MetricaId[] = ["ads"];
@@ -115,3 +115,14 @@ export function novosCadastrosPorMes(linhas: { data_cadastro?: string | null }[]
     const k = d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }).slice(0, 7) : ""; if (/^\d{4}-\d{2}$/.test(k)) m.set(k, (m.get(k) || 0) + 1); });
   return m;
 }
+
+/** Datas (AAAA-MM-DD, fuso de São Paulo) dos novos cadastros, para contar em qualquer período. */
+export function datasDeCadastro(linhas: { data_cadastro?: string | null }[]): string[] {
+  const out: string[] = [];
+  linhas.forEach((l) => {
+    const d = l.data_cadastro ? new Date(l.data_cadastro) : null;
+    if (d && !isNaN(d.getTime())) out.push(d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }));
+  });
+  return out;
+}
+export const contarNoPeriodo = (datas: string[], inicio: string, fim: string) => datas.reduce((n, d) => (d >= inicio && d <= fim ? n + 1 : n), 0);

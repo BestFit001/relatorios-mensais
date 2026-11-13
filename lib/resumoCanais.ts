@@ -95,14 +95,63 @@ export const parseCurrency = (val: any): number => {
 };
 
 
+/** Intervalo de datas (AAAA-MM-DD, inclusive nas duas pontas) para calcular um período que não é um mês fechado. */
+export interface PeriodoDatas { inicio: string; fim: string }
+
+/** Data em qualquer formato comum (AAAA-MM-DD..., DD/MM/AAAA) -> "AAAA-MM-DD"; vazio se não for data. */
+export function dataISO(v: any): string {
+  const t = String(v ?? "").trim();
+  const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const br = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  return br ? `${br[3]}-${br[2].padStart(2, "0")}-${br[1].padStart(2, "0")}` : "";
+}
+
+/** Mês de referência ("2026-11", "11/2026", "novembro de 2026", ou texto que contenha um deles) -> "2026-11"; vazio se não achar. */
+export function isoDoMesRef(v: any): string {
+  const t = String(v ?? "").trim().toLowerCase();
+  let m = t.match(/(\d{4})-(\d{2})/); if (m) return `${m[1]}-${m[2]}`;
+  m = t.match(/(\d{2})\/(\d{4})/); if (m) return `${m[2]}-${m[1]}`;
+  m = t.match(/([a-zçã]+) de (\d{4})/);
+  if (m) { const n = Object.entries(MESES_MAP).find(([, nome]) => nome === m![1]); if (n) return `${m[2]}-${n[0]}`; }
+  return "";
+}
+
+const ultimoDiaDoMes = (iso: string) => { const [a, m] = iso.split("-").map(Number); return new Date(a, m, 0).getDate(); };
+
+/** Meses que o período toca, com quantos dias do mês cabem nele (para ratear Ads e metas, que são mensais). */
+export function mesesDoPeriodo(p: PeriodoDatas): { iso: string; dias: number; total: number }[] {
+  const out: { iso: string; dias: number; total: number }[] = [];
+  let [a, m] = p.inicio.split("-").map(Number);
+  const [fa, fm] = p.fim.split("-").map(Number);
+  while (a < fa || (a === fa && m <= fm)) {
+    const iso = `${a}-${String(m).padStart(2, "0")}`, total = ultimoDiaDoMes(iso);
+    const ini = iso + "-01" > p.inicio ? iso + "-01" : p.inicio;
+    const fimMes = `${iso}-${String(total).padStart(2, "0")}`;
+    const fim = fimMes < p.fim ? fimMes : p.fim;
+    const dias = Math.round((Date.UTC(+fim.slice(0, 4), +fim.slice(5, 7) - 1, +fim.slice(8, 10)) - Date.UTC(+ini.slice(0, 4), +ini.slice(5, 7) - 1, +ini.slice(8, 10))) / 86400000) + 1;
+    out.push({ iso, dias: Math.max(0, dias), total });
+    if (++m > 12) { m = 1; a++; }
+  }
+  return out;
+}
+
 /** "2026-10" -> formatos usados pelas tabelas: 2026-10, 10/2026, "outubro de 2026" */
 export function formatosDoMes(mesIso: string) {
   const [ano, mes] = mesIso.split("-");
   return { iso: mesIso, barra: `${mes}/${ano}`, extenso: `${MESES_MAP[mes] || "outubro"} de ${ano}` };
 }
 
-export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date = new Date()): ResumoCanal[] {
+/**
+ * Resumo por canal. Sem `periodo`: o mês fechado/corrente `mesIso` (regra do Dashboard, sem alteração).
+ * Com `periodo`: só o que cai entre as datas — vendas pela data de faturamento, devoluções e frete Flex pela própria data;
+ * Ads e metas (que são mensais) entram proporcionais aos dias do período; as lojas físicas (que só têm o mês de referência) entram quando o mês inteiro está dentro do período.
+ */
+export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date = new Date(), periodo?: PeriodoDatas): ResumoCanal[] {
   const mesRefFormatos = formatosDoMes(mesIso);
+  const dentro = (d: any) => { const x = dataISO(d); return !!periodo && !!x && x >= periodo.inicio && x <= periodo.fim; };
+  const mesesP = periodo ? mesesDoPeriodo(periodo) : [];
+  const mesInteiroNoPeriodo = (iso: string) => !!periodo && !!iso && periodo.inicio <= iso + "-01" && periodo.fim >= `${iso}-${String(ultimoDiaDoMes(iso)).padStart(2, "0")}`;
 
   // Canais oficiais (iguais ao Dashboard)
   const mapaOficiais = new Map<string, string>();
@@ -157,21 +206,34 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
   });
 
   // Frete Flex pertence ao mês de ENVIO (data_envio), não ao mês do faturamento
-  const flexPorPedido = new Map<string, { ped: string; valor: number; mes: string; canal: string }>();
+  const flexPorPedido = new Map<string, { ped: string; valor: number; mes: string; data: string; canal: string }>();
   (db.plp_pedidos || []).forEach((p: any) => {
     const idPed = normalizarPedido(p.numero_pedido ?? p.id_pedido);
     const vFrete = parseCurrency(p.valor_frete);
-    if (idPed && vFrete > 0) flexPorPedido.set(`${normalizarTexto(p.canal)}|${idPed}`, { ped: idPed, valor: vFrete, mes: mesDoEnvio(p.data_envio), canal: canonizarCanal(p.canal, canaisOficiais) });
+    if (idPed && vFrete > 0) flexPorPedido.set(`${normalizarTexto(p.canal)}|${idPed}`, { ped: idPed, valor: vFrete, mes: mesDoEnvio(p.data_envio), data: dataISO(p.data_envio), canal: canonizarCanal(p.canal, canaisOficiais) });
   });
   const flexRows = Array.from(flexPorPedido.values());
 
   const adsMap = new Map<string, number>();
-  (db.ads_faturamento_canal || []).forEach((a: any) => {
-    const mesRefDb = String(a.mes_referencia || "").trim().toLowerCase();
-    if (mesRefDb === mesRefFormatos.iso || mesRefDb === mesRefFormatos.barra || mesRefDb === mesRefFormatos.extenso) {
-      adsMap.set(normalizarTexto(canonizarCanal(a.canal, canaisOficiais)), parseCurrency(a.gasto_ads));
-    }
-  });
+  if (periodo) {
+    // Ads é lançado por mês: entra a parte proporcional aos dias do período
+    const porMes = new Map<string, number>();
+    (db.ads_faturamento_canal || []).forEach((a: any) => {
+      const iso = isoDoMesRef(a.mes_referencia);
+      if (iso) porMes.set(`${normalizarTexto(canonizarCanal(a.canal, canaisOficiais))}|${iso}`, parseCurrency(a.gasto_ads));
+    });
+    porMes.forEach((valor, k) => {
+      const [canal, iso] = k.split("|"); const m = mesesP.find((x) => x.iso === iso);
+      if (m) adsMap.set(canal, (adsMap.get(canal) || 0) + (valor * m.dias) / m.total);
+    });
+  } else {
+    (db.ads_faturamento_canal || []).forEach((a: any) => {
+      const mesRefDb = String(a.mes_referencia || "").trim().toLowerCase();
+      if (mesRefDb === mesRefFormatos.iso || mesRefDb === mesRefFormatos.barra || mesRefDb === mesRefFormatos.extenso) {
+        adsMap.set(normalizarTexto(canonizarCanal(a.canal, canaisOficiais)), parseCurrency(a.gasto_ads));
+      }
+    });
+  }
 
   const channelLogos: Record<string, string> = {};
   channelRules.forEach((r: any) => { if (r.canal && r.logo_url) channelLogos[canonizarCanal(r.canal, canaisOficiais)] = r.logo_url; });
@@ -183,7 +245,8 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       v.includes(mesRefFormatos.iso) || v.includes(mesRefFormatos.barra) || v.includes(mesRefFormatos.extenso);
   };
 
-  const activeCancelados = cancelados.filter((c: any) => {
+  // com período, os cancelamentos são escolhidos depois de conhecer as vendas do período (mais abaixo)
+  let activeCancelados: any[] = periodo ? [] : cancelados.filter((c: any) => {
     const mRef = String(c.mes_referencia || "").trim().toLowerCase();
     if (!(mRef === mesRefFormatos.iso || mRef === mesRefFormatos.barra || mRef === mesRefFormatos.extenso)) return false;
     return canaisOficiais.includes(canonizarCanal(c.canal, canaisOficiais));
@@ -200,8 +263,8 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
         if (parts.length === 3) mesDev = `${parts[2]}-${parts[1]}`;
       }
     }
-    const matchMes = mesDev === mesRefFormatos.iso || mesDev === mesRefFormatos.barra ||
-      mesDev.includes(mesRefFormatos.iso) || mesDev.includes(mesRefFormatos.extenso);
+    const matchMes = periodo ? dentro(dataDev) : (mesDev === mesRefFormatos.iso || mesDev === mesRefFormatos.barra ||
+      mesDev.includes(mesRefFormatos.iso) || mesDev.includes(mesRefFormatos.extenso));
     if (!matchMes) return false;
     return canaisOficiais.includes(canonizarCanal(d.canal, canaisOficiais));
   });
@@ -215,12 +278,13 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       const fatInfo = faturadosMap.get(ped);
       if (!fisico) {
         if (!fatInfo) return false;
+        if (periodo) return dentro(fatInfo.data_faturamento);
         const fatMesRef = fatInfo.mes_referencia.toLowerCase();
         const fatData = fatInfo.data_faturamento;
         const matchMes = fatData ? fatData.startsWith(mesRefFormatos.iso) : (fatMesRef.includes(mesRefFormatos.iso) || fatMesRef.includes(mesRefFormatos.barra) ||
           fatMesRef.includes(mesRefFormatos.extenso));
         if (!matchMes) return false;
-      } else if (!mesRefCorresponde(s.mes_referencia)) return false;
+      } else if (periodo ? !mesInteiroNoPeriodo(isoDoMesRef(s.mes_referencia)) : !mesRefCorresponde(s.mes_referencia)) return false;
       return true;
     })
     .map((s: any) => {
@@ -254,10 +318,21 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       return { ...s, preco_venda: precoVenda, custoCMV, repasse_liquido: repasseLiquido };
     });
 
+  if (periodo) {
+    const pedidosDoPeriodo = new Set(enrichedSales.map((s: any) => normalizarPedido(s.id_pedido)).filter(Boolean));
+    activeCancelados = cancelados.filter((c: any) => {
+      if (!canaisOficiais.includes(canonizarCanal(c.canal, canaisOficiais))) return false;
+      const d = c.data_cancelamento || c.data || c.data_pedido || c.data_faturamento;
+      if (dataISO(d)) return dentro(d);
+      const ped = normalizarPedido(c.id_pedido);
+      return !!ped && pedidosDoPeriodo.has(ped);   // sem data: vale se o pedido cancelado está nas vendas do período
+    });
+  }
+
   const [refAnoStr, refMesStr] = mesIso.split("-");
   const refAno = parseInt(refAnoStr, 10);
   const refMes = parseInt(refMesStr, 10) - 1;
-  const isCurrentMonth = agora.getFullYear() === refAno && agora.getMonth() === refMes;
+  const isCurrentMonth = !periodo && agora.getFullYear() === refAno && agora.getMonth() === refMes;
   const totalDiasMes = new Date(refAno, refMes + 1, 0).getDate();
   let diasPassados = 1;
   if (isCurrentMonth) diasPassados = Math.max(1, agora.getDate());
@@ -332,7 +407,7 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
     const cmvVendasCanal = chSales.reduce((sum: number, s: any) => sum + s.custoCMV, 0) - estCmvCanc;
     const cmvCanalTotal = Math.max(0, cmvVendasCanal - devCmvTotal);
     const flexCanal = flexRows
-      .filter((f) => f.mes === mesRefFormatos.iso && f.canal === channelName && !pedidosCancelados.has(f.ped))
+      .filter((f) => (periodo ? dentro(f.data) : f.mes === mesRefFormatos.iso) && f.canal === channelName && !pedidosCancelados.has(f.ped))
       .reduce((sum, f) => sum + f.valor, 0);
     const impostoCanal = (faturadoComRedutor * aliquotaImpostoGlobal) / 100;
     const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - impostoCanal - (DESCONTAR_FRETE_ADS_NO_LUCRO ? flexCanal + canalAds + devFreteLiquido : 0);
@@ -350,7 +425,13 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       porSku.set(k, e);
     });
     const pedidosTotal = pedidosSet.size + semPedido;
-    const metaBase = parseCurrency(goalObj.meta_valor);
+    const metaBase = periodo
+      ? mesesP.reduce((acc, m) => {   // meta mensal proporcional aos dias do período
+          const f = formatosDoMes(m.iso);
+          const g = goals.find((x: any) => normalizarTexto(canonizarCanal(x.canal, canaisOficiais)) === normalizarTexto(channelName) && [f.iso, f.barra, f.extenso].includes(String(x.mes_referencia || "").trim().toLowerCase()));
+          return acc + (g ? (parseCurrency(g.meta_valor) * m.dias) / m.total : 0);
+        }, 0)
+      : parseCurrency(goalObj.meta_valor);
     return {
       canal: channelName,
       responsavel: ruleObj.responsavel || goalObj.responsavel || "Equipe Best Fit",
