@@ -101,7 +101,8 @@ export default function ChatInterno() {
     avisarNovas(lista);
   }, [avisarNovas]);
 
-  const carregarMsgs = useCallback(async (completo = false) => {
+  // completo: busca a conversa toda e mescla (mantém o que já está na tela e atualiza o que foi excluído); trocar: substitui tudo (links de imagem renovados)
+  const carregarMsgs = useCallback(async (completo = false, trocar = false) => {
     const id = vivo.current.salaId;
     if (!id || vivo.current.fase !== "ok") return;
     const atual = vivo.current.msgs;
@@ -109,7 +110,16 @@ export default function ChatInterno() {
     const r = await chatApi<{ mensagens: MensagemChat[] }>("mensagens", { sala_id: id, depois });
     if (!r.ok || vivo.current.salaId !== id) return;
     const novas = r.dados.mensagens || [];
-    if (!depois) { setMsgs(novas); return; }
+    if (!depois) {
+      setMsgs((prev) => {
+        if (trocar || prev.length === 0) return novas;
+        const antigas = new Map(prev.map((x) => [x.id, x]));
+        let mudou = prev.length !== novas.length;
+        const lista = novas.map((n) => { const p = antigas.get(n.id); if (p && !!p.payload?.excluida === !!n.payload?.excluida) return p; mudou = true; return n; });
+        return mudou ? lista : prev;
+      });
+      return;
+    }
     if (novas.length) setMsgs((l) => [...l, ...novas.filter((n) => !l.some((x) => x.id === n.id))]);
   }, []);
 
@@ -117,7 +127,8 @@ export default function ChatInterno() {
   useEffect(() => {
     if (fase !== "ok") return;
     carregarSalas();
-    const t = setInterval(() => { carregarSalas(); if (vivo.current.aberto && !document.hidden) carregarMsgs(); }, 5000);
+    let ciclo = 0;
+    const t = setInterval(() => { carregarSalas(); if (vivo.current.aberto && !document.hidden) carregarMsgs(++ciclo % 3 === 0); }, 5000);
     return () => clearInterval(t);
   }, [fase, carregarSalas, carregarMsgs]);
 
@@ -126,13 +137,13 @@ export default function ChatInterno() {
     if (fase !== "ok") return;
     try {
       const canal = supabase.channel("chat-aviso", { config: { broadcast: { self: false } } })
-        .on("broadcast", { event: "novo" }, (p: any) => { carregarSalas(); if (p?.payload?.sala_id && p.payload.sala_id === vivo.current.salaId) carregarMsgs(); })
+        .on("broadcast", { event: "novo" }, (p: any) => { carregarSalas(); if (p?.payload?.sala_id && p.payload.sala_id === vivo.current.salaId) carregarMsgs(!!p.payload.excluiu); })
         .subscribe();
       canalRef.current = canal;
       return () => { canalRef.current = null; try { supabase.removeChannel(canal); } catch { /* ignora */ } };
     } catch { /* sem tempo real: segue a consulta de reserva */ }
   }, [fase, carregarSalas, carregarMsgs]);
-  const avisarOutros = (id: string) => { try { canalRef.current?.send({ type: "broadcast", event: "novo", payload: { sala_id: id } }); } catch { /* ignora */ } };
+  const avisarOutros = (id: string, excluiu = false) => { try { canalRef.current?.send({ type: "broadcast", event: "novo", payload: { sala_id: id, excluiu } }); } catch { /* ignora */ } };
 
   // escolher a conversa
   const abrirSala = useCallback((id: string) => {
@@ -187,6 +198,14 @@ export default function ChatInterno() {
     }
     if (ok) setTexto("");
     setEnviando(false);
+  };
+
+  const excluirMsg = async (id: string) => {
+    const r = await chatApi<{ mensagem: MensagemChat }>("excluir", { id });
+    if (!r.ok) return setErro("Não consegui excluir: " + (r.erro || ""));
+    setMsgs((l) => l.map((x) => (x.id === id ? r.dados.mensagem : x)));
+    if (vivo.current.salaId) avisarOutros(vivo.current.salaId, true);
+    carregarSalas();
   };
 
   const escolherImagem = async (f: File | undefined | null) => {
@@ -333,7 +352,7 @@ export default function ChatInterno() {
                       {msgs.map((m, i) => (
                         <React.Fragment key={m.id}>
                           {(i === 0 || chaveDia(msgs[i - 1].criado_em) !== chaveDia(m.criado_em)) && <p className="text-center text-[10px] font-bold text-slate-500 uppercase py-1">{rotuloDia(m.criado_em)}</p>}
-                          <ChatMensagem m={m} minha={m.de_email === email} mostrarNome={sala.tipo !== "dm"} onImagem={setImagemGrande} onImagemErro={() => carregarMsgs(true)} />
+                          <ChatMensagem m={m} minha={m.de_email === email} mostrarNome={sala.tipo !== "dm"} onImagem={setImagemGrande} onImagemErro={() => carregarMsgs(true, true)} onExcluir={excluirMsg} />
                         </React.Fragment>
                       ))}
                       <div ref={fimRef} />
@@ -360,7 +379,7 @@ export default function ChatInterno() {
                         <input ref={arquivoRef} type="file" accept="image/*" hidden data-chat-arquivo onChange={(e) => { escolherImagem(e.target.files?.[0]); e.target.value = ""; }} />
                       </div>
                       <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={1} maxLength={MAX_TEXTO} data-chat-texto
-                        placeholder={anexo ? "Legenda (opcional)..." : `Mensagem para ${nomeDaSala(sala, email)}... (envie só um SKU para ver o produto)`}
+                        placeholder={anexo ? "Legenda (opcional)..." : `Mensagem para ${nomeDaSala(sala, email)}... (SKU ou link vira card)`}
                         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
                         onPaste={(e) => { const f = Array.from(e.clipboardData.files || []).find((x) => x.type.startsWith("image/")); if (f) { e.preventDefault(); escolherImagem(f); } }}
                         className="flex-1 resize-none max-h-24 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500" />

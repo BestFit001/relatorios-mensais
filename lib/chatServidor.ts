@@ -6,6 +6,8 @@ import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseServidor } from "./concorrentes/servidor";
 import { normalizarSkuPai } from "./skuPai";
+import { encurtarUrls } from "./chat";
+import { extrairUrls, montarCartaoLink } from "./linkPreview";
 import { canalTemCadastro, normalizarNomeCanal } from "./vendasCanaisLogica";
 
 export const SALA_GERAL_ID = "00000000-0000-4000-8000-000000000001";
@@ -106,7 +108,7 @@ async function exigirMembro(sb: SupabaseClient, salaId: any, email: string): Pro
 }
 
 const resumoDoTipo = (m: any): string =>
-  m.tipo === "imagem" ? "📷 Foto" : m.tipo === "produto" ? `🔎 ${m.payload?.produto || m.payload?.sku || "Produto"}` : m.tipo === "tarefa" ? "📝 Tarefa" : m.tipo === "notificacao" ? "🔔 Notificação" : String(m.texto || "").slice(0, 80);
+  m.payload?.excluida ? "🚫 Mensagem excluída" : m.tipo === "produto" && m.payload?.tipo === "link" ? `🔗 ${m.payload.titulo || m.payload.site || "Link"}` : m.tipo === "imagem" ? "📷 Foto" : m.tipo === "produto" ? `🔎 ${m.payload?.produto || m.payload?.sku || "Produto"}` : m.tipo === "tarefa" ? "📝 Tarefa" : m.tipo === "notificacao" ? "🔔 Notificação" : encurtarUrls(String(m.texto || "")).slice(0, 80);
 
 async function listarSalas(sb: SupabaseClient, email: string) {
   await garantirGeral(sb, email);
@@ -309,8 +311,17 @@ async function enviar(sb: SupabaseClient, email: string, d: any) {
   let payload: any = null, anexo: string | null = null;
   if (tipo === "texto") {
     if (!msg) erro(400, "Mensagem vazia.");
-    const cartao = await cartaoProduto(sb, msg as string);
-    if (cartao) { tipo = "produto"; payload = cartao; }
+    const urls = extrairUrls(msg as string);
+    if (urls.length) {
+      // só um link na mensagem: vira o cartão; link no meio de um texto: o texto fica e os cartões aparecem embaixo
+      const sobra = (msg as string).replace(urls[0], "").trim();
+      const cartoes = (await Promise.all(Array.from(new Set(urls)).slice(0, 3).map((u) => montarCartaoLink(u)))).filter(Boolean);
+      if (urls.length === 1 && !sobra && cartoes[0]) { tipo = "produto"; payload = cartoes[0]; msg = null; }
+      else if (cartoes.length) payload = { links: cartoes };
+    } else {
+      const cartao = await cartaoProduto(sb, msg as string);
+      if (cartao) { tipo = "produto"; payload = cartao; }
+    }
   } else if (tipo === "imagem") {
     anexo = String(d.anexo_path || "");
     if (!anexo.startsWith(id + "/") || anexo.includes("..")) erro(400, "Imagem inválida.");
@@ -333,6 +344,23 @@ async function enviar(sb: SupabaseClient, email: string, d: any) {
     sb.from("chat_membros").update({ lido_ate: agora }).eq("sala_id", id).eq("email", email),
   ]);
   return { mensagem: (await comLinks(sb, [data]))[0] };
+}
+
+/** Apaga uma mensagem sua: o conteúdo some (e a imagem também) e fica no lugar "Mensagem excluída". */
+async function excluirMensagem(sb: SupabaseClient, email: string, d: any) {
+  const idMsg = String(d.id || "");
+  if (!/^[0-9a-f-]{36}$/i.test(idMsg)) erro(400, "Mensagem inválida.");
+  const { data } = await sb.from("chat_mensagens").select("*").eq("id", idMsg).limit(1);
+  const m = (data as any[] | null)?.[0];
+  if (!m) erro(404, "Mensagem não encontrada.");
+  await exigirMembro(sb, m.sala_id, email);
+  if (limpoEmail(m.de_email) !== email) erro(403, "Só quem enviou pode excluir a mensagem.");
+  if (m.payload?.excluida) return { mensagem: (await comLinks(sb, [m]))[0] };
+  const nova = { tipo: "texto", texto: null, anexo_path: null, payload: { excluida: true, em: new Date().toISOString() } };
+  const { error } = await sb.from("chat_mensagens").update(nova).eq("id", idMsg);
+  if (error) return erro(500, "Não consegui excluir: " + error.message);
+  if (m.anexo_path) await sb.storage.from(BUCKET).remove([m.anexo_path]);
+  return { mensagem: (await comLinks(sb, [{ ...m, ...nova }]))[0] };
 }
 
 // ---------------------------------------------------------------- limpeza (7 dias)
@@ -381,6 +409,7 @@ export async function tratarChat(acao: string, d: any, token: string | null): Pr
       case "mensagens": corpo = await lerMensagens(sb, email, d); break;
       case "ler": corpo = await marcarLido(sb, email, d); break;
       case "enviar": corpo = await enviar(sb, email, d); break;
+      case "excluir": corpo = await excluirMensagem(sb, email, d); break;
       case "upload_url": corpo = await urlDeUpload(sb, email, d); break;
       case "criar_dm": corpo = await criarDm(sb, email, d); break;
       case "criar_grupo": corpo = await criarGrupo(sb, email, d); break;

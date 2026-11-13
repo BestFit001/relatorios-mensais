@@ -44,3 +44,13 @@ export const chaveDia = (iso: string): string => diaSP(new Date(iso));
 export function rotaDaNotificacao(tipo: string): string {
   return tipo === "full" ? "/full" : tipo === "devolucao" ? "/devolucoes" : tipo === "promocao" ? "/promocoes/ml" : tipo === "correcao" ? "/videos" : "/inicio";
 }
+
+/** Texto de endereço para exibir no lugar de um link comprido: "mercadolivre.com.br/…". */
+export function rotuloDoLink(url: string): string {
+  try { const u = new URL(url); const h = u.hostname.replace(/^www\./i, ""); return u.pathname.length > 1 || u.search ? h + "/…" : h; } catch { return url.slice(0, 30) + "…"; }
+}
+export const URL_NO_TEXTO = /https?:\/\/[^\s<>"']+/gi;
+/** Troca links compridos por um rótulo curto (usado em prévias de texto; a tela mostra o link clicável). */
+export function encurtarUrls(texto: string): string {
+  return String(texto || "").replace(URL_NO_TEXTO, (u) => rotuloDoLink(u.replace(/[.,;:!?)\]}]+$/, "")));
+}
