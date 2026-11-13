@@ -3,6 +3,7 @@ import "./globals.css";
 import AlertaTarefasGlobal from "./components/AlertaTarefasGlobal";
 import AvisoConstrucao from "./components/AvisoConstrucao";
 import ChatInterno from "./components/ChatInterno";
+import EscolherAvatar from "./components/EscolherAvatar";
 
 export const metadata: Metadata = {
   title: "Hub Best Fit",
@@ -27,6 +28,7 @@ export default function RootLayout({
         <AlertaTarefasGlobal />
         <AvisoConstrucao />
         <ChatInterno />
+        <EscolherAvatar />
       </body>
     </html>
   );

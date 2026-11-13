@@ -11,6 +11,9 @@ import { SALA_GERAL_ID, MAX_TEXTO, type MensagemChat, type SalaChat, nomeDoEmail
 import { chatApi, emailLogado, perfilLogado, tokenDoChat, sairDoChat, prepararImagem, type ItemCompartilhado } from "../../lib/chatCliente";
 import ChatMensagem from "./ChatMensagem";
 import ChatPin from "./ChatPin";
+import Avatar from "./Avatar";
+import { abrirEscolhaDeAvatar } from "./EscolherAvatar";
+import { carregarAvatares, EVENTO_AVATAR } from "../../lib/avatar";
 
 type Fase = "verificando" | "pin" | "ok";
 type Modal = null | "grupo" | "membros" | "tarefa" | "compartilhar" | "config";
@@ -20,6 +23,7 @@ export default function ChatInterno() {
   const pathname = usePathname();
   const [email, setEmail] = useState("");
   const [aberto, setAberto] = useState(false);
+  const [telaCheia, setTelaCheia] = useState(false);
   const [fase, setFase] = useState<Fase>("verificando");
   const [temSenha, setTemSenha] = useState<boolean | null>(null);
   const [salas, setSalas] = useState<SalaChat[]>([]);
@@ -45,13 +49,21 @@ export default function ChatInterno() {
   const arquivoRef = useRef<HTMLInputElement>(null);
   const canalRef = useRef<any>(null);
   const prevNaoLidas = useRef<Record<string, number> | null>(null);
-  const vivo = useRef({ email: "", aberto: false, salaId: null as string | null, fase: "verificando" as Fase, msgs: [] as MensagemChat[] });
-  vivo.current = { email, aberto, salaId, fase, msgs };
+  const vivo = useRef({ email: "", aberto: false, salaId: null as string | null, fase: "verificando" as Fase, msgs: [] as MensagemChat[], lightbox: false });
+  vivo.current = { email, aberto, salaId, fase, msgs, lightbox: !!imagemGrande };
 
   const sala = useMemo(() => salas.find((s) => s.id === salaId) || null, [salas, salaId]);
   const totalNaoLidas = salas.reduce((a, s) => a + (s.nao_lidas || 0), 0);
 
   useEffect(() => { setEmail(emailLogado()); }, [pathname]);
+  useEffect(() => { try { setTelaCheia(localStorage.getItem("chat_tela_cheia") === "1"); } catch { /* sem armazenamento */ } }, []);
+  const alternarTela = () => setTelaCheia((v) => { const n = !v; try { localStorage.setItem("chat_tela_cheia", n ? "1" : "0"); } catch { /* ignora */ } return n; });
+  useEffect(() => {
+    if (!aberto || !telaCheia) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && !vivo.current.lightbox) setTelaCheia(false); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [aberto, telaCheia]);
 
   // ---------- sessão
   const aoExpirar = useCallback(() => { setFase("pin"); setSalas([]); setMsgs([]); setSalaId(null); prevNaoLidas.current = null; }, []);
@@ -128,7 +140,10 @@ export default function ChatInterno() {
     if (fase !== "ok") return;
     carregarSalas();
     let ciclo = 0;
-    const t = setInterval(() => { carregarSalas(); if (vivo.current.aberto && !document.hidden) carregarMsgs(++ciclo % 3 === 0); }, 5000);
+    const t = setInterval(() => {
+      carregarSalas(); if (vivo.current.aberto && !document.hidden) carregarMsgs(++ciclo % 3 === 0);
+      if (ciclo % 12 === 0 && vivo.current.aberto) carregarAvatares(true).then(() => window.dispatchEvent(new CustomEvent(EVENTO_AVATAR))).catch(() => {});   // pega avatares trocados por outras pessoas
+    }, 5000);
     return () => clearInterval(t);
   }, [fase, carregarSalas, carregarMsgs]);
 
@@ -282,7 +297,7 @@ export default function ChatInterno() {
     <div className="max-h-56 overflow-y-auto border border-slate-800 rounded-xl divide-y divide-slate-800/70">
       {usuarios.map((u) => (
         <button key={u} type="button" onClick={() => aoEscolher(u)} data-chat-pessoa={u} className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 cursor-pointer hover:bg-slate-800/70 ${marcados?.has(u) ? "bg-indigo-600/25 text-white" : "text-slate-300"}`}>
-          {marcados && <span>{marcados.has(u) ? "☑" : "☐"}</span>}<span className="truncate">{nomeDoEmail(u)}</span><span className="text-[10px] text-slate-500 truncate">{u}</span>
+          {marcados && <span>{marcados.has(u) ? "☑" : "☐"}</span>}<Avatar email={u} tamanho={22} /><span className="truncate">{nomeDoEmail(u)}</span><span className="text-[10px] text-slate-500 truncate">{u}</span>
         </button>
       ))}
     </div>
@@ -291,13 +306,14 @@ export default function ChatInterno() {
   return (
     <div className="fixed bottom-5 right-5 z-[9000] flex flex-col items-end gap-3 print:hidden" data-chat>
       {aberto && (
-        <div className="relative w-[min(96vw,820px)] h-[min(84vh,680px)] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden" data-chat-painel>
+        <div className={telaCheia ? "fixed inset-0 z-[9100] bg-slate-900 flex flex-col overflow-hidden" : "relative w-[min(96vw,820px)] h-[min(84vh,680px)] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden"} data-chat-painel data-chat-tela={telaCheia ? "cheia" : "janela"}>
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-950 shrink-0">
             <div>
               <p className="text-sm font-black text-white">💬 Chat interno</p>
               <p className="text-[10px] text-slate-500">Conversas privadas · as mensagens ficam por 7 dias e depois são apagadas.</p>
             </div>
             <div className="flex items-center gap-1">
+              <button type="button" onClick={alternarTela} data-chat-expandir aria-label={telaCheia ? "Voltar para janela" : "Expandir para tela cheia"} title={telaCheia ? "Voltar para janela (Esc)" : "Expandir para tela cheia"} className="text-slate-400 hover:text-white text-base px-2 cursor-pointer">{telaCheia ? "🗗" : "⛶"}</button>
               {fase === "ok" && <button type="button" onClick={() => setModal("config")} data-chat-config aria-label="Configurações do chat" className="text-slate-400 hover:text-white text-base px-2 cursor-pointer">⚙️</button>}
               <button type="button" onClick={() => setAberto(false)} aria-label="Fechar chat" className="text-slate-400 hover:text-white text-lg px-2 cursor-pointer">✕</button>
             </div>
@@ -308,7 +324,7 @@ export default function ChatInterno() {
           ) : (
             <div className="flex flex-1 min-h-0">
               {/* lista de conversas */}
-              <div className={`${salaId ? "hidden sm:flex" : "flex"} w-full sm:w-60 shrink-0 border-r border-slate-800 flex-col bg-slate-950/50`}>
+              <div className={`${salaId ? "hidden sm:flex" : "flex"} w-full ${telaCheia ? "sm:w-80" : "sm:w-60"} shrink-0 border-r border-slate-800 flex-col bg-slate-950/50`}>
                 <div className="p-2 flex gap-2">
                   <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar conversa ou pessoa..." data-chat-busca className={inputCls + " !py-1.5 !text-[11px]"} />
                   <button type="button" onClick={() => { setModal("grupo"); setErro(""); }} data-chat-novo-grupo title="Novo grupo" className="shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-2.5 rounded-xl cursor-pointer">👥+</button>
@@ -317,7 +333,7 @@ export default function ChatInterno() {
                   {conversasFiltradas.map((s) => (
                     <button key={s.id} type="button" data-chat-sala={s.tipo === "geral" ? "geral" : s.id} data-chat-nome={nomeDaSala(s, email)} onClick={() => abrirSala(s.id)} className={itemCls(salaId === s.id)}>
                       <span className="min-w-0">
-                        <span className="block font-bold truncate">{iconeSala(s)} {nomeDaSala(s, email)}</span>
+                        <span className="flex items-center gap-1.5 font-bold truncate">{s.tipo === "dm" ? <Avatar email={s.membros.find((x) => x.email !== email)?.email || ""} tamanho={22} /> : <span>{iconeSala(s)}</span>}<span className="truncate">{nomeDaSala(s, email)}</span></span>
                         {s.ultima && <span className="block text-[10px] text-slate-500 truncate">{s.ultima.de === email ? "Você: " : s.tipo !== "dm" ? nomeDoEmail(s.ultima.de).split(" ")[0] + ": " : ""}{s.ultima.texto}</span>}
                       </span>
                       <Badge n={s.nao_lidas} />
@@ -326,7 +342,7 @@ export default function ChatInterno() {
                   {pessoasSemDm.length > 0 && <p className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase text-slate-500">Iniciar conversa</p>}
                   {pessoasSemDm.map((u) => (
                     <button key={u} type="button" data-chat-pessoa-nova={u} onClick={() => clicarPessoa(u)} className={itemCls(false)} title={u}>
-                      <span className="truncate">👤 {nomeDoEmail(u)}</span>
+                      <span className="flex items-center gap-1.5 truncate"><Avatar email={u} tamanho={22} /><span className="truncate">{nomeDoEmail(u)}</span></span>
                     </button>
                   ))}
                 </div>
@@ -341,13 +357,14 @@ export default function ChatInterno() {
                     <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
                       <div className="flex items-center gap-2 min-w-0">
                         <button type="button" onClick={() => { setSalaId(null); setMsgs([]); }} className="sm:hidden text-slate-400 text-sm cursor-pointer" aria-label="Voltar">←</button>
+                        {sala.tipo === "dm" && <Avatar email={sala.membros.find((x) => x.email !== email)?.email || ""} tamanho={26} />}
                         <p className="text-xs font-bold text-slate-100 truncate" data-chat-titulo>{iconeSala(sala)} {nomeDaSala(sala, email)}</p>
                         {sala.tipo === "grupo" && <span className="text-[10px] text-slate-500">{sala.membros.length} membros</span>}
                         {sala.tipo === "geral" && <span className="text-[10px] text-slate-500">todos do sistema</span>}
                       </div>
                       {sala.tipo === "grupo" && <button type="button" onClick={() => setModal("membros")} data-chat-membros className="text-[11px] font-bold text-indigo-300 hover:text-indigo-200 cursor-pointer shrink-0">Membros</button>}
                     </div>
-                    <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5" data-chat-mensagens>
+                    <div className={`flex-1 overflow-y-auto py-3 space-y-1.5 ${telaCheia ? "px-[max(1rem,8%)]" : "px-3"}`} data-chat-mensagens>
                       {msgs.length === 0 && <p className="text-center text-[11px] text-slate-500 mt-6">Nenhuma mensagem ainda. Comece a conversa!</p>}
                       {msgs.map((m, i) => (
                         <React.Fragment key={m.id}>
@@ -412,7 +429,7 @@ export default function ChatInterno() {
               <div className="border border-slate-800 rounded-xl divide-y divide-slate-800/70">
                 {sala.membros.map((m) => (
                   <div key={m.email} className="px-3 py-2 text-xs flex items-center justify-between gap-2 text-slate-200">
-                    <span className="truncate">{nomeDoEmail(m.email)}{m.papel === "admin" && <span className="ml-2 text-[10px] text-amber-300">admin</span>}</span>
+                    <span className="flex items-center gap-2 truncate"><Avatar email={m.email} tamanho={24} /><span className="truncate">{nomeDoEmail(m.email)}</span>{m.papel === "admin" && <span className="ml-2 text-[10px] text-amber-300">admin</span>}</span>
                     {souAdminDoGrupo && m.email !== email && <button type="button" onClick={() => editarGrupo({ remover: m.email })} className="text-[10px] text-rose-400 hover:text-rose-300 cursor-pointer">remover</button>}
                   </div>
                 ))}
@@ -472,6 +489,7 @@ export default function ChatInterno() {
           {modal === "config" && (
             <div className={modalCls} data-chat-modal="config"><div className={caixaCls}>
               <h3 className="text-sm font-black text-white">⚙️ Configurações do chat</h3>
+              <button type="button" onClick={() => { setModal(null); abrirEscolhaDeAvatar(); }} data-chat-avatar className="w-full text-left bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 px-3 py-2 rounded-xl cursor-pointer flex items-center gap-2"><Avatar email={email} tamanho={22} /> Meu avatar (personagem ou foto)</button>
               <button type="button" onClick={() => { sairDoChat(); setModal(null); setFase("pin"); setSalas([]); setSalaId(null); }} data-chat-bloquear className="w-full text-left bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 px-3 py-2 rounded-xl cursor-pointer">🔒 Bloquear o chat neste navegador</button>
               {ehAdminApp && (
                 <div className="space-y-2">
@@ -497,7 +515,7 @@ export default function ChatInterno() {
         </div>
       )}
 
-      <button type="button" onClick={() => setAberto((a) => !a)} data-chat-botao aria-label="Abrir chat interno"
+      <button type="button" onClick={() => setAberto((a) => !a)} data-chat-botao style={aberto && telaCheia ? { display: "none" } : undefined} aria-label="Abrir chat interno"
         className="relative w-14 h-14 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-2xl shadow-xl shadow-indigo-900/50 cursor-pointer flex items-center justify-center">
         💬
         {totalNaoLidas > 0 && <span data-chat-total className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center">{totalNaoLidas > 99 ? "99+" : totalNaoLidas}</span>}

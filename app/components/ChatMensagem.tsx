@@ -2,6 +2,7 @@
 // Balão de uma mensagem do chat: texto, imagem e os cartões (produto, pai, tarefa, notificação).
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
+import Avatar from "./Avatar";
 import { type MensagemChat, horaSP, nomeDoEmail, rotaDaNotificacao, rotuloDoLink, URL_NO_TEXTO } from "../../lib/chat";
 
 const chip = "px-1.5 py-0.5 rounded text-[10px] font-bold border";
@@ -117,7 +118,8 @@ export default function ChatMensagem({ m, minha, mostrarNome, onImagem, onImagem
   const p = m.payload;
   if (p?.excluida) {
     return (
-      <div className={`flex ${minha ? "justify-end" : "justify-start"}`} data-chat-msg data-tipo="excluida">
+      <div className={`flex items-end gap-1.5 ${minha ? "justify-end" : "justify-start"}`} data-chat-msg data-tipo="excluida">
+        {!minha && <Avatar email={m.de_email} tamanho={28} />}
         <div className="max-w-[88%] rounded-2xl px-3 py-1.5 text-xs border border-slate-700/70 bg-slate-900/60 text-slate-500 italic">
           {mostrarNome && !minha && <p className="text-[10px] font-bold not-italic text-slate-500">{nomeDoEmail(m.de_email)}</p>}
           <p>🚫 Mensagem excluída</p>
@@ -130,7 +132,8 @@ export default function ChatMensagem({ m, minha, mostrarNome, onImagem, onImagem
   const ehLink = m.tipo === "produto" && p?.tipo === "link";
   const links: any[] = m.tipo === "texto" && Array.isArray(p?.links) ? p.links : [];
   return (
-    <div className={`flex ${minha ? "justify-end" : "justify-start"}`} data-chat-msg data-tipo={m.tipo}>
+    <div className={`flex items-end gap-1.5 ${minha ? "justify-end" : "justify-start"}`} data-chat-msg data-tipo={m.tipo}>
+      {!minha && <Avatar email={m.de_email} tamanho={28} />}
       <div className={`max-w-[88%] rounded-2xl px-3 py-1.5 text-xs ${minha ? "bg-indigo-600 text-white rounded-br-sm" : "bg-slate-800 text-slate-100 rounded-bl-sm"}`}>
         {mostrarNome && !minha && <p className="text-[10px] font-bold text-indigo-300">{nomeDoEmail(m.de_email)}</p>}
         {m.tipo === "imagem" && (

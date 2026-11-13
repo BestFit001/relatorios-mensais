@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
+import Avatar from "../components/Avatar";
 import { calcularResumoCanais, TABELAS_RESUMO, type ResumoCanal } from "../../lib/resumoCanais";
 import {
   agoraSP, concluiu, statusPorResponsavel, vencimento, estaAtrasada, ehCiclica, textoCiclo,
@@ -683,7 +684,7 @@ export default function InicioPage() {
       <div className="max-w-[98%] mx-auto">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Olá, {nomeDoEmail(usuario.email).split(" ")[0] || "bem-vindo"} 👋</h1>
+            <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-3"><Avatar email={usuario.email} tamanho={40} />Olá, {nomeDoEmail(usuario.email).split(" ")[0] || "bem-vindo"} 👋</h1>
             <p className="text-sm font-medium text-slate-400">
               {isAdmin ? "Visão do administrador — todos os canais, notificações e tarefas." : "Seus canais, avisos e tarefas."}
             </p>

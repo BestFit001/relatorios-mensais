@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { ROTAS_DISPONIVEIS } from "@/lib/rotasMenu";
+import Avatar from "./Avatar";
+import { abrirEscolhaDeAvatar } from "./EscolherAvatar";
 
 export default function Navbar() {
   const router = useRouter();
@@ -628,14 +630,18 @@ export default function Navbar() {
           </button>
 
           {sidebarAberta ? (
-            <div className="overflow-hidden px-1">
-              <p className="text-[10px] font-bold text-white truncate">{emailUsuario || "Utilizador"}</p>
-              <span className="inline-block mt-1 px-2 py-0.5 rounded text-[8px] font-black uppercase bg-indigo-950 text-indigo-300 border border-indigo-800/50">
-                {perfilUsuario}
-              </span>
+            <div className="overflow-hidden px-1 flex items-center gap-2.5">
+              {emailUsuario && <button type="button" onClick={abrirEscolhaDeAvatar} data-meu-avatar title="Escolher meu avatar (personagem ou foto)" className="cursor-pointer rounded-full ring-2 ring-transparent hover:ring-indigo-500 transition shrink-0"><Avatar email={emailUsuario} tamanho={36} /></button>}
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold text-white truncate">{emailUsuario || "Utilizador"}</p>
+                <span className="inline-block mt-1 px-2 py-0.5 rounded text-[8px] font-black uppercase bg-indigo-950 text-indigo-300 border border-indigo-800/50">
+                  {perfilUsuario}
+                </span>
+              </div>
             </div>
           ) : (
-            <div className="text-center">
+            <div className="text-center space-y-1">
+              {emailUsuario && <button type="button" onClick={abrirEscolhaDeAvatar} data-meu-avatar title="Escolher meu avatar" className="cursor-pointer mx-auto block"><Avatar email={emailUsuario} tamanho={28} /></button>}
               <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-indigo-950 text-indigo-300 border border-indigo-800/50">
                 {perfilUsuario.substring(0, 3)}
               </span>
