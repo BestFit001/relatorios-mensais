@@ -1,78 +1,206 @@
 @import "tailwindcss";
 
-:root {
-  --background: #0d0f18;
-  --foreground: #f1f5f9;
+/* ==========================================================================
+   HUB BEST FIT — SISTEMA DE DESIGN
+   Ideia: painel de instrumentos, sóbrio e legível. Grafite neutro no escuro, papel frio no claro,
+   uma única cor de marca (índigo), tipografia IBM Plex (números tabulares) e cantos mais contidos.
+   Como o site inteiro usa classes do Tailwind (slate, rounded, font-bold...), a base é redefinida
+   aqui no tema: todas as telas herdam a nova paleta, fonte, cantos e pesos sem mexer em cada página.
+   ========================================================================== */
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* neutros (escuro): grafite com um fio de azul, menos "azul-marinho" que o slate padrão */
+  --color-slate-50: #f5f7fa;
+  --color-slate-100: #e9edf3;
+  --color-slate-200: #d3dae4;
+  --color-slate-300: #aeb8c7;
+  --color-slate-400: #8c98ab;
+  --color-slate-500: #78849a;
+  --color-slate-600: #556074;
+  --color-slate-700: #38414f;
+  --color-slate-800: #262e3b;
+  --color-slate-900: #1a212c;
+  --color-slate-950: #11161e;
+  --color-gray-50: #f5f7fa;
+  --color-gray-100: #e9edf3;
+  --color-gray-200: #d3dae4;
+  --color-gray-300: #aeb8c7;
+  --color-gray-400: #8c98ab;
+  --color-gray-500: #78849a;
+  --color-gray-600: #556074;
+  --color-gray-700: #38414f;
+  --color-gray-800: #262e3b;
+  --color-gray-900: #1a212c;
+  --color-gray-950: #11161e;
+
+  /* marca: índigo um pouco mais fundo que o padrão */
+  --color-indigo-400: #8f9cf5;
+  --color-indigo-500: #6573ee;
+  --color-indigo-600: #4f5fe3;
+  --color-indigo-700: #404ec7;
+
+  /* cantos mais contidos: menos "bolha", mais painel */
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
+  --radius-2xl: 0.875rem;
+  --radius-3xl: 1.125rem;
+
+  /* pesos: Plex tem 400/500/600/700; o que era "black" vira 700, "bold" vira 600 */
+  --font-weight-semibold: 500;
+  --font-weight-bold: 600;
+  --font-weight-extrabold: 700;
+  --font-weight-black: 700;
+
+  --tracking-wider: 0.025em;
+  --tracking-widest: 0.05em;
 }
 
+:root {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bg: #0c1016;
+  --aside-bg: #0a0d12;
+  --surface: #161c26;
+  --line: #242c39;
+  --text: #e9edf3;
+  --text-2: #98a3b6;
+  --text-3: #78849a;
+  --hover: rgb(255 255 255 / 0.05);
+  --accent: #6573ee;
+  --accent-soft: rgb(101 115 238 / 0.14);
+  --accent-text: #b4bdfb;
+  --ring: rgb(101 115 238 / 0.28);
+  --background: var(--bg);
+  --foreground: var(--text);
+}
+html.light {
+  --bg: #f3f5f8;
+  --aside-bg: #ffffff;
+  --surface: #ffffff;
+  --line: #e2e7ee;
+  --text: #0f1b2d;
+  --text-2: #475467;
+  --text-3: #667085;
+  --hover: #f1f4f8;
+  --accent: #4f5fe3;
+  --accent-soft: #eceefd;
+  --accent-text: #3a47c4;
+  --ring: rgb(79 95 227 / 0.22);
+}
+
+html { color-scheme: dark; }
+html.light { color-scheme: light; }
+
 body {
-  background-color: #0d0f18;
-  color: #f1f5f9;
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "kern", "liga";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   margin: 0;
   padding: 0;
 }
 
+h1, h2, h3 { letter-spacing: -0.012em; }
+h1 { letter-spacing: -0.02em; }
+::selection { background: var(--ring); }
+
+/* Foco visível para quem usa teclado */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+:where(input, select, textarea):focus-visible { outline-offset: 0; }
+
+/* Barras de rolagem discretas */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-3) 45%, transparent) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text-3) 40%, transparent); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text-3) 65%, transparent); background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* Rótulos pequenos: em caixa normal (menos "gritado"); só cabeçalhos de tabela mantêm caixa alta */
+.uppercase { text-transform: none; }
+th.uppercase, thead .uppercase, th .uppercase, thead th { text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* ----- Painéis, campos e tabelas (modo escuro) ----- */
+[class*="bg-slate-900"][class*="rounded"] {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035), 0 1px 2px rgb(0 0 0 / 0.28);
+}
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), select, textarea {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus, select:focus, textarea:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+button { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease; }
+button:not(:disabled):active { transform: translateY(0.5px); }
+button:disabled { cursor: not-allowed; }
+table { border-collapse: collapse; }
+table tbody tr { transition: background-color 0.12s ease; }
+html:not(.light) table tbody tr:hover { background-color: rgb(255 255 255 / 0.025); }
+html:not(.light) thead th { color: var(--text-3); }
+
 /* ==========================================
    MODO CLARO (LIGHT MODE)
    Regras de contraste:
-   - painel = branco, bloco interno = cinza bem claro, página = cinza-azulado;
+   - painel = branco com borda fina e sombra mínima, bloco interno = cinza bem claro, página = cinza frio;
    - texto de destaque (verde/rosa/roxo...) escurece para não "sumir" no branco;
    - fundo colorido sólido (roxo, índigo...) mantém texto branco;
    - fundos translúcidos escuros (bg-xxx-950/40) viram tons pastel.
    ========================================== */
-html.light body {
-  background-color: #f1f5f9 !important;
-  color: #0f172a !important;
-}
+html.light body { background-color: var(--bg) !important; color: var(--text) !important; }
 
 /* Páginas e painéis */
-html.light [class*="min-h-screen"][class*="bg-slate-9"] { background-color: #f1f5f9 !important; }
+html.light [class*="min-h-screen"][class*="bg-slate-9"] { background-color: var(--bg) !important; }
 html.light [class^="bg-slate-9"], html.light [class*=" bg-slate-9"],
 html.light .bg-\[\#0b0e14\], html.light .bg-\[\#07090e\] {
   background-color: #ffffff !important;
-  border-color: #e2e8f0 !important;
+  border-color: var(--line) !important;
 }
+html.light [class*="bg-slate-9"][class*="rounded"] { box-shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 1px 3px rgb(16 24 40 / 0.04); }
 /* blocos internos (campos, linhas, cartões dentro de um painel) */
-html.light [class^="bg-slate-950"], html.light [class*=" bg-slate-950"] { background-color: #f8fafc !important; }
-html.light [class^="bg-slate-8"], html.light [class*=" bg-slate-8"] { background-color: #e2e8f0 !important; }
-html.light [class^="bg-slate-7"], html.light [class*=" bg-slate-7"] { background-color: #cbd5e1 !important; }
+html.light [class^="bg-slate-950"], html.light [class*=" bg-slate-950"] { background-color: #f6f8fb !important; }
+html.light [class^="bg-slate-8"], html.light [class*=" bg-slate-8"] { background-color: #e7ecf2 !important; }
+html.light [class^="bg-slate-7"], html.light [class*=" bg-slate-7"] { background-color: #d3dae4 !important; }
 html.light .hover\:bg-slate-800:hover, html.light .hover\:bg-slate-700:hover,
-html.light [class*="hover:bg-slate-800"]:hover, html.light [class*="hover:bg-slate-700"]:hover { background-color: #e2e8f0 !important; }
-html.light .hover\:bg-slate-900:hover { background-color: #f1f5f9 !important; }
-
-/* Barra lateral */
-html.light aside { background-color: #ffffff !important; border-right-color: #e2e8f0 !important; box-shadow: 1px 0 0 #e2e8f0 !important; }
-html.light aside .text-slate-400, html.light aside .text-slate-500 { color: #475569 !important; }
-html.light aside .hover\:text-white:hover { color: #0f172a !important; background-color: #f1f5f9; }
+html.light [class*="hover:bg-slate-800"]:hover, html.light [class*="hover:bg-slate-700"]:hover { background-color: #e7ecf2 !important; }
+html.light .hover\:bg-slate-900:hover { background-color: #f1f4f8 !important; }
 
 /* Bordas e divisórias */
-html.light [class^="border-slate-"], html.light [class*=" border-slate-"] { border-color: #e2e8f0 !important; }
-html.light [class*="divide-slate"] > * { border-color: #e2e8f0 !important; }
-html.light [class*="shadow-xl"], html.light [class*="shadow-2xl"] { box-shadow: 0 1px 3px rgb(15 23 42 / 0.08), 0 1px 2px rgb(15 23 42 / 0.05) !important; }
+html.light [class^="border-slate-"], html.light [class*=" border-slate-"],
+html.light [class^="border-gray-"], html.light [class*=" border-gray-"] { border-color: var(--line) !important; }
+html.light [class*="divide-slate"] > * { border-color: var(--line) !important; }
+html.light [class*="shadow-xl"], html.light [class*="shadow-2xl"] { box-shadow: 0 4px 12px rgb(16 24 40 / 0.08), 0 1px 3px rgb(16 24 40 / 0.06) !important; }
 
 /* Textos neutros */
-html.light .text-white { color: #0f172a !important; }
-html.light .text-slate-100, html.light .text-slate-200, html.light .text-slate-300 { color: #1e293b !important; }
-html.light .text-slate-400 { color: #475569 !important; }
-html.light .text-slate-500, html.light .text-slate-600 { color: #64748b !important; }
-html.light .hover\:text-white:hover, html.light .hover\:text-slate-200:hover, html.light .hover\:text-slate-300:hover { color: #0f172a !important; }
-html.light ::placeholder { color: #94a3b8 !important; opacity: 1; }
+html.light .text-white { color: var(--text) !important; }
+html.light .text-slate-100, html.light .text-slate-200, html.light .text-slate-300,
+html.light .text-gray-200, html.light .text-gray-300 { color: #1d2939 !important; }
+html.light .text-slate-400, html.light .text-gray-400 { color: #475467 !important; }
+html.light .text-slate-500, html.light .text-slate-600, html.light .text-gray-500, html.light .text-gray-600 { color: #667085 !important; }
+html.light .hover\:text-white:hover, html.light .hover\:text-slate-200:hover, html.light .hover\:text-slate-300:hover { color: var(--text) !important; }
+html.light ::placeholder { color: #98a2b3 !important; opacity: 1; }
 
 /* Campos */
 html.light input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 html.light select, html.light textarea {
   background-color: #ffffff !important;
-  color: #0f172a !important;
-  border-color: #cbd5e1 !important;
+  color: var(--text) !important;
+  border-color: #cfd6e0 !important;
 }
-html.light input:focus, html.light select:focus, html.light textarea:focus { border-color: #6366f1 !important; box-shadow: 0 0 0 3px rgb(99 102 241 / 0.15); }
-html.light option { background-color: #ffffff; color: #0f172a; }
+html.light input:focus, html.light select:focus, html.light textarea:focus { border-color: var(--accent) !important; }
+html.light option { background-color: #ffffff; color: var(--text); }
 
 /* Tabelas */
-html.light table tr { border-color: #e2e8f0 !important; }
-html.light table tbody tr:hover { background-color: #f1f5f9 !important; }
-html.light thead, html.light thead th { background-color: #f1f5f9 !important; color: #475569 !important; }
+html.light table tr { border-color: #e9edf3 !important; }
+html.light table tbody tr:hover { background-color: #f6f8fb !important; }
+html.light thead, html.light thead th { background-color: #f6f8fb !important; color: #667085 !important; }
 
 /* Cores de destaque: texto mais escuro e fundos pastel */
 
@@ -168,3 +296,122 @@ html.light [class*="bg-black"] .text-white, html.light [class*="bg-black"].text-
 /* quem tem fundo sólido E o texto branco no mesmo elemento (ex.: aba ativa roxa) */
 html.light [class*="bg-gradient"].text-white, html.light [class*="bg-linear"].text-white { color: #ffffff !important; }
 
+
+/* Degradês com pontas escuras (from/via/to-xxx-900/950) viram pastel no modo claro */
+html.light [class*="from-slate-9"] { --tw-gradient-from: #ffffff !important; }
+html.light [class*="via-slate-9"] { --tw-gradient-via: #ffffff !important; }
+html.light [class*="to-slate-9"] { --tw-gradient-to: #ffffff !important; }
+html.light [class*="from-amber-9"] { --tw-gradient-from: #fffbeb !important; }
+html.light [class*="via-amber-9"] { --tw-gradient-via: #fffbeb !important; }
+html.light [class*="to-amber-9"] { --tw-gradient-to: #fffbeb !important; }
+html.light [class*="from-emerald-9"] { --tw-gradient-from: #ecfdf5 !important; }
+html.light [class*="via-emerald-9"] { --tw-gradient-via: #ecfdf5 !important; }
+html.light [class*="to-emerald-9"] { --tw-gradient-to: #ecfdf5 !important; }
+html.light [class*="from-green-9"] { --tw-gradient-from: #f0fdf4 !important; }
+html.light [class*="via-green-9"] { --tw-gradient-via: #f0fdf4 !important; }
+html.light [class*="to-green-9"] { --tw-gradient-to: #f0fdf4 !important; }
+html.light [class*="from-teal-9"] { --tw-gradient-from: #f0fdfa !important; }
+html.light [class*="via-teal-9"] { --tw-gradient-via: #f0fdfa !important; }
+html.light [class*="to-teal-9"] { --tw-gradient-to: #f0fdfa !important; }
+html.light [class*="from-cyan-9"] { --tw-gradient-from: #ecfeff !important; }
+html.light [class*="via-cyan-9"] { --tw-gradient-via: #ecfeff !important; }
+html.light [class*="to-cyan-9"] { --tw-gradient-to: #ecfeff !important; }
+html.light [class*="from-sky-9"] { --tw-gradient-from: #f0f9ff !important; }
+html.light [class*="via-sky-9"] { --tw-gradient-via: #f0f9ff !important; }
+html.light [class*="to-sky-9"] { --tw-gradient-to: #f0f9ff !important; }
+html.light [class*="from-blue-9"] { --tw-gradient-from: #eff6ff !important; }
+html.light [class*="via-blue-9"] { --tw-gradient-via: #eff6ff !important; }
+html.light [class*="to-blue-9"] { --tw-gradient-to: #eff6ff !important; }
+html.light [class*="from-indigo-9"] { --tw-gradient-from: #eef2ff !important; }
+html.light [class*="via-indigo-9"] { --tw-gradient-via: #eef2ff !important; }
+html.light [class*="to-indigo-9"] { --tw-gradient-to: #eef2ff !important; }
+html.light [class*="from-violet-9"] { --tw-gradient-from: #f5f3ff !important; }
+html.light [class*="via-violet-9"] { --tw-gradient-via: #f5f3ff !important; }
+html.light [class*="to-violet-9"] { --tw-gradient-to: #f5f3ff !important; }
+html.light [class*="from-purple-9"] { --tw-gradient-from: #faf5ff !important; }
+html.light [class*="via-purple-9"] { --tw-gradient-via: #faf5ff !important; }
+html.light [class*="to-purple-9"] { --tw-gradient-to: #faf5ff !important; }
+html.light [class*="from-fuchsia-9"] { --tw-gradient-from: #fdf4ff !important; }
+html.light [class*="via-fuchsia-9"] { --tw-gradient-via: #fdf4ff !important; }
+html.light [class*="to-fuchsia-9"] { --tw-gradient-to: #fdf4ff !important; }
+html.light [class*="from-pink-9"] { --tw-gradient-from: #fdf2f8 !important; }
+html.light [class*="via-pink-9"] { --tw-gradient-via: #fdf2f8 !important; }
+html.light [class*="to-pink-9"] { --tw-gradient-to: #fdf2f8 !important; }
+html.light [class*="from-rose-9"] { --tw-gradient-from: #fff1f2 !important; }
+html.light [class*="via-rose-9"] { --tw-gradient-via: #fff1f2 !important; }
+html.light [class*="to-rose-9"] { --tw-gradient-to: #fff1f2 !important; }
+html.light [class*="from-red-9"] { --tw-gradient-from: #fef2f2 !important; }
+html.light [class*="via-red-9"] { --tw-gradient-via: #fef2f2 !important; }
+html.light [class*="to-red-9"] { --tw-gradient-to: #fef2f2 !important; }
+html.light [class*="from-orange-9"] { --tw-gradient-from: #fff7ed !important; }
+html.light [class*="via-orange-9"] { --tw-gradient-via: #fff7ed !important; }
+html.light [class*="to-orange-9"] { --tw-gradient-to: #fff7ed !important; }
+html.light [class*="from-yellow-9"] { --tw-gradient-from: #fefce8 !important; }
+html.light [class*="via-yellow-9"] { --tw-gradient-via: #fefce8 !important; }
+html.light [class*="to-yellow-9"] { --tw-gradient-to: #fefce8 !important; }
+
+/* ==========================================
+   MENU LATERAL
+   ========================================== */
+.hub-aside { position: fixed; top: 0; left: 0; bottom: 0; z-index: 50; display: flex; flex-direction: column; width: 4rem; background: var(--aside-bg); border-right: 1px solid var(--line); transition: width 0.25s ease; font-family: var(--font-sans); user-select: none; }
+.hub-aside[data-aberta="true"] { width: 15rem; }
+html.light .hub-aside { box-shadow: 1px 0 0 var(--line), 4px 0 16px rgb(16 24 40 / 0.03); }
+.hub-topo { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0 0.75rem; height: 3.75rem; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.hub-marca { display: flex; align-items: center; gap: 0.625rem; min-width: 0; }
+.hub-logo { position: relative; width: 2rem; height: 2rem; flex-shrink: 0; border-radius: 0.5rem; background: var(--accent); color: #fff; font-weight: 700; font-size: 0.7rem; letter-spacing: 0.02em; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; box-shadow: 0 1px 2px rgb(0 0 0 / 0.25), inset 0 1px 0 rgb(255 255 255 / 0.22); }
+.hub-logo img { width: 100%; height: 100%; object-fit: cover; }
+.hub-logo-troca { position: absolute; inset: 0; background: rgb(0 0 0 / 0.65); color: #fff; font-size: 0.55rem; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.15s; }
+.hub-logo:hover .hub-logo-troca { opacity: 1; }
+.hub-nome { font-size: 0.875rem; font-weight: 600; letter-spacing: -0.01em; color: var(--text); line-height: 1.15; white-space: nowrap; }
+.hub-sub-nome { font-size: 0.6875rem; color: var(--text-3); line-height: 1.2; white-space: nowrap; }
+.hub-recolher { width: 1.625rem; height: 1.625rem; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 0.4rem; color: var(--text-3); background: transparent; border: 1px solid transparent; cursor: pointer; }
+.hub-recolher:hover { color: var(--text); background: var(--hover); border-color: var(--line); }
+.hub-nav { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0.75rem 0.5rem; display: flex; flex-direction: column; gap: 2px; }
+.hub-item { position: relative; display: flex; align-items: center; gap: 0.75rem; width: 100%; padding: 0.5rem 0.625rem; border-radius: 0.5rem; border: 0; background: transparent; color: var(--text-2); font-family: inherit; font-size: 0.8125rem; font-weight: 500; line-height: 1.25; text-align: left; cursor: pointer; text-decoration: none; }
+.hub-aside:not([data-aberta="true"]) .hub-item { justify-content: center; padding: 0.625rem 0; }
+.hub-item:hover { background: var(--hover); color: var(--text); }
+.hub-item[data-ativo="true"] { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.hub-item[data-ativo="true"]::before { content: ""; position: absolute; left: -0.5rem; top: 0.45rem; bottom: 0.45rem; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+.hub-item[data-secao-ativa="true"] { color: var(--text); }
+.hub-item svg { flex-shrink: 0; }
+.hub-rotulo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-seta { flex-shrink: 0; color: var(--text-3); transition: transform 0.2s ease; }
+.hub-seta[data-aberta="true"] { transform: rotate(180deg); }
+.hub-sub { margin: 2px 0 6px 1.2rem; padding-left: 0.625rem; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
+.hub-subitem { display: block; padding: 0.375rem 0.625rem; border-radius: 0.4rem; color: var(--text-2); font-size: 0.8125rem; line-height: 1.3; text-decoration: none; }
+.hub-subitem:hover { color: var(--text); background: var(--hover); }
+.hub-subitem[data-ativo="true"] { color: var(--accent-text); background: var(--accent-soft); font-weight: 600; }
+.hub-pe { flex-shrink: 0; padding: 0.625rem 0.5rem 0.75rem; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 0.5rem; }
+.hub-usuario { display: flex; align-items: center; gap: 0.625rem; padding: 0.25rem 0.375rem; min-width: 0; }
+.hub-usuario-info { min-width: 0; }
+.hub-usuario-email { font-size: 0.75rem; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-perfil { display: inline-block; margin-top: 2px; padding: 1px 0.4rem; border-radius: 0.3rem; font-size: 0.625rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; background: var(--accent-soft); color: var(--accent-text); }
+.hub-acoes { display: flex; gap: 0.375rem; }
+.hub-acao { flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.4rem; height: 2.125rem; border-radius: 0.5rem; border: 1px solid var(--line); background: transparent; color: var(--text-2); font-family: inherit; font-size: 0.75rem; font-weight: 500; cursor: pointer; }
+.hub-acao:hover { background: var(--hover); color: var(--text); }
+.hub-acao[data-perigo="true"]:hover { color: #f43f5e; border-color: rgb(244 63 94 / 0.4); background: rgb(244 63 94 / 0.08); }
+.hub-aside:not([data-aberta="true"]) .hub-acoes { flex-direction: column; }
+
+/* ==========================================
+   LOGIN
+   ========================================== */
+.login-raiz { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); background: var(--bg); color: var(--text); font-family: var(--font-sans); }
+.login-lado { display: none; }
+.login-form-lado { display: flex; align-items: center; justify-content: center; padding: 2rem 1.5rem; }
+@media (min-width: 1024px) {
+  .login-raiz { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+  .login-lado { display: flex; flex-direction: column; justify-content: space-between; padding: 2.5rem 3rem; background: #151a33; background-image: linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 40%), repeating-linear-gradient(0deg, transparent 0 47px, rgb(255 255 255 / 0.022) 47px 48px); color: #e7eafd; border-right: 1px solid rgb(255 255 255 / 0.06); }
+}
+.login-marca { display: flex; align-items: center; gap: 0.75rem; font-weight: 600; font-size: 1rem; letter-spacing: -0.01em; color: #fff; }
+.login-logo { width: 2.25rem; height: 2.25rem; border-radius: 0.5rem; background: #5b6cf2; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.25); }
+.login-titulo { font-size: 2rem; line-height: 1.15; font-weight: 600; letter-spacing: -0.025em; color: #fff; max-width: 17ch; }
+.login-lista { list-style: none; margin: 2rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.875rem; max-width: 26rem; }
+.login-lista li { display: flex; flex-direction: column; gap: 2px; padding-left: 0.875rem; border-left: 2px solid #5b6cf2; }
+.login-lista strong { font-weight: 600; font-size: 0.9375rem; color: #fff; }
+.login-lista span { font-size: 0.8125rem; color: #aab2e6; }
+.login-rodape { font-size: 0.75rem; color: #8e97d4; margin: 0; }
+html.light .login-form-lado { background: #fff; }
+
+/* cartões com degradê de pontas escuras (viram pastel no claro): texto normal, não branco */
+html.light [class*="bg-gradient"][class*="-950"] .text-white, html.light [class*="bg-gradient"][class*="-900"] .text-white,
+html.light [class*="bg-gradient"][class*="-950"].text-white, html.light [class*="bg-gradient"][class*="-900"].text-white { color: var(--text) !important; }
