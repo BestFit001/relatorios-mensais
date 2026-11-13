@@ -1,6 +1,7 @@
 // SKU pai: agrupa os SKUs filhos (variações) de um mesmo produto. Informação central do app, usada no Mapa de Cadastros e na Calculadora.
 // Regra padrão: o pai são os 5 primeiros dígitos do SKU. Há pais com 4 dígitos (SKUs de 10 dígitos): nesses casos o ajuste é manual
-// e fica gravado na tabela sku_pai_manual (sku -> pai), valendo para todas as telas.
+// e fica gravado na tabela sku_pai_manual (sku -> pai), valendo para todas as telas. Gravar o pai igual ao padrão (5 dígitos) vale como "está correto":
+// o SKU sai da lista de suspeitos de ter pai de 4 dígitos.
 
 export const TAMANHO_PAI_PADRAO = 5;
 export type RegraCustoPai = "maior" | "media" | "menor";

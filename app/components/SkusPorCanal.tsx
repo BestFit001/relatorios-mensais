@@ -142,6 +142,14 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
     if (erro) setErroPai(erro); else setEditandoPai(null);
   };
 
+  // "Está correto": mantém o pai atual (ex.: 5 dígitos) em todos os filhos do grupo e tira o aviso de que ele poderia ter 4 dígitos
+  const confirmarPai = async (pai: string) => {
+    setSalvandoPai(true); setErroPai("");
+    const erro = await onEditarPai((filhosPorPai.get(pai) || []).map((it) => it.sku), pai);
+    setSalvandoPai(false);
+    if (erro) setErroPai(erro); else setEditandoPai(null);
+  };
+
   const baixarCsv = () => {
     const esc = (v: any) => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const cab = ["SKU pai", "SKU", "Produto", "Marca", "Status", "Exclusão", "Estoque", "Canais cadastrados", "Total de canais", ...visiveis.map((v) => v.canal)];
@@ -350,6 +358,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
                                       onKeyDown={(e) => { if (e.key === "Enter") salvarPai(); if (e.key === "Escape") setEditandoPai(null); }}
                                       className="w-32 bg-slate-900 border border-indigo-500 rounded-lg px-2 py-1 text-xs font-mono font-black text-white outline-none" />
                                     <button type="button" data-salvar-pai disabled={salvandoPai} onClick={salvarPai} className="px-3 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 cursor-pointer">{salvandoPai ? "Salvando…" : "Salvar"}</button>
+                                    <button type="button" data-confirmar-pai disabled={salvandoPai} onClick={() => confirmarPai(g.pai)} title={`Manter ${g.pai.toUpperCase()} como pai de todos os filhos e parar de sugerir 4 dígitos`} className="px-3 py-1 rounded-lg text-[11px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 cursor-pointer">✔ Está correto ({g.pai.toUpperCase()})</button>
                                     <button type="button" disabled={salvandoPai} onClick={() => setEditandoPai(null)} className="px-3 py-1 rounded-lg text-[11px] font-bold bg-slate-800 text-slate-200 border border-slate-700 cursor-pointer">Cancelar</button>
                                     {erroPai && <span className="text-[11px] text-rose-300">{erroPai}</span>}
                                   </div>

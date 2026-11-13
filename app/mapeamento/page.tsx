@@ -295,7 +295,7 @@ export default function MapeamentoPage() {
     const novo = normalizarSkuPai(pai);
     setPaiManual((m) => {
       const n = new Map(m);
-      for (const sku of skus) { const k = normalizarSkuPai(sku); if (paiPadrao(k) === novo) n.delete(k); else n.set(k, novo); }
+      for (const sku of skus) n.set(normalizarSkuPai(sku), novo);   // inclusive quando igual ao padrão: fica como "confirmado"
       return n;
     });
     return null;
