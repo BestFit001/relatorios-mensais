@@ -302,6 +302,22 @@ export default function Navbar() {
             </Link>
           )}
 
+          {/* RANKING DE ANALISTAS */}
+          {temPermissao("/ranking") && (
+            <Link
+              href="/ranking"
+              title="Ranking de analistas"
+              className={`flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all ${
+                pathname === "/ranking"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-bold"
+                  : "text-slate-400 hover:text-white hover:bg-slate-900/60"
+              }`}
+            >
+              <span className="text-sm flex-shrink-0">🏆</span>
+              {sidebarAberta && <span className="truncate">Ranking</span>}
+            </Link>
+          )}
+
           {/* MARKETING (POSTAGENS & AJUSTES NO SITE) */}
           {(temPermissao("/marketing") || temPermissao("/marketing/ajustes")) && (
             <div>

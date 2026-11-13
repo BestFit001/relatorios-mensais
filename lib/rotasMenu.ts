@@ -14,6 +14,7 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/executivo", nome: "Executivo" },
   ] },
   { titulo: "Reputação", submenu: false, rotas: [{ id: "/reputacao", nome: "Reputação" }] },
+  { titulo: "Ranking", submenu: false, rotas: [{ id: "/ranking", nome: "Ranking" }] },
   { titulo: "Marketing", submenu: true, rotas: [
     { id: "/marketing", nome: "Postagens" },
     { id: "/marketing/ajustes", nome: "Ajustes no Site" },

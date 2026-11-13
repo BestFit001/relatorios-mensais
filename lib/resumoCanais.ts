@@ -22,6 +22,16 @@ export interface ResumoCanal {
   isCurrentMonth: boolean;
   isFisico: boolean;
   logoUrl: string | null;
+  /** pedidos distintos faturados no mês (linhas sem número de pedido, como as das lojas físicas, contam uma a uma) */
+  pedidos: number;
+  unidades: number;
+  /** faturamento bruto ÷ pedidos */
+  ticketMedio: number;
+  /** investimento em Ads do canal no mês (aba Adsense) */
+  adsGasto: number;
+  devolucoesValor: number;
+  canceladosValor: number;
+  topProdutos: { sku: string; produto: string; qtd: number; faturamento: number }[];
 }
 
 export const TABELAS_RESUMO = [
@@ -123,8 +133,10 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
   });
 
   const produtosCustoMap = new Map<string, { custo_unitario: number; custo_embalagem: number }>();
+  const nomeProduto = new Map<string, string>();
   products.forEach((p: any) => {
     const sNorm = normalizarSku(p.sku);
+    if (sNorm && p.produto) nomeProduto.set(sNorm, String(p.produto).trim());
     if (sNorm) {
       produtosCustoMap.set(sNorm, {
         custo_unitario: parseCurrency(p.custo_unitario || p.preco_custo || p.custo),
@@ -325,6 +337,19 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
     const impostoCanal = (faturadoComRedutor * aliquotaImpostoGlobal) / 100;
     const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - impostoCanal - (DESCONTAR_FRETE_ADS_NO_LUCRO ? flexCanal + canalAds + devFreteLiquido : 0);
 
+    const pedidosSet = new Set<string>(); let semPedido = 0, unidades = 0;
+    const porSku = new Map<string, { sku: string; produto: string; qtd: number; faturamento: number }>();
+    chSales.forEach((s: any) => {
+      const ped = normalizarPedido(s.id_pedido);
+      if (ped) pedidosSet.add(ped); else semPedido++;
+      const q = parseCurrency(s.quantidade) || 1;
+      unidades += q;
+      const k = normalizarSku(s.sku) || "sem sku";
+      const e = porSku.get(k) || { sku: String(s.sku ?? "").trim() || "sem sku", produto: nomeProduto.get(k) || String(s.produto ?? s.descricao ?? "").trim(), qtd: 0, faturamento: 0 };
+      e.qtd += q; e.faturamento += s.preco_venda;
+      porSku.set(k, e);
+    });
+    const pedidosTotal = pedidosSet.size + semPedido;
     const metaBase = parseCurrency(goalObj.meta_valor);
     return {
       canal: channelName,
@@ -341,6 +366,10 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       isCurrentMonth,
       isFisico: isChannelFisico(channelName),
       logoUrl: channelLogos[channelName] || ruleObj.logo_url || null,
+      pedidos: pedidosTotal, unidades,
+      ticketMedio: pedidosTotal > 0 ? faturadoBrutoPuro / pedidosTotal : 0,
+      adsGasto: canalAds, devolucoesValor: devPdvBruto, canceladosValor: cancelamentosMes,
+      topProdutos: Array.from(porSku.values()).sort((a, b) => b.faturamento - a.faturamento).slice(0, 10),
     };
   });
 }
