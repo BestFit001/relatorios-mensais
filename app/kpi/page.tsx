@@ -13,7 +13,7 @@ import { nomeDeExibicao, useNomes } from "../../lib/nomes";
 import { normalizarSkuVenda } from "../../lib/vendasCanaisLogica";
 import { rotuloMes } from "../../lib/ranking";
 import {
-  calcularKpiAnalista, mesesDoCiclo, separarSkus, somarMeses, variavelBaseSugerida,
+  baseDoMes, calcularKpiAnalista, mesesDoCiclo, separarSkus, somarMeses,  
   type DadosMes, type KpiConfig, type LinhaKpi, type ResultadoKpi, type SkuExcluido,
 } from "../../lib/kpi";
 import { CAMPO_CONFIG, CAMPO_SKUS, campoMargemDoMes, dadosDoMes, lerConfiguracoes, margemDoMes } from "../../lib/kpiCalculo";
@@ -28,7 +28,7 @@ const mesExtenso = (iso: string) => { const [a, m] = iso.split("-"); return `${M
 const ACUM = "acum";
 
 type Mapeamento = { email: string; canal: string };
-type Aba = "metas" | "skus" | "regras" | "analistas";
+type Aba = "metas" | "salarios" | "skus" | "regras";
 
 const campo = "bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-indigo-500";
 const cartao = "bg-slate-900/90 border border-slate-800 rounded-2xl";
@@ -54,7 +54,8 @@ export default function KpiPage() {
   const [atualizando, setAtualizando] = useState(false);
   const [visao, setVisao] = useState<string>("");
   const [analista, setAnalista] = useState<string>("equipe");
-  const [painel, setPainel] = useState<Aba | null>(null);
+  const [tela, setTela] = useState<"painel" | "config">("painel");
+  const [aba, setAba] = useState<Aba>("metas");
   const ultimaBusca = useRef(0);
 
   // ------------------------------------------------------------ dados (atualiza sozinho)
@@ -125,13 +126,15 @@ export default function KpiPage() {
     mapeamentos.forEach((m) => { if (m.email) (por.get(m.email) || por.set(m.email, new Set()).get(m.email)!).add(chaveCanal(m.canal)); });
     return Array.from(por.entries()).map(([email, chaves]) => ({ email, chaves: Array.from(chaves) })).sort((a, b) => nomeDeExibicao(a.email).localeCompare(nomeDeExibicao(b.email)));
   }, [mapeamentos]);
-  const baseDe = (email: string) => config.analistas[email]?.variavelBase ?? variavelBaseSugerida(nomeDeExibicao(email));
+  // salário do analista no mês visto (no acumulado, vale o do último mês do período)
+  const mesBase = visao === ACUM || !visao ? mesesAteHoje[mesesAteHoje.length - 1] : visao;
+  const baseDe = (email: string, mes: string = mesBase) => baseDoMes(config, email, nomeDeExibicao(email), mes);
   const resultados = useMemo(() => {
     const m = new Map<string, ResultadoKpi>();
     if (periodoVisto) analistas.forEach((a) => m.set(a.email, calcularKpiAnalista(periodoVisto, a.chaves, baseDe(a.email), config)));
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [periodoVisto, analistas, config]);
+  }, [periodoVisto, analistas, config, mesBase]);
 
   const visiveis = usuario.admin ? analistas : analistas.filter((a) => a.email === usuario.email);
   const selecionado = usuario.admin ? (analista === "equipe" ? null : analistas.find((a) => a.email === analista) || null) : visiveis[0] || null;
@@ -158,8 +161,17 @@ export default function KpiPage() {
           <Navbar />
         </div>
 
+        {usuario.admin && (
+          <div className="flex gap-2" role="tablist" aria-label="Seção" data-telas>
+            {([["painel", "Painel"], ["config", "Configuração"]] as const).map(([id, nome]) => (
+              <button key={id} type="button" role="tab" aria-selected={tela === id} data-tela={id} onClick={() => setTela(id)}
+                className={`px-5 py-2 rounded-xl text-sm font-semibold cursor-pointer border ${tela === id ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-900 border-slate-700 text-slate-300 hover:text-white"}`}>{nome}</button>
+            ))}
+          </div>
+        )}
+
         {/* barra de período e atualização */}
-        <div className={`${cartao} p-4 flex flex-wrap items-center gap-3`} data-barra-periodo>
+        {(tela === "painel" || !usuario.admin) && <div className={`${cartao} p-4 flex flex-wrap items-center gap-3`} data-barra-periodo>
           <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Período">
             {meses.map((m) => (
               <button key={m} type="button" role="tab" aria-selected={visao === m} data-mes-kpi={m} onClick={() => setVisao(m)}
@@ -176,17 +188,16 @@ export default function KpiPage() {
           <div className="ml-auto flex items-center gap-3 text-xs text-slate-400" data-atualizacao>
             <span>{atualizando ? "Atualizando…" : atualizadoEm ? `Atualizado às ${horaSP(atualizadoEm)} · atualiza sozinho` : ""}</span>
             <button type="button" onClick={() => carregar(true)} data-atualizar className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-950 text-slate-200 hover:text-white cursor-pointer font-semibold">Atualizar agora</button>
-            {usuario.admin && <button type="button" onClick={() => setPainel(painel ? null : "metas")} data-abrir-config className={`px-3 py-1.5 rounded-lg border cursor-pointer font-semibold ${painel ? "bg-indigo-600 border-indigo-500 text-white" : "border-slate-700 bg-slate-950 text-slate-200 hover:text-white"}`}>Metas e regras</button>}
           </div>
-        </div>
+        </div>}
 
         {erro && <p className="text-sm text-rose-400">Não consegui carregar tudo: {erro}</p>}
         {carregando || !periodoVisto ? <p className="text-sm text-slate-400 p-10 text-center">Calculando os KPIs…</p> : (
           <>
-            {usuario.admin && painel && <PainelConfig aba={painel} setAba={setPainel} db={db} config={config} skus={skus} margens={margens} meses={meses} mesInicial={visao && visao !== ACUM ? visao : mesesAteHoje[mesesAteHoje.length - 1]}
+            {usuario.admin && tela === "config" && <PainelConfig aba={aba} setAba={setAba} db={db} config={config} skus={skus} margens={margens} meses={meses} mesInicial={mesBase}
               analistas={analistas} baseDe={baseDe} gravar={gravar} recarregar={() => carregar(true)} />}
 
-            {usuario.admin && (
+            {usuario.admin && tela === "painel" && (
               <div className="flex flex-wrap gap-2" data-seletor-analista>
                 <button type="button" data-analista="equipe" onClick={() => setAnalista("equipe")} className={`px-4 py-2 rounded-xl text-sm font-semibold cursor-pointer border ${analista === "equipe" ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-900 border-slate-700 text-slate-300 hover:text-white"}`}>Equipe</button>
                 {analistas.map((a) => (
@@ -197,16 +208,16 @@ export default function KpiPage() {
               </div>
             )}
 
-            {visiveis.length === 0 && <p className="text-sm text-amber-300">Nenhum canal está vinculado a você ainda. Peça ao admin para vincular seus canais na tela Início.</p>}
+            {tela === "painel" && visiveis.length === 0 && <p className="text-sm text-amber-300">Nenhum canal está vinculado a você ainda. Peça ao admin para vincular seus canais na tela Início.</p>}
 
-            {usuario.admin && !selecionado && analistas.length > 0 && (
+            {tela === "painel" && usuario.admin && !selecionado && analistas.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-resumo-equipe>
                 {analistas.map((a) => {
                   const r = resultados.get(a.email); if (!r) return null;
                   const p = r.maximo > 0 ? (r.total / r.maximo) * 100 : 0;
                   return (
                     <button key={a.email} type="button" onClick={() => setAnalista(a.email)} data-cartao-analista={a.email} className={`${cartao} p-5 text-left cursor-pointer hover:border-indigo-500/60`}>
-                      <div className="flex items-center gap-3"><Avatar email={a.email} tamanho={40} /><div className="min-w-0"><p className="text-base font-bold text-white truncate">{nomeDeExibicao(a.email)}</p><p className="text-xs text-slate-400">{a.chaves.length} canal(is) · base {brl(baseDe(a.email))}</p></div></div>
+                      <div className="flex items-center gap-3"><Avatar email={a.email} tamanho={40} /><div className="min-w-0"><p className="text-base font-bold text-white truncate">{nomeDeExibicao(a.email)}</p><p className="text-xs text-slate-400">{a.chaves.length} canal(is) · salário {brl(baseDe(a.email))}</p></div></div>
                       <p className="mt-4 text-xs text-slate-400">A receber · {rotuloVisao}</p>
                       <p className="text-2xl font-black text-white" data-a-receber>{brl(r.total)}</p>
                       <div className="h-1.5 rounded bg-slate-800 mt-2"><div className="h-1.5 rounded bg-indigo-500" style={{ width: `${Math.min(100, Math.max(1, p))}%` }} /></div>
@@ -217,7 +228,7 @@ export default function KpiPage() {
               </div>
             )}
 
-            {selecionado && resultados.get(selecionado.email) && periodoVisto && (
+            {tela === "painel" && selecionado && resultados.get(selecionado.email) && periodoVisto && (
               <PainelAnalista email={selecionado.email} r={resultados.get(selecionado.email)!} periodo={periodoVisto} chaves={selecionado.chaves} config={config} rotulo={rotuloVisao} temSkus={skus.length > 0} margens={margens} visao={visao} />
             )}
           </>
@@ -243,7 +254,7 @@ function PainelAnalista({ email, r, periodo, chaves, config, rotulo, temSkus, ma
           <p className="mt-5 text-xs text-slate-400">Variável a receber · {rotulo}</p>
           <p className="text-3xl font-black text-white" data-total-receber>{brl(r.total)}</p>
           <div className="h-2 rounded bg-slate-800 mt-3"><div className="h-2 rounded bg-indigo-500" style={{ width: `${Math.min(100, Math.max(1, p))}%` }} /></div>
-          <p className="mt-2 text-xs text-slate-400">{pct1(p)} do máximo de {brl(r.maximo)} (base {brl(r.base)})</p>
+          <p className="mt-2 text-xs text-slate-400">{pct1(p)} do máximo de {brl(r.maximo)} (salário {brl(r.base)})</p>
         </div>
         <div className={`${cartao} p-5`}>
           <p className="text-sm font-semibold text-slate-200">Redutor por cancelamento</p>
@@ -339,12 +350,12 @@ function PainelAnalista({ email, r, periodo, chaves, config, rotulo, temSkus, ma
 
 // ================================================================ metas e regras (só admin)
 function PainelConfig({ aba, setAba, db, config, skus, margens, meses, mesInicial, analistas, baseDe, gravar, recarregar }: {
-  aba: Aba; setAba: (a: Aba | null) => void; db: Record<string, any[]>; config: KpiConfig; skus: SkuExcluido[]; margens: Record<string, number>; meses: string[]; mesInicial: string;
-  analistas: { email: string; chaves: string[] }[]; baseDe: (email: string) => number; gravar: (campo: string, valor: string | null) => Promise<string | null>; recarregar: () => void;
+  aba: Aba; setAba: (a: Aba) => void; db: Record<string, any[]>; config: KpiConfig; skus: SkuExcluido[]; margens: Record<string, number>; meses: string[]; mesInicial: string;
+  analistas: { email: string; chaves: string[] }[]; baseDe: (email: string, mes?: string) => number; gravar: (campo: string, valor: string | null) => Promise<string | null>; recarregar: () => void;
 }) {
   const [aviso, setAviso] = useState<{ ok: boolean; texto: string } | null>(null);
   const [salvando, setSalvando] = useState(false);
-  const abas: { id: Aba; nome: string }[] = [{ id: "metas", nome: "Metas do mês" }, { id: "skus", nome: "SKUs fora do cálculo" }, { id: "regras", nome: "Regras e pesos" }, { id: "analistas", nome: "Analistas" }];
+  const abas: { id: Aba; nome: string }[] = [{ id: "metas", nome: "Metas do mês" }, { id: "salarios", nome: "Salários" }, { id: "skus", nome: "SKUs fora do cálculo" }, { id: "regras", nome: "Regras e pesos" }];
   const salvar = async (fn: () => Promise<string | null>, ok: string) => {
     setSalvando(true); setAviso(null);
     const e = await fn();
@@ -358,13 +369,13 @@ function PainelConfig({ aba, setAba, db, config, skus, margens, meses, mesInicia
     <div className={`${cartao} p-5`} data-painel-config>
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {abas.map((a) => <button key={a.id} type="button" data-aba-config={a.id} onClick={() => { setAba(a.id); setAviso(null); }} className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold cursor-pointer border ${aba === a.id ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:text-white"}`}>{a.nome}</button>)}
-        <button type="button" onClick={() => setAba(null)} className="ml-auto text-sm text-slate-400 hover:text-white cursor-pointer">Fechar</button>
+        <span className="ml-auto text-xs text-slate-500">Só você vê esta área.</span>
       </div>
       {aviso && <p role="status" data-aviso-config className={`text-sm mb-4 ${aviso.ok ? "text-emerald-300" : "text-rose-300"}`}>{aviso.texto}</p>}
       {aba === "metas" && <AbaMetas db={db} config={config} margens={margens} meses={meses} mesInicial={mesInicial} gravar={gravar} salvar={salvar} salvando={salvando} />}
       {aba === "skus" && <AbaSkus db={db} skus={skus} meses={meses} mesInicial={mesInicial} gravar={gravar} salvar={salvar} salvando={salvando} />}
       {aba === "regras" && <AbaRegras config={config} salvarConfig={salvarConfig} salvando={salvando} />}
-      {aba === "analistas" && <AbaAnalistas config={config} analistas={analistas} baseDe={baseDe} salvarConfig={salvarConfig} salvando={salvando} />}
+      {aba === "salarios" && <AbaSalarios config={config} analistas={analistas} meses={meses} baseDe={baseDe} salvarConfig={salvarConfig} salvando={salvando} />}
     </div>
   );
 }
@@ -556,30 +567,52 @@ function AbaRegras({ config, salvarConfig, salvando }: { config: KpiConfig; salv
   );
 }
 
-function AbaAnalistas({ config, analistas, baseDe, salvarConfig, salvando }: { config: KpiConfig; analistas: { email: string; chaves: string[] }[]; baseDe: (e: string) => number; salvarConfig: (c: KpiConfig, ok: string) => Promise<void>; salvando: boolean }) {
-  const [vals, setVals] = useState<Record<string, string>>({});
-  useEffect(() => { const v: Record<string, string> = {}; analistas.forEach((a) => { v[a.email] = String(baseDe(a.email)).replace(".", ","); }); setVals(v); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [analistas, config.analistas]);
+function AbaSalarios({ config, analistas, meses, baseDe, salvarConfig, salvando }: { config: KpiConfig; analistas: { email: string; chaves: string[] }[]; meses: string[]; baseDe: (e: string, mes?: string) => number; salvarConfig: (c: KpiConfig, ok: string) => Promise<void>; salvando: boolean }) {
+  const [padrao, setPadrao] = useState<Record<string, string>>({});
+  const [porMes, setPorMes] = useState<Record<string, string>>({});
+  const txt = (n: number) => String(n).replace(".", ",");
+  const num = (s: string) => { const n = parseFloat(String(s).replace(/\./g, "").replace(",", ".")); return isFinite(n) && n >= 0 ? n : NaN; };
+  useEffect(() => {
+    const p: Record<string, string> = {}; const m: Record<string, string> = {};
+    analistas.forEach((a) => {
+      const c = config.analistas[a.email];
+      p[a.email] = txt(c?.variavelBase ?? baseDoMes({ ...config, analistas: {} }, a.email, nomeDeExibicao(a.email), meses[0] || ""));
+      Object.entries(c?.porMes || {}).forEach(([mes, v]) => { m[a.email + "|" + mes] = txt(v); });
+    });
+    setPadrao(p); setPorMes(m);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analistas, config.analistas]);
   const salvar = () => {
     const novo = { ...config.analistas };
-    analistas.forEach((a) => { const n = parseFloat(String(vals[a.email] ?? "").replace(/\./g, "").replace(",", ".")); if (isFinite(n) && n >= 0) novo[a.email] = { ...novo[a.email], variavelBase: n }; });
-    salvarConfig({ ...config, analistas: novo }, "Variável-base dos analistas salva.");
+    analistas.forEach((a) => {
+      const pad = num(padrao[a.email] ?? "");
+      const meses2: Record<string, number> = {};
+      meses.forEach((mes) => { const t = porMes[a.email + "|" + mes]; if (t !== undefined && t.trim() !== "") { const n = num(t); if (!isNaN(n)) meses2[mes] = n; } });
+      novo[a.email] = { ...novo[a.email], ...(isNaN(pad) ? {} : { variavelBase: pad }), porMes: meses2 };
+    });
+    salvarConfig({ ...config, analistas: novo }, "Salários salvos. O painel já usa os novos valores.");
   };
   return (
-    <div className="space-y-5" data-aba-analistas>
-      <p className="text-sm text-slate-300 max-w-3xl">Variável-base é o valor máximo que o analista recebe quando bate tudo. Os canais de cada um vêm da tela Início (vínculo analista–canal). Para o analista ver esta aba, libere "KPIs e variável" em Painel Admin, no ✏️ do usuário; ele verá só o painel dele.</p>
-      <table className="w-full text-sm max-w-2xl">
-        <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-800"><th className="py-2 pr-3 font-semibold">Analista</th><th className="py-2 px-2 font-semibold">Canais</th><th className="py-2 px-2 font-semibold w-44">Variável-base (R$)</th></tr></thead>
-        <tbody>
-          {analistas.map((a) => (
-            <tr key={a.email} className="border-b border-slate-800/60">
-              <td className="py-2 pr-3"><span className="flex items-center gap-2"><Avatar email={a.email} tamanho={24} />{nomeDeExibicao(a.email)}</span></td>
-              <td className="py-2 px-2 text-slate-400">{a.chaves.length}</td>
-              <td className="py-2 px-2"><input value={vals[a.email] ?? ""} onChange={(e) => setVals((v) => ({ ...v, [a.email]: e.target.value }))} inputMode="decimal" data-base-analista={a.email} className={campo + " w-full text-right"} /></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <button type="button" disabled={salvando} onClick={salvar} data-salvar-analistas className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold cursor-pointer disabled:opacity-60">Salvar</button>
+    <div className="space-y-5" data-aba-salarios>
+      <p className="text-sm text-slate-300 max-w-3xl">O salário (variável-base) é o valor máximo que o analista recebe quando bate tudo, e só você define. Preencha o valor padrão de cada um; se mudar em algum mês, preencha aquele mês e ele vale dali em diante, até você definir outro. Campo em branco usa o valor anterior (mostrado em cinza). Os canais de cada analista vêm da tela Início.</p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
+          <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-800"><th className="py-2 pr-3 font-semibold">Analista</th><th className="py-2 px-2 font-semibold w-36">Padrão (R$)</th>{meses.map((m) => <th key={m} className="py-2 px-2 font-semibold w-36">{rotuloMes(m)}</th>)}</tr></thead>
+          <tbody>
+            {analistas.map((a) => (
+              <tr key={a.email} className="border-b border-slate-800/60">
+                <td className="py-2 pr-3"><span className="flex items-center gap-2"><Avatar email={a.email} tamanho={24} />{nomeDeExibicao(a.email)}</span></td>
+                <td className="py-2 px-2"><input value={padrao[a.email] ?? ""} onChange={(e) => setPadrao((v) => ({ ...v, [a.email]: e.target.value }))} inputMode="decimal" data-base-analista={a.email} className={campo + " w-full text-right"} /></td>
+                {meses.map((m) => (
+                  <td key={m} className="py-2 px-2"><input value={porMes[a.email + "|" + m] ?? ""} onChange={(e) => setPorMes((v) => ({ ...v, [a.email + "|" + m]: e.target.value }))} inputMode="decimal" data-salario-mes={a.email + "|" + m} placeholder={txt(baseDe(a.email, m))} className={campo + " w-full text-right"} /></td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-slate-500">Para o analista ver o painel dele, libere "KPIs e variável" em Painel Admin, no ✏️ do usuário. Ele não vê esta área nem o salário dos outros.</p>
+      <button type="button" disabled={salvando} onClick={salvar} data-salvar-salarios className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold cursor-pointer disabled:opacity-60">Salvar salários</button>
     </div>
   );
 }

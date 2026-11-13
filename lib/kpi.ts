@@ -22,7 +22,8 @@ export interface KpiConfig {
   canaisForaCancelamento: string[];
   /** true: a receita dos SKUs fora do cálculo continua contando na meta de faturamento (só a margem os ignora) */
   contarReceitaSkusExcluidos: boolean;
-  analistas: Record<string, { variavelBase?: number; cargo?: string }>;
+  /** salário/variável-base por analista: `variavelBase` é o padrão; `porMes` (AAAA-MM → valor) vale a partir daquele mês até o próximo definido */
+  analistas: Record<string, { variavelBase?: number; porMes?: Record<string, number>; cargo?: string }>;
 }
 
 export const CONFIG_PADRAO: KpiConfig = {
@@ -42,6 +43,17 @@ export function variavelBaseSugerida(nome: string): number {
   const n = String(nome || "").toLowerCase();
   if (n.includes("gabi")) return 1166.67;
   return 1000;
+}
+
+/** Salário/variável-base do analista num mês: o definido para o mês, senão o do último mês anterior definido, senão o padrão dele, senão a sugestão. */
+export function baseDoMes(cfg: KpiConfig, email: string, nome: string, mes: string): number {
+  const a = cfg.analistas[email];
+  const por = a?.porMes || {};
+  const valido = (v: any) => typeof v === "number" && isFinite(v) && v >= 0;
+  if (valido(por[mes])) return por[mes];
+  const antes = Object.keys(por).filter((m) => m < mes && valido(por[m])).sort().pop();
+  if (antes) return por[antes];
+  return valido(a?.variavelBase) ? (a!.variavelBase as number) : variavelBaseSugerida(nome);
 }
 
 const num = (v: any, padrao: number) => { const n = typeof v === "number" ? v : parseFloat(String(v ?? "").replace(",", ".")); return isFinite(n) ? n : padrao; };
