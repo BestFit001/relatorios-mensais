@@ -6,7 +6,8 @@ import { supabase } from "../../lib/supabase";
 import { canaisSemRepeticao } from "../../lib/vendasCanaisLogica";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
-import { STATUS_SEM_ESTOQUE, canaisNaoMarcados, paisEmCorrecao, situacaoDoItem, type Correcao, type SituacaoVideo } from "../../lib/videoCorrecoes";
+import { STATUS_SEM_ESTOQUE, canaisNaoMarcados, estadoDaCorrecao, paisEmCorrecao, situacaoDoItem, type Correcao, type CorrecaoCanal, type SituacaoVideo } from "../../lib/videoCorrecoes";
+import { lerSemAcaoLinhas } from "../../lib/notifResolucao";
 
 const CHAVE_CONFIG_CLIPES = "bestfit_canais_clipes_config";   // mesma chave de antes: a escolha de canais já feita continua valendo
 // "Pasta" = o vídeo já foi salvo na pasta de vídeos. Fica junto dos clipes (mesma coluna clipes_enviados), com uma chave que não é de canal.
@@ -25,7 +26,9 @@ export default function VideosPage() {
 
   const [pesquisa, setPesquisa] = useState("");
   const [filtroStatusVideo, setFiltroStatusVideo] = useState<"pendentes" | "finalizados" | "sem_estoque" | "todos">("pendentes");
-  const [correcoes, setCorrecoes] = useState<Correcao[]>([]);
+  const [correcoes, setCorrecoes] = useState<Correcao[]>([]);               // todas as correções (abertas e já encerradas)
+  const [correcoesCanais, setCorrecoesCanais] = useState<CorrecaoCanal[]>([]);
+  const [semAcao, setSemAcao] = useState<Set<number>>(new Set());          // linhas encerradas como "sem ação efetiva"
   const [paginaAtualVideos, setPaginaAtualVideos] = useState(1);
   const [itensPorPaginaVideos, setItensPorPaginaVideos] = useState(10);
 
@@ -83,8 +86,14 @@ export default function VideosPage() {
   };
 
   const carregarCorrecoes = async () => {
-    const { data } = await supabase.from("video_correcoes").select("*").eq("status", "aberta");
-    setCorrecoes((data as Correcao[]) || []);
+    const [c, k, sa] = await Promise.all([
+      supabase.from("video_correcoes").select("*"),
+      supabase.from("video_correcoes_canais").select("*"),
+      supabase.from("config_regras_tiny").select("campo").like("campo", "corr_sem_acao_%"),
+    ]);
+    setCorrecoes((c.data as Correcao[]) || []);
+    setCorrecoesCanais((k.data as CorrecaoCanal[]) || []);
+    setSemAcao(lerSemAcaoLinhas(sa.data as any[]));
   };
 
   // Lista de seleção da linha: "Sem estoque" só marca; "Com problemas" tira o produto daqui e manda uma correção aos analistas dos canais sem marca
@@ -94,7 +103,9 @@ export default function VideosPage() {
       const canais = canaisNaoMarcados(itens, canaisAtivosClipes);
       if (canaisAtivosClipes.length === 0) return alert("Nenhum canal com clipe marcado. Escolha os canais em Configurações.");
       if (canais.length === 0) return alert("Todos os canais já estão marcados neste produto: não há o que corrigir.");
-      if (!confirm(`Enviar o Pai ${item.sku} para correção?\n\nEle some da aba Vídeos e vai para os analistas de: ${canais.join(", ")}.\nVolta para cá quando todos marcarem como feito.`)) return;
+      if (emCorrecao.has(String(item.sku))) return alert("Este produto já está em correção com os analistas.");
+      const jaTemCanal = canaisAtivosClipes.some((c) => itens.every((it) => Boolean((it.clipes_enviados || {})[c])));
+      if (!confirm(`Enviar o Pai ${item.sku} para correção?\n\nOs analistas de ${canais.join(", ")} serão avisados.\n${jaTemCanal ? "O produto vai para \"Vídeos finalizados\" enquanto eles corrigem" : "O produto continua nos pendentes (nenhum canal marcado ainda) enquanto eles corrigem"}. Quando um analista marcar \"Resolvido\", ele volta para os pendentes com a tag verde \"Corrigido\".`)) return;
       const usuario = (() => { try { return JSON.parse(localStorage.getItem("usuario_logado") || "{}"); } catch { return {}; } })();
       const { data: nova1, error } = await supabase.from("video_correcoes").insert({ sku_pai: String(item.sku), produto: item.produto, origem: item.tipo, status: "aberta", criado_por: String(usuario.email || "") }).select("*").single();
       if (error || !nova1) return alert("Erro ao enviar para correção: " + (error?.message || "sem resposta") + "\n(Se a tabela ainda não existe, rode a migration 20261111180000_video_correcoes.sql no Supabase.)");
@@ -211,21 +222,33 @@ export default function VideosPage() {
   const canaisAtivosClipes = canaisLista.filter((c) => canaisComClipesConfig[c]);
 
   const emCorrecao = paisEmCorrecao(correcoes);
+  // canais que ainda faltam corrigir na correção aberta do pai
+  const canaisEmCorrecao = (pai: string) => {
+    const aberta = correcoes.filter((c) => c.status === "aberta" && String(c.sku_pai) === pai).sort((a, b) => b.id - a.id)[0];
+    return aberta ? correcoesCanais.filter((x) => x.correcao_id === aberta.id && !x.feito).map((x) => x.canal) : [];
+  };
 
   const itensUnificadosVideos = [
     ...chavesGrupos.map((paiKey) => {
       const itens = gruposRealizados[paiKey];
       const titulo = String(itens[0].produto || "").split("-")[0].trim();
       const finalizado = canaisAtivosClipes.length > 0 && canaisAtivosClipes.every((canal) => itens.every((it) => Boolean((it.clipes_enviados || {})[canal])));
-      return { tipo: "realizado", chave: paiKey, sku: paiKey, produto: titulo, itensGrupo: itens, finalizado } as any;
+      const algumMarcado = canaisAtivosClipes.some((canal) => itens.every((it) => Boolean((it.clipes_enviados || {})[canal])));
+      return { tipo: "realizado", chave: paiKey, sku: paiKey, produto: titulo, itensGrupo: itens, finalizado, algumMarcado } as any;
     }),
     ...videosManuaisFiltrados.map((item) => {
       const titulo = String(item.produto || "").split("-")[0].trim();
       const finalizado = canaisAtivosClipes.length > 0 && canaisAtivosClipes.every((canal) => Boolean((item.clipes_enviados || {})[canal]));
-      return { tipo: "manual", chave: item.sku, sku: paiDe(item), produto: titulo, itemManual: item, finalizado } as any;
+      const algumMarcado = canaisAtivosClipes.some((canal) => Boolean((item.clipes_enviados || {})[canal]));
+      return { tipo: "manual", chave: item.sku, sku: paiDe(item), produto: titulo, itemManual: item, finalizado, algumMarcado } as any;
     }),
-  ].map((item: any) => ({ ...item, situacao: situacaoDoItem(item.tipo === "realizado" ? item.itensGrupo : [item.itemManual]) as SituacaoVideo }))
-  .filter((item: any) => !emCorrecao.has(String(item.sku)))
+  ].map((item: any) => {
+    // Correção: enquanto os analistas corrigem, o produto fica em "concluído" (se já tem algum canal marcado). Corrigido (≥1 "Resolvido") volta
+    // para os pendentes com a tag verde; fechado só com "Sem ação efetiva" continua em concluído.
+    const correcao = estadoDaCorrecao(String(item.sku), correcoes, correcoesCanais, semAcao);
+    const finalizado = correcao === "aberta" || correcao === "sem_acao" ? (item.algumMarcado ? true : item.finalizado) : item.finalizado;
+    return { ...item, correcao, finalizado, situacao: situacaoDoItem(item.tipo === "realizado" ? item.itensGrupo : [item.itemManual]) as SituacaoVideo };
+  })
   .filter((item: any) => {
     if (filtroStatusVideo === "pendentes") return !item.finalizado;
     if (filtroStatusVideo === "finalizados") return item.finalizado;
@@ -233,6 +256,12 @@ export default function VideosPage() {
     return true;
   });
   const qtdEmCorrecao = emCorrecao.size;
+  const badgeCorrecao = (item: any) => {
+    if (item.correcao === "aberta") return <span data-badge-correcao="aberta" className="ml-2 text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800/60 px-1.5 py-0.5 rounded" title="Os analistas estão corrigindo">🛠️ Em correção{canaisEmCorrecao(String(item.sku)).length ? `: ${canaisEmCorrecao(String(item.sku)).join(", ")}` : ""}</span>;
+    if (item.correcao === "corrigido" && !item.finalizado) return <span data-badge-correcao="corrigido" className="ml-2 text-[10px] font-black bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded">✔ Corrigido</span>;
+    if (item.correcao === "sem_acao") return <span data-badge-correcao="sem_acao" className="ml-2 text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 px-1.5 py-0.5 rounded">Correção: sem ação efetiva</span>;
+    return null;
+  };
 
   const totalPaginasVideos = Math.ceil(itensUnificadosVideos.length / itensPorPaginaVideos) || 1;
   const paginaSegura = Math.min(paginaAtualVideos, totalPaginasVideos);
@@ -336,7 +365,7 @@ export default function VideosPage() {
 
             {qtdEmCorrecao > 0 && (
               <p className="text-xs text-amber-300 font-bold" data-em-correcao>
-                🛠️ {qtdEmCorrecao} produto(s) em correção com os analistas (somem desta lista e voltam quando todos os canais forem marcados como feitos, na tela Início &gt; Notificações &gt; Correções).
+                🛠️ {qtdEmCorrecao} produto(s) em correção com os analistas: ficam em “Vídeos finalizados” enquanto corrigem e voltam para os pendentes com a tag verde “Corrigido” quando um analista marcar “Resolvido” (Início &gt; Notificações).
               </p>
             )}
 
@@ -364,7 +393,7 @@ export default function VideosPage() {
                         return (
                           <tr key={`realizado-${idx}`} data-linha-video={item.sku} className="hover:bg-slate-800/40">
                             <td className="p-3 font-mono">
-                              <span className="text-purple-400 font-bold">Pai: {item.sku}</span> — <span className="text-white font-semibold">{item.produto}</span>
+                              <span className="text-purple-400 font-bold">Pai: {item.sku}</span> — <span className="text-white font-semibold">{item.produto}</span>{badgeCorrecao(item)}
                             </td>
                             <td className="p-3 text-center">
                               <input
@@ -410,7 +439,7 @@ export default function VideosPage() {
                       return (
                         <tr key={`manual-${idx}`} data-linha-video={item.sku} className="hover:bg-slate-800/40 bg-amber-950/10">
                           <td className="p-3 font-mono">
-                            <span className="text-amber-400 font-bold">Pai: {item.sku}</span> — <span className="text-white font-semibold">{item.produto}</span> <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.5 rounded ml-2">Manual</span>
+                            <span className="text-amber-400 font-bold">Pai: {item.sku}</span> — <span className="text-white font-semibold">{item.produto}</span> <span className="text-[10px] bg-amber-950 text-amber-300 px-1.5 py-0.5 rounded ml-2">Manual</span>{badgeCorrecao(item)}
                           </td>
                           <td className="p-3 text-center">
                             <input type="checkbox" checked={Boolean((itemManual.clipes_enviados || {})[PASTA])} data-pasta

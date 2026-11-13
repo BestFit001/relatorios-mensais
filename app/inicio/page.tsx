@@ -13,6 +13,8 @@ import { compartilharNoChat } from "../../lib/chatCliente";
 import { nomeDeExibicao, useNomes } from "../../lib/nomes";
 import { registrarPush, temAssinaturaAtiva, suportaPush } from "../../lib/push";
 import { correcoesVisiveis, correcaoConcluida, podeMarcarCanal, type Correcao, type CorrecaoCanal } from "../../lib/videoCorrecoes";
+import { campoResolucao, campoSemAcaoLinha, lerResolucoes, lerSemAcaoLinhas, resolucaoVale, rotuloStatus, serializarResolucao, type Resolucao, type StatusResolucao } from "../../lib/notifResolucao";
+import { resumirDevolucoesPorCanal, type ResumoCanalDev } from "../../lib/devolucaoMotivos";
 import { foraDePromocao, type PromoValidade, type MarcaPromovido } from "../../lib/foraPromocao";
 
 // ---------------------------------------------------------------------------------------------
@@ -43,7 +45,16 @@ async function buscarTudo(tabela: string): Promise<any[]> {
   return todas;
 }
 
-type Notificacao = { id: string; tipo: "full" | "devolucao" | "tarefa" | "promocao" | "correcao"; nivel: "critico" | "atencao" | "info"; titulo: string; detalhe: string; canal?: string };
+type Notificacao = {
+  id: string; tipo: "full" | "devolucao" | "tarefa" | "promocao" | "correcao"; nivel: "critico" | "atencao" | "info"; titulo: string; detalhe: string; canal?: string;
+  /** situação que a marcação "Resolvido / Sem ação efetiva" encerra: se mudar, a notificação volta a aparecer */
+  ref?: string;
+  /** só informa (ex.: devoluções que não afetaram a reputação): não conta nem aparece em "Todas" */
+  informativa?: boolean;
+  /** card de devoluções do canal por motivo */
+  devMotivos?: ResumoCanalDev;
+  correcaoId?: number;
+};
 
 export default function InicioPage() {
   useNomes();
@@ -76,6 +87,9 @@ export default function InicioPage() {
   const [filtroNotif, setFiltroNotif] = useState<"todas" | "full" | "devolucao" | "tarefa" | "promocao" | "correcao">("todas");
   // Correções de vídeo: produtos marcados "Com problemas" na aba Vídeos, por canal (cada analista marca o(s) canal(is) dele)
   const [correcoes, setCorrecoes] = useState<Correcao[]>([]);
+  const [resolucoes, setResolucoes] = useState<Map<string, Resolucao>>(new Map());   // marcações "Resolvido / Sem ação efetiva" das notificações
+  const [semAcaoLinhas, setSemAcaoLinhas] = useState<Set<number>>(new Set());          // linhas de correção de vídeo encerradas como "sem ação efetiva"
+  const [verResolvidas, setVerResolvidas] = useState(false);
   const [correcoesCanais, setCorrecoesCanais] = useState<CorrecaoCanal[]>([]);
   const [erroCorrecao, setErroCorrecao] = useState("");
   // Itens fora de promoção (Mercado Livre): validade das promoções registrada ao salvar as campanhas + marcações "já promovi"
@@ -147,13 +161,23 @@ export default function InicioPage() {
   };
   useEffect(() => { carregarCorrecoes(); }, []);
 
-  // Marca/desmarca "feito" em UM canal. Quando todos os canais da correção estão feitos, ela fecha e o produto volta para a aba Vídeos.
-  const alternarCorrecao = async (linha: CorrecaoCanal) => {
+  // Encerra UMA linha (canal) da correção como "Resolvido" ou "Sem ação efetiva", ou reabre. Quando todos os canais estão encerrados, a correção fecha:
+  // com pelo menos um "Resolvido" o produto volta para os pendentes da aba Vídeos, com a tag "Corrigido".
+  const marcarLinhaCorrecao = async (linha: CorrecaoCanal, acao: StatusResolucao | "reabrir") => {
     if (!usuario || !podeMarcarCanal(usuario, mapeamentos, linha.canal)) return;
-    const feito = !linha.feito;
+    const feito = acao !== "reabrir";
     const campos = { feito, feito_por: feito ? usuario.email : null, feito_em: feito ? new Date().toISOString() : null };
+    // a marca "sem ação" é gravada ANTES de fechar a correção, para a aba Vídeos já enxergar o resultado certo
+    if (acao === "sem_acao") {
+      const { error: eFlag } = await supabase.from("config_regras_tiny").upsert({ campo: campoSemAcaoLinha(linha.id as number), coluna: "1" }, { onConflict: "campo" });
+      if (eFlag) return alert("Erro ao marcar: " + eFlag.message);
+    } else {
+      const { error: eFlag } = await supabase.from("config_regras_tiny").delete().eq("campo", campoSemAcaoLinha(linha.id as number));
+      if (eFlag) return alert("Erro ao marcar: " + eFlag.message);
+    }
     const { error } = await supabase.from("video_correcoes_canais").update(campos).eq("id", linha.id);
     if (error) return alert("Erro ao atualizar a correção: " + error.message);
+    setSemAcaoLinhas((prev) => { const n = new Set(prev); if (acao === "sem_acao") n.add(linha.id as number); else n.delete(linha.id as number); return n; });
     const novos = correcoesCanais.map((x) => (x.id === linha.id ? { ...x, ...campos } : x));
     setCorrecoesCanais(novos);
     if (feito && correcaoConcluida(novos.filter((x) => x.correcao_id === linha.correcao_id))) {
@@ -161,6 +185,22 @@ export default function InicioPage() {
       if (e2) return alert("Erro ao concluir a correção: " + e2.message);
       setCorrecoes((prev) => prev.filter((c) => c.id !== linha.correcao_id));
     }
+  };
+
+  // Notificação de Full / devolução: o responsável do canal (ou o admin) marca "Resolvido" ou "Sem ação efetiva"; "reabrir" desfaz.
+  const marcarNotificacao = async (n: Notificacao, status: StatusResolucao | "reabrir") => {
+    if (!usuario || !n.canal || !podeMarcarCanal(usuario, mapeamentos, n.canal)) return;
+    const campo = campoResolucao(n.id);
+    if (status === "reabrir") {
+      const { error } = await supabase.from("config_regras_tiny").delete().eq("campo", campo);
+      if (error) return alert("Erro ao reabrir: " + error.message);
+      setResolucoes((prev) => { const m = new Map(prev); m.delete(n.id); return m; });
+      return;
+    }
+    const r: Resolucao = { id: n.id, status, por: usuario.email, em: new Date().toISOString(), ref: n.ref ?? "" };
+    const { error } = await supabase.from("config_regras_tiny").upsert({ campo, coluna: serializarResolucao(r) }, { onConflict: "campo" });
+    if (error) return alert("Erro ao marcar: " + error.message);
+    setResolucoes((prev) => new Map(prev).set(n.id, r));
   };
 
   const carregarTudo = async () => {
@@ -172,6 +212,8 @@ export default function InicioPage() {
     const resultado: Record<string, any[]> = {};
     tabelas.forEach(([t, linhas]) => { resultado[t] = linhas; });
     setDb(resultado);
+    setResolucoes(lerResolucoes(resultado.config_regras_tiny));
+    setSemAcaoLinhas(lerSemAcaoLinhas(resultado.config_regras_tiny));
     setUsuariosLista(usuarios);
     await carregarHome();
 
@@ -498,7 +540,7 @@ export default function InicioPage() {
     correcoesVisiveis(correcoes, correcoesCanais, mapeamentos, { admin: isAdmin, email: emailAlvo }).forEach(({ correcao, canais }) => {
       const faltam = canais.filter((c) => !c.feito).map((c) => c.canal);
       if (faltam.length === 0) return;
-      lista.push({ id: `correcao-${correcao.id}`, tipo: "correcao", nivel: "atencao", titulo: `Pai ${correcao.sku_pai}${correcao.produto ? " · " + correcao.produto : ""} — corrigir anúncio`, detalhe: `Corrigir em: ${faltam.join(", ")}. Depois de corrigir, marque como feito na aba “Correções”.` });
+      lista.push({ id: `correcao-${correcao.id}`, correcaoId: correcao.id, tipo: "correcao", nivel: "atencao", titulo: `Pai ${correcao.sku_pai}${correcao.produto ? " · " + correcao.produto : ""} — corrigir anúncio`, detalhe: `Corrigir em: ${faltam.join(", ")}. Depois de corrigir, marque “Resolvido” (ou “Sem ação efetiva”) em cada canal.` });
     });
 
     // Estoque no Full (armazenagem): do mais urgente para o menos
@@ -509,9 +551,17 @@ export default function InicioPage() {
         const qtd = Number(s.nivel === "COBRANDO" ? s.qtd_cobrando : s.qtd_em_alerta) || Number(s.saldo_lotes) || 0;
         const dias = Number(s.dias_para_cobranca);
         lista.push(s.nivel === "COBRANDO"
-          ? { id: `full-${s.canal}-${s.sku}`, tipo: "full", nivel: "critico", canal: s.canal, titulo: `${s.sku} — armazenagem em cobrança`, detalhe: `${s.canal}: ${qtd} un. no Full passaram do prazo (lote mais antigo com ${s.lote_mais_antigo_dias} dias).` }
-          : { id: `full-${s.canal}-${s.sku}`, tipo: "full", nivel: "atencao", canal: s.canal, titulo: `${s.sku} — ${dias <= 1 ? "falta 1 dia" : `faltam ${dias} dias`} para cobrar armazenagem`, detalhe: `${s.canal}: ${qtd} un. com ${s.lote_mais_antigo_dias} dias no Full.` });
+          ? { id: `full-${s.canal}-${s.sku}`, ref: `cobrando:${qtd}`, tipo: "full", nivel: "critico", canal: s.canal, titulo: `${s.sku} — armazenagem em cobrança`, detalhe: `${s.canal}: ${qtd} un. no Full passaram do prazo (lote mais antigo com ${s.lote_mais_antigo_dias} dias).` }
+          : { id: `full-${s.canal}-${s.sku}`, ref: `alerta:${qtd}`, tipo: "full", nivel: "atencao", canal: s.canal, titulo: `${s.sku} — ${dias <= 1 ? "falta 1 dia" : `faltam ${dias} dias`} para cobrar armazenagem`, detalhe: `${s.canal}: ${qtd} un. com ${s.lote_mais_antigo_dias} dias no Full.` });
       });
+
+    // Devoluções do mês por motivo: "Arrependimento da compra" não afeta a reputação; qualquer outro motivo afeta
+    resumirDevolucoesPorCanal(db.devolucoes || [], mesIso, (c) => nomesVisiveis.has(norm(c)), norm).forEach((r) => {
+      lista.push({
+        id: `devmot-${norm(r.canal)}-${mesIso}`, ref: String(r.afetou), tipo: "devolucao", nivel: r.afetou > 0 ? "atencao" : "info", canal: r.canal, devMotivos: r, informativa: r.afetou === 0,
+        titulo: `${r.canal} — devoluções de ${mesBarra}`, detalhe: "",
+      });
+    });
 
     // Devoluções altas (análises salvas da aba Full e da Logística Própria, no mês selecionado)
     const melhor = new Map<string, any>();
@@ -525,7 +575,7 @@ export default function InicioPage() {
     Array.from(melhor.values()).sort((a, b) => Number(b.taxa_devolucao) - Number(a.taxa_devolucao)).forEach((l: any) => {
       const taxa = Number(l.taxa_devolucao);
       lista.push({
-        id: `dev-${l.canal}-${l.sku}`, tipo: "devolucao", nivel: taxa >= DEV_CRITICO ? "critico" : "atencao", canal: l.canal,
+        id: `dev-${l.canal}-${l.sku}-${mesBarra}`, ref: String(l.qtd_devolucoes), tipo: "devolucao", nivel: taxa >= DEV_CRITICO ? "critico" : "atencao", canal: l.canal,
         titulo: `${l.sku}${l.produto && l.produto !== "Produto Desconhecido" ? " · " + l.produto : ""} — ${pct(taxa)} de devolução`,
         detalhe: `${l.canal}: ${l.qtd_devolucoes} devolvida(s) em ${l.qtd_vendida} vendida(s) em ${mesBarra}.${taxa >= DEV_CRITICO ? " Envio ao Full não recomendado." : ""}`,
       });
@@ -547,15 +597,58 @@ export default function InicioPage() {
     });
     return lista;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saldoFull, lancFull, lancPropria, nomesVisiveis, mesBarra, minhasTarefas, conclusoes, hoje, hojeInfo.hora, isAdmin, emailRef, foraPromo, correcoes, correcoesCanais, mapeamentos, emailAlvo]);
+  }, [saldoFull, lancFull, lancPropria, nomesVisiveis, mesBarra, mesIso, db.devolucoes, minhasTarefas, conclusoes, hoje, hojeInfo.hora, isAdmin, emailRef, foraPromo, correcoes, correcoesCanais, mapeamentos, emailAlvo]);
 
-  const notifFiltradas = notificacoes.filter((n) => filtroNotif === "todas" || n.tipo === filtroNotif);
-  const contar = (tipo: string) => notificacoes.filter((n) => n.tipo === tipo).length;
+  // marcadas como "Resolvido" / "Sem ação efetiva" saem da lista (e voltam se a situação mudar, ex.: chegaram mais devoluções)
+  const estaResolvida = (n: Notificacao) => n.ref !== undefined && resolucaoVale(resolucoes.get(n.id), n.ref);
+  const pendentes = notificacoes.filter((n) => !estaResolvida(n));
+  const resolvidasLista = notificacoes.filter((n) => estaResolvida(n));
+  const notifFiltradas = pendentes.filter((n) => (filtroNotif === "todas" ? !n.informativa : n.tipo === filtroNotif));
+  const contar = (tipo: string) => pendentes.filter((n) => n.tipo === tipo && !n.informativa).length;
+  const totalPendentes = pendentes.filter((n) => !n.informativa).length;
   const listaCorrecoes = useMemo(() => correcoesVisiveis(correcoes, correcoesCanais, mapeamentos, { admin: isAdmin, email: emailAlvo }), [correcoes, correcoesCanais, mapeamentos, isAdmin, emailAlvo]);
 
   // ---------------------------------------------------------------------------------------------
   const corNivel = (nivel: string) => (nivel === "critico" ? "border-rose-800/60 bg-rose-950/30 text-rose-200" : nivel === "atencao" ? "border-amber-800/60 bg-amber-950/20 text-amber-200" : "border-slate-700 bg-slate-900 text-slate-200");
   const iconeTipo = (tipo: string) => (tipo === "full" ? "📦" : tipo === "devolucao" ? "↩️" : tipo === "promocao" ? "🏷️" : tipo === "correcao" ? "🛠️" : "📝");
+  const devs = (n: number) => `${n} ${n === 1 ? "devolução" : "devoluções"}`;
+  // uma linha (canal) da correção de vídeo, com "Resolvido" e "Sem ação efetiva"
+  const linhaCorrecao = (c: CorrecaoCanal) => {
+    const pode = podeMarcarCanal(usuario, mapeamentos, c.canal);
+    const sem = semAcaoLinhas.has(c.id as number);
+    const dica = pode ? "" : "Só o responsável por este canal marca";
+    return (
+      <div key={c.id} data-correcao-linha={c.canal} className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-xs ${pode ? "" : "opacity-60"}`}>
+        <span className={`min-w-[7rem] ${c.feito ? "text-slate-500" : "text-slate-200 font-bold"}`}>{c.canal}</span>
+        <label className={`flex items-center gap-1.5 ${pode ? "cursor-pointer" : ""}`} title={dica}>
+          <input type="checkbox" data-correcao-resolvido={c.canal} checked={c.feito && !sem} disabled={!pode} onChange={() => marcarLinhaCorrecao(c, c.feito && !sem ? "reabrir" : "resolvido")} className="accent-emerald-500 w-4 h-4" />
+          <span className="text-emerald-300 font-semibold">Resolvido</span>
+        </label>
+        <label className={`flex items-center gap-1.5 ${pode ? "cursor-pointer" : ""}`} title={dica}>
+          <input type="checkbox" data-correcao-sem-acao={c.canal} checked={c.feito && sem} disabled={!pode} onChange={() => marcarLinhaCorrecao(c, c.feito && sem ? "reabrir" : "sem_acao")} className="accent-slate-400 w-4 h-4" />
+          <span className="text-slate-300 font-semibold">Sem ação efetiva</span>
+        </label>
+        {c.feito && <span className="text-[10px] text-slate-400">{sem ? "Sem ação" : "✔"} {c.feito_por ? nomeDoEmail(c.feito_por).split(" ")[0] : ""} {dataBR(c.feito_em)}</span>}
+      </div>
+    );
+  };
+  // controles "Resolvido / Sem ação efetiva" de uma notificação (Full, devolução)
+  const controlesNotif = (n: Notificacao) => {
+    if (!n.canal || n.informativa) return null;
+    const pode = podeMarcarCanal(usuario, mapeamentos, n.canal);
+    return (
+      <div data-controles-notif={n.id} className={`flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 pt-2 border-t border-white/10 text-[11px] ${pode ? "" : "opacity-60"}`} title={pode ? "" : "Só o responsável por este canal marca"}>
+        <label className={`flex items-center gap-1.5 ${pode ? "cursor-pointer" : ""}`}>
+          <input type="checkbox" data-notif-resolvido={n.id} checked={false} disabled={!pode} onChange={() => marcarNotificacao(n, "resolvido")} className="accent-emerald-500 w-4 h-4" />
+          <span className="font-semibold text-emerald-300">Resolvido</span>
+        </label>
+        <label className={`flex items-center gap-1.5 ${pode ? "cursor-pointer" : ""}`}>
+          <input type="checkbox" data-notif-sem-acao={n.id} checked={false} disabled={!pode} onChange={() => marcarNotificacao(n, "sem_acao")} className="accent-slate-400 w-4 h-4" />
+          <span className="font-semibold text-slate-300">Sem ação efetiva</span>
+        </label>
+      </div>
+    );
+  };
   const corPrioridade = (p: string) => (p === "Alta" ? "bg-rose-950/60 text-rose-300 border-rose-800/50" : p === "Baixa" ? "bg-slate-800 text-slate-300 border-slate-700" : "bg-amber-950/50 text-amber-300 border-amber-800/50");
 
   // ---- Calendário do mês: resumo em cada dia; clicando no dia abre a lista completa
@@ -908,7 +1001,7 @@ export default function InicioPage() {
           </div>
           <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800">
             <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Avisos ativos</div>
-            <div className={`text-xl font-black mt-1 ${notificacoes.length ? "text-amber-300" : "text-emerald-400"}`}>{carregando ? "…" : notificacoes.length}</div>
+            <div className={`text-xl font-black mt-1 ${totalPendentes ? "text-amber-300" : "text-emerald-400"}`}>{carregando ? "…" : totalPendentes}</div>
             <div className="text-[10px] text-slate-500 mt-1">{qtdAndamento} tarefa(s) em andamento</div>
           </div>
         </div>
@@ -959,7 +1052,7 @@ export default function InicioPage() {
           <div className="xl:col-span-2 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
             <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider mb-3">🔔 Notificações</h2>
             <div className="flex flex-wrap gap-2 mb-4">
-              {([["todas", "Todas", notificacoes.length], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["tarefa", "📝 Tarefas", contar("tarefa")], ["promocao", "🏷️ Itens fora de promoção", foraPromo.length], ["correcao", "🛠️ Correções", listaCorrecoes.length]] as const).map(([k, nome, n]) => (
+              {([["todas", "Todas", totalPendentes], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["tarefa", "📝 Tarefas", contar("tarefa")], ["promocao", "🏷️ Itens fora de promoção", foraPromo.length], ["correcao", "🛠️ Correções", listaCorrecoes.length]] as const).map(([k, nome, n]) => (
                 <button key={k} data-notif-aba={k} onClick={() => setFiltroNotif(k)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer ${filtroNotif === k ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>{nome} ({n})</button>
               ))}
             </div>
@@ -977,23 +1070,14 @@ export default function InicioPage() {
                           <div className="text-xs font-bold text-amber-200"><span className="font-mono text-indigo-300">Pai: {correcao.sku_pai}</span>{correcao.produto ? <> — {correcao.produto}</> : null}</div>
                           <div className="text-[11px] text-slate-400">Enviado da aba Vídeos em {dataBR(correcao.criado_em)}{correcao.criado_por ? ` por ${nomeDoEmail(correcao.criado_por).split(" ")[0]}` : ""} · {feitos}/{todos.length} canal(is) feito(s)</div>
                         </div>
-                        <div className="space-y-1">
-                          {canais.map((c) => {
-                            const pode = podeMarcarCanal(usuario, mapeamentos, c.canal);
-                            return (
-                              <label key={c.id} className={`flex items-center gap-3 text-xs ${pode ? "cursor-pointer" : "opacity-60"}`}>
-                                <input type="checkbox" data-correcao-canal={c.canal} checked={c.feito} disabled={!pode} onChange={() => alternarCorrecao(c)} className="accent-emerald-500 w-4 h-4" title={pode ? "Marque quando corrigir este canal" : "Só o responsável por este canal marca"} />
-                                <span className={c.feito ? "line-through text-slate-500" : "text-slate-200 font-bold"}>{c.canal}</span>
-                                {c.feito && <span className="text-[10px] text-emerald-400">✔ {c.feito_por ? nomeDoEmail(c.feito_por).split(" ")[0] : ""} {dataBR(c.feito_em)}</span>}
-                              </label>
-                            );
-                          })}
+                        <div className="space-y-1.5">
+                          {canais.map((c) => linhaCorrecao(c))}
                         </div>
                       </div>
                     );
                   })}
                 </div>
-                <p className="text-[10px] text-slate-500">Quando todos os canais do produto forem marcados como feitos, ele volta para a aba Vídeos para a responsável marcar. O analista vê e marca só os canais dele; o administrador, todos.</p>
+                <p className="text-[10px] text-slate-500">Quando todos os canais forem encerrados, a correção fecha: com pelo menos um “Resolvido” o produto volta aos pendentes da aba Vídeos com a tag verde “Corrigido”; só com “Sem ação efetiva” ele continua em concluído. O analista marca só os canais dele; o administrador, todos.</p>
               </div>
             ) : filtroNotif === "promocao" ? (
               <div data-painel-fora-promocao className="space-y-3">
@@ -1038,6 +1122,41 @@ export default function InicioPage() {
               {carregando ? <p className="text-xs text-slate-500">Carregando…</p> : notifFiltradas.length === 0 ? (
                 <p className="text-xs text-emerald-400 font-bold">✅ Nada pendente por aqui.</p>
               ) : notifFiltradas.map((n) => (
+                n.devMotivos ? (
+                  <div key={n.id} data-card-devolucao={n.devMotivos.canal} className={`border rounded-xl p-3 ${corNivel(n.nivel)}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-xs font-bold">↩️ {n.titulo}</div>
+                      <button type="button" data-enviar-chat-notif title="Enviar esta notificação no chat" onClick={() => compartilharNoChat({ tipo: "notificacao", payload: { tipo: n.tipo, nivel: n.nivel, titulo: n.titulo, detalhe: `Afetou a reputação: ${devs(n.devMotivos!.afetou)} · Não afetou: ${devs(n.devMotivos!.naoAfetou)}`, canal: n.canal } })} className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-600/60 bg-slate-900/50 text-slate-200 hover:text-white cursor-pointer">💬 Enviar no chat</button>
+                    </div>
+                    <div className="mt-2 space-y-1 text-[11px]">
+                      <div data-dev-nao-afetou className="text-slate-200"><span className="font-bold text-emerald-300">Arrependimento da compra = Não afetou a reputação</span> — <span className="font-mono font-bold">{devs(n.devMotivos.naoAfetou)}</span></div>
+                      <div data-dev-afetou className="text-slate-200"><span className="font-bold text-rose-300">Qualquer outro motivo = Afetou sua reputação</span> — <span className="font-mono font-bold">{devs(n.devMotivos.afetou)}</span></div>
+                    </div>
+                    {n.devMotivos.motivos.length > 0 && (
+                      <ul className="mt-2 space-y-0.5 text-[11px] text-slate-300">
+                        {n.devMotivos.motivos.map((m) => (
+                          <li key={m.motivo} data-motivo-dev={m.motivo} className="flex items-center gap-2"><span className={`inline-block w-1.5 h-1.5 rounded-full ${m.afeta ? "bg-rose-400" : "bg-emerald-400"}`} />{m.motivo} — <span className="font-mono font-bold">{m.qtd}</span></li>
+                        ))}
+                      </ul>
+                    )}
+                    <div data-veredito-dev className={`mt-2 text-[11px] font-bold ${n.devMotivos.afetou > 0 ? "text-amber-200" : "text-emerald-300"}`}>
+                      {n.devMotivos.afetou > 0 ? "Atenção: há devoluções que afetam a reputação. Avalie se precisa agir (anúncio, produto, embalagem, atendimento)." : "Nenhuma ação necessária: nenhuma devolução afetou a reputação."}
+                    </div>
+                    {n.devMotivos.afetou > 0 && controlesNotif(n)}
+                  </div>
+                ) : n.tipo === "correcao" && n.correcaoId !== undefined ? (
+                  <div key={n.id} data-notif-correcao={n.correcaoId} className={`border rounded-xl p-3 ${corNivel(n.nivel)}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold">{iconeTipo(n.tipo)} {n.titulo}</div>
+                        <div className="text-[11px] opacity-80 mt-0.5">{n.detalhe}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 pt-2 border-t border-white/10 space-y-1.5">
+                      {correcoesCanais.filter((x) => x.correcao_id === n.correcaoId && listaCorrecoes.some((l) => l.correcao.id === n.correcaoId && l.canais.some((k) => k.id === x.id))).map((c) => linhaCorrecao(c))}
+                    </div>
+                  </div>
+                ) : (
                 <div key={n.id} className={`border rounded-xl p-3 ${corNivel(n.nivel)}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -1046,11 +1165,35 @@ export default function InicioPage() {
                     </div>
                     <button type="button" data-enviar-chat-notif title="Enviar esta notificação no chat" onClick={() => compartilharNoChat({ tipo: "notificacao", payload: { tipo: n.tipo, nivel: n.nivel, titulo: n.titulo, detalhe: n.detalhe, canal: n.canal } })} className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-600/60 bg-slate-900/50 text-slate-200 hover:text-white cursor-pointer">💬 Enviar no chat</button>
                   </div>
+                  {(n.tipo === "full" || n.tipo === "devolucao") && controlesNotif(n)}
                 </div>
+                )
               ))}
+              {resolvidasLista.length > 0 && (
+                <div data-resolvidas className="pt-2 border-t border-slate-800">
+                  <button type="button" data-ver-resolvidas onClick={() => setVerResolvidas((v) => !v)} className="text-[11px] text-slate-400 underline hover:text-white cursor-pointer">{verResolvidas ? "ocultar resolvidas" : `ver ${resolvidasLista.length} resolvida(s) / sem ação`}</button>
+                  {verResolvidas && (
+                    <div className="mt-2 space-y-1.5">
+                      {resolvidasLista.filter((n) => filtroNotif === "todas" || n.tipo === filtroNotif).map((n) => {
+                        const r = resolucoes.get(n.id)!;
+                        const pode = !!n.canal && podeMarcarCanal(usuario, mapeamentos, n.canal);
+                        return (
+                          <div key={n.id} data-notif-resolvida={n.id} className="flex items-start justify-between gap-2 border border-slate-700 bg-slate-900 rounded-xl p-2.5 text-[11px] text-slate-400">
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-300">{iconeTipo(n.tipo)} {n.titulo}</div>
+                              <div><span className={r.status === "resolvido" ? "text-emerald-400 font-bold" : "text-slate-300 font-bold"}>{rotuloStatus(r.status)}</span> · {r.por ? nomeDoEmail(r.por).split(" ")[0] : ""} {dataBR(r.em)}</div>
+                            </div>
+                            {pode && <button type="button" data-reabrir-notif={n.id} onClick={() => marcarNotificacao(n, "reabrir")} className="shrink-0 underline hover:text-white cursor-pointer">reabrir</button>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             )}
-            <p className="text-[10px] text-slate-500 mt-3">Devolução: avisa a partir de {DEV_ATENCAO}% (crítico a partir de {DEV_CRITICO}%), com no mínimo {DEV_AMOSTRA_MIN} vendas, usando as análises salvas na aba Fulfillment. Full: prazos configurados por canal na aba Regras.</p>
+            <p className="text-[10px] text-slate-500 mt-3">Cards de devolução por motivo: “Arrependimento da compra” não afeta a reputação; qualquer outro motivo afeta (mês selecionado). Marcado como Resolvido / Sem ação efetiva, o aviso sai da lista e volta se a situação mudar (ex.: nova devolução). Devolução por SKU: avisa a partir de {DEV_ATENCAO}% (crítico a partir de {DEV_CRITICO}%), com no mínimo {DEV_AMOSTRA_MIN} vendas, usando as análises salvas na aba Fulfillment. Full: prazos configurados por canal na aba Regras.</p>
           </div>
 
           {/* TAREFAS */}

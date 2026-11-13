@@ -58,3 +58,24 @@ export function correcoesVisiveis(
     })
     .filter((x) => x.canais.length > 0);
 }
+
+// ---------------------------------------------------------------- situação do produto na aba Vídeos
+export type EstadoCorrecao = "nenhum" | "aberta" | "corrigido" | "sem_acao";
+
+/**
+ * Situação do SKU Pai conforme a correção MAIS RECENTE dele:
+ *  - "aberta": os analistas ainda estão corrigindo → o produto fica em "concluído" na aba Vídeos (se já tem algum canal marcado);
+ *  - "corrigido": fechou com pelo menos um canal "Resolvido" → volta para os pendentes com a tag verde "Corrigido";
+ *  - "sem_acao": fechou só com "Sem ação efetiva" → nada mudou para o produto, continua em "concluído".
+ */
+export function estadoDaCorrecao(
+  skuPai: string, correcoes: Pick<Correcao, "id" | "sku_pai" | "status">[], canais: Pick<CorrecaoCanal, "id" | "correcao_id" | "feito">[], semAcao: Set<number>,
+): EstadoCorrecao {
+  const doPai = correcoes.filter((c) => String(c.sku_pai) === String(skuPai)).sort((a, b) => b.id - a.id);
+  const ultima = doPai[0];
+  if (!ultima) return "nenhum";
+  if (ultima.status === "aberta") return "aberta";
+  const linhas = canais.filter((x) => x.correcao_id === ultima.id);
+  if (linhas.length === 0) return "nenhum";
+  return linhas.some((x) => x.feito && !(x.id !== undefined && semAcao.has(x.id))) ? "corrigido" : "sem_acao";
+}
