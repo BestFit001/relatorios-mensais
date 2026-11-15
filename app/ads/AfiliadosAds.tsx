@@ -1,5 +1,5 @@
 "use client";
-// Adsense > (canal) > Afiliados: quanto foi vendido por afiliados e pela própria loja (vendas APROVADAS da mesma planilha que alimenta o
+// Relatórios > Afiliados: quanto foi vendido por afiliados e pela própria loja (vendas APROVADAS da mesma planilha que alimenta o
 // dashboard), a comissão paga a cada afiliado e como cada um vende (vídeo, live...). As colunas, os perfis próprios e as comissões ficam aqui.
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";

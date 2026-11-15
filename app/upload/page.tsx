@@ -1264,7 +1264,7 @@ export default function UpdatesPage() {
               const erroAfil = await salvarVendasAfiliados(supabase, canalAlvoDash, `${anoUpload}-${String(mesUpload).padStart(2, "0")}`, res);
               if (erroAfil) throw new Error(erroAfil);
               const an = analisarAfiliados(res, cfgAfil);
-              msgAfil = `• Afiliados (método na coluna ${cfgAfil.colConteudo || "—"}, afiliado na coluna ${cfgAfil.colAfiliado || "—"}): ${res.pedidos} pedido(s) aprovado(s), sendo ${an.afiliados.pedidos} de ${an.afiliados.quantos} afiliado(s)${an.afiliados.semComissao ? ` (${an.afiliados.semComissao} sem comissão definida)` : ""}. Veja em Adsense > ${canalAlvoDash} > Afiliados.`;
+              msgAfil = `• Afiliados (método na coluna ${cfgAfil.colConteudo || "—"}, afiliado na coluna ${cfgAfil.colAfiliado || "—"}): ${res.pedidos} pedido(s) aprovado(s), sendo ${an.afiliados.pedidos} de ${an.afiliados.quantos} afiliado(s)${an.afiliados.semComissao ? ` (${an.afiliados.semComissao} sem comissão definida)` : ""}. Veja em Relatórios > Afiliados.`;
             } catch (errAfil: any) {
               msgAfil = `⚠️ As vendas foram salvas, mas os afiliados não: ${errAfil?.message || errAfil}`;
             }

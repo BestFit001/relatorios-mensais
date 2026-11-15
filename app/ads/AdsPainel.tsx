@@ -9,7 +9,6 @@ import { listarCampanhasSalvas, slugCanal } from "../../lib/adsImportDb";
 import ImportarAds from "./ImportarAds";
 import ConfigAds from "./ConfigAds";
 import ComparativoAds from "./ComparativoAds";
-import AfiliadosAds from "./AfiliadosAds";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -137,7 +136,7 @@ const mesAnteriorBR = () => { const d = new Date(); d.setDate(1); d.setMonth(d.g
  *  - "canal": a página de UM canal (/ads/<canal>): importação de planilhas, lançamentos manuais, sugestões e Configurações do canal
  */
 export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal"; canalSlug?: string }) {
-  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes" | "config" | "comparativo" | "afiliados">(modo === "global" ? "dashboard" : "campanhas");
+  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes" | "config" | "comparativo">(modo === "global" ? "dashboard" : "campanhas");
   const [canalNaoEncontrado, setCanalNaoEncontrado] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [salvando, setSalvando] = useState<boolean>(false);
@@ -1088,7 +1087,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
         {/* NAVEGAÇÃO ENTRE ABAS */}
         <div className="flex flex-wrap gap-3 mb-6" data-abas-ads>
           {([
-            ...(modo === "canal" ? [["campanhas", "📋 Campanhas"] as const, ["comparativo", "🔄 Atual vs anterior"] as const, ["afiliados", "🤝 Afiliados"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
+            ...(modo === "canal" ? [["campanhas", "📋 Campanhas"] as const, ["comparativo", "🔄 Atual vs anterior"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
             ...(modo === "global" ? [["dashboard", "📊 Análise global"] as const, ["budget", "⚖️ Disponibilizado x Usado"] as const] : []),
           ]).map(([id, rotulo]) => (
             <button
@@ -1109,8 +1108,6 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
             Não encontrei esse canal. Escolha um canal no menu Relatórios &gt; Adsense (ou veja os canais visíveis em Regras Gerais).
           </div>
         )}
-
-        {modo === "canal" && subAba === "afiliados" && canalSelecionado && <AfiliadosAds key={canalSelecionado} canal={canalSelecionado} mes={mesSelecionado} setMes={setMesSelecionado} meses={mesesCompetencia.filter((m) => m !== "TODOS")} />}
 
         {modo === "canal" && subAba === "comparativo" && canalSelecionado && <ComparativoAds key={canalSelecionado} canal={canalSelecionado} />}
 

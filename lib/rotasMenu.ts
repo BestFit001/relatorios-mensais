@@ -25,6 +25,7 @@ export const SECOES_MENU: SecaoMenu[] = [
   ] },
   { titulo: "Relatórios", icone: "📈", submenu: true, rotas: [
     { id: "/ads", nome: "Adsense", porCanal: true },
+    { id: "/afiliados", nome: "Afiliados" },
     { id: "/", nome: "Curva ABC" },
     { id: "/full", nome: "Fulfillment" },
     { id: "/mapeamento", nome: "Mapa de Cadastros" },
