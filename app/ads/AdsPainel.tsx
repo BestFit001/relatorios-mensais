@@ -13,6 +13,8 @@ import ComparativoAds from "./ComparativoAds";
 import ImportarAdsML from "./ImportarAdsML";
 import AnaliseAdsML from "./AnaliseAdsML";
 import ConfigAdsML from "./ConfigAdsML";
+import ComparativoAdsML from "./ComparativoAdsML";
+import SugestoesAdsML from "./SugestoesAdsML";
 import { ehMercadoLivre, idsEspelhadosML } from "../../lib/adsMlDb";
 
 const matrizFretes = [
@@ -1098,7 +1100,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
         {/* NAVEGAÇÃO ENTRE ABAS */}
         <div className="flex flex-wrap gap-3 mb-6" data-abas-ads>
           {([
-            ...(modo === "canal" && canalSelecionado && ehMercadoLivre(canalSelecionado) ? [["campanhas", "📋 Campanhas"] as const, ["analise_ml", "📈 Análise dos anúncios"] as const, ["halo_ml", "🔗 Vendas sem patrocínio"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
+            ...(modo === "canal" && canalSelecionado && ehMercadoLivre(canalSelecionado) ? [["campanhas", "📋 Campanhas"] as const, ["analise_ml", "📈 Análise dos anúncios"] as const, ["halo_ml", "🔗 Vendas sem patrocínio"] as const, ["comparativo", "🔄 Atual vs anterior"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
             ...(modo === "canal" && canalSelecionado && !ehMercadoLivre(canalSelecionado) ? [["campanhas", "📋 Campanhas"] as const, ["comparativo", "🔄 Atual vs anterior"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
             ...(modo === "global" ? [["dashboard", "📊 Análise global"] as const, ["budget", "⚖️ Disponibilizado x Usado"] as const] : []),
           ]).map(([id, rotulo]) => (
@@ -1121,10 +1123,11 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
           </div>
         )}
 
-        {modo === "canal" && subAba === "analise_ml" && canalSelecionado && ehMercadoLivre(canalSelecionado) && <AnaliseAdsML key={canalSelecionado + mesSelecionado} canal={canalSelecionado} mes={mesSelecionado} visao="anuncios" />}
-        {modo === "canal" && subAba === "halo_ml" && canalSelecionado && ehMercadoLivre(canalSelecionado) && <AnaliseAdsML key={canalSelecionado + mesSelecionado} canal={canalSelecionado} mes={mesSelecionado} visao="halo" />}
+        {modo === "canal" && subAba === "analise_ml" && canalSelecionado && ehMercadoLivre(canalSelecionado) && <AnaliseAdsML key={canalSelecionado} canal={canalSelecionado} visao="anuncios" />}
+        {modo === "canal" && subAba === "halo_ml" && canalSelecionado && ehMercadoLivre(canalSelecionado) && <AnaliseAdsML key={canalSelecionado} canal={canalSelecionado} visao="halo" />}
 
         {modo === "canal" && subAba === "comparativo" && canalSelecionado && !ehMercadoLivre(canalSelecionado) && <ComparativoAds key={canalSelecionado} canal={canalSelecionado} />}
+        {modo === "canal" && subAba === "comparativo" && canalSelecionado && ehMercadoLivre(canalSelecionado) && <ComparativoAdsML key={canalSelecionado} canal={canalSelecionado} />}
 
         {modo === "canal" && subAba === "config" && canalSelecionado && (ehMercadoLivre(canalSelecionado) ? <ConfigAdsML key={canalSelecionado} canal={canalSelecionado} /> : <ConfigAds key={canalSelecionado} canal={canalSelecionado} />)}
 
@@ -1655,7 +1658,9 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
         )}
 
         {/* ===================== ABA 4: SUGESTÕES DE ADS ===================== */}
-        {modo === "canal" && subAba === "sugestoes" && (
+        {modo === "canal" && subAba === "sugestoes" && canalSelecionado && ehMercadoLivre(canalSelecionado) && <SugestoesAdsML key={canalSelecionado} canal={canalSelecionado} />}
+
+        {modo === "canal" && subAba === "sugestoes" && !(canalSelecionado && ehMercadoLivre(canalSelecionado)) && (
           <div className="space-y-6">
             <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">

@@ -5,7 +5,7 @@ import type { Acao, AnaliseAnuncio } from "../../lib/adsMl";
 import { useDadosML } from "./useDadosML";
 import { NUM, ORDEM_ACOES, PCT, R$, ROAS, ROTULO_ACAO, dataBR } from "./fmtML";
 
-type Props = { canal: string; mes: string; visao: "anuncios" | "halo" };
+type Props = { canal: string; visao: "anuncios" | "halo" };
 
 const Selo = ({ acao }: { acao: Acao }) => (
   <span title={ROTULO_ACAO[acao].dica} className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${ROTULO_ACAO[acao].cor}`}>{ROTULO_ACAO[acao].rotulo}</span>
@@ -34,8 +34,8 @@ function Paginacao({ total, pag, porPagina, setPag, setPorPagina, rotulo }: { to
   );
 }
 
-export default function AnaliseAdsML({ canal, mes, visao }: Props) {
-  const { pads, vendas, analise, carregando } = useDadosML(canal, mes);
+export default function AnaliseAdsML({ canal, visao }: Props) {
+  const { pads, vendas, analise, carregando, mes } = useDadosML(canal);
   const [busca, setBusca] = useState("");
   const [acao, setAcao] = useState<Acao | "todas">("todas");
   const [ordem, setOrdem] = useState<"liquidez" | "roi" | "roas" | "investimento" | "receita" | "indireta">("liquidez");
@@ -60,7 +60,7 @@ export default function AnaliseAdsML({ canal, mes, visao }: Props) {
   const puxadores = useMemo(() => (analise ? analise.anuncios.filter((a) => a.itens.some((i) => !i.direta)).sort((x, y) => y.liquidezIndireta - x.liquidezIndireta) : []), [analise]);
 
   if (carregando) return <div className="text-sm text-slate-500 p-6">Carregando…</div>;
-  if (!analise || !pads) return <div data-sem-dados-ml className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center text-sm text-slate-500">Nenhuma planilha do Mercado Livre em {mes}. Envie as planilhas na sub-aba Campanhas.</div>;
+  if (!analise || !pads) return <div data-sem-dados-ml className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center text-sm text-slate-500">Nenhuma planilha do Mercado Livre enviada. Envie as planilhas na sub-aba Campanhas.</div>;
   const t = analise.tot;
   const inicio = (pag - 1) * porPagina;
 

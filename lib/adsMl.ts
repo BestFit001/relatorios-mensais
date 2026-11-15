@@ -298,3 +298,19 @@ export function analisarML(anuncios: AnuncioPat[], vendas: VendaPat[] | null, ct
     haloTot: { un: halo.reduce((t, h) => t + h.un, 0), rec: halo.reduce((t, h) => t + h.rec, 0), lucroAntesAds: halo.reduce((t, h) => t + h.conta.lucroAntesAds, 0), mlbs: halo.length },
   };
 }
+
+// ---------- resumo guardado para o "Atual vs anterior" ----------
+export type ResumoAnuncio = { mlb: string; t: string; inv: number; rec: number; liq: number; un: number; acao: Acao };
+export type ResumoML = {
+  mes: string; arquivo: string; importadoEm: string; periodo: Periodo; comVendas: boolean;
+  tot: { inv: number; rec: number; liq: number; roi: number | null; roas: number; un: number; haloUn: number; haloRec: number };
+  anuncios: ResumoAnuncio[];
+};
+export function resumirAnalise(a: AnaliseML, meta: { mes: string; arquivo: string; importadoEm: string; periodo: Periodo }): ResumoML {
+  const r2 = (n: number) => Number((n || 0).toFixed(2));
+  return {
+    ...meta, comVendas: !a.semCruzamento,
+    tot: { inv: r2(a.tot.investimento), rec: r2(a.tot.receita), liq: r2(a.tot.liquidez), roi: a.tot.roi === null ? null : Number(a.tot.roi.toFixed(2)), roas: Number(a.tot.roas.toFixed(4)), un: a.tot.unidades, haloUn: a.haloTot.un, haloRec: r2(a.haloTot.rec) },
+    anuncios: a.anuncios.map((x) => ({ mlb: x.mlb, t: x.titulo, inv: r2(x.investimento), rec: r2(x.receitaTotal), liq: r2(x.liquidez), un: x.unidades, acao: x.acao })),
+  };
+}
