@@ -10,6 +10,10 @@ import { listarCampanhasSalvas, slugCanal } from "../../lib/adsImportDb";
 import ImportarAds from "./ImportarAds";
 import ConfigAds from "./ConfigAds";
 import ComparativoAds from "./ComparativoAds";
+import ImportarAdsML from "./ImportarAdsML";
+import AnaliseAdsML from "./AnaliseAdsML";
+import ConfigAdsML from "./ConfigAdsML";
+import { ehMercadoLivre, idsEspelhadosML } from "../../lib/adsMlDb";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -138,7 +142,7 @@ const mesAnteriorBR = () => { const d = new Date(); d.setDate(1); d.setMonth(d.g
  *  - "canal": a página de UM canal (/ads/<canal>): importação de planilhas, lançamentos manuais, sugestões e Configurações do canal
  */
 export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal"; canalSlug?: string }) {
-  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes" | "config" | "comparativo">(modo === "global" ? "dashboard" : "campanhas");
+  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes" | "config" | "comparativo" | "analise_ml" | "halo_ml">(modo === "global" ? "dashboard" : "campanhas");
   const [canalNaoEncontrado, setCanalNaoEncontrado] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [salvando, setSalvando] = useState<boolean>(false);
@@ -333,7 +337,8 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
     try {
       if (modo !== "canal" || !canalSelecionado || mesSelecionado === "TODOS") return new Set();
       const camps = await listarCampanhasSalvas(supabase, slugCanal(canalSelecionado), mesSelecionado);
-      return new Set(camps.flatMap((c) => c.ids || []));
+      const ml = ehMercadoLivre(canalSelecionado) ? await idsEspelhadosML(supabase, slugCanal(canalSelecionado), mesSelecionado) : [];
+      return new Set([...camps.flatMap((c) => c.ids || []), ...ml]);
     } catch { return new Set(); }
   };
 
@@ -1093,7 +1098,8 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
         {/* NAVEGAÇÃO ENTRE ABAS */}
         <div className="flex flex-wrap gap-3 mb-6" data-abas-ads>
           {([
-            ...(modo === "canal" ? [["campanhas", "📋 Campanhas"] as const, ["comparativo", "🔄 Atual vs anterior"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
+            ...(modo === "canal" && canalSelecionado && ehMercadoLivre(canalSelecionado) ? [["campanhas", "📋 Campanhas"] as const, ["analise_ml", "📈 Análise dos anúncios"] as const, ["halo_ml", "🔗 Vendas sem patrocínio"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
+            ...(modo === "canal" && canalSelecionado && !ehMercadoLivre(canalSelecionado) ? [["campanhas", "📋 Campanhas"] as const, ["comparativo", "🔄 Atual vs anterior"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
             ...(modo === "global" ? [["dashboard", "📊 Análise global"] as const, ["budget", "⚖️ Disponibilizado x Usado"] as const] : []),
           ]).map(([id, rotulo]) => (
             <button
@@ -1115,16 +1121,21 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
           </div>
         )}
 
-        {modo === "canal" && subAba === "comparativo" && canalSelecionado && <ComparativoAds key={canalSelecionado} canal={canalSelecionado} />}
+        {modo === "canal" && subAba === "analise_ml" && canalSelecionado && ehMercadoLivre(canalSelecionado) && <AnaliseAdsML key={canalSelecionado + mesSelecionado} canal={canalSelecionado} mes={mesSelecionado} visao="anuncios" />}
+        {modo === "canal" && subAba === "halo_ml" && canalSelecionado && ehMercadoLivre(canalSelecionado) && <AnaliseAdsML key={canalSelecionado + mesSelecionado} canal={canalSelecionado} mes={mesSelecionado} visao="halo" />}
 
-        {modo === "canal" && subAba === "config" && canalSelecionado && <ConfigAds key={canalSelecionado} canal={canalSelecionado} />}
+        {modo === "canal" && subAba === "comparativo" && canalSelecionado && !ehMercadoLivre(canalSelecionado) && <ComparativoAds key={canalSelecionado} canal={canalSelecionado} />}
+
+        {modo === "canal" && subAba === "config" && canalSelecionado && (ehMercadoLivre(canalSelecionado) ? <ConfigAdsML key={canalSelecionado} canal={canalSelecionado} /> : <ConfigAds key={canalSelecionado} canal={canalSelecionado} />)}
 
         {/* ===================== ABA 1: CAMPANHAS ===================== */}
         {modo === "canal" && subAba === "campanhas" && (
           <>
             {canalSelecionado && (
               <div className="mb-8">
-                <ImportarAds canal={canalSelecionado} mes={mesSelecionado} setMes={setMesSelecionado} meses={mesesCompetencia.filter((m) => m !== "TODOS")} custosMap={custosMap} regras={regrasTarifacao} />
+                {ehMercadoLivre(canalSelecionado)
+                  ? <ImportarAdsML key={canalSelecionado} canal={canalSelecionado} mes={mesSelecionado === "TODOS" ? mesesCompetencia[1] : mesSelecionado} setMes={setMesSelecionado} meses={mesesCompetencia.filter((m) => m !== "TODOS")} onMudou={carregarLancamentos} />
+                  : <ImportarAds canal={canalSelecionado} mes={mesSelecionado} setMes={setMesSelecionado} meses={mesesCompetencia.filter((m) => m !== "TODOS")} custosMap={custosMap} regras={regrasTarifacao} />}
               </div>
             )}
 
