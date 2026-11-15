@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect } from "react";
+import ProjecaoAds from "./ProjecaoAds";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
@@ -1561,6 +1562,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
               </div>
             )}
             <p className="px-5 pb-4 text-[10px] text-slate-500" data-roi-legenda>ROI = margem líquida ÷ investido em anúncios (a margem já vem depois de custo do produto, imposto, tarifa, embalagem, frete e do próprio anúncio). ROAS = faturamento dos anúncios ÷ investido.</p>
+            <ProjecaoAds mes={mesSelecionado} canais={dadosComparativo.map((d) => ({ canal: d.canal, invAtual: d.invAtual || 0, totFatAtual: d.totFatAtual || 0 }))} />
           </div>
         )}
 
