@@ -1,0 +1,136 @@
+// Afiliados: a mesma planilha de vendas que alimenta o dashboard (upload do canal) traz, em duas colunas, o método de venda
+// (ex.: LIVE, Videos, Product cards) e o afiliado (Creator Handle). Aqui ficam as regras puras (sem rede nem tela):
+//  - AcumuladorAfiliados: lê as linhas APROVADAS (as mesmas que viram venda no dashboard, sem canceladas) e soma por afiliado x método;
+//  - analisarAfiliados: com a configuração (comissão de cada afiliado, perfis próprios) calcula o que foi pago e como cada um vende.
+import { indiceDaColuna } from "./adsImport";
+
+export type Afiliado = { nome: string; comissaoPct: number };
+export type CfgAfiliados = {
+  colConteudo: string;       // coluna do método de venda (vídeo, live...)
+  colAfiliado: string;       // coluna do nome do afiliado (Creator Handle)
+  perfisProprios: string[];  // perfis da própria loja: vendas deles não pagam comissão
+  afiliados: Afiliado[];     // afiliados com comissão definida
+};
+
+export const CFG_AFIL_TIKTOK: CfgAfiliados = { colConteudo: "BG", colAfiliado: "BH", perfisProprios: ["use.bestfit"], afiliados: [] };
+export const CFG_AFIL_EM_BRANCO: CfgAfiliados = { colConteudo: "", colAfiliado: "", perfisProprios: [], afiliados: [] };
+export const ehCanalTikTok = (canal: string) => /tiktok/i.test(String(canal || ""));
+export const padraoAfiliados = (canal: string): CfgAfiliados => (ehCanalTikTok(canal) ? CFG_AFIL_TIKTOK : CFG_AFIL_EM_BRANCO);
+
+/** "@Roh_UGC " -> "roh_ugc" (nome comparável). */
+export const normHandle = (s: any): string => String(s ?? "").trim().replace(/^@/, "").toLowerCase();
+
+export function mesclarCfgAfiliados(salva: any, padrao: CfgAfiliados): CfgAfiliados {
+  const s = salva && typeof salva === "object" ? salva : {};
+  const txt = (v: any, p: string) => (typeof v === "string" ? v.trim() : p);
+  const lista = (v: any): string[] => (Array.isArray(v) ? Array.from(new Set(v.map(normHandle).filter(Boolean))) : padrao.perfisProprios);
+  const afiliados: Afiliado[] = Array.isArray(s.afiliados)
+    ? s.afiliados.map((a: any) => ({ nome: normHandle(a?.nome), comissaoPct: Math.max(0, Number(a?.comissaoPct) || 0) })).filter((a: Afiliado) => a.nome)
+    : padrao.afiliados;
+  return { colConteudo: txt(s.colConteudo, padrao.colConteudo), colAfiliado: txt(s.colAfiliado, padrao.colAfiliado), perfisProprios: lista(s.perfisProprios), afiliados };
+}
+
+// ---------- leitura das linhas da planilha de vendas ----------
+export type GrupoAfil = { a: string; c: string; p: number; u: number; r: number };   // afiliado ("" = sem), conteúdo, pedidos, unidades, receita
+export type VendasAfiliadosMes = {
+  atualizadoEm: string; colConteudo: string; colAfiliado: string;
+  pedidos: number; unidades: number; receita: number;   // tudo que foi aprovado na planilha (com ou sem afiliado)
+  grupos: GrupoAfil[];
+};
+
+export class AcumuladorAfiliados {
+  private iCont: number; private iAfil: number;
+  private grupos = new Map<string, { a: string; c: string; ped: Set<string>; u: number; r: number }>();
+  private todos = new Set<string>();
+  private unidades = 0; private receita = 0;
+  constructor(private cfg: CfgAfiliados, cabecalho: any[] | undefined) {
+    const cab = (cabecalho || []).map((c) => String(c ?? ""));
+    this.iCont = indiceDaColuna(cfg.colConteudo, cab);
+    this.iAfil = indiceDaColuna(cfg.colAfiliado, cab);
+  }
+  /** Só lê se ao menos uma das duas colunas estiver definida e existir. */
+  get ativo() { return this.iCont >= 0 || this.iAfil >= 0; }
+  /** Soma uma linha aprovada (mesmo valor de venda e quantidade que o dashboard usa). */
+  add(linha: any[], idPedido: string, receita: number, quantidade: number) {
+    if (!this.ativo) return;
+    const a = this.iAfil >= 0 ? normHandle(linha[this.iAfil]) : "";
+    const c = this.iCont >= 0 ? String(linha[this.iCont] ?? "").trim() : "";
+    const k = `${a}\u0000${c.toLowerCase()}`;
+    const g = this.grupos.get(k) || { a, c, ped: new Set<string>(), u: 0, r: 0 };
+    g.ped.add(idPedido); g.u += quantidade; g.r += receita;
+    this.grupos.set(k, g);
+    this.todos.add(idPedido); this.unidades += quantidade; this.receita += receita;
+  }
+  resultado(): VendasAfiliadosMes {
+    const r2 = (n: number) => Number(n.toFixed(2));
+    return {
+      atualizadoEm: new Date().toISOString(), colConteudo: this.cfg.colConteudo, colAfiliado: this.cfg.colAfiliado,
+      pedidos: this.todos.size, unidades: this.unidades, receita: r2(this.receita),
+      grupos: Array.from(this.grupos.values()).map((g) => ({ a: g.a, c: g.c, p: g.ped.size, u: g.u, r: r2(g.r) })),
+    };
+  }
+}
+
+// ---------- análise ----------
+/** "LIVE" -> "Live", "Videos" -> "Vídeo", "Product cards" -> "Vitrine (product cards)"; o resto fica como veio. */
+export function rotuloMetodo(bruto: string): string {
+  const t = String(bruto ?? "").trim();
+  if (!t) return "Sem método informado";
+  const n = t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  if (n.includes("live")) return "Live";
+  if (n.includes("video")) return "Vídeo";
+  if (n.includes("product card") || n.includes("showcase") || n.includes("vitrine")) return "Vitrine (product cards)";
+  return t;
+}
+
+export type Metodo = { metodo: string; pedidos: number; unidades: number; receita: number; pct: number };
+export type LinhaAfiliado = {
+  nome: string; comissaoPct: number | null;       // null = comissão ainda não definida
+  pedidos: number; unidades: number; receita: number; comissao: number;
+  metodos: Metodo[]; principal: Metodo | null; definido: boolean;
+};
+export type AnaliseAfiliados = {
+  total: { pedidos: number; unidades: number; receita: number };
+  proprias: { pedidos: number; unidades: number; receita: number; pct: number; metodos: Metodo[] };
+  afiliados: { pedidos: number; unidades: number; receita: number; pct: number; comissao: number; quantos: number; semComissao: number; metodos: Metodo[] };
+  linhas: LinhaAfiliado[];
+};
+
+type Soma = { pedidos: number; unidades: number; receita: number };
+const somar = (a: Soma, g: GrupoAfil) => { a.pedidos += g.p; a.unidades += g.u; a.receita += g.r; };
+function metodosDe(grupos: GrupoAfil[]): Metodo[] {
+  const m = new Map<string, Soma>();
+  for (const g of grupos) { const k = rotuloMetodo(g.c); const s = m.get(k) || { pedidos: 0, unidades: 0, receita: 0 }; somar(s, g); m.set(k, s); }
+  const total = Array.from(m.values()).reduce((t, s) => t + s.receita, 0);
+  return Array.from(m.entries()).map(([metodo, s]) => ({ metodo, ...s, pct: total > 0 ? s.receita / total : 0 })).sort((a, b) => b.receita - a.receita);
+}
+
+export function analisarAfiliados(dados: VendasAfiliadosMes, cfg: CfgAfiliados): AnaliseAfiliados {
+  const proprios = new Set(cfg.perfisProprios.map(normHandle));
+  const comissao = new Map(cfg.afiliados.map((a) => [normHandle(a.nome), a.comissaoPct] as const));
+  const gProprios: GrupoAfil[] = [];
+  const porAfil = new Map<string, GrupoAfil[]>();
+  for (const g of dados.grupos) {
+    if (!g.a || proprios.has(g.a)) gProprios.push(g);
+    else porAfil.set(g.a, [...(porAfil.get(g.a) || []), g]);
+  }
+  const linhas: LinhaAfiliado[] = Array.from(porAfil.entries()).map(([nome, gs]) => {
+    const s: Soma = { pedidos: 0, unidades: 0, receita: 0 }; gs.forEach((g) => somar(s, g));
+    const pct = comissao.has(nome) ? comissao.get(nome)! : null;
+    const metodos = metodosDe(gs);
+    return { nome, comissaoPct: pct, ...s, comissao: pct ? s.receita * (pct / 100) : 0, metodos, principal: metodos[0] || null, definido: pct !== null };
+  }).sort((a, b) => b.receita - a.receita);
+  const sp: Soma = { pedidos: 0, unidades: 0, receita: 0 }; gProprios.forEach((g) => somar(sp, g));
+  const sa: Soma = { pedidos: 0, unidades: 0, receita: 0 }; linhas.forEach((l) => { sa.pedidos += l.pedidos; sa.unidades += l.unidades; sa.receita += l.receita; });
+  const totalReceita = dados.receita > 0 ? dados.receita : sp.receita + sa.receita;
+  return {
+    total: { pedidos: dados.pedidos, unidades: dados.unidades, receita: dados.receita },
+    proprias: { ...sp, pct: totalReceita > 0 ? sp.receita / totalReceita : 0, metodos: metodosDe(gProprios) },
+    afiliados: {
+      ...sa, pct: totalReceita > 0 ? sa.receita / totalReceita : 0, comissao: linhas.reduce((t, l) => t + l.comissao, 0), quantos: linhas.length,
+      semComissao: linhas.filter((l) => !l.definido).length, metodos: metodosDe(linhas.flatMap((l) => porAfil.get(l.nome) || [])),
+    },
+    linhas,
+  };
+}
+

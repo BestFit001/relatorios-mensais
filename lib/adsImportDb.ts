@@ -27,18 +27,18 @@ export type CampanhaSalva = {
   produtos: ProdutoCalculado[];
 };
 
-async function lerChave(supabase: any, campo: string): Promise<string | null> {
+export async function lerChave(supabase: any, campo: string): Promise<string | null> {
   try {
     const { data, error } = await supabase.from("config_regras_tiny").select("coluna").eq("campo", campo).maybeSingle();
     if (error) return null;
     return data?.coluna ?? null;
   } catch { return null; }
 }
-const gravarChave = async (supabase: any, campo: string, texto: string): Promise<string | null> => {
+export const gravarChave = async (supabase: any, campo: string, texto: string): Promise<string | null> => {
   const { error } = await supabase.from("config_regras_tiny").upsert({ campo, coluna: texto }, { onConflict: "campo" });
   return error ? error.message : null;
 };
-const paraJson = (t: string | null): any => { try { return t ? JSON.parse(t) : null; } catch { return null; } };
+export const paraJson = (t: string | null): any => { try { return t ? JSON.parse(t) : null; } catch { return null; } };
 
 export async function carregarCfgAds(supabase: any, slug: string, canal: string): Promise<CfgAdsCanal> {
   return mesclarConfig(paraJson(await lerChave(supabase, kCfg(slug))), padraoDoCanal(canal));

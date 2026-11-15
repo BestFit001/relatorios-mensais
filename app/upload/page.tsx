@@ -9,6 +9,8 @@ import { lerArquivoComoMatriz, lerArquivoComoLinhas } from "../../lib/lerArquivo
 import { removerSufixoFba } from "../../lib/fulfillment";
 import { alimentarFullPeloUpload, mesDoFull } from "../../lib/fullMotor";
 import { registrarSkusNaBaseCadastrada, linhaAvisoCadastro } from "../../lib/cadastros";
+import { AcumuladorAfiliados, analisarAfiliados } from "../../lib/afiliados";
+import { carregarCfgAfiliados, excluirVendasAfiliados, salvarVendasAfiliados } from "../../lib/afiliadosDb";
 import { detectarColunaDataLive, montarConfigLives, ehCanalDasLives, ehModalLive, lerLinhaLive, montarRegistroLive, normalizarSkuLive } from "../../lib/livesVendas";
 
 async function fetchTodosRegistros(tabela: string, select: string = '*', eqCampo?: string, eqValor?: any) {
@@ -965,6 +967,11 @@ export default function UpdatesPage() {
         const livesNovas: any[] = [];
         const modaisVistos = new Map<string, number>();
 
+        // Afiliados: a mesma planilha traz o método de venda (ex.: LIVE, Videos) e o afiliado (Creator Handle). Só as linhas aprovadas
+        // (as mesmas que viram venda aqui, sem canceladas) entram; as colunas ficam em Adsense > (canal) > Afiliados.
+        const cfgAfil = await carregarCfgAfiliados(supabase, canalAlvoDash);
+        const afil = new AcumuladorAfiliados(cfgAfil, json[0]);
+
         const novasVendas = [];
         let totalImportados = 0;
         let ignoradosForaDoMes = 0;
@@ -1168,6 +1175,7 @@ export default function UpdatesPage() {
             repasse_liquido: repasseLiquido,
             __cancelado: cancelado
           });
+          if (!cancelado) afil.add(row, idFormatado, precoVenda, quantidade);
           totalImportados++;
 
           i++;
@@ -1196,6 +1204,7 @@ export default function UpdatesPage() {
 
         let canceladosGravados = 0;
         let msgLives = "";
+        let msgAfil = "";
         let avisoCadastro = "";
         if (novasVendas.length > 0) {
           // SKUs vendidos que ainda não constam na base de cadastrados entram lá (estoque 0, sem mexer nos que já existem)
@@ -1248,6 +1257,19 @@ export default function UpdatesPage() {
             }
           }
 
+          // Afiliados do canal/mês: refeitos a cada upload de vendas (só se as colunas de método/afiliado estiverem configuradas)
+          if (afil.ativo) {
+            try {
+              const res = afil.resultado();
+              const erroAfil = await salvarVendasAfiliados(supabase, canalAlvoDash, `${anoUpload}-${String(mesUpload).padStart(2, "0")}`, res);
+              if (erroAfil) throw new Error(erroAfil);
+              const an = analisarAfiliados(res, cfgAfil);
+              msgAfil = `• Afiliados (método na coluna ${cfgAfil.colConteudo || "—"}, afiliado na coluna ${cfgAfil.colAfiliado || "—"}): ${res.pedidos} pedido(s) aprovado(s), sendo ${an.afiliados.pedidos} de ${an.afiliados.quantos} afiliado(s)${an.afiliados.semComissao ? ` (${an.afiliados.semComissao} sem comissão definida)` : ""}. Veja em Adsense > ${canalAlvoDash} > Afiliados.`;
+            } catch (errAfil: any) {
+              msgAfil = `⚠️ As vendas foram salvas, mas os afiliados não: ${errAfil?.message || errAfil}`;
+            }
+          }
+
           // Pedidos faturados pela Nota Fiscal da planilha (Site) passam a constar em 'faturados' para o dashboard enxergá-los
           const idsNovos = Array.from(novosFaturados.keys());
           for (let k = 0; k < idsNovos.length; k += 100) {
@@ -1272,6 +1294,7 @@ export default function UpdatesPage() {
         if (isFisico) linhasMsg.push(`• Linha de total da planilha ignorada: ${ignoradosTotalClube > 0 ? 'sim' : 'não encontrada'}`);
         if (avisoCadastro) linhasMsg.push(avisoCadastro);
         if (msgLives) linhasMsg.push(msgLives);
+        if (msgAfil) linhasMsg.push(msgAfil);
         if (msgFull) linhasMsg.push(msgFull);
         if (foraDoMesData > 0 && mesesDosPedidos.size > 0) {
           const lista = Array.from(mesesDosPedidos.entries()).sort().map(([k, n]) => `${nomeDoMes(k)} (${n})`).join(", ");
@@ -1371,6 +1394,7 @@ export default function UpdatesPage() {
       } else if (tabela === 'vendas') {
         await supabase.from('vendas_canais').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
         await supabase.from('vendas_lives_separadas').delete().eq('canal', canalAlvoDash).eq('mes_referencia', mesAlvoDash);
+        await excluirVendasAfiliados(supabase, canalAlvoDash, `${anoUpload}-${String(mesUpload).padStart(2, "0")}`);
       }
       alert(`✅ Registros de ${tabela} limpos.`);
       carregarVendasPendentes();
