@@ -4,6 +4,8 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 
+const STATUS_ANDAMENTO = "Em andamento";
+
 export default function AgendaPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -15,8 +17,8 @@ export default function AgendaPage() {
   const [filtroPrioridade, setFiltroPrioridade] = useState("");
   const [assuntosDisponiveis, setAssuntosDisponiveis] = useState<string[]>([]);
   
-  // Abas de Status: "em_andamento" ou "concluidos"
-  const [abaAtiva, setAbaAtiva] = useState<"em_andamento" | "concluidos" | "todos">("em_andamento");
+  // Abas de Status: "pendentes", "em_andamento" ou "concluidos"
+  const [abaAtiva, setAbaAtiva] = useState<"pendentes" | "em_andamento" | "concluidos" | "todos">("pendentes");
 
   // Estado do Formulário de Inserção
   const hoje = new Date().toISOString().split('T')[0];
@@ -189,14 +191,27 @@ export default function AgendaPage() {
     else carregarTarefas();
   };
 
-  // Filtragem: Abas de Concluído / Em Andamento + Filtros de Topo
+  // Três situações, sem coluna nova: pendente (não iniciada), em andamento (status_entrega = "Em andamento", ainda não concluída) e concluída.
+  const emAndamento = (t: any) => !t.finalizado && t.status_entrega === STATUS_ANDAMENTO;
+
+  const alternarAndamento = async (item: any) => {
+    const { error } = await supabase.from('agenda_tarefas').update({
+      status_entrega: emAndamento(item) ? "" : STATUS_ANDAMENTO
+    }).eq('id', item.id);
+    if (error) alert("Erro ao atualizar status: " + error.message);
+    else carregarTarefas();
+  };
+
+  // Filtragem: Abas de Pendentes / Em Andamento / Concluídos + Filtros de Topo
   const dadosFiltrados = tarefas.filter(t => {
     const matchAssunto = filtroAssunto === "" || t.assunto === filtroAssunto;
     const matchPrioridade = filtroPrioridade === "" || t.prioridade === filtroPrioridade;
     
     let matchAba = true;
-    if (abaAtiva === "em_andamento") {
-      matchAba = !t.finalizado;
+    if (abaAtiva === "pendentes") {
+      matchAba = !t.finalizado && !emAndamento(t);
+    } else if (abaAtiva === "em_andamento") {
+      matchAba = emAndamento(t);
     } else if (abaAtiva === "concluidos") {
       matchAba = !!t.finalizado;
     }
@@ -204,7 +219,8 @@ export default function AgendaPage() {
     return matchAssunto && matchPrioridade && matchAba;
   });
 
-  const totalEmAndamento = tarefas.filter(t => !t.finalizado).length;
+  const totalPendentes = tarefas.filter(t => !t.finalizado && !emAndamento(t)).length;
+  const totalEmAndamento = tarefas.filter(t => emAndamento(t)).length;
   const totalConcluidos = tarefas.filter(t => !!t.finalizado).length;
 
   return (
@@ -332,21 +348,36 @@ export default function AgendaPage() {
           {/* ABAS E FILTROS */}
           <div className="p-6 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
             
-            {/* Abas: Em Andamento / Concluídos */}
+            {/* Abas: Pendentes / Em Andamento / Concluídos */}
             <div className="flex gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
               <button
-                onClick={() => setAbaAtiva("em_andamento")}
+                data-aba="pendentes"
+                onClick={() => setAbaAtiva("pendentes")}
                 className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer flex items-center gap-2 ${
-                  abaAtiva === "em_andamento" 
+                  abaAtiva === "pendentes" 
                     ? "bg-amber-600 text-white shadow-md shadow-amber-950/50" 
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                <span>⏳ Em Andamento</span>
+                <span>⏳ Pendentes</span>
+                <span className="text-[10px] bg-slate-900/80 px-1.5 py-0.5 rounded-full">{totalPendentes}</span>
+              </button>
+
+              <button
+                data-aba="em_andamento"
+                onClick={() => setAbaAtiva("em_andamento")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer flex items-center gap-2 ${
+                  abaAtiva === "em_andamento" 
+                    ? "bg-sky-600 text-white shadow-md shadow-sky-950/50" 
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <span>🔧 Em Andamento</span>
                 <span className="text-[10px] bg-slate-900/80 px-1.5 py-0.5 rounded-full">{totalEmAndamento}</span>
               </button>
               
               <button
+                data-aba="concluidos"
                 onClick={() => setAbaAtiva("concluidos")}
                 className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer flex items-center gap-2 ${
                   abaAtiva === "concluidos" 
@@ -402,7 +433,11 @@ export default function AgendaPage() {
             <p className="p-8 text-center text-slate-500">
               {abaAtiva === "concluidos" 
                 ? "Nenhum item marcado como concluído até o momento." 
-                : "Nenhuma tarefa em andamento no momento."}
+                : abaAtiva === "em_andamento"
+                  ? "Nenhuma tarefa em andamento no momento. Use \"▶ Iniciar\" na coluna Status Entrega para mover uma tarefa para cá."
+                  : abaAtiva === "pendentes"
+                    ? "Nenhuma tarefa pendente no momento."
+                    : "Nenhuma tarefa cadastrada."}
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -584,16 +619,24 @@ export default function AgendaPage() {
                               checked={!!item.finalizado} 
                               onChange={() => alternarFinalizado(item)}
                               className="w-5 h-5 accent-emerald-500 cursor-pointer"
-                              title={item.finalizado ? "Mover para Em Andamento" : "Mover para Concluídos"}
+                              title={item.finalizado ? "Reabrir (volta para Pendentes)" : "Mover para Concluídos"}
                             />
                           </td>
                         )}
 
                         {!visaoSimplificada && (
                           <td className="p-3">
-                            <span className={`font-bold text-[10px] uppercase ${item.status_entrega?.includes('antecedência') ? 'text-indigo-400' : item.status_entrega?.includes('atraso') ? 'text-rose-400' : 'text-emerald-400'}`}>
-                              {item.status_entrega || "-"}
-                            </span>
+                            {item.finalizado ? (
+                              <span className={`font-bold text-[10px] uppercase ${item.status_entrega?.includes('antecedência') ? 'text-indigo-400' : item.status_entrega?.includes('atraso') ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                {item.status_entrega || "-"}
+                              </span>
+                            ) : (
+                              <button type="button" data-andamento={emAndamento(item) ? "sim" : "nao"} onClick={() => alternarAndamento(item)}
+                                title={emAndamento(item) ? "Voltar para Pendentes" : "Marcar como Em Andamento"}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase border cursor-pointer transition-colors ${emAndamento(item) ? "bg-sky-950/60 border-sky-700 text-sky-300 hover:bg-sky-900" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white hover:border-sky-600"}`}>
+                                {emAndamento(item) ? "🔧 Em andamento" : "▶ Iniciar"}
+                              </button>
+                            )}
                           </td>
                         )}
 
