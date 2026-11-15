@@ -9,6 +9,7 @@ import {
   analisarAfiliados, normHandle, padraoAfiliados, type CfgAfiliados, type LinhaAfiliado, type Metodo, type ProdutoAfil, type VendasAfiliadosMes,
 } from "../../lib/afiliados";
 import { carregarCfgAfiliados, carregarVendasAfiliados } from "../../lib/afiliadosDb";
+import { calcularLiquidoAfiliados } from "../../lib/afiliadosLiquido";
 import { slugCanal } from "../../lib/adsImportDb";
 
 type Props = { canal: string; mes: string; setMes: (m: string) => void; meses: string[] };
@@ -72,7 +73,7 @@ function TabelaProdutos({ dado, produtos, vazio, mostrarAfiliados }: { dado: str
       <div className="overflow-x-auto border border-slate-800 rounded-xl">
         <table className="w-full text-left border-collapse text-xs" data-afil-prod-tabela={dado}>
           <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-            <tr><th className="p-3 w-10">#</th><th className="p-3">Produto</th><th className="p-3 text-right">Unid.</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">Comissão</th><th className="p-3 text-right">Líquido</th><th className="p-3 text-right">% das vendas</th>{mostrarAfiliados && <th className="p-3 text-right">Afiliados</th>}</tr>
+            <tr><th className="p-3 w-10">#</th><th className="p-3">Produto</th><th className="p-3 text-right">Unid.</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">Comissão</th><th className="p-3 text-right">Líquido</th><th className="p-3 text-right">Margem</th><th className="p-3 text-right">% das vendas</th>{mostrarAfiliados && <th className="p-3 text-right">Afiliados</th>}</tr>
           </thead>
           <tbody className="divide-y divide-slate-800/70">
             {visiveis.map((p, i) => (
@@ -83,7 +84,8 @@ function TabelaProdutos({ dado, produtos, vazio, mostrarAfiliados }: { dado: str
                 <td className="p-3 text-right">{NUM(p.pedidos)}</td>
                 <td className="p-3 text-right font-bold text-slate-100">{R$(p.receita)}</td>
                 <td className="p-3 text-right text-amber-300">{R$(p.comissao)}</td>
-                <td className="p-3 text-right font-bold text-emerald-300">{R$(p.liquido)}</td>
+                <td className="p-3 text-right font-bold text-emerald-300">{p.liquido === null ? "—" : R$(p.liquido)}{p.semCusto && <span title="Produto sem custo cadastrado: custo R$ 0,00 no cálculo" className="ml-1 text-[9px] text-yellow-300 font-black">sem custo</span>}</td>
+                <td className={`p-3 text-right ${p.liquido !== null && p.liquido < 0 ? "text-rose-400" : "text-slate-300"}`}>{p.liquido === null || p.receita <= 0 ? "—" : PCT(p.liquido / p.receita)}</td>
                 <td className="p-3 text-right text-slate-300">{PCT(total > 0 ? p.receita / total : 0)}</td>
                 {mostrarAfiliados && <td className="p-3 text-right text-slate-300">{NUM(p.afiliados)}</td>}
               </tr>
@@ -107,6 +109,8 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
   const padrao = padraoAfiliados(canal);
   const [cfg, setCfg] = useState<CfgAfiliados>(padrao);
   const [dados, setDados] = useState<VendasAfiliadosMes | null>(null);
+  const [dadosLiq, setDadosLiq] = useState<VendasAfiliadosMes | null>(null);   // as mesmas vendas já com o resultado do dashboard (custo, repasse...)
+  const [calculandoLiq, setCalculandoLiq] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [selAfil, setSelAfil] = useState("");
   const boxProdAfil = useRef<HTMLDivElement>(null);
@@ -128,12 +132,22 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
   }, [canal]);
   useEffect(() => {
     let ativo = true;
-    setCarregando(true);
-    (async () => { const d = await carregarVendasAfiliados(supabase, canal, mes); if (ativo) { setDados(d); setCarregando(false); } })();
+    setCarregando(true); setDadosLiq(null); setCalculandoLiq(false);
+    (async () => {
+      const d = await carregarVendasAfiliados(supabase, canal, mes);
+      if (!ativo) return;
+      setDados(d); setCarregando(false);
+      if (!d) return;
+      setCalculandoLiq(true);
+      const l = await calcularLiquidoAfiliados(supabase, canal, mes, d);
+      if (ativo) { setDadosLiq(l); setCalculandoLiq(false); }
+    })();
     return () => { ativo = false; };
   }, [canal, mes]);
 
-  const analise = useMemo(() => (dados ? analisarAfiliados(dados, cfg) : null), [dados, cfg]);
+  const analise = useMemo(() => (dados ? analisarAfiliados(dadosLiq || dados, cfg) : null), [dados, dadosLiq, cfg]);
+  const semCustoQtd = useMemo(() => (dadosLiq ? dadosLiq.grupos.reduce((t, g) => t + (g.pr || []).filter((p) => p.x?.sc).length, 0) : 0), [dadosLiq]);
+  const liqNaoCalculado = (calculandoLiq ? "calculando…" : "indisponível: suba de novo a planilha de vendas do mês em Uploads");
   const afilAtual = analise ? (analise.linhas.find((l) => l.nome === selAfil) || analise.linhas[0] || null) : null;
   const linhas = useMemo(() => {
     if (!analise) return [] as LinhaAfiliado[];
@@ -188,11 +202,12 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
                 {card("Vendas próprias (nós)", R$(analise.proprias.receita), `${PCT(analise.proprias.pct)} do total · ${NUM(analise.proprias.pedidos)} pedidos`)}
                 {card("Comissão paga", R$(analise.afiliados.comissao), analise.afiliados.receita > 0 ? `${PCT(analise.afiliados.comissao / analise.afiliados.receita)} das vendas de afiliados` : "—", "text-amber-300")}
                 {card("Afiliados que venderam", String(analise.afiliados.quantos), analise.afiliados.semComissao > 0 ? `${analise.afiliados.semComissao} sem comissão definida` : "todos com comissão", analise.afiliados.semComissao > 0 ? "text-amber-300" : "text-white")}
-                {card("Líquido após comissão", R$(analise.total.liquido), `vendas aprovadas − comissão dos afiliados · ${PCT(analise.total.receita > 0 ? analise.total.liquido / analise.total.receita : 0)} das vendas`, "text-emerald-300")}
-                {card("Líquido das vendas de afiliados", R$(analise.afiliados.liquido), `${R$(analise.afiliados.receita)} vendidos − ${R$(analise.afiliados.comissao)} de comissão`, "text-emerald-300")}
+                {card("Líquido total (após comissão)", analise.total.liquido === null ? "—" : R$(analise.total.liquido), analise.total.liquido === null ? liqNaoCalculado : `${PCT(analise.total.receita > 0 ? analise.total.liquido / analise.total.receita : 0)} das vendas · como no dashboard, menos a comissão`, "text-emerald-300")}
+                {card("Líquido das vendas de afiliados", analise.afiliados.liquido === null ? "—" : R$(analise.afiliados.liquido), analise.afiliados.liquido === null ? liqNaoCalculado : `${PCT(analise.afiliados.receita > 0 ? analise.afiliados.liquido / analise.afiliados.receita : 0)} das vendas deles · já sem a comissão`, "text-emerald-300")}
                 {card("Pedido médio (afiliados)", R$(analise.afiliados.pedidos > 0 ? analise.afiliados.receita / analise.afiliados.pedidos : 0), "vendas ÷ pedidos")}
               </div>
-              <p className="text-[10px] text-slate-500 mt-3">Planilha lida em {quando(dados.atualizadoEm)} (método na coluna {dados.colConteudo || "—"}, afiliado na coluna {dados.colAfiliado || "—"}). Comissão = % definido × valor vendido do afiliado. Líquido = valor vendido − comissão.</p>
+              <p className="text-[10px] text-slate-500 mt-3">Planilha lida em {quando(dados.atualizadoEm)} (método na coluna {dados.colConteudo || "—"}, afiliado na coluna {dados.colAfiliado || "—"}). Comissão = % definido × valor vendido do afiliado. Líquido = mesmo cálculo do dashboard (repasse do canal − custo − frete − devoluções) menos a comissão.</p>
+              {semCustoQtd > 0 && <p data-afil-aviso-custo className="mt-3 text-[11px] text-yellow-300 bg-yellow-950/20 border border-yellow-900/40 rounded-xl p-3">⚠ {semCustoQtd} produto(s) vendidos por aqui estão sem custo cadastrado: entram com custo R$ 0,00 e deixam o líquido maior do que o real (o dashboard também mostra “sem custo”).</p>}
               {analise.afiliados.semComissao > 0 && (
                 <p data-afil-aviso className="mt-3 text-[11px] text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-3">⚠ {analise.afiliados.semComissao} afiliado(s) sem comissão definida: estão com comissão R$ 0,00 até você informar o % em <Link href={`/afiliados?canal=${slugCanal(canal)}`} data-afil-ir-config className="underline font-bold">Afiliados · Configurações</Link>.</p>
               )}
@@ -235,7 +250,7 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
                         <td className="p-3 text-right">{NUM(l.unidades)}</td>
                         <td className="p-3 text-right">{R$(l.receita)}</td>
                         <td className="p-3 text-right font-bold text-amber-300">{R$(l.comissao)}</td>
-                        <td className="p-3 text-right font-bold text-emerald-300" data-afil-liquido={l.nome}>{R$(l.liquido)}</td>
+                        <td className="p-3 text-right font-bold text-emerald-300" data-afil-liquido={l.nome}>{l.liquido === null ? "—" : R$(l.liquido)}{l.semCusto > 0 && <span title="Há produtos sem custo cadastrado: o custo entra como R$ 0,00" className="ml-1 text-[9px] text-yellow-300 font-black">sem custo</span>}</td>
                         <td className="p-3 text-slate-200" data-afil-principal={l.nome}>{l.principal ? `${l.principal.metodo} (${PCT(l.principal.pct)})` : "—"}</td>
                         <td className="p-3 text-[11px] text-slate-400">{l.metodos.map((m) => `${m.metodo} ${PCT(m.pct)}`).join(" · ")}</td>
                         <td className="p-3 text-right"><button type="button" data-afil-ver-produtos={l.nome} onClick={() => { setSelAfil(l.nome); setTimeout(() => boxProdAfil.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }} className="text-[11px] font-bold text-purple-400 hover:text-purple-300 cursor-pointer">Ver produtos</button></td>
