@@ -1,10 +1,12 @@
 "use client";
-// Sugestões de Ads do Mercado Livre, automáticas: usa as vendas do mês que já estão no dashboard (upload de vendas), o custo do SKU,
-// a aba de devoluções e o que já está no Ads, e indica o que vale colocar no Adsense segundo as regras de Configurações.
+// Sugestões de Ads automáticas, para todos os canais: usa as vendas do mês que já estão no dashboard (upload de vendas), o custo do SKU,
+// a aba de devoluções e o que já está no Ads (no ML, o relatório de patrocinados; nos demais, as campanhas lançadas), e indica o que vale
+// colocar no Adsense segundo as regras de Configurações do canal.
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { slugCanal } from "../../lib/adsImportDb";
-import { carregarBaseSugestoes, carregarCfgSug } from "../../lib/adsMlDb";
+import { carregarBaseSugestoes, carregarCfgSug, carregarLancamentosCanal, ehMercadoLivre } from "../../lib/adsMlDb";
+import { normalizarSkuPai, paiPadrao } from "../../lib/skuPai";
 import { CFG_SUG_PADRAO, calcularSugestoes, normSkuSug, type AdsDoMlb, type CfgSugestoes, type Sugestao, type SituacaoSug } from "../../lib/adsMlSugestoes";
 import { useDadosML } from "./useDadosML";
 import { NUM, PCT, R$ } from "./fmtML";
@@ -24,13 +26,15 @@ const card = (titulo: string, valor: string, sub?: string, c = "text-white") => 
   </div>
 );
 
-export default function SugestoesAdsML({ canal }: { canal: string }) {
+export default function SugestoesAds({ canal }: { canal: string }) {
   const slug = slugCanal(canal);
+  const ml = ehMercadoLivre(canal);
   const { ctx, atual, analise, carregando: carregandoAds } = useDadosML(canal);
   const [escolhido, setMes] = useState<string | null>(null);
-  const mes = escolhido ?? atual?.mes ?? mesAtual();   // sem escolha: o mês do relatório de Ads em vigor
+  const mes = escolhido ?? (ml ? atual?.mes : null) ?? mesAtual();   // sem escolha: no ML, o mês do relatório de Ads em vigor; nos demais, o mês atual
   const [cfg, setCfg] = useState<CfgSugestoes>(CFG_SUG_PADRAO);
   const [base, setBase] = useState<{ vendas: any[]; cancelados: any[]; devolucoes: any[] } | null>(null);
+  const [lanc, setLanc] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [filtro, setFiltro] = useState<SituacaoSug | "todas">("recomendar");
   const [busca, setBusca] = useState("");
@@ -44,22 +48,37 @@ export default function SugestoesAdsML({ canal }: { canal: string }) {
     let ativo = true;
     setCarregando(true);
     (async () => {
-      const [b, c] = await Promise.all([carregarBaseSugestoes(supabase, canal, mes), carregarCfgSug(supabase, slug)]);
+      const [b, c, l] = await Promise.all([carregarBaseSugestoes(supabase, canal, mes), carregarCfgSug(supabase, slug), ml ? Promise.resolve([]) : carregarLancamentosCanal(supabase, canal, mes)]);
       if (!ativo) return;
-      setBase(b); setCfg(c); setCarregando(false);
+      setBase(b); setCfg(c); setLanc(l); setCarregando(false);
     })();
     return () => { ativo = false; };
-  }, [canal, mes, slug, carregandoAds]);
+  }, [canal, mes, slug, ml, carregandoAds]);
 
   const lista: Sugestao[] = useMemo(() => {
     if (!base || !ctx) return [];
     const custos = new Map<string, { custo: number; produto: string }>(ctx.custos);
     const mlbsPorSku = new Map<string, string[]>();
-    ctx.regras.forEach((rs, mlb) => rs.forEach((r) => { const k = normSkuSug(r.sku); if (k) mlbsPorSku.set(k, Array.from(new Set([...(mlbsPorSku.get(k) || []), mlb]))); }));
     const ads = new Map<string, AdsDoMlb>();
-    analise?.anuncios.forEach((a) => ads.set(a.mlb, { status: a.status, roi: a.roi }));
+    if (ml) {
+      ctx.regras.forEach((rs, mlb) => rs.forEach((r) => { const k = normSkuSug(r.sku); if (k) mlbsPorSku.set(k, Array.from(new Set([...(mlbsPorSku.get(k) || []), mlb]))); }));
+      analise?.anuncios.forEach((a) => ads.set(a.mlb, { status: a.status, roi: a.roi }));
+    } else {
+      // outros canais: um produto "já está no Ads" quando há lançamento com o mesmo SKU (ou com o SKU pai, que é como as campanhas importadas gravam variações)
+      const porSku = new Map<string, any[]>();
+      lanc.forEach((l) => { const k = normalizarSkuPai(l.sku); if (k) porSku.set(k, [...(porSku.get(k) || []), l]); });
+      base.vendas.forEach((v) => {
+        const k = normSkuSug(v.sku); if (!k || mlbsPorSku.has(k)) return;
+        const hit = [...(porSku.get(normalizarSkuPai(v.sku)) || []), ...(porSku.get(paiPadrao(v.sku)) || [])];
+        const ids = Array.from(new Set(hit.map((l) => String(l.identificador_anuncio || l.sku)))).filter(Boolean);
+        if (ids.length) mlbsPorSku.set(k, ids);
+      });
+      const agr = new Map<string, { inv: number; liq: number }>();
+      lanc.forEach((l) => { const id = String(l.identificador_anuncio || l.sku); const a = agr.get(id) || { inv: 0, liq: 0 }; a.inv += Number(l.investimento) || 0; a.liq += Number(l.margem_liquida_rs) || 0; agr.set(id, a); });
+      agr.forEach((a, id) => ads.set(id, { status: "ativo", roi: a.inv > 0 ? (a.liq / a.inv) * 100 : null }));
+    }
     return calcularSugestoes(base.vendas, base.cancelados, base.devolucoes, canal, mes, custos, mlbsPorSku, ads, cfg);
-  }, [base, ctx, analise, canal, mes, cfg]);
+  }, [base, ctx, analise, lanc, ml, canal, mes, cfg]);
 
   const cont = useMemo(() => ({ recomendar: lista.filter((s) => s.situacao === "recomendar").length, no_ads: lista.filter((s) => s.situacao === "no_ads").length, nao: lista.filter((s) => s.situacao === "nao").length }), [lista]);
   const visiveis = useMemo(() => {
@@ -72,7 +91,7 @@ export default function SugestoesAdsML({ canal }: { canal: string }) {
   const inicio = (pag - 1) * porPagina;
   const carregandoTudo = carregando || carregandoAds;
   return (
-    <div className="space-y-6" data-sugestoes-ml>
+    <div className="space-y-6" data-sugestoes-ml data-sugestoes-ads>
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
         <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
           <div>
@@ -85,19 +104,19 @@ export default function SugestoesAdsML({ canal }: { canal: string }) {
           </div>
         </div>
         <p data-regras-sug className="text-[11px] text-slate-300 bg-slate-950 border border-slate-800 rounded-xl p-3 mb-4">
-          Regras em vigor: pelo menos <strong>{NUM(cfg.vendasMin)} un.</strong> vendidas · margem líquida de pelo menos <strong>{NUM(cfg.margemMinPct)}%</strong> (imposto de {NUM(cfg.impostoPct)}%) · devoluções de no máximo <strong>{NUM(cfg.taxaDevMaxPct)}%</strong> das vendas e até <strong>{cfg.devMaxQtd}</strong> no mês. Mude em Configurações.
+          Regras em vigor: pelo menos <strong>{NUM(cfg.vendasMin)} un.</strong> vendidas · margem líquida de pelo menos <strong>{NUM(cfg.margemMinPct)}%</strong> (imposto de {NUM(cfg.impostoPct)}%) · devoluções de no máximo <strong>{NUM(cfg.taxaDevMaxPct)}%</strong> das vendas e até <strong>{cfg.devMaxQtd}</strong> no mês. Mude em Configurações do canal.
         </p>
         {!carregandoTudo && lista.length === 0 && <div data-sem-vendas-sug className="text-sm text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-4">Não há vendas de {canal} em {mes}. Envie a planilha de vendas do canal em Upload (dashboard) ou escolha outro mês.</div>}
         {lista.length > 0 && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-cards-sug>
             {card("SKUs vendidos", String(lista.length), `${NUM(lista.reduce((t, s) => t + s.un, 0))} unidades`)}
             {card("Colocar no Ads", String(cont.recomendar), `${R$(lista.filter((s) => s.situacao === "recomendar").reduce((t, s) => t + s.liquido, 0))} de líquido`, "text-emerald-400")}
-            {card("Já estão no Ads", String(cont.no_ads), analise ? `relatório de ${atual?.mes}` : "sem relatório de Ads enviado", "text-sky-300")}
+            {card("Já estão no Ads", String(cont.no_ads), ml ? (analise ? `relatório de ${atual?.mes}` : "sem relatório de Ads enviado") : (lanc.length ? `campanhas de ${mes}` : "sem campanhas lançadas"), "text-sky-300")}
             {card("Não recomendados", String(cont.nao))}
           </div>
         )}
         {lista.some((s) => s.semCusto) && <p className="text-[11px] text-amber-300 mt-3">⚠ {lista.filter((s) => s.semCusto).length} SKU(s) sem custo cadastrado ficam de fora das recomendações.</p>}
-        {!analise && lista.length > 0 && <p className="text-[11px] text-slate-500 mt-3">Sem o relatório de anúncios patrocinados enviado, o app não sabe o que já está no Ads e pode indicar produtos que já anunciam.</p>}
+        {lista.length > 0 && (ml ? !analise : lanc.length === 0) && <p data-aviso-sem-ads className="text-[11px] text-slate-500 mt-3">{ml ? "Sem o relatório de anúncios patrocinados enviado" : `Sem campanhas de ${canal} lançadas em ${mes}`}, o app não sabe o que já está no Ads e pode indicar produtos que já anunciam.</p>}
       </div>
 
       {lista.length > 0 && (
@@ -106,7 +125,7 @@ export default function SugestoesAdsML({ canal }: { canal: string }) {
             {([["recomendar", `Colocar no Ads (${cont.recomendar})`], ["no_ads", `Já no Ads (${cont.no_ads})`], ["nao", `Não recomendados (${cont.nao})`], ["todas", `Todos (${lista.length})`]] as const).map(([k, t]) => (
               <button key={k} type="button" data-filtro-sug={k} onClick={() => { setFiltro(k); setPag(1); }} className={`px-3 py-2 rounded-xl text-[11px] font-bold border cursor-pointer ${filtro === k ? "bg-purple-600 border-purple-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>{t}</button>
             ))}
-            <input data-busca-sug value={busca} onChange={(e) => { setBusca(e.target.value); setPag(1); }} placeholder="Buscar produto, SKU ou MLB…" className="ml-auto bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none focus:border-purple-500 w-60" />
+            <input data-busca-sug value={busca} onChange={(e) => { setBusca(e.target.value); setPag(1); }} placeholder={ml ? "Buscar produto, SKU ou MLB…" : "Buscar produto ou SKU…"} className="ml-auto bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none focus:border-purple-500 w-60" />
             <select value={ordem} onChange={(e) => setOrdem(e.target.value as any)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer">
               <option value="liquido">Ordenar: maior líquido (R$)</option><option value="margem">Ordenar: maior margem (%)</option><option value="vendas">Ordenar: mais vendas</option><option value="liquidoUn">Ordenar: maior líquido por unidade</option>
             </select>
@@ -135,7 +154,7 @@ export default function SugestoesAdsML({ canal }: { canal: string }) {
                         {s.situacao === "recomendar" && <p className="text-emerald-300">Passou em todas as regras: vende bem, tem margem e poucas devoluções{s.adsStatus === "inativo" ? " (o anúncio patrocinado está pausado: vale reativar)" : ""}.</p>}
                         {s.situacao === "no_ads" && <p className="text-sky-300">Já tem anúncio patrocinado ativo{s.adsRoi !== null ? ` (ROI do relatório atual: ${PCT(s.adsRoi)})` : ""}.</p>}
                         {s.motivos.map((m, i) => <p key={i} className="text-amber-300">• {m}</p>)}
-                        <p className="text-slate-400">Repasse {R$(s.repasse)} − custo {R$(s.custoTotal)} ({R$(s.custoUn)} por un.) − imposto {R$(s.imposto)} = <strong className="text-slate-200">{R$(s.liquido)}</strong>. MLBs ligados ao SKU: {s.mlbs.length ? s.mlbs.join(", ") : "nenhum no cadastro de anúncios"}.</p>
+                        <p className="text-slate-400">Repasse {R$(s.repasse)} − custo {R$(s.custoTotal)} ({R$(s.custoUn)} por un.) − imposto {R$(s.imposto)} = <strong className="text-slate-200">{R$(s.liquido)}</strong>. {ml ? "MLBs ligados ao SKU" : "Anúncios no Ads com este SKU"}: {s.mlbs.length ? s.mlbs.join(", ") : ml ? "nenhum no cadastro de anúncios" : "nenhum"}.</p>
                       </td></tr>
                     )}
                   </React.Fragment>

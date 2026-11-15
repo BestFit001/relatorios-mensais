@@ -188,3 +188,8 @@ export async function carregarBaseSugestoes(supabase: any, canal: string, mes: s
   ]);
   return { vendas, cancelados, devolucoes };
 }
+
+/** O que o canal (que não é o ML) já tem no Ads no mês: os lançamentos da Análise global / campanhas importadas. */
+export async function carregarLancamentosCanal(supabase: any, canal: string, mes: string) {
+  return lerTudo(supabase, "ads_campanhas_lancamentos", "identificador_anuncio, sku, investimento, margem_liquida_rs", (q) => q.eq("canal", canal).eq("mes_referencia", mes));
+}

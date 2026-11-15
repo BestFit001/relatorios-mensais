@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { ehTikTok, mesclarConfig, numeroBR, padraoDoCanal, type CfgAdsCanal, type CustosManuais } from "../../lib/adsImport";
+import RegrasSugestoesAds from "./RegrasSugestoesAds";
 import { carregarCfgAds, carregarCustosManuais, salvarCfgAds, salvarCustosManuais, slugCanal } from "../../lib/adsImportDb";
 
 type Campo = { chave: string; rotulo: string; dica: string; obrigatorio?: boolean };
@@ -167,6 +168,10 @@ export default function ConfigAds({ canal }: { canal: string }) {
           </div>
         )}
         {msgManual && <p data-manual-msg className="text-[11px] font-bold text-emerald-400 mt-3">{msgManual}</p>}
+      </div>
+
+      <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl max-w-3xl" data-cfg-bloco="sugestoes">
+        <RegrasSugestoesAds canal={canal} />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
