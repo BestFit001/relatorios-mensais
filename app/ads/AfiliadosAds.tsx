@@ -72,7 +72,7 @@ function TabelaProdutos({ dado, produtos, vazio, mostrarAfiliados }: { dado: str
       <div className="overflow-x-auto border border-slate-800 rounded-xl">
         <table className="w-full text-left border-collapse text-xs" data-afil-prod-tabela={dado}>
           <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-            <tr><th className="p-3 w-10">#</th><th className="p-3">Produto</th><th className="p-3 text-right">Unid.</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">% das vendas</th>{mostrarAfiliados && <th className="p-3 text-right">Afiliados</th>}</tr>
+            <tr><th className="p-3 w-10">#</th><th className="p-3">Produto</th><th className="p-3 text-right">Unid.</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">Comissão</th><th className="p-3 text-right">Líquido</th><th className="p-3 text-right">% das vendas</th>{mostrarAfiliados && <th className="p-3 text-right">Afiliados</th>}</tr>
           </thead>
           <tbody className="divide-y divide-slate-800/70">
             {visiveis.map((p, i) => (
@@ -82,6 +82,8 @@ function TabelaProdutos({ dado, produtos, vazio, mostrarAfiliados }: { dado: str
                 <td className="p-3 text-right">{NUM(p.unidades)}</td>
                 <td className="p-3 text-right">{NUM(p.pedidos)}</td>
                 <td className="p-3 text-right font-bold text-slate-100">{R$(p.receita)}</td>
+                <td className="p-3 text-right text-amber-300">{R$(p.comissao)}</td>
+                <td className="p-3 text-right font-bold text-emerald-300">{R$(p.liquido)}</td>
                 <td className="p-3 text-right text-slate-300">{PCT(total > 0 ? p.receita / total : 0)}</td>
                 {mostrarAfiliados && <td className="p-3 text-right text-slate-300">{NUM(p.afiliados)}</td>}
               </tr>
@@ -180,15 +182,17 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
         ) : (
           <>
             <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
-              <div className="grid grid-cols-2 lg:grid-cols-6 gap-3" data-afil-resumo>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-afil-resumo>
                 {card("Vendas aprovadas", R$(analise.total.receita), `${NUM(analise.total.pedidos)} pedidos · ${NUM(analise.total.unidades)} un.`)}
                 {card("Vendas por afiliados", R$(analise.afiliados.receita), `${PCT(analise.afiliados.pct)} do total · ${NUM(analise.afiliados.pedidos)} pedidos`, "text-purple-300")}
                 {card("Vendas próprias (nós)", R$(analise.proprias.receita), `${PCT(analise.proprias.pct)} do total · ${NUM(analise.proprias.pedidos)} pedidos`)}
                 {card("Comissão paga", R$(analise.afiliados.comissao), analise.afiliados.receita > 0 ? `${PCT(analise.afiliados.comissao / analise.afiliados.receita)} das vendas de afiliados` : "—", "text-amber-300")}
                 {card("Afiliados que venderam", String(analise.afiliados.quantos), analise.afiliados.semComissao > 0 ? `${analise.afiliados.semComissao} sem comissão definida` : "todos com comissão", analise.afiliados.semComissao > 0 ? "text-amber-300" : "text-white")}
+                {card("Líquido após comissão", R$(analise.total.liquido), `vendas aprovadas − comissão dos afiliados · ${PCT(analise.total.receita > 0 ? analise.total.liquido / analise.total.receita : 0)} das vendas`, "text-emerald-300")}
+                {card("Líquido das vendas de afiliados", R$(analise.afiliados.liquido), `${R$(analise.afiliados.receita)} vendidos − ${R$(analise.afiliados.comissao)} de comissão`, "text-emerald-300")}
                 {card("Pedido médio (afiliados)", R$(analise.afiliados.pedidos > 0 ? analise.afiliados.receita / analise.afiliados.pedidos : 0), "vendas ÷ pedidos")}
               </div>
-              <p className="text-[10px] text-slate-500 mt-3">Planilha lida em {quando(dados.atualizadoEm)} (método na coluna {dados.colConteudo || "—"}, afiliado na coluna {dados.colAfiliado || "—"}). Comissão = % definido × valor vendido do afiliado.</p>
+              <p className="text-[10px] text-slate-500 mt-3">Planilha lida em {quando(dados.atualizadoEm)} (método na coluna {dados.colConteudo || "—"}, afiliado na coluna {dados.colAfiliado || "—"}). Comissão = % definido × valor vendido do afiliado. Líquido = valor vendido − comissão.</p>
               {analise.afiliados.semComissao > 0 && (
                 <p data-afil-aviso className="mt-3 text-[11px] text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-3">⚠ {analise.afiliados.semComissao} afiliado(s) sem comissão definida: estão com comissão R$ 0,00 até você informar o % em <Link href={`/afiliados?canal=${slugCanal(canal)}`} data-afil-ir-config className="underline font-bold">Afiliados · Configurações</Link>.</p>
               )}
@@ -219,10 +223,10 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
               <div className="overflow-x-auto border border-slate-800 rounded-xl">
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap" data-afil-tabela>
                   <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                    <tr><th className="p-3">Afiliado</th><th className="p-3 text-right">Comissão (%)</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Unid.</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">Comissão paga</th><th className="p-3">Vende mais por</th><th className="p-3">Distribuição</th><th className="p-3"></th></tr>
+                    <tr><th className="p-3">Afiliado</th><th className="p-3 text-right">Comissão (%)</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Unid.</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">Comissão paga</th><th className="p-3 text-right">Líquido</th><th className="p-3">Vende mais por</th><th className="p-3">Distribuição</th><th className="p-3"></th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
-                    {visiveis.length === 0 && <tr><td colSpan={9} className="p-6 text-center text-slate-500">Nenhum afiliado com esse filtro.</td></tr>}
+                    {visiveis.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-slate-500">Nenhum afiliado com esse filtro.</td></tr>}
                     {visiveis.map((l) => (
                       <tr key={l.nome} data-afil-linha={l.nome} className="hover:bg-slate-800/40">
                         <td className="p-3 font-bold text-slate-100">{l.nome}{!l.definido && <span className="ml-2 text-[10px] text-amber-400 font-bold">sem comissão</span>}</td>
@@ -231,6 +235,7 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
                         <td className="p-3 text-right">{NUM(l.unidades)}</td>
                         <td className="p-3 text-right">{R$(l.receita)}</td>
                         <td className="p-3 text-right font-bold text-amber-300">{R$(l.comissao)}</td>
+                        <td className="p-3 text-right font-bold text-emerald-300" data-afil-liquido={l.nome}>{R$(l.liquido)}</td>
                         <td className="p-3 text-slate-200" data-afil-principal={l.nome}>{l.principal ? `${l.principal.metodo} (${PCT(l.principal.pct)})` : "—"}</td>
                         <td className="p-3 text-[11px] text-slate-400">{l.metodos.map((m) => `${m.metodo} ${PCT(m.pct)}`).join(" · ")}</td>
                         <td className="p-3 text-right"><button type="button" data-afil-ver-produtos={l.nome} onClick={() => { setSelAfil(l.nome); setTimeout(() => boxProdAfil.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }} className="text-[11px] font-bold text-purple-400 hover:text-purple-300 cursor-pointer">Ver produtos</button></td>

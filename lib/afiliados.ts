@@ -96,16 +96,16 @@ export function rotuloMetodo(bruto: string): string {
 }
 
 export type Metodo = { metodo: string; pedidos: number; unidades: number; receita: number; pct: number };
-export type ProdutoAfil = { sku: string; nome: string; pedidos: number; unidades: number; receita: number; afiliados: number };
+export type ProdutoAfil = { sku: string; nome: string; pedidos: number; unidades: number; receita: number; comissao: number; liquido: number; afiliados: number };
 export type LinhaAfiliado = {
   nome: string; comissaoPct: number | null;       // null = comissão ainda não definida
-  pedidos: number; unidades: number; receita: number; comissao: number;
+  pedidos: number; unidades: number; receita: number; comissao: number; liquido: number;   // liquido = vendas - comissão
   metodos: Metodo[]; principal: Metodo | null; definido: boolean; produtos: ProdutoAfil[];
 };
 export type AnaliseAfiliados = {
-  total: { pedidos: number; unidades: number; receita: number };
-  proprias: { pedidos: number; unidades: number; receita: number; pct: number; metodos: Metodo[] };
-  afiliados: { pedidos: number; unidades: number; receita: number; pct: number; comissao: number; quantos: number; semComissao: number; metodos: Metodo[]; produtos: ProdutoAfil[] };
+  total: { pedidos: number; unidades: number; receita: number; comissao: number; liquido: number };   // liquido = vendas - comissão paga aos afiliados
+  proprias: { pedidos: number; unidades: number; receita: number; liquido: number; pct: number; metodos: Metodo[] };
+  afiliados: { pedidos: number; unidades: number; receita: number; liquido: number; pct: number; comissao: number; quantos: number; semComissao: number; metodos: Metodo[]; produtos: ProdutoAfil[] };
   linhas: LinhaAfiliado[];
   temProdutos: boolean;   // false em meses lidos antes de a planilha guardar os produtos
 };
@@ -120,15 +120,15 @@ function metodosDe(grupos: GrupoAfil[]): Metodo[] {
 }
 
 /** Soma os produtos dos grupos (mais vendido primeiro). "afiliados" = quantos afiliados diferentes venderam o produto. */
-function produtosDe(grupos: GrupoAfil[]): ProdutoAfil[] {
+function produtosDe(grupos: GrupoAfil[], pctDe: (afiliado: string) => number): ProdutoAfil[] {
   const m = new Map<string, ProdutoAfil & { _a: Set<string> }>();
   for (const g of grupos) for (const p of g.pr || []) {
     const k = (p.s || p.n || "sem-sku").toLowerCase();
-    const x = m.get(k) || { sku: p.s, nome: p.n, pedidos: 0, unidades: 0, receita: 0, afiliados: 0, _a: new Set<string>() };
+    const x = m.get(k) || { sku: p.s, nome: p.n, pedidos: 0, unidades: 0, receita: 0, comissao: 0, liquido: 0, afiliados: 0, _a: new Set<string>() };
     if (!x.nome && p.n) x.nome = p.n;
-    x.pedidos += p.p; x.unidades += p.u; x.receita += p.r; if (g.a) x._a.add(g.a); m.set(k, x);
+    x.pedidos += p.p; x.unidades += p.u; x.receita += p.r; x.comissao += p.r * (pctDe(g.a) / 100); if (g.a) x._a.add(g.a); m.set(k, x);
   }
-  return Array.from(m.values()).map(({ _a, ...x }) => ({ ...x, receita: Number(x.receita.toFixed(2)), afiliados: _a.size })).sort((a, b) => b.receita - a.receita);
+  return Array.from(m.values()).map(({ _a, ...x }) => ({ ...x, receita: Number(x.receita.toFixed(2)), comissao: Number(x.comissao.toFixed(2)), liquido: Number((x.receita - x.comissao).toFixed(2)), afiliados: _a.size })).sort((a, b) => b.receita - a.receita);
 }
 
 export function analisarAfiliados(dados: VendasAfiliadosMes, cfg: CfgAfiliados): AnaliseAfiliados {
@@ -144,18 +144,20 @@ export function analisarAfiliados(dados: VendasAfiliadosMes, cfg: CfgAfiliados):
     const s: Soma = { pedidos: 0, unidades: 0, receita: 0 }; gs.forEach((g) => somar(s, g));
     const pct = comissao.has(nome) ? comissao.get(nome)! : null;
     const metodos = metodosDe(gs);
-    return { nome, comissaoPct: pct, ...s, comissao: pct ? s.receita * (pct / 100) : 0, metodos, principal: metodos[0] || null, definido: pct !== null, produtos: produtosDe(gs) };
+    const com = pct ? s.receita * (pct / 100) : 0;
+    return { nome, comissaoPct: pct, ...s, comissao: com, liquido: s.receita - com, metodos, principal: metodos[0] || null, definido: pct !== null, produtos: produtosDe(gs, () => pct || 0) };
   }).sort((a, b) => b.receita - a.receita);
   const sp: Soma = { pedidos: 0, unidades: 0, receita: 0 }; gProprios.forEach((g) => somar(sp, g));
   const sa: Soma = { pedidos: 0, unidades: 0, receita: 0 }; linhas.forEach((l) => { sa.pedidos += l.pedidos; sa.unidades += l.unidades; sa.receita += l.receita; });
+  const totalComissao = linhas.reduce((t, l) => t + l.comissao, 0);
   const totalReceita = dados.receita > 0 ? dados.receita : sp.receita + sa.receita;
   return {
-    total: { pedidos: dados.pedidos, unidades: dados.unidades, receita: dados.receita },
-    proprias: { ...sp, pct: totalReceita > 0 ? sp.receita / totalReceita : 0, metodos: metodosDe(gProprios) },
+    total: { pedidos: dados.pedidos, unidades: dados.unidades, receita: dados.receita, comissao: totalComissao, liquido: dados.receita - totalComissao },
+    proprias: { ...sp, liquido: sp.receita, pct: totalReceita > 0 ? sp.receita / totalReceita : 0, metodos: metodosDe(gProprios) },
     afiliados: {
-      ...sa, pct: totalReceita > 0 ? sa.receita / totalReceita : 0, comissao: linhas.reduce((t, l) => t + l.comissao, 0), quantos: linhas.length,
+      ...sa, liquido: sa.receita - totalComissao, pct: totalReceita > 0 ? sa.receita / totalReceita : 0, comissao: totalComissao, quantos: linhas.length,
       semComissao: linhas.filter((l) => !l.definido).length, metodos: metodosDe(linhas.flatMap((l) => porAfil.get(l.nome) || [])),
-      produtos: produtosDe(linhas.flatMap((l) => porAfil.get(l.nome) || [])),
+      produtos: produtosDe(linhas.flatMap((l) => porAfil.get(l.nome) || []), (a) => comissao.get(a) || 0),
     },
     linhas,
     temProdutos: dados.grupos.length === 0 || dados.grupos.some((g) => Array.isArray(g.pr)),
