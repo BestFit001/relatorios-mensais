@@ -28,3 +28,19 @@ export async function salvarVendasAfiliados(supabase: any, canal: string, mesAAA
 export async function excluirVendasAfiliados(supabase: any, canal: string, mesAAAAMM: string): Promise<void> {
   try { await supabase.from("config_regras_tiny").delete().eq("campo", kVendas(slugCanal(canal), mesAAAAMM)); } catch { /* sem dados para apagar */ }
 }
+
+// ---------- quais canais aparecem em Relatórios > Afiliados ----------
+const K_CANAIS = "afiliados_canais_visiveis";
+export const EVENTO_CANAIS_AFILIADOS = "afiliados-canais-mudou";
+
+/** Canais visíveis: a lista salva (só os que ainda existem); sem nada salvo, começa só com o TikTok. */
+export async function carregarCanaisAfiliados(supabase: any, todos: string[]): Promise<string[]> {
+  const j = paraJson(await lerChave(supabase, K_CANAIS));
+  if (Array.isArray(j)) { const set = new Set(j.map(String)); return todos.filter((c) => set.has(c)); }
+  return todos.filter((c) => /tiktok/i.test(c));
+}
+export async function salvarCanaisAfiliados(supabase: any, visiveis: string[]): Promise<string | null> {
+  const erro = await gravarChave(supabase, K_CANAIS, JSON.stringify(visiveis));
+  if (!erro && typeof window !== "undefined") window.dispatchEvent(new Event(EVENTO_CANAIS_AFILIADOS));
+  return erro ? "Não consegui salvar os canais: " + erro : null;
+}

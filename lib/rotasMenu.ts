@@ -12,6 +12,10 @@ export interface RotaMenu {
   oculta?: boolean;
   /** true = no menu vira um grupo: "Análise global" + uma página por canal visível (ex.: Adsense) */
   porCanal?: boolean;
+  /** de onde vêm os canais do grupo: "ads" (visíveis em Regras Gerais, padrão) ou "afiliados" (escolhidos na Configuração de Afiliados) */
+  fonteCanais?: "ads" | "afiliados";
+  /** nome do 1º item do grupo, que abre a própria rota (padrão: "Análise global") */
+  primeiroItem?: string;
 }
 export interface SecaoMenu { titulo: string; icone: string; /** false = a aba fica solta no menu, sem submenu */ submenu: boolean; rotas: RotaMenu[] }
 
@@ -25,7 +29,7 @@ export const SECOES_MENU: SecaoMenu[] = [
   ] },
   { titulo: "Relatórios", icone: "📈", submenu: true, rotas: [
     { id: "/ads", nome: "Adsense", porCanal: true },
-    { id: "/afiliados", nome: "Afiliados" },
+    { id: "/afiliados", nome: "Afiliados", porCanal: true, fonteCanais: "afiliados", primeiroItem: "Configurações" },
     { id: "/", nome: "Curva ABC" },
     { id: "/full", nome: "Fulfillment" },
     { id: "/mapeamento", nome: "Mapa de Cadastros" },

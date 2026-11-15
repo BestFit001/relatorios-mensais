@@ -6,6 +6,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { ROTAS_DISPONIVEIS, SECOES_MENU, secaoDoCaminho } from "@/lib/rotasMenu";
 import { slugCanal } from "@/lib/adsImportDb";
+import { carregarCanaisAfiliados, EVENTO_CANAIS_AFILIADOS } from "@/lib/afiliadosDb";
 import Avatar from "./Avatar";
 import { abrirEscolhaDeAvatar } from "./EscolherAvatar";
 import {
@@ -28,7 +29,8 @@ export default function Navbar() {
   const [emailUsuario, setEmailUsuario] = useState("");
   const [menuExpandido, setMenuExpandido] = useState<string | null>(null);
   const [canaisAds, setCanaisAds] = useState<string[]>([]);      // canais visíveis no Adsense (Regras Gerais)
-  const [adsAberto, setAdsAberto] = useState(false);
+  const [canaisAfil, setCanaisAfil] = useState<string[]>([]);      // canais escolhidos em Afiliados > Configurações
+  const [gruposAbertos, setGruposAbertos] = useState<Record<string, boolean>>({});
   const [sidebarAberta, setSidebarAberta] = useState(false);
   const [modoEscuro, setModoEscuro] = useState(true);
   
@@ -154,7 +156,22 @@ export default function Navbar() {
     });
     return () => { vivo = false; };
   }, []);
-  useEffect(() => { if (pathname === "/ads" || pathname?.startsWith("/ads/")) setAdsAberto(true); }, [pathname]);
+  // Afiliados: um item de menu por canal escolhido na configuração (e a página de Configurações no topo do grupo)
+  useEffect(() => {
+    let vivo = true;
+    const carregar = async () => {
+      const { data } = await supabase.from("config_regras_canais").select("canal").order("id");
+      const todos = (data || []).map((c: any) => String(c.canal));
+      const visiveis = await carregarCanaisAfiliados(supabase, todos);
+      if (vivo) setCanaisAfil(visiveis);
+    };
+    carregar();
+    window.addEventListener(EVENTO_CANAIS_AFILIADOS, carregar);
+    return () => { vivo = false; window.removeEventListener(EVENTO_CANAIS_AFILIADOS, carregar); };
+  }, []);
+  useEffect(() => {
+    for (const s of SECOES_MENU) for (const r of s.rotas) if (r.porCanal && (pathname === r.id || pathname?.startsWith(r.id + "/"))) setGruposAbertos((g) => ({ ...g, [r.id]: true }));
+  }, [pathname]);
 
   const temPermissao = (rota: string) => {
     return paginasPermitidas.includes(rota);
@@ -232,15 +249,15 @@ export default function Navbar() {
                 {sidebarAberta && aberta && (
                   <div className="hub-sub">
                     {visiveis.map((r) => r.porCanal ? (
-                      <div key={r.id} data-menu-adsense>
-                        <button type="button" onClick={() => setAdsAberto((v) => !v)} className="hub-subitem hub-subgrupo" data-ativo={pathname === r.id || !!pathname?.startsWith(r.id + "/")} aria-expanded={adsAberto}>
+                      <div key={r.id} data-menu-adsense={r.id === "/ads" ? "" : undefined} data-menu-grupo={r.id}>
+                        <button type="button" onClick={() => setGruposAbertos((g) => ({ ...g, [r.id]: !g[r.id] }))} className="hub-subitem hub-subgrupo" data-ativo={pathname === r.id || !!pathname?.startsWith(r.id + "/")} aria-expanded={!!gruposAbertos[r.id]}>
                           <span>{r.rotulo || r.nome}</span>
-                          <ChevronDown size={12} className="hub-seta" data-aberta={adsAberto} />
+                          <ChevronDown size={12} className="hub-seta" data-aberta={!!gruposAbertos[r.id]} />
                         </button>
-                        {adsAberto && (
+                        {gruposAbertos[r.id] && (
                           <div className="hub-subsub">
-                            <Link href={r.id} className="hub-subitem" data-ativo={pathname === r.id}>Análise global</Link>
-                            {canaisAds.map((c) => (
+                            <Link href={r.id} className="hub-subitem" data-ativo={pathname === r.id}>{r.primeiroItem || "Análise global"}</Link>
+                            {(r.fonteCanais === "afiliados" ? canaisAfil : canaisAds).map((c) => (
                               <Link key={c} href={`${r.id}/${slugCanal(c)}`} className="hub-subitem" data-ativo={pathname === `${r.id}/${slugCanal(c)}`}>{c}</Link>
                             ))}
                           </div>
