@@ -44,3 +44,16 @@ export async function salvarCanaisAfiliados(supabase: any, visiveis: string[]): 
   if (!erro && typeof window !== "undefined") window.dispatchEvent(new Event(EVENTO_CANAIS_AFILIADOS));
   return erro ? "Não consegui salvar os canais: " + erro : null;
 }
+
+/** Afiliados que apareceram nas vendas já lidas do canal (todos os meses), do que mais vendeu para o que menos vendeu. */
+export async function listarAfiliadosVistos(supabase: any, canal: string): Promise<{ nome: string; receita: number }[]> {
+  try {
+    const { data } = await supabase.from("config_regras_tiny").select("campo, coluna").ilike("campo", `afiliados_vendas_${slugCanal(canal)}_%`);
+    const soma = new Map<string, number>();
+    for (const r of data || []) {
+      const j = paraJson(r.coluna);
+      for (const g of (j && Array.isArray(j.grupos) ? j.grupos : [])) if (g.a) soma.set(g.a, (soma.get(g.a) || 0) + (Number(g.r) || 0));
+    }
+    return Array.from(soma.entries()).map(([nome, receita]) => ({ nome, receita })).sort((a, b) => b.receita - a.receita);
+  } catch { return []; }
+}

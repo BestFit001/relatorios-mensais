@@ -8,12 +8,13 @@ export type Afiliado = { nome: string; comissaoPct: number };
 export type CfgAfiliados = {
   colConteudo: string;       // coluna do método de venda (vídeo, live...)
   colAfiliado: string;       // coluna do nome do afiliado (Creator Handle)
+  colProduto: string;        // coluna do nome do produto (só usada quando o SKU não está na base de custos)
   perfisProprios: string[];  // perfis da própria loja: vendas deles não pagam comissão
   afiliados: Afiliado[];     // afiliados com comissão definida
 };
 
-export const CFG_AFIL_TIKTOK: CfgAfiliados = { colConteudo: "BG", colAfiliado: "BH", perfisProprios: ["use.bestfit"], afiliados: [] };
-export const CFG_AFIL_EM_BRANCO: CfgAfiliados = { colConteudo: "", colAfiliado: "", perfisProprios: [], afiliados: [] };
+export const CFG_AFIL_TIKTOK: CfgAfiliados = { colConteudo: "BG", colAfiliado: "BH", colProduto: "I", perfisProprios: ["use.bestfit"], afiliados: [] };
+export const CFG_AFIL_EM_BRANCO: CfgAfiliados = { colConteudo: "", colAfiliado: "", colProduto: "", perfisProprios: [], afiliados: [] };
 export const ehCanalTikTok = (canal: string) => /tiktok/i.test(String(canal || ""));
 export const padraoAfiliados = (canal: string): CfgAfiliados => (ehCanalTikTok(canal) ? CFG_AFIL_TIKTOK : CFG_AFIL_EM_BRANCO);
 
@@ -27,11 +28,12 @@ export function mesclarCfgAfiliados(salva: any, padrao: CfgAfiliados): CfgAfilia
   const afiliados: Afiliado[] = Array.isArray(s.afiliados)
     ? s.afiliados.map((a: any) => ({ nome: normHandle(a?.nome), comissaoPct: Math.max(0, Number(a?.comissaoPct) || 0) })).filter((a: Afiliado) => a.nome)
     : padrao.afiliados;
-  return { colConteudo: txt(s.colConteudo, padrao.colConteudo), colAfiliado: txt(s.colAfiliado, padrao.colAfiliado), perfisProprios: lista(s.perfisProprios), afiliados };
+  return { colConteudo: txt(s.colConteudo, padrao.colConteudo), colAfiliado: txt(s.colAfiliado, padrao.colAfiliado), colProduto: txt(s.colProduto, padrao.colProduto), perfisProprios: lista(s.perfisProprios), afiliados };
 }
 
 // ---------- leitura das linhas da planilha de vendas ----------
-export type GrupoAfil = { a: string; c: string; p: number; u: number; r: number };   // afiliado ("" = sem), conteúdo, pedidos, unidades, receita
+export type ProdAf = { s: string; n: string; p: number; u: number; r: number };   // SKU, nome, pedidos, unidades, receita
+export type GrupoAfil = { a: string; c: string; p: number; u: number; r: number; pr?: ProdAf[] };   // afiliado ("" = sem), conteúdo, pedidos, unidades, receita, produtos (ausente em meses lidos antes desta função)
 export type VendasAfiliadosMes = {
   atualizadoEm: string; colConteudo: string; colAfiliado: string;
   pedidos: number; unidades: number; receita: number;   // tudo que foi aprovado na planilha (com ou sem afiliado)
@@ -39,25 +41,32 @@ export type VendasAfiliadosMes = {
 };
 
 export class AcumuladorAfiliados {
-  private iCont: number; private iAfil: number;
-  private grupos = new Map<string, { a: string; c: string; ped: Set<string>; u: number; r: number }>();
+  private iCont: number; private iAfil: number; private iProd: number;
+  private grupos = new Map<string, { a: string; c: string; ped: Set<string>; u: number; r: number; prod: Map<string, { s: string; n: string; ped: Set<string>; u: number; r: number }> }>();
   private todos = new Set<string>();
   private unidades = 0; private receita = 0;
   constructor(private cfg: CfgAfiliados, cabecalho: any[] | undefined) {
     const cab = (cabecalho || []).map((c) => String(c ?? ""));
     this.iCont = indiceDaColuna(cfg.colConteudo, cab);
     this.iAfil = indiceDaColuna(cfg.colAfiliado, cab);
+    this.iProd = cfg.colProduto ? indiceDaColuna(cfg.colProduto, cab) : -1;
   }
   /** Só lê se ao menos uma das duas colunas estiver definida e existir. */
   get ativo() { return this.iCont >= 0 || this.iAfil >= 0; }
   /** Soma uma linha aprovada (mesmo valor de venda e quantidade que o dashboard usa). */
-  add(linha: any[], idPedido: string, receita: number, quantidade: number) {
+  /** nomeBase = nome do produto na base de custos (vazio se o SKU não está lá: aí vale a coluna do nome na planilha). */
+  add(linha: any[], idPedido: string, receita: number, quantidade: number, sku = "", nomeBase = "") {
     if (!this.ativo) return;
     const a = this.iAfil >= 0 ? normHandle(linha[this.iAfil]) : "";
     const c = this.iCont >= 0 ? String(linha[this.iCont] ?? "").trim() : "";
     const k = `${a}\u0000${c.toLowerCase()}`;
-    const g = this.grupos.get(k) || { a, c, ped: new Set<string>(), u: 0, r: 0 };
+    const g = this.grupos.get(k) || { a, c, ped: new Set<string>(), u: 0, r: 0, prod: new Map() };
     g.ped.add(idPedido); g.u += quantidade; g.r += receita;
+    const s0 = String(sku ?? "").trim(); const n0 = String(nomeBase || (this.iProd >= 0 ? linha[this.iProd] : "") || "").trim();
+    const kp = (s0 && s0 !== "sem-sku" ? s0 : n0 || "sem-sku").toLowerCase();
+    const pr = g.prod.get(kp) || { s: s0 && s0 !== "sem-sku" ? s0 : "", n: n0, ped: new Set<string>(), u: 0, r: 0 };
+    if (!pr.n && n0) pr.n = n0;
+    pr.ped.add(idPedido); pr.u += quantidade; pr.r += receita; g.prod.set(kp, pr);
     this.grupos.set(k, g);
     this.todos.add(idPedido); this.unidades += quantidade; this.receita += receita;
   }
@@ -66,7 +75,10 @@ export class AcumuladorAfiliados {
     return {
       atualizadoEm: new Date().toISOString(), colConteudo: this.cfg.colConteudo, colAfiliado: this.cfg.colAfiliado,
       pedidos: this.todos.size, unidades: this.unidades, receita: r2(this.receita),
-      grupos: Array.from(this.grupos.values()).map((g) => ({ a: g.a, c: g.c, p: g.ped.size, u: g.u, r: r2(g.r) })),
+      grupos: Array.from(this.grupos.values()).map((g) => ({
+        a: g.a, c: g.c, p: g.ped.size, u: g.u, r: r2(g.r),
+        pr: Array.from(g.prod.values()).map((x) => ({ s: x.s, n: x.n, p: x.ped.size, u: x.u, r: r2(x.r) })).sort((x, y) => y.r - x.r),
+      })),
     };
   }
 }
@@ -84,16 +96,18 @@ export function rotuloMetodo(bruto: string): string {
 }
 
 export type Metodo = { metodo: string; pedidos: number; unidades: number; receita: number; pct: number };
+export type ProdutoAfil = { sku: string; nome: string; pedidos: number; unidades: number; receita: number; afiliados: number };
 export type LinhaAfiliado = {
   nome: string; comissaoPct: number | null;       // null = comissão ainda não definida
   pedidos: number; unidades: number; receita: number; comissao: number;
-  metodos: Metodo[]; principal: Metodo | null; definido: boolean;
+  metodos: Metodo[]; principal: Metodo | null; definido: boolean; produtos: ProdutoAfil[];
 };
 export type AnaliseAfiliados = {
   total: { pedidos: number; unidades: number; receita: number };
   proprias: { pedidos: number; unidades: number; receita: number; pct: number; metodos: Metodo[] };
-  afiliados: { pedidos: number; unidades: number; receita: number; pct: number; comissao: number; quantos: number; semComissao: number; metodos: Metodo[] };
+  afiliados: { pedidos: number; unidades: number; receita: number; pct: number; comissao: number; quantos: number; semComissao: number; metodos: Metodo[]; produtos: ProdutoAfil[] };
   linhas: LinhaAfiliado[];
+  temProdutos: boolean;   // false em meses lidos antes de a planilha guardar os produtos
 };
 
 type Soma = { pedidos: number; unidades: number; receita: number };
@@ -103,6 +117,18 @@ function metodosDe(grupos: GrupoAfil[]): Metodo[] {
   for (const g of grupos) { const k = rotuloMetodo(g.c); const s = m.get(k) || { pedidos: 0, unidades: 0, receita: 0 }; somar(s, g); m.set(k, s); }
   const total = Array.from(m.values()).reduce((t, s) => t + s.receita, 0);
   return Array.from(m.entries()).map(([metodo, s]) => ({ metodo, ...s, pct: total > 0 ? s.receita / total : 0 })).sort((a, b) => b.receita - a.receita);
+}
+
+/** Soma os produtos dos grupos (mais vendido primeiro). "afiliados" = quantos afiliados diferentes venderam o produto. */
+function produtosDe(grupos: GrupoAfil[]): ProdutoAfil[] {
+  const m = new Map<string, ProdutoAfil & { _a: Set<string> }>();
+  for (const g of grupos) for (const p of g.pr || []) {
+    const k = (p.s || p.n || "sem-sku").toLowerCase();
+    const x = m.get(k) || { sku: p.s, nome: p.n, pedidos: 0, unidades: 0, receita: 0, afiliados: 0, _a: new Set<string>() };
+    if (!x.nome && p.n) x.nome = p.n;
+    x.pedidos += p.p; x.unidades += p.u; x.receita += p.r; if (g.a) x._a.add(g.a); m.set(k, x);
+  }
+  return Array.from(m.values()).map(({ _a, ...x }) => ({ ...x, receita: Number(x.receita.toFixed(2)), afiliados: _a.size })).sort((a, b) => b.receita - a.receita);
 }
 
 export function analisarAfiliados(dados: VendasAfiliadosMes, cfg: CfgAfiliados): AnaliseAfiliados {
@@ -118,7 +144,7 @@ export function analisarAfiliados(dados: VendasAfiliadosMes, cfg: CfgAfiliados):
     const s: Soma = { pedidos: 0, unidades: 0, receita: 0 }; gs.forEach((g) => somar(s, g));
     const pct = comissao.has(nome) ? comissao.get(nome)! : null;
     const metodos = metodosDe(gs);
-    return { nome, comissaoPct: pct, ...s, comissao: pct ? s.receita * (pct / 100) : 0, metodos, principal: metodos[0] || null, definido: pct !== null };
+    return { nome, comissaoPct: pct, ...s, comissao: pct ? s.receita * (pct / 100) : 0, metodos, principal: metodos[0] || null, definido: pct !== null, produtos: produtosDe(gs) };
   }).sort((a, b) => b.receita - a.receita);
   const sp: Soma = { pedidos: 0, unidades: 0, receita: 0 }; gProprios.forEach((g) => somar(sp, g));
   const sa: Soma = { pedidos: 0, unidades: 0, receita: 0 }; linhas.forEach((l) => { sa.pedidos += l.pedidos; sa.unidades += l.unidades; sa.receita += l.receita; });
@@ -129,8 +155,10 @@ export function analisarAfiliados(dados: VendasAfiliadosMes, cfg: CfgAfiliados):
     afiliados: {
       ...sa, pct: totalReceita > 0 ? sa.receita / totalReceita : 0, comissao: linhas.reduce((t, l) => t + l.comissao, 0), quantos: linhas.length,
       semComissao: linhas.filter((l) => !l.definido).length, metodos: metodosDe(linhas.flatMap((l) => porAfil.get(l.nome) || [])),
+      produtos: produtosDe(linhas.flatMap((l) => porAfil.get(l.nome) || [])),
     },
     linhas,
+    temProdutos: dados.grupos.length === 0 || dados.grupos.some((g) => Array.isArray(g.pr)),
   };
 }
 

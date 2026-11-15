@@ -1,13 +1,15 @@
 "use client";
 // Relatórios > Afiliados: quanto foi vendido por afiliados e pela própria loja (vendas APROVADAS da mesma planilha que alimenta o
-// dashboard), a comissão paga a cada afiliado e como cada um vende (vídeo, live...). As colunas, os perfis próprios e as comissões ficam aqui.
-import React, { useEffect, useMemo, useState } from "react";
+// dashboard), a comissão paga a cada afiliado, como cada um vende (vídeo, live...) e os produtos mais vendidos. Aqui é só visualização:
+// as colunas, os perfis próprios e as comissões ficam em Afiliados > Configurações.
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
-import { numeroBR } from "../../lib/adsImport";
 import {
-  analisarAfiliados, mesclarCfgAfiliados, normHandle, padraoAfiliados, type CfgAfiliados, type LinhaAfiliado, type Metodo, type VendasAfiliadosMes,
+  analisarAfiliados, normHandle, padraoAfiliados, type CfgAfiliados, type LinhaAfiliado, type Metodo, type ProdutoAfil, type VendasAfiliadosMes,
 } from "../../lib/afiliados";
-import { carregarCfgAfiliados, carregarVendasAfiliados, salvarCfgAfiliados } from "../../lib/afiliadosDb";
+import { carregarCfgAfiliados, carregarVendasAfiliados } from "../../lib/afiliadosDb";
+import { slugCanal } from "../../lib/adsImportDb";
 
 type Props = { canal: string; mes: string; setMes: (m: string) => void; meses: string[] };
 
@@ -43,33 +45,82 @@ function BarrasMetodo({ titulo, vazio, metodos, dado }: { titulo: string; vazio:
   );
 }
 
+function TabelaProdutos({ dado, produtos, vazio, mostrarAfiliados }: { dado: string; produtos: ProdutoAfil[]; vazio: string; mostrarAfiliados?: boolean }) {
+  const [ordem, setOrdem] = useState<"receita" | "unidades">("receita");
+  const [porPagina, setPorPagina] = useState(10);
+  const [pagina, setPagina] = useState(1);
+  const lista = useMemo(() => [...produtos].sort((a, b) => (ordem === "unidades" ? b.unidades - a.unidades || b.receita - a.receita : b.receita - a.receita)), [produtos, ordem]);
+  useEffect(() => { setPagina(1); }, [produtos, ordem, porPagina]);
+  const total = lista.reduce((t, p) => t + p.receita, 0);
+  const totalPaginas = Math.max(1, Math.ceil(lista.length / porPagina));
+  const pag = Math.min(pagina, totalPaginas);
+  const visiveis = lista.slice((pag - 1) * porPagina, pag * porPagina);
+  if (lista.length === 0) return <p className="text-[11px] text-slate-500" data-afil-prod-vazio={dado}>{vazio}</p>;
+  return (
+    <div data-afil-prod={dado}>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <select data-afil-prod-ordem={dado} value={ordem} onChange={(e) => setOrdem(e.target.value as any)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer">
+          <option value="receita">Ordenar: maior venda (R$)</option><option value="unidades">Ordenar: mais unidades</option>
+        </select>
+        <div className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+          <span>Por página</span>
+          <select data-afil-prod-por-pagina={dado} value={porPagina} onChange={(e) => setPorPagina(Number(e.target.value))} className="bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none cursor-pointer">
+            {[10, 25, 50].map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="overflow-x-auto border border-slate-800 rounded-xl">
+        <table className="w-full text-left border-collapse text-xs" data-afil-prod-tabela={dado}>
+          <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+            <tr><th className="p-3 w-10">#</th><th className="p-3">Produto</th><th className="p-3 text-right">Unid.</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">% das vendas</th>{mostrarAfiliados && <th className="p-3 text-right">Afiliados</th>}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/70">
+            {visiveis.map((p, i) => (
+              <tr key={(p.sku || p.nome) + i} data-afil-prod-linha={p.sku || p.nome} className="hover:bg-slate-800/40">
+                <td className="p-3 text-slate-500 font-bold">{(pag - 1) * porPagina + i + 1}</td>
+                <td className="p-3"><div className="font-bold text-slate-100">{p.nome || p.sku || "Sem nome"}</div>{p.sku && p.nome && <div className="text-[10px] text-slate-500">{p.sku}</div>}</td>
+                <td className="p-3 text-right">{NUM(p.unidades)}</td>
+                <td className="p-3 text-right">{NUM(p.pedidos)}</td>
+                <td className="p-3 text-right font-bold text-slate-100">{R$(p.receita)}</td>
+                <td className="p-3 text-right text-slate-300">{PCT(total > 0 ? p.receita / total : 0)}</td>
+                {mostrarAfiliados && <td className="p-3 text-right text-slate-300">{NUM(p.afiliados)}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-3" data-afil-prod-paginacao={dado}>
+        <span className="text-[11px] text-slate-500">{`${(pag - 1) * porPagina + 1}–${Math.min(pag * porPagina, lista.length)} de ${lista.length} produto(s)`}</span>
+        <div className="flex items-center gap-1">
+          <button type="button" data-afil-prod-ant={dado} disabled={pag <= 1} onClick={() => setPagina(pag - 1)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 bg-slate-950 text-slate-300 disabled:opacity-30 cursor-pointer">‹ Anterior</button>
+          <span className="text-[11px] text-slate-400 px-2">{pag} / {totalPaginas}</span>
+          <button type="button" data-afil-prod-prox={dado} disabled={pag >= totalPaginas} onClick={() => setPagina(pag + 1)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 bg-slate-950 text-slate-300 disabled:opacity-30 cursor-pointer">Próxima ›</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
   const padrao = padraoAfiliados(canal);
   const [cfg, setCfg] = useState<CfgAfiliados>(padrao);
   const [dados, setDados] = useState<VendasAfiliadosMes | null>(null);
   const [carregando, setCarregando] = useState(true);
-  const [aba, setAba] = useState<"painel" | "config">("painel");
-  const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
-  // configuração (rascunho das colunas e dos perfis próprios: só valem ao salvar)
-  const [colConteudo, setColConteudo] = useState(padrao.colConteudo);
-  const [colAfiliado, setColAfiliado] = useState(padrao.colAfiliado);
-  const [perfis, setPerfis] = useState(padrao.perfisProprios.join(", "));
-  const [novoNome, setNovoNome] = useState("");
-  const [novaComissao, setNovaComissao] = useState("");
+  const [selAfil, setSelAfil] = useState("");
+  const boxProdAfil = useRef<HTMLDivElement>(null);
   // tabela
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState<"todos" | "sem_comissao">("todos");
   const [ordem, setOrdem] = useState<"receita" | "comissao" | "pedidos">("receita");
   const [porPagina, setPorPagina] = useState(10);
   const [pagina, setPagina] = useState(1);
-  const [editando, setEditando] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let ativo = true;
     (async () => {
       const c = await carregarCfgAfiliados(supabase, canal);
       if (!ativo) return;
-      setCfg(c); setColConteudo(c.colConteudo); setColAfiliado(c.colAfiliado); setPerfis(c.perfisProprios.join(", "));
+      setCfg(c);
     })();
     return () => { ativo = false; };
   }, [canal]);
@@ -80,28 +131,8 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
     return () => { ativo = false; };
   }, [canal, mes]);
 
-  const gravar = async (nova: CfgAfiliados, aviso: string) => {
-    setCfg(nova);
-    const erro = await salvarCfgAfiliados(supabase, canal, nova);
-    setMsg(erro ? { tipo: "erro", texto: erro } : { tipo: "ok", texto: aviso });
-  };
-  const definirComissao = async (nome: string, texto: string) => {
-    const n = normHandle(nome); const pct = numeroBR(texto);
-    if (!n) return;
-    const resto = cfg.afiliados.filter((a) => normHandle(a.nome) !== n);
-    await gravar({ ...cfg, afiliados: [...resto, { nome: n, comissaoPct: Math.max(0, pct) }].sort((a, b) => a.nome.localeCompare(b.nome)) }, `Comissão de ${n} salva: ${NUM(pct)}%.`);
-  };
-  const removerAfiliado = async (nome: string) => gravar({ ...cfg, afiliados: cfg.afiliados.filter((a) => normHandle(a.nome) !== normHandle(nome)) }, `${nome} removido da lista de comissões.`);
-  const adicionarAfiliado = async () => {
-    if (!normHandle(novoNome) || novaComissao.trim() === "") { setMsg({ tipo: "erro", texto: "Informe o nome do afiliado e a comissão (%)." }); return; }
-    await definirComissao(novoNome, novaComissao); setNovoNome(""); setNovaComissao("");
-  };
-  const salvarColunas = async () => {
-    const lista = Array.from(new Set(perfis.split(/[,;\n]+/).map(normHandle).filter(Boolean)));
-    await gravar(mesclarCfgAfiliados({ ...cfg, colConteudo: colConteudo.trim(), colAfiliado: colAfiliado.trim(), perfisProprios: lista }, padrao), "Configuração salva. As colunas valem a partir do próximo upload de vendas deste canal; os perfis próprios e as comissões valem já.");
-  };
-
   const analise = useMemo(() => (dados ? analisarAfiliados(dados, cfg) : null), [dados, cfg]);
+  const afilAtual = analise ? (analise.linhas.find((l) => l.nome === selAfil) || analise.linhas[0] || null) : null;
   const linhas = useMemo(() => {
     if (!analise) return [] as LinhaAfiliado[];
     const q = normHandle(busca);
@@ -121,7 +152,6 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
       {extra && <div className="text-[10px] text-slate-500 mt-0.5">{extra}</div>}
     </div>
   );
-  const inputCls = "w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-purple-500";
 
   return (
     <div className="space-y-6" data-afiliados-ads>
@@ -129,7 +159,7 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-bold text-white">🤝 Afiliados — {canal}</h2>
-            <p className="text-xs text-slate-400 mt-1 max-w-3xl">Usa as vendas aprovadas da mesma planilha de vendas do dashboard (canceladas e não faturadas ficam de fora). Mostra o que foi vendido por afiliados e pela própria loja, a comissão paga e o método de venda (vídeo, live…).</p>
+            <p className="text-xs text-slate-400 mt-1 max-w-3xl">Usa as vendas aprovadas da mesma planilha de vendas do dashboard (canceladas e não faturadas ficam de fora). Mostra o que foi vendido por afiliados e pela própria loja, a comissão paga, o método de venda (vídeo, live…) e os produtos mais vendidos.</p>
           </div>
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mês de competência</label>
@@ -138,68 +168,14 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
             </select>
           </div>
         </div>
-        <div className="flex gap-2 mt-4">
-          {([["painel", "📊 Painel"], ["config", "⚙️ Afiliados e colunas"]] as const).map(([id, rotulo]) => (
-            <button key={id} type="button" data-afil-sub={id} onClick={() => { setAba(id); setMsg(null); }}
-              className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer border ${aba === id ? "bg-purple-600 border-purple-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>{rotulo}</button>
-          ))}
-        </div>
-        {msg && <p data-afil-msg className={`mt-3 text-xs font-bold ${msg.tipo === "ok" ? "text-emerald-400" : "text-rose-400"}`}>{msg.texto}</p>}
       </div>
 
-      {aba === "config" && (
-        <div className="space-y-6" data-afil-config>
-          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
-            <h3 className="text-sm font-black text-white mb-1">1. Colunas da planilha de vendas</h3>
-            <p className="text-[11px] text-slate-400 mb-4">Informe a letra da coluna (ex.: BG) ou o nome do cabeçalho. Valem a partir do próximo upload de vendas deste canal (Uploads), porque é nesse momento que a planilha é lida.</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Coluna do método de venda (vídeo ou live)</label>
-                <input data-afil-cfg="colConteudo" value={colConteudo} onChange={(e) => setColConteudo(e.target.value)} placeholder="Ex.: BG" className={inputCls} /></div>
-              <div><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Coluna do nome do afiliado</label>
-                <input data-afil-cfg="colAfiliado" value={colAfiliado} onChange={(e) => setColAfiliado(e.target.value)} placeholder="Ex.: BH" className={inputCls} /></div>
-              <div className="md:col-span-2"><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Perfis da própria loja (vendas deles não pagam comissão)</label>
-                <input data-afil-cfg="perfis" value={perfis} onChange={(e) => setPerfis(e.target.value)} placeholder="Ex.: use.bestfit" className={inputCls} />
-                <p className="text-[10px] text-slate-500 mt-0.5">Separe por vírgula. Vendas sem nome de afiliado (ex.: product cards) também contam como venda própria.</p></div>
-            </div>
-            <button type="button" data-afil-salvar-cols onClick={salvarColunas} className="mt-4 bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">Salvar configuração</button>
-          </div>
-
-          <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
-            <h3 className="text-sm font-black text-white mb-1">2. Afiliados e comissão</h3>
-            <p className="text-[11px] text-slate-400 mb-4">Nome do afiliado exatamente como aparece na coluna da planilha (ex.: roh_ugc) e a comissão sobre o valor vendido. A comissão também pode ser definida direto na tabela do painel.</p>
-            <div className="flex flex-wrap items-end gap-3 mb-4">
-              <div><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nome do afiliado</label>
-                <input data-afil-novo-nome value={novoNome} onChange={(e) => setNovoNome(e.target.value)} placeholder="Ex.: roh_ugc" className="w-60 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-purple-500" /></div>
-              <div><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Comissão (%)</label>
-                <input data-afil-novo-pct value={novaComissao} onChange={(e) => setNovaComissao(e.target.value)} placeholder="8" className="w-28 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-purple-500" /></div>
-              <button type="button" data-afil-adicionar onClick={adicionarAfiliado} className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold py-2.5 px-5 rounded-xl text-xs cursor-pointer">Adicionar afiliado</button>
-            </div>
-            {cfg.afiliados.length === 0 ? <p data-afil-lista-vazia className="text-[11px] text-slate-500">Nenhum afiliado com comissão definida ainda.</p> : (
-              <div className="overflow-x-auto border border-slate-800 rounded-xl">
-                <table className="w-full text-left text-xs" data-afil-lista>
-                  <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[10px]"><tr><th className="p-3">Afiliado</th><th className="p-3 text-right">Comissão (%)</th><th className="p-3"></th></tr></thead>
-                  <tbody className="divide-y divide-slate-800/70">
-                    {cfg.afiliados.map((a) => (
-                      <tr key={a.nome} data-afil-cad={a.nome}>
-                        <td className="p-3 font-bold text-slate-100">{a.nome}</td>
-                        <td className="p-3 text-right"><input key={a.comissaoPct} defaultValue={String(a.comissaoPct).replace(".", ",")} onBlur={(e) => { if (numeroBR(e.target.value) !== a.comissaoPct) definirComissao(a.nome, e.target.value); }} className="w-24 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-right text-white outline-none focus:border-purple-500" /></td>
-                        <td className="p-3 text-right"><button type="button" onClick={() => removerAfiliado(a.nome)} className="text-[11px] font-bold text-rose-400 hover:text-rose-300 cursor-pointer">Remover</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {aba === "painel" && (
+      {(
         carregando ? <p className="p-8 text-center text-slate-400">Carregando…</p>
         : !dados || !analise ? (
           <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center text-sm text-slate-400" data-afil-vazio>
-            Ainda não há vendas de afiliados lidas para {canal} em {mes}. Suba a planilha de vendas do canal em Uploads (a mesma do dashboard): ela é lida junto, usando as colunas definidas em “Afiliados e colunas”.
-            {!cfg.colAfiliado && !cfg.colConteudo && <span className="block mt-2 text-amber-300">As colunas do método e do afiliado ainda não foram definidas para este canal.</span>}
+            Ainda não há vendas de afiliados lidas para {canal} em {mes}. Suba a planilha de vendas do canal em Uploads (a mesma do dashboard): ela é lida junto, usando as colunas definidas em Afiliados · Configurações.
+            {!cfg.colAfiliado && !cfg.colConteudo && <span className="block mt-2 text-amber-300">As colunas do método e do afiliado ainda não foram definidas para este canal. <Link href={`/afiliados?canal=${slugCanal(canal)}`} className="underline font-bold">Definir agora</Link></span>}
           </div>
         ) : (
           <>
@@ -214,7 +190,7 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
               </div>
               <p className="text-[10px] text-slate-500 mt-3">Planilha lida em {quando(dados.atualizadoEm)} (método na coluna {dados.colConteudo || "—"}, afiliado na coluna {dados.colAfiliado || "—"}). Comissão = % definido × valor vendido do afiliado.</p>
               {analise.afiliados.semComissao > 0 && (
-                <p data-afil-aviso className="mt-3 text-[11px] text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-3">⚠ {analise.afiliados.semComissao} afiliado(s) sem comissão definida: estão com comissão R$ 0,00 até você informar o % na tabela abaixo ou em “Afiliados e colunas”.</p>
+                <p data-afil-aviso className="mt-3 text-[11px] text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-3">⚠ {analise.afiliados.semComissao} afiliado(s) sem comissão definida: estão com comissão R$ 0,00 até você informar o % em <Link href={`/afiliados?canal=${slugCanal(canal)}`} data-afil-ir-config className="underline font-bold">Afiliados · Configurações</Link>.</p>
               )}
             </div>
 
@@ -243,26 +219,21 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
               <div className="overflow-x-auto border border-slate-800 rounded-xl">
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap" data-afil-tabela>
                   <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                    <tr><th className="p-3">Afiliado</th><th className="p-3 text-right">Comissão (%)</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Unid.</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">Comissão paga</th><th className="p-3">Vende mais por</th><th className="p-3">Distribuição</th></tr>
+                    <tr><th className="p-3">Afiliado</th><th className="p-3 text-right">Comissão (%)</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Unid.</th><th className="p-3 text-right">Vendas</th><th className="p-3 text-right">Comissão paga</th><th className="p-3">Vende mais por</th><th className="p-3">Distribuição</th><th className="p-3"></th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
-                    {visiveis.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-500">Nenhum afiliado com esse filtro.</td></tr>}
+                    {visiveis.length === 0 && <tr><td colSpan={9} className="p-6 text-center text-slate-500">Nenhum afiliado com esse filtro.</td></tr>}
                     {visiveis.map((l) => (
                       <tr key={l.nome} data-afil-linha={l.nome} className="hover:bg-slate-800/40">
                         <td className="p-3 font-bold text-slate-100">{l.nome}{!l.definido && <span className="ml-2 text-[10px] text-amber-400 font-bold">sem comissão</span>}</td>
-                        <td className="p-3 text-right">
-                          <input data-afil-pct={l.nome} inputMode="decimal" placeholder="definir %" value={editando[l.nome] ?? (l.comissaoPct === null ? "" : String(l.comissaoPct).replace(".", ","))}
-                            onChange={(e) => setEditando((x) => ({ ...x, [l.nome]: e.target.value }))}
-                            onBlur={() => { const t = editando[l.nome]; setEditando((x) => { const { [l.nome]: _, ...r } = x; return r; }); if (t !== undefined && t.trim() !== "" && numeroBR(t) !== l.comissaoPct) definirComissao(l.nome, t); }}
-                            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                            className={`w-24 text-right bg-slate-950 border rounded-lg p-1.5 text-xs text-white outline-none focus:border-purple-500 ${l.definido ? "border-slate-700" : "border-amber-700"}`} />
-                        </td>
+                        <td className="p-3 text-right" data-afil-pct-valor={l.nome}>{l.comissaoPct === null ? <span className="text-amber-400 font-bold">—</span> : `${NUM(l.comissaoPct)}%`}</td>
                         <td className="p-3 text-right">{NUM(l.pedidos)}</td>
                         <td className="p-3 text-right">{NUM(l.unidades)}</td>
                         <td className="p-3 text-right">{R$(l.receita)}</td>
                         <td className="p-3 text-right font-bold text-amber-300">{R$(l.comissao)}</td>
                         <td className="p-3 text-slate-200" data-afil-principal={l.nome}>{l.principal ? `${l.principal.metodo} (${PCT(l.principal.pct)})` : "—"}</td>
                         <td className="p-3 text-[11px] text-slate-400">{l.metodos.map((m) => `${m.metodo} ${PCT(m.pct)}`).join(" · ")}</td>
+                        <td className="p-3 text-right"><button type="button" data-afil-ver-produtos={l.nome} onClick={() => { setSelAfil(l.nome); setTimeout(() => boxProdAfil.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }} className="text-[11px] font-bold text-purple-400 hover:text-purple-300 cursor-pointer">Ver produtos</button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -281,6 +252,29 @@ export default function AfiliadosAds({ canal, mes, setMes, meses }: Props) {
                   <button type="button" data-afil-pag-prox disabled={pag >= totalPaginas} onClick={() => setPagina(pag + 1)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 bg-slate-950 text-slate-300 disabled:opacity-30 cursor-pointer">Próxima ›</button>
                 </div>
               </div>
+            </div>
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl" data-afil-prod-geral>
+              <h3 className="text-sm font-black text-white mb-1">Produtos mais vendidos pelos afiliados (geral)</h3>
+              <p className="text-[11px] text-slate-400 mb-4">Soma de todos os afiliados do mês. Não entra a venda própria da loja.</p>
+              {!analise.temProdutos ? <p data-afil-sem-produtos className="text-[11px] text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-3">Este mês foi lido antes de o painel guardar os produtos. Suba de novo a planilha de vendas do mês em Uploads para liberar esta lista.</p>
+                : <TabelaProdutos dado="geral" mostrarAfiliados produtos={analise.afiliados.produtos} vazio="Nenhuma venda de afiliado neste mês." />}
+            </div>
+
+            <div ref={boxProdAfil} className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl scroll-mt-6" data-afil-prod-afiliado>
+              <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="text-sm font-black text-white mb-1">Produtos mais vendidos por afiliado</h3>
+                  <p className="text-[11px] text-slate-400">Escolha o afiliado para ver o que ele mais vendeu no mês.</p>
+                </div>
+                {analise.linhas.length > 0 && (
+                  <select data-afil-prod-select value={afilAtual?.nome || ""} onChange={(e) => setSelAfil(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer max-w-xs">
+                    {analise.linhas.map((l) => <option key={l.nome} value={l.nome}>{l.nome} · {R$(l.receita)}</option>)}
+                  </select>
+                )}
+              </div>
+              {!analise.temProdutos ? <p className="text-[11px] text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-3">Suba de novo a planilha de vendas do mês em Uploads para liberar os produtos de cada afiliado.</p>
+                : !afilAtual ? <p className="text-[11px] text-slate-500">Nenhum afiliado vendeu neste mês.</p>
+                : <TabelaProdutos key={afilAtual.nome} dado="afiliado" produtos={afilAtual.produtos} vazio="Esse afiliado não tem produtos neste mês." />}
             </div>
           </>
         )

@@ -34,9 +34,12 @@ export default function AfiliadosCanal() {
       <div className="max-w-[98%] mx-auto relative">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
-            <Link href="/afiliados" data-voltar-afiliados className="text-[11px] font-bold text-purple-400 hover:text-purple-300">← Afiliados · Configurações</Link>
+            <div className="flex gap-4">
+              <Link href="/afiliados" data-voltar-afiliados className="text-[11px] font-bold text-purple-400 hover:text-purple-300">← Afiliados · Configurações</Link>
+              <Link href={`/afiliados?canal=${slug}`} data-afil-config-link className="text-[11px] font-bold text-purple-400 hover:text-purple-300">⚙️ Definir comissões e colunas</Link>
+            </div>
             <h1 className="text-2xl font-black text-white tracking-tight">Afiliados · {canal || "…"}</h1>
-            <p className="text-sm font-medium text-slate-400">Vendas por afiliados, comissão paga e como cada um vende</p>
+            <p className="text-sm font-medium text-slate-400">Vendas por afiliados, comissão paga, como cada um vende e produtos mais vendidos</p>
           </div>
           <Navbar />
         </div>

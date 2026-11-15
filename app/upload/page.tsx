@@ -1175,7 +1175,7 @@ export default function UpdatesPage() {
             repasse_liquido: repasseLiquido,
             __cancelado: cancelado
           });
-          if (!cancelado) afil.add(row, idFormatado, precoVenda, quantidade);
+          if (!cancelado) afil.add(row, idFormatado, precoVenda, quantidade, skuFinal, existeNaBase ? String(mapaProdutos.get(skuNorm) || "") : "");
           totalImportados++;
 
           i++;
