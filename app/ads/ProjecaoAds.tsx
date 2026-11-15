@@ -13,7 +13,7 @@ const NUM1 = (v: number) => (v || 0).toLocaleString("pt-BR", { minimumFractionDi
 const dataCurta = (d: Date) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
 const quando = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? "" : `${dataCurta(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
-export default function ProjecaoAds({ mes, canais }: { mes: string; canais: CanalProjecao[] }) {
+export default function ProjecaoAds({ mes, canais, solo = false }: { mes: string; canais: CanalProjecao[]; solo?: boolean }) {
   const [saldos, setSaldos] = useState<Record<string, SaldoAds | null>>({});
   const [gastos, setGastos] = useState<Record<string, number>>({});
   const [carregando, setCarregando] = useState(true);
@@ -74,7 +74,7 @@ export default function ProjecaoAds({ mes, canais }: { mes: string; canais: Cana
   );
 
   return (
-    <div className="mt-8 bg-slate-950/50 p-5 rounded-xl border border-slate-800" data-projecao>
+    <div className={`${solo ? "" : "mt-8 "}bg-slate-950/50 p-5 rounded-xl border border-slate-800`} data-projecao>
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div>
           <h3 className="text-sm font-black text-white">📈 Projeção mensal · {mes}</h3>

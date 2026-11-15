@@ -6,7 +6,11 @@ import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
-import { listarCampanhasSalvas, slugCanal } from "../../lib/adsImportDb";
+import { listarCampanhasSalvas, mesIso, slugCanal } from "../../lib/adsImportDb";
+import { buscarTudo } from "../../lib/buscarTudo";
+import { calcularResumoCanais, TABELAS_RESUMO } from "../../lib/resumoCanais";
+import { carregarAjustes, chaveCanalAjuste, salvarAjuste } from "../../lib/adsAjustes";
+import CampoAutoManual from "./CampoAutoManual";
 import ImportarAds from "./ImportarAds";
 import ConfigAds from "./ConfigAds";
 import ComparativoAds from "./ComparativoAds";
@@ -144,9 +148,12 @@ const mesAnteriorBR = () => { const d = new Date(); d.setDate(1); d.setMonth(d.g
  *  - "canal": a página de UM canal (/ads/<canal>): importação de planilhas, lançamentos manuais, sugestões e Configurações do canal
  */
 export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal"; canalSlug?: string }) {
-  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes" | "config" | "comparativo" | "analise_ml" | "halo_ml">(modo === "global" ? "dashboard" : "campanhas");
+  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes" | "config" | "comparativo" | "analise_ml" | "halo_ml" | "projecao">(modo === "global" ? "dashboard" : "campanhas");
   const [canalNaoEncontrado, setCanalNaoEncontrado] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
+  const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
+  const ultimaAtualizacao = React.useRef(0);
+  const pedidoDash = React.useRef(0);
   const [salvando, setSalvando] = useState<boolean>(false);
   const router = useRouter();
 
@@ -218,10 +225,25 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
   }, [canalSelecionado, mesSelecionado]);
 
   useEffect(() => {
-    if (subAba === "dashboard" || subAba === "budget") {
+    if (subAba === "dashboard" || subAba === "budget" || subAba === "projecao") {
       carregarDadosDashboard();
     }
   }, [subAba, mesSelecionado, mesComparativo, canaisAtivos]);   // canaisAtivos: sem isso a primeira carga rodava com a lista de canais ainda vazia
+
+  // Tempo real: faturamento do dash e gasto do Adsense se atualizam sozinhos (aviso do banco, a cada 2 minutos e ao voltar para a aba)
+  useEffect(() => {
+    if (modo !== "global" || !(subAba === "dashboard" || subAba === "budget" || subAba === "projecao") || canaisAtivos.length === 0) return;
+    let debounce: any = null;
+    const timer = setInterval(() => { if (document.visibilityState === "visible") carregarDadosDashboard(true); }, 120000);
+    const aoVoltar = () => { if (document.visibilityState === "visible" && Date.now() - ultimaAtualizacao.current > 30000) carregarDadosDashboard(true); };
+    document.addEventListener("visibilitychange", aoVoltar);
+    const canal = supabase.channel("ads-global-tempo-real");
+    ["vendas_canais", "faturados", "cancelados", "devolucoes", "ads_campanhas_lancamentos", "ads_faturamento_canal", "config_regras_tiny"].forEach((tabela) =>
+      canal.on("postgres_changes" as any, { event: "*", schema: "public", table: tabela }, () => { clearTimeout(debounce); debounce = setTimeout(() => carregarDadosDashboard(true), 3000); }));
+    try { canal.subscribe(); } catch { /* sem tempo real: ficam a atualização por tempo e ao voltar para a aba */ }
+    return () => { clearInterval(timer); clearTimeout(debounce); document.removeEventListener("visibilitychange", aoVoltar); try { supabase.removeChannel(canal); } catch { /* ignora */ } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo, subAba, mesSelecionado, mesComparativo, canaisAtivos]);
 
   useEffect(() => {
     if (canalSugestao) {
@@ -344,8 +366,9 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
     } catch { return new Set(); }
   };
 
-  const carregarDadosDashboard = async () => {
-    setLoading(true);
+  const carregarDadosDashboard = async (silencioso = false) => {
+    const pedido = ++pedidoDash.current;
+    if (!silencioso) setLoading(true);
     const listaCanais = canaisAtivos.map(c => c.canal);
 
     const { data: configTiny } = await supabase.from('config_regras_tiny').select('coluna').eq('campo', 'meta_tacos').maybeSingle();
@@ -360,6 +383,18 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
 
     const { data: livesAtualRaw } = await supabase.from('vendas_lives_separadas').select('*');
     const { data: metricasLivesRaw } = await supabase.from('metricas_lives').select('*');
+
+    // Faturamento bruto do canal = o mesmo número do dashboard (mesma conta), lido de novo a cada atualização
+    const normCanal = (c: any) => chaveCanalAjuste(c);
+    let fatDashAtual = new Map<string, number>(), fatDashAnt = new Map<string, number>();
+    try {
+      const tabelas = await Promise.all(TABELAS_RESUMO.map(async (t) => [t, await buscarTudo(t, "*")] as const));
+      const bancoDash: Record<string, any[]> = {}; tabelas.forEach(([t, l]) => { bancoDash[t] = l; });
+      const agora = new Date();
+      calcularResumoCanais(bancoDash, mesIso(mesSelecionado), agora).forEach((r) => fatDashAtual.set(normCanal(r.canal), r.faturadoBruto));
+      calcularResumoCanais(bancoDash, mesIso(mesComparativo), agora).forEach((r) => fatDashAnt.set(normCanal(r.canal), r.faturadoBruto));
+    } catch (e) { console.error("Não consegui ler o faturamento do dashboard:", e); }
+    const [ajAtual, ajAnt] = await Promise.all([carregarAjustes(supabase, mesSelecionado), carregarAjustes(supabase, mesComparativo)]);
 
     const consolidado = listaCanais.map(canal => {
       const cNorm = canal.toLowerCase().trim();
@@ -390,16 +425,25 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
       const roasAtual = invAtual > 0 ? fatAdsAtual / invAtual : 0;
       const roasAnt = invAnt > 0 ? fatAdsAnt / invAnt : 0;
 
+      // Faturamento do canal: ajuste manual (só desta aba) > dashboard em tempo real > valor digitado antes > faturamento dos anúncios
       const dadosFatAtual = faturamentosAtual?.find(f => String(f.canal || '').toLowerCase().trim() === cNorm);
-      const fatCanalBrutoAtual = dadosFatAtual?.faturamento_total || "";
-      const gastoAdsBrutoAtual = dadosFatAtual?.gasto_ads || "";
-      
-      const fatCanalAtualDB = Number(fatCanalBrutoAtual);
-      const totFatAtual = fatCanalAtualDB > 0 ? fatCanalAtualDB : fatAdsAtual;
+      const chave = normCanal(canal);
+      const fatAutoAtual = fatDashAtual.get(chave) || 0;
+      const fatManualAtual = chave in ajAtual.fat ? ajAtual.fat[chave] : null;
+      const fatLegadoAtual = Number(dadosFatAtual?.faturamento_total || 0);
+      const fatCanalAtual = fatManualAtual !== null ? fatManualAtual : fatAutoAtual > 0 ? fatAutoAtual : fatLegadoAtual;
+      const totFatAtual = fatCanalAtual > 0 ? fatCanalAtual : fatAdsAtual;
+
+      // Usado em Ads: ajuste manual (só desta aba) > investimento lançado no Adsense (tempo real) > valor digitado antes
+      const gastoManual = chave in ajAtual.gasto ? ajAtual.gasto[chave] : null;
+      const gastoAuto = invAtual > 0 ? invAtual : Number(dadosFatAtual?.gasto_ads || 0);
+      const gastoEfetivo = gastoManual !== null ? gastoManual : gastoAuto;
 
       const dadosFatAnt = faturamentosAnt?.find(f => String(f.canal || '').toLowerCase().trim() === cNorm);
-      const fatCanalAntDB = Number(dadosFatAnt?.faturamento_total || 0);
-      const totFatAnt = fatCanalAntDB > 0 ? fatCanalAntDB : fatAdsAnt;
+      const fatAutoAnt = fatDashAnt.get(chave) || 0;
+      const fatManualAnt = chave in ajAnt.fat ? ajAnt.fat[chave] : null;
+      const fatCanalAnt = fatManualAnt !== null ? fatManualAnt : fatAutoAnt > 0 ? fatAutoAnt : Number(dadosFatAnt?.faturamento_total || 0);
+      const totFatAnt = fatCanalAnt > 0 ? fatCanalAnt : fatAdsAnt;
 
       const tacosAtual = totFatAtual > 0 ? (invAtual / totFatAtual) * 100 : 0;
       const tacosAnt = totFatAnt > 0 ? (invAnt / totFatAnt) * 100 : 0;
@@ -416,37 +460,20 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
       return {
         canal, fatAdsAtual, fatAdsAnt, diffAds, roasAtual, roasAnt, invAtual, invAnt, roiAtual, roiAnt,
         tacosAtual, tacosAnt, margemRsAtual, margemRsAnt, diffMargemRs,
-        totFatAtual, totFatAnt, totFatAtual_bruto: fatCanalBrutoAtual,
-        gastoAdsBrutoAtual, repAds
+        totFatAtual, totFatAnt, fatAutoAtual: fatAutoAtual > 0 ? fatAutoAtual : fatLegadoAtual, fatManualAtual,
+        gastoAuto, gastoManual, gastoEfetivo, repAds
       };
     });
 
+    if (pedido !== pedidoDash.current) return;   // chegou uma atualização mais nova enquanto esta rodava
     setDadosComparativo(consolidado);
+    setAtualizadoEm(new Date()); ultimaAtualizacao.current = Date.now();
     setLoading(false);
   };
 
-  const salvarFaturamentoEGasto = async (canal: string, campo: "faturamento_total" | "gasto_ads", valorStr: string) => {
-    let valorLimpo = valorStr.replace(/\./g, '').replace(',', '.');
-    const numVal = Number(valorLimpo);
-    if (isNaN(numVal)) return;
-
-    const { data: existente } = await supabase.from('ads_faturamento_canal')
-      .select('*')
-      .ilike('canal', canal)
-      .eq('mes_referencia', mesSelecionado)
-      .maybeSingle();
-
-    const payload = {
-      canal,
-      mes_referencia: mesSelecionado,
-      faturamento_total: existente?.faturamento_total || 0,
-      gasto_ads: existente?.gasto_ads || 0,
-      [campo]: numVal
-    };
-
-    const { error } = await supabase.from('ads_faturamento_canal').upsert(payload, { onConflict: 'canal, mes_referencia' });
-    if (error) alert("Erro ao salvar: " + error.message);
-    else carregarDadosDashboard();
+  const salvarAjusteManual = async (canal: string, tipo: "fat" | "gasto", valor: number | null) => {
+    const erro = await salvarAjuste(supabase, mesSelecionado, tipo, canal, valor);
+    if (erro) alert(erro); else carregarDadosDashboard(true);
   };
 
   const adicionarLinhaForm = () => setLinhas([...linhas, { mlb: "", sku: "", unidades: "", receitaAds: "", investimento: "", itensLive: [] }]);
@@ -1102,7 +1129,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
           {([
             ...(modo === "canal" && canalSelecionado && ehMercadoLivre(canalSelecionado) ? [["campanhas", "📋 Campanhas"] as const, ["analise_ml", "📈 Análise dos anúncios"] as const, ["halo_ml", "🔗 Vendas sem patrocínio"] as const, ["comparativo", "🔄 Atual vs anterior"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
             ...(modo === "canal" && canalSelecionado && !ehMercadoLivre(canalSelecionado) ? [["campanhas", "📋 Campanhas"] as const, ["comparativo", "🔄 Atual vs anterior"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
-            ...(modo === "global" ? [["dashboard", "📊 Análise global"] as const, ["budget", "⚖️ Disponibilizado x Usado"] as const] : []),
+            ...(modo === "global" ? [["dashboard", "📊 Análise global"] as const, ["budget", "⚖️ Disponibilizado x Usado"] as const, ["projecao", "📈 Projeção mensal"] as const] : []),
           ]).map(([id, rotulo]) => (
             <button
               key={id}
@@ -1454,34 +1481,33 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
               </div>
             </div>
 
-            <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800 mb-8">
-              <div className="flex flex-wrap items-center justify-between mb-4">
-                <h3 className="text-[11px] font-black text-slate-300 uppercase tracking-wider">💰 Inserir Faturamento Total do Canal (Orgânico + Ads) - {mesSelecionado}</h3>
+            <div className="bg-slate-950/50 p-5 rounded-xl border border-slate-800 mb-8" data-faturamento-canais>
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="text-[11px] font-black text-slate-300 uppercase tracking-wider">💰 Faturamento total do canal (Orgânico + Ads) - {mesSelecionado}</h3>
+                  <p className="text-[10px] text-emerald-400 mt-1" data-tempo-real>● Tempo real, igual ao faturamento bruto do dashboard{atualizadoEm ? ` · atualizado às ${atualizadoEm.toLocaleTimeString("pt-BR")}` : ""}</p>
+                </div>
                 <div className="flex items-center gap-2 bg-purple-900/30 border border-purple-800/50 px-3 py-1.5 rounded-lg">
                   <span className="text-[10px] font-bold text-purple-300 uppercase">Meta TACOS Global:</span>
                   <span className="text-white font-bold text-xs">{metaTacosGlobal}%</span>
                   <span className="text-[9px] text-purple-400 ml-1">(Definido na aba Regras)</span>
                 </div>
               </div>
-              
+
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {canaisAtivos.map(c => {
-                  const valorAtual = dadosComparativo.find(d => d.canal === c.canal)?.totFatAtual_bruto || "";
+                  const d = dadosComparativo.find(x => x.canal === c.canal);
                   return (
                     <div key={c.canal}>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">{c.canal}</label>
-                      <input 
-                        type="text" 
-                        defaultValue={valorAtual} 
-                        onBlur={(e) => salvarFaturamentoEGasto(c.canal, "faturamento_total", e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-emerald-400 outline-none focus:border-purple-500"
-                        placeholder="Ex: 153.000,00"
-                      />
+                      <div className="bg-slate-900 border border-slate-700 rounded-lg p-2">
+                        <CampoAutoManual id={`fat-${c.canal}`} auto={d?.fatAutoAtual || 0} manual={d ? d.fatManualAtual : null} carregando={!d} onSalvar={(v) => salvarAjusteManual(c.canal, "fat", v)} tituloAuto="Automático: faturamento bruto do dashboard" />
+                      </div>
                     </div>
                   );
                 })}
               </div>
-              <p className="text-[9px] text-slate-500 mt-3">* Ao clicar fora do campo, o valor é salvo. O TACOS e Budget Sugerido ajustam-se automaticamente à sua meta definida acima.</p>
+              <p className="text-[9px] text-slate-500 mt-3">* Acompanha o dashboard sozinho. Clique no ✏️ para ajustar à mão: o ajuste vale só nesta aba (não muda o dashboard nem o Adsense) e o ↺ volta ao automático. O TACOS e o Budget Sugerido seguem a sua meta definida acima.</p>
             </div>
 
             {loading ? (
@@ -1576,7 +1602,24 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
               </div>
             )}
             <p className="px-5 pb-4 text-[10px] text-slate-500" data-roi-legenda>ROI = margem líquida ÷ investido em anúncios (a margem já vem depois de custo do produto, imposto, tarifa, embalagem, frete e do próprio anúncio). ROAS = faturamento dos anúncios ÷ investido.</p>
-            <ProjecaoAds mes={mesSelecionado} canais={dadosComparativo.map((d) => ({ canal: d.canal, invAtual: d.invAtual || 0, totFatAtual: d.totFatAtual || 0 }))} />
+          </div>
+        )}
+
+        {/* ===================== ABA: PROJEÇÃO MENSAL ===================== */}
+        {modo === "global" && subAba === "projecao" && (
+          <div className="bg-slate-900/90 p-6 md:p-8 rounded-2xl border border-slate-800 shadow-xl" data-aba-projecao>
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-2">
+              <p className="text-[10px] text-emerald-400" data-tempo-real-proj>● Faturamento e gasto em tempo real{atualizadoEm ? ` · atualizado às ${atualizadoEm.toLocaleTimeString("pt-BR")}` : ""}</p>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Período:</label>
+                <select data-proj-mes value={mesSelecionado} onChange={(e) => setMesSelecionado(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
+                  {mesesCompetencia.filter(m => m !== "TODOS").map((m, i) => <option key={i} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+            {loading ? <p className="p-8 text-center text-slate-400">A processar projeção...</p> : (
+              <ProjecaoAds solo mes={mesSelecionado} canais={dadosComparativo.map((d) => ({ canal: d.canal, invAtual: d.gastoEfetivo || 0, totFatAtual: d.totFatAtual || 0 }))} />
+            )}
           </div>
         )}
 
@@ -1586,7 +1629,8 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
             <div className="flex flex-wrap items-center justify-between gap-4 mb-8 pb-6 border-b border-slate-800">
               <div>
                 <h2 className="text-xl font-bold text-white">Disponibilizado x Usado</h2>
-                <p className="text-xs text-slate-400 mt-1">Comparativo entre o Budget Sugerido do Mês Anterior e o Valor Realmente Gasto no Mês Atual.</p>
+                <p className="text-xs text-slate-400 mt-1">Comparativo entre o Budget Sugerido do Mês Anterior e o que já foi usado em Ads no mês (soma dos lançamentos do Adsense, em tempo real). Use o ✏️ para ajustar à mão: vale só nesta aba.</p>
+                <p className="text-[10px] text-emerald-400 mt-1" data-tempo-real-budget>● Tempo real{atualizadoEm ? ` · atualizado às ${atualizadoEm.toLocaleTimeString("pt-BR")}` : ""}</p>
               </div>
 
               <div className="flex items-center gap-4">
@@ -1614,7 +1658,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
                     <tr>
                       <th className="p-4">Canal</th>
                       <th className="p-4 text-right">Budget Mês Anterior (Disponível)</th>
-                      <th className="p-4 text-right w-48">Valor Gasto (Inserir)</th>
+                      <th className="p-4 text-right w-64">Usado até agora</th>
                       <th className="p-4 text-right">Saldo</th>
                       <th className="p-4 text-center">Status</th>
                     </tr>
@@ -1622,7 +1666,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
                   <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
                     {dadosComparativo.map((d, idx) => {
                       const budgetDisponivel = (d.totFatAnt * metaTacosGlobal) / 100;
-                      const valorGastoReal = Number(d.gastoAdsBrutoAtual || 0);
+                      const valorGastoReal = Number(d.gastoEfetivo || 0);
                       const saldo = budgetDisponivel - valorGastoReal;
                       const status = saldo >= 0 ? "Dentro do Budget" : "Estourou Budget";
 
@@ -1631,13 +1675,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
                           <td className="p-4 font-bold text-white">{d.canal}</td>
                           <td className="p-4 text-right font-mono font-bold text-emerald-400">{formatarMoeda(budgetDisponivel)}</td>
                           <td className="p-4 text-right">
-                            <input 
-                              type="text" 
-                              defaultValue={d.gastoAdsBrutoAtual} 
-                              onBlur={(e) => salvarFaturamentoEGasto(d.canal, "gasto_ads", e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs font-mono text-white outline-none focus:border-purple-500 text-right"
-                              placeholder="Ex: 1530,00"
-                            />
+                            <CampoAutoManual id={`gasto-${d.canal}`} alinhar="right" cor="text-white" auto={d.gastoAuto || 0} manual={d.gastoManual} carregando={false} onSalvar={(v) => salvarAjusteManual(d.canal, "gasto", v)} tituloAuto="Automático: investimento lançado no Adsense neste mês" />
                           </td>
                           <td className={`p-4 text-right font-mono font-black ${saldo >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
                             {saldo >= 0 ? '+' : ''}{formatarMoeda(saldo)}
