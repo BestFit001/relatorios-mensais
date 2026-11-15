@@ -1,11 +1,11 @@
 "use client";
-// Adsense de um canal (TikTok Shop): envia a planilha da campanha + a planilha de anúncios, localiza o SKU do vendedor de cada
+// Adsense de um canal: envia a planilha da campanha + a planilha de anúncios, localiza o SKU do vendedor de cada
 // anúncio, busca o custo e calcula a margem líquida por produto (com paginação). As colunas vêm da aba Configurações.
 import React, { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "../../lib/supabase";
 import {
-  CFG_PADRAO_TIKTOK, calcularProdutos, lerCampanha, lerCatalogo, mesDoNomeDoArquivo, totalizar,
+  calcularProdutos, ehTikTok, padraoDoCanal, lerCampanha, lerCatalogo, mesDoNomeDoArquivo, totalizar,
   type CfgAdsCanal, type Catalogo, type CustoSku, type ProdutoCalculado,
 } from "../../lib/adsImport";
 import {
@@ -28,7 +28,7 @@ async function lerPlanilha(arquivo: File, aba: string): Promise<any[][]> {
 
 export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regras }: Props) {
   const slug = slugCanal(canal);
-  const [cfg, setCfg] = useState<CfgAdsCanal>(CFG_PADRAO_TIKTOK);
+  const [cfg, setCfg] = useState<CfgAdsCanal>(padraoDoCanal(canal));
   const [catalogoSalvo, setCatalogoSalvo] = useState<Catalogo | null>(null);
   const [salvas, setSalvas] = useState<CampanhaSalva[]>([]);
   const [selecionada, setSelecionada] = useState<string>("");
@@ -52,7 +52,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
     return m;
   }, [custosMap]);
 
-  useEffect(() => { (async () => { setCfg(await carregarCfgAds(supabase, slug)); setCatalogoSalvo(await carregarCatalogoAds(supabase, slug)); })(); }, [slug]);
+  useEffect(() => { (async () => { setCfg(await carregarCfgAds(supabase, slug, canal)); setCatalogoSalvo(await carregarCatalogoAds(supabase, slug)); })(); }, [slug, canal]);
 
   const recarregarSalvas = async (manter?: string) => {
     const l = await listarCampanhasSalvas(supabase, slug, mes);
@@ -174,7 +174,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
         <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
           <div>
             <h2 className="text-lg font-bold text-white">📥 Importar planilhas — {canal}</h2>
-            <p className="text-xs text-slate-400 mt-1">Envie a planilha da campanha e a de anúncios. O app acha o SKU do vendedor de cada anúncio, busca o custo e calcula a margem líquida. As colunas ficam em Análise global &gt; Configurações.</p>
+            <p className="text-xs text-slate-400 mt-1">Envie a planilha da campanha e a de anúncios. O app acha o SKU do vendedor de cada anúncio, busca o custo e calcula a margem líquida. As colunas ficam na sub-aba Configurações deste canal.</p>
           </div>
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mês de competência</label>
@@ -189,7 +189,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
             <input type="file" accept=".xlsx,.xls,.csv" data-arq-campanha onChange={(e) => escolherCampanha(e.target.files?.[0] || null)} className="block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-purple-700 file:text-white file:font-bold cursor-pointer" />
           </div>
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">2. Planilha de anúncios (SKU TikTok → SKU do vendedor)</label>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">2. Planilha de anúncios (ID do anúncio → SKU do vendedor)</label>
             <input type="file" accept=".xlsx,.xls,.csv" data-arq-catalogo onChange={(e) => { setArqCatalogo(e.target.files?.[0] || null); setMsg(null); }} className="block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-slate-700 file:text-white file:font-bold cursor-pointer" />
             <p data-status-catalogo className="text-[10px] mt-1 text-slate-500">
               {catalogoSalvo ? `Já salva: ${Object.keys(catalogoSalvo.produtos).length} produtos, ${Object.values(catalogoSalvo.produtos).reduce((a, p) => a + p.v.length, 0)} SKUs (atualizada em ${quando(catalogoSalvo.atualizadoEm)}). Só envie de novo se houver anúncios novos.` : "Nenhuma planilha de anúncios salva ainda."}

@@ -1,17 +1,17 @@
 "use client";
-// Adsense > Análise global > Configurações: colunas de cada planilha importada (TikTok) e parâmetros do cálculo de margem.
+// Adsense > (canal) > Configurações: colunas de cada planilha importada naquele canal e parâmetros do cálculo de margem.
 import React, { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { CFG_PADRAO_TIKTOK, mesclarConfig, type CfgAdsCanal } from "../../lib/adsImport";
+import { ehTikTok, mesclarConfig, padraoDoCanal, type CfgAdsCanal } from "../../lib/adsImport";
 import { carregarCfgAds, salvarCfgAds, slugCanal } from "../../lib/adsImportDb";
 
 type Campo = { chave: string; rotulo: string; dica: string; obrigatorio?: boolean };
 
 const CAMPOS_CAMPANHA: Campo[] = [
   { chave: "aba", rotulo: "Aba da planilha", dica: "Deixe vazio para usar a primeira aba." },
-  { chave: "idProduto", rotulo: "ID do produto (TikTok)", dica: "Liga o anúncio ao SKU do vendedor.", obrigatorio: true },
+  { chave: "idProduto", rotulo: "ID do produto / anúncio", dica: "Liga o anúncio ao SKU do vendedor.", obrigatorio: true },
   { chave: "produto", rotulo: "Nome do produto", dica: "Só para exibir." },
-  { chave: "idSku", rotulo: "ID do SKU (TikTok)", dica: "Opcional: só se a planilha da campanha já vier por SKU." },
+  { chave: "idSku", rotulo: "ID do SKU no canal", dica: "Opcional: só se a planilha da campanha já vier por SKU." },
   { chave: "campanhaId", rotulo: "ID da campanha", dica: "Separa as campanhas quando a planilha tem mais de uma." },
   { chave: "campanhaNome", rotulo: "Nome da campanha", dica: "Só para exibir." },
   { chave: "investimento", rotulo: "Investimento (custo)", dica: "Quanto foi gasto no anúncio.", obrigatorio: true },
@@ -23,42 +23,41 @@ const CAMPOS_CAMPANHA: Campo[] = [
 ];
 const CAMPOS_CATALOGO: Campo[] = [
   { chave: "aba", rotulo: "Aba da planilha", dica: "Na planilha do TikTok a aba se chama Template." },
-  { chave: "idProduto", rotulo: "ID do produto (TikTok)", dica: "Mesmo ID usado na planilha da campanha.", obrigatorio: true },
-  { chave: "idSku", rotulo: "ID do SKU (TikTok)", dica: "Opcional." },
+  { chave: "idProduto", rotulo: "ID do produto / anúncio", dica: "Mesmo ID usado na planilha da campanha.", obrigatorio: true },
+  { chave: "idSku", rotulo: "ID do SKU no canal", dica: "Opcional." },
   { chave: "skuSeller", rotulo: "SKU do vendedor (nosso)", dica: "É com ele que o app acha o custo.", obrigatorio: true },
   { chave: "variacao", rotulo: "Variação", dica: "Só para exibir." },
   { chave: "nome", rotulo: "Nome do produto", dica: "Só para exibir." },
   { chave: "preco", rotulo: "Preço", dica: "Só para exibir." },
 ];
 
-export default function ConfigAds() {
-  const [slug, setSlug] = useState<string>("tiktok-shop");
-  const [nomeCanal, setNomeCanal] = useState<string>("TikTok Shop");
-  const [cfg, setCfg] = useState<CfgAdsCanal>(CFG_PADRAO_TIKTOK);
+export default function ConfigAds({ canal }: { canal: string }) {
+  const slug = slugCanal(canal);
+  const padrao = padraoDoCanal(canal);
+  const tiktok = ehTikTok(canal);
+  const [cfg, setCfg] = useState<CfgAdsCanal>(padrao);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
 
   useEffect(() => {
+    let vivo = true;
     (async () => {
-      const { data } = await supabase.from("config_regras_canais").select("canal").order("id");
-      const tt = (data || []).find((c: any) => /tiktok/i.test(String(c.canal || "")));
-      const s = tt ? slugCanal(tt.canal) : "tiktok-shop";
-      setSlug(s); if (tt) setNomeCanal(tt.canal);
-      setCfg(await carregarCfgAds(supabase, s));
-      setCarregando(false);
+      const c = await carregarCfgAds(supabase, slug, canal);
+      if (vivo) { setCfg(c); setCarregando(false); }
     })();
-  }, []);
+    return () => { vivo = false; };
+  }, [slug, canal]);
 
   const mudar = (grupo: "campanha" | "catalogo", chave: string, valor: string) => { setCfg((c) => ({ ...c, [grupo]: { ...c[grupo], [chave]: valor } })); setMsg(null); };
 
   const salvar = async () => {
     setSalvando(true); setMsg(null);
-    const erro = await salvarCfgAds(supabase, slug, mesclarConfig(cfg));
+    const erro = await salvarCfgAds(supabase, slug, mesclarConfig(cfg, padrao));
     setSalvando(false);
     setMsg(erro ? { tipo: "erro", texto: erro } : { tipo: "ok", texto: "Configuração salva. As próximas importações já usam essas colunas." });
   };
-  const restaurar = () => { setCfg(CFG_PADRAO_TIKTOK); setMsg({ tipo: "ok", texto: "Padrão restaurado: clique em Salvar para gravar." }); };
+  const restaurar = () => { setCfg(padrao); setMsg({ tipo: "ok", texto: tiktok ? "Padrão restaurado: clique em Salvar para gravar." : "Campos limpos: clique em Salvar para gravar." }); };
 
   const bloco = (titulo: string, subtitulo: string, grupo: "campanha" | "catalogo", campos: Campo[]) => (
     <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl" data-cfg-bloco={grupo}>
@@ -82,16 +81,16 @@ export default function ConfigAds() {
   return (
     <div className="space-y-6" data-config-ads>
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
-        <h2 className="text-lg font-bold text-white">⚙️ Importação de planilhas — {nomeCanal}</h2>
+        <h2 className="text-lg font-bold text-white">⚙️ Configurações — {canal}</h2>
         <p className="text-xs text-slate-400 mt-1">
           Em cada campo, informe a <strong className="text-slate-200">letra da coluna</strong> (ex.: G) ou o <strong className="text-slate-200">nome do cabeçalho</strong> (ex.: Receita bruta).
           O app localiza as colunas sozinho a cada importação, sem precisar mexer na planilha. Campos com <span className="text-rose-400">*</span> são obrigatórios.
-          Os canais que aparecem no menu Adsense são os marcados como visíveis em Regras Gerais.
+          Cada canal tem a sua própria configuração{tiktok ? "; o TikTok Shop já vem preenchido com o modelo do TikTok" : ", que começa em branco: preencha as colunas da planilha que esse canal exporta"}. Os canais do menu Adsense são os marcados como visíveis em Regras Gerais.
         </p>
       </div>
 
-      {bloco("1. Planilha da campanha", "Exportação do TikTok Ads (Product data): uma linha por produto, com custo, pedidos, receita e ROI.", "campanha", CAMPOS_CAMPANHA)}
-      {bloco("2. Planilha de anúncios", "Modelo \"Sales information\" do TikTok Seller Center: relaciona o ID do produto ao SKU do vendedor. Fica salva e só precisa ser enviada de novo quando houver anúncios novos.", "catalogo", CAMPOS_CATALOGO)}
+      {bloco("1. Planilha da campanha", tiktok ? "Exportação do TikTok Ads (Product data): uma linha por produto, com custo, pedidos, receita e ROI." : `Relatório de anúncios do ${canal}: uma linha por anúncio/produto, com investimento, pedidos, receita e ROI.`, "campanha", CAMPOS_CAMPANHA)}
+      {bloco("2. Planilha de anúncios", tiktok ? "Modelo \"Sales information\" do TikTok Seller Center: relaciona o ID do produto ao SKU do vendedor. Fica salva e só precisa ser enviada de novo quando houver anúncios novos." : `Planilha de anúncios do ${canal}: relaciona o ID do anúncio ao SKU do vendedor. Fica salva e só precisa ser enviada de novo quando houver anúncios novos.`, "catalogo", CAMPOS_CATALOGO)}
 
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl" data-cfg-bloco="calculo">
         <h3 className="text-sm font-black text-white mb-4">3. Cálculo da margem líquida</h3>
@@ -114,7 +113,7 @@ export default function ConfigAds() {
 
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" data-salvar-cfg-ads onClick={salvar} disabled={salvando} className="bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white font-bold py-2.5 px-6 rounded-xl text-xs uppercase tracking-wider cursor-pointer">{salvando ? "Salvando…" : "Salvar configuração"}</button>
-        <button type="button" onClick={restaurar} className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold py-2.5 px-5 rounded-xl text-xs cursor-pointer">Restaurar padrão do TikTok</button>
+        <button type="button" onClick={restaurar} className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold py-2.5 px-5 rounded-xl text-xs cursor-pointer">{tiktok ? "Restaurar padrão do TikTok" : "Limpar campos"}</button>
         {msg && <span data-cfg-msg className={`text-xs font-bold ${msg.tipo === "ok" ? "text-emerald-400" : "text-rose-400"}`}>{msg.texto}</span>}
       </div>
     </div>

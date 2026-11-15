@@ -1,13 +1,13 @@
 // Gravação/leitura da importação de Ads por canal. Tudo em tabelas que já existem (sem migração):
 //  - config_regras_tiny: configuração de colunas, catálogo de anúncios (ID do TikTok -> SKU do vendedor) e as campanhas importadas
 //  - ads_campanhas_lancamentos: uma linha por produto, para a Análise global / Budget enxergarem o canal
-import { mesclarConfig, type CfgAdsCanal, type Catalogo, type ProdutoCalculado } from "./adsImport";
+import { mesclarConfig, padraoDoCanal, type CfgAdsCanal, type Catalogo, type ProdutoCalculado } from "./adsImport";
 import { paiDoSku } from "./skuPai";
 
 /** "TikTok Shop" -> "tiktok-shop" (usado na URL e nas chaves de configuração). */
 export const slugCanal = (nome: string) => String(nome || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
-/** Canais que têm importação de planilhas (por enquanto só o TikTok Shop). */
+/** Canal que já abre direto na importação de planilhas (os demais abrem no lançamento manual, mas também têm a importação). */
 export const temImportacaoAds = (canal: string) => /tiktok/i.test(String(canal || ""));
 
 /** "MM/AAAA" -> "AAAA-MM". */
@@ -37,8 +37,8 @@ const gravarChave = async (supabase: any, campo: string, texto: string): Promise
 };
 const paraJson = (t: string | null): any => { try { return t ? JSON.parse(t) : null; } catch { return null; } };
 
-export async function carregarCfgAds(supabase: any, slug: string): Promise<CfgAdsCanal> {
-  return mesclarConfig(paraJson(await lerChave(supabase, kCfg(slug))));
+export async function carregarCfgAds(supabase: any, slug: string, canal: string): Promise<CfgAdsCanal> {
+  return mesclarConfig(paraJson(await lerChave(supabase, kCfg(slug))), padraoDoCanal(canal));
 }
 export async function salvarCfgAds(supabase: any, slug: string, cfg: CfgAdsCanal): Promise<string | null> {
   const erro = await gravarChave(supabase, kCfg(slug), JSON.stringify(cfg));

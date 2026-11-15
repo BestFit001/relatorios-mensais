@@ -131,8 +131,8 @@ const mesAnteriorBR = () => { const d = new Date(); d.setDate(1); d.setMonth(d.g
 
 /**
  * Painel de Ads. Dois modos:
- *  - "global": Análise global (comparativo com o mês anterior, budget) + Configurações das importações
- *  - "canal": a página de UM canal (/ads/<canal>): importação de planilhas (TikTok), lançamentos manuais e sugestões
+ *  - "global": Análise global (comparativo com o mês anterior, budget)
+ *  - "canal": a página de UM canal (/ads/<canal>): importação de planilhas, lançamentos manuais, sugestões e Configurações do canal
  */
 export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal"; canalSlug?: string }) {
   const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes" | "config" | "importar">(modo === "global" ? "dashboard" : "campanhas");
@@ -1066,7 +1066,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
           <div>
             {modo === "canal" && <Link href="/ads" data-voltar-global className="text-[11px] font-bold text-purple-400 hover:text-purple-300">← Adsense · Análise global</Link>}
             <h1 className="text-2xl font-black text-white tracking-tight">{modo === "global" ? "Adsense · Análise global" : `Adsense · ${canalSelecionado || "…"}`}</h1>
-            <p className="text-sm font-medium text-slate-400">{modo === "global" ? "Comparativo com o mês anterior, budget e configurações das importações" : "Ads, campanhas e margem líquida do canal"}</p>
+            <p className="text-sm font-medium text-slate-400">{modo === "global" ? "Comparativo com o mês anterior e budget de todos os canais" : "Ads, campanhas e margem líquida do canal"}</p>
           </div>
           <Navbar />
         </div>
@@ -1074,9 +1074,8 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
         {/* NAVEGAÇÃO ENTRE ABAS */}
         <div className="flex flex-wrap gap-3 mb-6" data-abas-ads>
           {([
-            ...(modo === "canal" && temImportacaoAds(canalSelecionado) ? [["importar", "📥 Importar planilhas"] as const] : []),
-            ...(modo === "canal" ? [["campanhas", "📋 Lançamento manual"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const] : []),
-            ...(modo === "global" ? [["dashboard", "📊 Análise global"] as const, ["budget", "⚖️ Disponibilizado x Usado"] as const, ["config", "⚙️ Configurações"] as const] : []),
+            ...(modo === "canal" ? [["importar", "📥 Importar planilhas"] as const, ["campanhas", "📋 Lançamento manual"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
+            ...(modo === "global" ? [["dashboard", "📊 Análise global"] as const, ["budget", "⚖️ Disponibilizado x Usado"] as const] : []),
           ]).map(([id, rotulo]) => (
             <button
               key={id}
@@ -1101,7 +1100,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
           <ImportarAds canal={canalSelecionado} mes={mesSelecionado} setMes={setMesSelecionado} meses={mesesCompetencia.filter((m) => m !== "TODOS")} custosMap={custosMap} regras={regrasTarifacao} />
         )}
 
-        {modo === "global" && subAba === "config" && <ConfigAds />}
+        {modo === "canal" && subAba === "config" && canalSelecionado && <ConfigAds key={canalSelecionado} canal={canalSelecionado} />}
 
         {/* ===================== ABA 1: CAMPANHAS ===================== */}
         {modo === "canal" && subAba === "campanhas" && (

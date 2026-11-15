@@ -1,7 +1,7 @@
-// Importação das planilhas de Ads por canal (primeiro o TikTok Shop).
+// Importação das planilhas de Ads por canal (cada canal tem a sua própria configuração; o TikTok Shop já vem com o padrão preenchido).
 //  - Planilha da CAMPANHA: uma linha por produto, com investimento (custo), pedidos, receita e ROI.
 //  - Planilha dos ANÚNCIOS (modelo "Sales information" do TikTok): liga o ID do produto/SKU do TikTok ao SKU do vendedor (nosso).
-// As colunas de cada planilha ficam configuradas na aba Configurações do Adsense: cada campo aceita a LETRA da coluna (ex.: G)
+// As colunas de cada planilha ficam configuradas na sub-aba Configurações de cada canal: cada campo aceita a LETRA da coluna (ex.: G)
 // ou o NOME do cabeçalho (ex.: "Receita bruta"). A partir do SKU do vendedor o app busca o custo e calcula a margem líquida.
 import { obterRegraCanal, type RegraTarifacao } from "./tarifacao";
 
@@ -47,9 +47,21 @@ export const CFG_PADRAO_TIKTOK: CfgAdsCanal = {
   embalagemUn: 0.7,
 };
 
-/** Junta a configuração salva com o padrão (campos novos entram sozinhos). */
-export function mesclarConfig(salva: any): CfgAdsCanal {
-  const p = CFG_PADRAO_TIKTOK;
+/** Canal sem padrão conhecido: colunas em branco (o usuário informa em Configurações), parâmetros de cálculo iguais aos do TikTok. */
+export const CFG_PADRAO_EM_BRANCO: CfgAdsCanal = {
+  campanha: { aba: "", produto: "", idProduto: "", idSku: "", campanhaId: "", campanhaNome: "", investimento: "", custoAfiliado: "", pedidos: "", receita: "", roi: "", pdv: "" },
+  catalogo: { aba: "", idProduto: "", idSku: "", skuSeller: "", variacao: "", nome: "", preco: "" },
+  somarAfiliado: true,
+  impostoPct: 8,
+  embalagemUn: 0.7,
+};
+export const ehTikTok = (canal: string) => /tiktok/i.test(String(canal || ""));
+/** Padrão de colunas de cada canal: o TikTok já vem preenchido, os demais começam em branco. */
+export const padraoDoCanal = (canal: string): CfgAdsCanal => (ehTikTok(canal) ? CFG_PADRAO_TIKTOK : CFG_PADRAO_EM_BRANCO);
+
+/** Junta a configuração salva com o padrão do canal (campos novos entram sozinhos). */
+export function mesclarConfig(salva: any, padrao: CfgAdsCanal = CFG_PADRAO_TIKTOK): CfgAdsCanal {
+  const p = padrao;
   const s = salva && typeof salva === "object" ? salva : {};
   return {
     campanha: { ...p.campanha, ...(s.campanha || {}) },
@@ -142,7 +154,7 @@ export function lerCampanha(matriz: any[][], cfg: CfgCampanha): LeituraCampanha 
   if (c.investimento < 0) faltando.push("investimento (custo)");
   if (c.pedidos < 0) faltando.push("pedidos");
   if (c.receita < 0) faltando.push("receita");
-  if (faltando.length) return { linhas: [], ignoradasSemMovimento: 0, erro: `Não achei na planilha da campanha as colunas: ${faltando.join(", ")}. Confira os nomes/letras em Adsense > Análise global > Configurações.` };
+  if (faltando.length) return { linhas: [], ignoradasSemMovimento: 0, erro: `Não achei na planilha da campanha as colunas: ${faltando.join(", ")}. Confira os nomes/letras na sub-aba Configurações deste canal.` };
 
   const idCol = c.idProduto >= 0 ? c.idProduto : c.idSku;
   const linhas: LinhaCampanha[] = [];
@@ -173,7 +185,7 @@ export function lerCatalogo(matriz: any[][], cfg: CfgCatalogo): LeituraCatalogo 
   const cab = hdrIdx >= 0 ? (matriz[hdrIdx] || []).map((c: any) => String(c ?? "")) : [];
   const col = (ref: string) => indiceDaColuna(ref, cab);
   const c = { id: col(cfg.idProduto), sku: col(cfg.idSku), seller: col(cfg.skuSeller), variacao: col(cfg.variacao), nome: col(cfg.nome), preco: col(cfg.preco) };
-  if (c.id < 0 || c.seller < 0) return { catalogo: null, totalSkus: 0, semSkuSeller: 0, erro: "Não achei, na planilha de anúncios, a coluna do ID do produto e/ou a do SKU do vendedor. Confira em Adsense > Análise global > Configurações." };
+  if (c.id < 0 || c.seller < 0) return { catalogo: null, totalSkus: 0, semSkuSeller: 0, erro: "Não achei, na planilha de anúncios, a coluna do ID do produto e/ou a do SKU do vendedor. Confira na sub-aba Configurações deste canal." };
   const produtos: Catalogo["produtos"] = {};
   let total = 0, sem = 0;
   for (let i = hdrIdx + 1; i < matriz.length; i++) {
