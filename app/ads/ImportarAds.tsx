@@ -288,7 +288,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
                       {aberto === k && (
                         <tr data-produto-detalhe={k} className="bg-slate-950/60">
                           <td colSpan={13} className="p-4 whitespace-normal">
-                            <div className="text-[11px] text-slate-400 mb-1">SKUs do vendedor deste anúncio ({p.skus.length}) · custo unitário médio usado: <strong className="text-slate-200">{R$(p.custoUnit)}</strong> · custo de afiliados: {R$(p.custoAfiliado)}</div>
+                            <div className="text-[11px] text-slate-400 mb-1">SKUs do vendedor deste anúncio ({p.skus.length}) · custo unitário usado (SKU {p.sku}): <strong className="text-slate-200">{R$(p.custoUnit)}</strong> · custo de afiliados: {R$(p.custoAfiliado)}</div>
                             <div className="flex flex-wrap gap-1.5">{p.skus.length ? p.skus.map((s) => <span key={s} className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-300">{s}</span>) : <span className="text-[11px] text-amber-400">Nenhum SKU do vendedor encontrado para este ID de produto.</span>}</div>
                           </td>
                         </tr>

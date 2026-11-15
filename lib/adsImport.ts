@@ -206,7 +206,7 @@ export function lerCatalogo(matriz: any[][], cfg: CfgCatalogo): LeituraCatalogo 
 export type CustoSku = { custo: number; produto?: string };
 export type ProdutoCalculado = {
   campanhaId: string; campanhaNome: string; idProduto: string; produto: string;
-  skus: string[]; skusComCusto: number; sku: string;          // sku = SKU do vendedor (ou o do primeiro, quando há variações)
+  skus: string[]; skusComCusto: number; sku: string;          // sku = SKU do vendedor cujo custo foi usado (o 1º com custo; sem custo, o 1º do anúncio)
   pedidos: number; receita: number; pdv: number;
   investimento: number; custoAfiliado: number; roiPlataforma: number;
   custoUnit: number; custoProduto: number; imposto: number; tarifa: number; embalagem: number; frete: number;
@@ -231,8 +231,14 @@ export function calcularProdutos(linhas: LinhaCampanha[], o: OpcoesCalculo): Pro
     else if (l.idProduto && o.catalogo?.produtos[l.idProduto]) { skusVend = o.catalogo.produtos[l.idProduto].v; nomeCat = o.catalogo.produtos[l.idProduto].n; }
 
     const skus = Array.from(new Set(skusVend.map((s) => s.skuSeller)));
-    const custosAchados = skus.map((s) => o.custos.get(normalizarSkuAds(s))).filter((c): c is CustoSku => !!c && c.custo > 0);
-    const custoUnit = custosAchados.length ? custosAchados.reduce((a, c) => a + c.custo, 0) / custosAchados.length : 0;
+    // O anúncio vem só pelo ID do produto pai e todas as variações têm o mesmo custo: usa o 1º SKU do anúncio que tenha custo cadastrado.
+    let skuCusto = "";
+    let custoUnit = 0;
+    let comCusto = 0;
+    for (const sk of skus) {
+      const c = o.custos.get(normalizarSkuAds(sk));
+      if (c && c.custo > 0) { comCusto++; if (!skuCusto) { skuCusto = sk; custoUnit = c.custo; } }
+    }
 
     const pedidos = l.pedidos, receita = l.receita;
     const pdv = l.pdv > 0 ? l.pdv : pedidos > 0 ? receita / pedidos : 0;
@@ -244,11 +250,11 @@ export function calcularProdutos(linhas: LinhaCampanha[], o: OpcoesCalculo): Pro
     const embalagem = o.cfg.embalagemUn * pedidos;
     const custoProduto = custoUnit * pedidos;
     const margemRs = receita - (investimento + custoProduto + imposto + tarifa + embalagem + frete);
-    const status: ProdutoCalculado["status"] = skus.length === 0 ? "sem_anuncio" : custosAchados.length === 0 ? "sem_custo" : custosAchados.length < skus.length ? "custo_parcial" : "ok";
+    const status: ProdutoCalculado["status"] = skus.length === 0 ? "sem_anuncio" : !skuCusto ? "sem_custo" : "ok";
 
     return {
       campanhaId: l.campanhaId, campanhaNome: l.campanhaNome, idProduto: l.idProduto || l.idSku, produto: l.produto || nomeCat,
-      skus, skusComCusto: custosAchados.length, sku: skus[0] || "",
+      skus, skusComCusto: comCusto, sku: skuCusto || skus[0] || "",
       pedidos, receita, pdv, investimento, custoAfiliado: l.custoAfiliado, roiPlataforma: l.roiPlanilha || (l.investimento > 0 ? receita / l.investimento : 0),
       custoUnit, custoProduto, imposto, tarifa, embalagem, frete, margemRs, margemPct: receita > 0 ? margemRs / receita : 0, status,
     };
