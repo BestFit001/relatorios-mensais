@@ -10,6 +10,8 @@ export interface RotaMenu {
   rotulo?: string;
   /** true = só existe como permissão; não aparece como link no menu (ex.: aba que vive dentro de outra) */
   oculta?: boolean;
+  /** true = no menu vira um grupo: "Análise global" + uma página por canal visível (ex.: Adsense) */
+  porCanal?: boolean;
 }
 export interface SecaoMenu { titulo: string; icone: string; /** false = a aba fica solta no menu, sem submenu */ submenu: boolean; rotas: RotaMenu[] }
 
@@ -22,7 +24,7 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/executivo", nome: "Executivo" },
   ] },
   { titulo: "Relatórios", icone: "📈", submenu: true, rotas: [
-    { id: "/ads", nome: "Adsense" },
+    { id: "/ads", nome: "Adsense", porCanal: true },
     { id: "/", nome: "Curva ABC" },
     { id: "/full", nome: "Fulfillment" },
     { id: "/mapeamento", nome: "Mapa de Cadastros" },

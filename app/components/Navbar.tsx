@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { ROTAS_DISPONIVEIS, SECOES_MENU, secaoDoCaminho } from "@/lib/rotasMenu";
+import { slugCanal } from "@/lib/adsImportDb";
 import Avatar from "./Avatar";
 import { abrirEscolhaDeAvatar } from "./EscolherAvatar";
 import {
@@ -26,6 +27,8 @@ export default function Navbar() {
   const [perfilUsuario, setPerfilUsuario] = useState("");
   const [emailUsuario, setEmailUsuario] = useState("");
   const [menuExpandido, setMenuExpandido] = useState<string | null>(null);
+  const [canaisAds, setCanaisAds] = useState<string[]>([]);      // canais visíveis no Adsense (Regras Gerais)
+  const [adsAberto, setAdsAberto] = useState(false);
   const [sidebarAberta, setSidebarAberta] = useState(false);
   const [modoEscuro, setModoEscuro] = useState(true);
   
@@ -143,6 +146,16 @@ export default function Navbar() {
     setUploadingLogo(false);
   };
 
+  // Adsense: um item de menu por canal marcado como visível em Regras Gerais
+  useEffect(() => {
+    let vivo = true;
+    supabase.from("config_regras_canais").select("canal, ativo_ads").order("id").then(({ data }) => {
+      if (vivo && data) setCanaisAds(data.filter((c: any) => c.ativo_ads !== false).map((c: any) => String(c.canal)));
+    });
+    return () => { vivo = false; };
+  }, []);
+  useEffect(() => { if (pathname === "/ads" || pathname?.startsWith("/ads/")) setAdsAberto(true); }, [pathname]);
+
   const temPermissao = (rota: string) => {
     return paginasPermitidas.includes(rota);
   };
@@ -197,7 +210,7 @@ export default function Navbar() {
           {SECOES_MENU.map((secao) => {
             const visiveis = secao.rotas.filter((r) => !r.oculta && temPermissao(r.id));
             if (visiveis.length === 0) return null;
-            const ativa = secao.rotas.some((r) => !r.oculta && (r.id === "/" ? pathname === "/" : pathname === r.id));
+            const ativa = secao.rotas.some((r) => !r.oculta && (r.id === "/" ? pathname === "/" : pathname === r.id || (!!r.porCanal && !!pathname?.startsWith(r.id + "/"))));
             const Icone = ICONES_SECAO[secao.titulo] || Circle;
             if (!secao.submenu) {
               const r = visiveis[0];
@@ -218,7 +231,22 @@ export default function Navbar() {
                 </button>
                 {sidebarAberta && aberta && (
                   <div className="hub-sub">
-                    {visiveis.map((r) => (
+                    {visiveis.map((r) => r.porCanal ? (
+                      <div key={r.id} data-menu-adsense>
+                        <button type="button" onClick={() => setAdsAberto((v) => !v)} className="hub-subitem hub-subgrupo" data-ativo={pathname === r.id || !!pathname?.startsWith(r.id + "/")} aria-expanded={adsAberto}>
+                          <span>{r.rotulo || r.nome}</span>
+                          <ChevronDown size={12} className="hub-seta" data-aberta={adsAberto} />
+                        </button>
+                        {adsAberto && (
+                          <div className="hub-subsub">
+                            <Link href={r.id} className="hub-subitem" data-ativo={pathname === r.id}>Análise global</Link>
+                            {canaisAds.map((c) => (
+                              <Link key={c} href={`${r.id}/${slugCanal(c)}`} className="hub-subitem" data-ativo={pathname === `${r.id}/${slugCanal(c)}`}>{c}</Link>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
                       <Link key={r.id} href={r.id} className="hub-subitem" data-ativo={pathname === r.id}>
                         {r.prefixo ? `${r.prefixo} ` : ""}{r.rotulo || r.nome}
                       </Link>
