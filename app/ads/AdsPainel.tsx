@@ -92,6 +92,7 @@ function parseNumero(valor: any): number {
   return isNaN(num) ? 0 : num;
 }
 
+const fmtRoi = (v: number) => `${v >= 0 ? "" : "-"}${Math.abs(v).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 const formatarMoeda = (valor: number) => {
   return "R$ " + (valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -213,7 +214,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
     if (subAba === "dashboard" || subAba === "budget") {
       carregarDadosDashboard();
     }
-  }, [subAba, mesSelecionado, mesComparativo]);
+  }, [subAba, mesSelecionado, mesComparativo, canaisAtivos]);   // canaisAtivos: sem isso a primeira carga rodava com a lista de canais ainda vazia
 
   useEffect(() => {
     if (canalSugestao) {
@@ -400,8 +401,12 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
 
       const repAds = totFatAtual > 0 ? (fatAdsAtual / totFatAtual) * 100 : 0;
 
+      // ROI = o que sobrou de lucro (margem líquida, já depois de custo, imposto, tarifa, frete e do próprio anúncio) para cada R$ 1 investido em anúncios
+      const roiAtual = invAtual > 0 ? (margemRsAtual / invAtual) * 100 : null;
+      const roiAnt = invAnt > 0 ? (margemRsAnt / invAnt) * 100 : null;
+
       return {
-        canal, fatAdsAtual, fatAdsAnt, diffAds, roasAtual, roasAnt,
+        canal, fatAdsAtual, fatAdsAnt, diffAds, roasAtual, roasAnt, invAtual, invAnt, roiAtual, roiAnt,
         tacosAtual, tacosAnt, margemRsAtual, margemRsAnt, diffMargemRs,
         totFatAtual, totFatAnt, totFatAtual_bruto: fatCanalBrutoAtual,
         gastoAdsBrutoAtual, repAds
@@ -1475,8 +1480,11 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
                       <th className="p-3 text-right">Fat. Ads (Atual)</th>
                       {!ocultarComparacao && <th className="p-3 text-right">Fat. Ads (Anterior)</th>}
                       {!ocultarComparacao && <th className="p-3 text-right">Dif. Ads (R$)</th>}
+                      <th className="p-3 text-right">Investido (Atual)</th>
                       <th className="p-3 text-right">ROAS Atual</th>
                       {!ocultarComparacao && <th className="p-3 text-right">ROAS Anterior</th>}
+                      <th className="p-3 text-right" title="Margem líquida ÷ investido em anúncios">ROI Atual</th>
+                      {!ocultarComparacao && <th className="p-3 text-right">ROI Anterior</th>}
                       <th className="p-3 text-right">TACOS Atual</th>
                       {!ocultarComparacao && <th className="p-3 text-right">TACOS Anterior</th>}
                       <th className="p-3 text-right">Margem Líq. R$ (Atual)</th>
@@ -1501,8 +1509,11 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
                               {d.diffAds >= 0 ? '+' : ''}{formatarMoeda(d.diffAds)}
                             </td>
                           )}
+                          <td className="p-3 text-right font-mono text-slate-200" data-roi-investido={d.canal}>{formatarMoeda(d.invAtual)}</td>
                           <td className="p-3 text-right font-mono text-indigo-400 font-bold">{d.roasAtual.toFixed(2)}x</td>
                           {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{d.roasAnt.toFixed(2)}x</td>}
+                          <td className={`p-3 text-right font-mono font-bold ${d.roiAtual === null ? "text-slate-500" : d.roiAtual >= 0 ? "text-emerald-400" : "text-rose-500"}`} data-roi-atual={d.canal}>{d.roiAtual === null ? "—" : fmtRoi(d.roiAtual)}</td>
+                          {!ocultarComparacao && <td className={`p-3 text-right font-mono ${d.roiAnt === null ? "text-slate-500" : d.roiAnt >= 0 ? "text-slate-300" : "text-rose-500"}`} data-roi-anterior={d.canal}>{d.roiAnt === null ? "—" : fmtRoi(d.roiAnt)}</td>}
                           <td className="p-3 text-right font-mono text-amber-400 font-bold">{d.tacosAtual.toFixed(2)}%</td>
                           {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{d.tacosAnt.toFixed(2)}%</td>}
                           <td className="p-3 text-right font-mono text-emerald-300">{formatarMoeda(d.margemRsAtual)}</td>
@@ -1518,10 +1529,38 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
                         </tr>
                       );
                     })}
+                    {dadosComparativo.length > 0 && (() => {
+                      const soma = (f: (d: any) => number) => dadosComparativo.reduce((t, d) => t + (f(d) || 0), 0);
+                      const invA = soma(d => d.invAtual), invP = soma(d => d.invAnt), fatA = soma(d => d.fatAdsAtual), fatP = soma(d => d.fatAdsAnt);
+                      const mA = soma(d => d.margemRsAtual), mP = soma(d => d.margemRsAnt);
+                      const roiA = invA > 0 ? (mA / invA) * 100 : null, roiP = invP > 0 ? (mP / invP) * 100 : null;
+                      return (
+                        <tr className="bg-slate-900 border-t-2 border-slate-700 font-bold" data-roi-total>
+                          <td className="p-3 text-white">Todos os canais</td>
+                          <td className="p-3 text-right font-mono text-emerald-400">{formatarMoeda(fatA)}</td>
+                          {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(fatP)}</td>}
+                          {!ocultarComparacao && <td className={`p-3 text-right font-mono ${fatA - fatP >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>{fatA - fatP >= 0 ? '+' : ''}{formatarMoeda(fatA - fatP)}</td>}
+                          <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(invA)}</td>
+                          <td className="p-3 text-right font-mono text-indigo-400">{(invA > 0 ? fatA / invA : 0).toFixed(2)}x</td>
+                          {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{(invP > 0 ? fatP / invP : 0).toFixed(2)}x</td>}
+                          <td className={`p-3 text-right font-mono ${roiA === null ? "text-slate-500" : roiA >= 0 ? "text-emerald-400" : "text-rose-500"}`} data-roi-total-atual>{roiA === null ? "—" : fmtRoi(roiA)}</td>
+                          {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{roiP === null ? "—" : fmtRoi(roiP)}</td>}
+                          <td className="p-3 text-right text-slate-500">—</td>
+                          {!ocultarComparacao && <td className="p-3 text-right text-slate-500">—</td>}
+                          <td className="p-3 text-right font-mono text-emerald-300">{formatarMoeda(mA)}</td>
+                          {!ocultarComparacao && <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(mP)}</td>}
+                          {!ocultarComparacao && <td className={`p-3 text-right font-mono ${mA - mP >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>{mA - mP >= 0 ? '+' : ''}{formatarMoeda(mA - mP)}</td>}
+                          <td className="p-3 text-right font-mono text-white">{formatarMoeda(soma(d => d.totFatAtual))}</td>
+                          <td className="p-3 text-right text-slate-500">—</td>
+                          <td className="p-3 text-right text-slate-500">—</td>
+                        </tr>
+                      );
+                    })()}
                   </tbody>
                 </table>
               </div>
             )}
+            <p className="px-5 pb-4 text-[10px] text-slate-500" data-roi-legenda>ROI = margem líquida ÷ investido em anúncios (a margem já vem depois de custo do produto, imposto, tarifa, embalagem, frete e do próprio anúncio). ROAS = faturamento dos anúncios ÷ investido.</p>
           </div>
         )}
 
