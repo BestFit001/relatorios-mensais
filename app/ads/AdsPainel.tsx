@@ -5,9 +5,10 @@ import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
-import { slugCanal, temImportacaoAds } from "../../lib/adsImportDb";
+import { listarCampanhasSalvas, slugCanal } from "../../lib/adsImportDb";
 import ImportarAds from "./ImportarAds";
 import ConfigAds from "./ConfigAds";
+import ComparativoAds from "./ComparativoAds";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -135,7 +136,7 @@ const mesAnteriorBR = () => { const d = new Date(); d.setDate(1); d.setMonth(d.g
  *  - "canal": a página de UM canal (/ads/<canal>): importação de planilhas, lançamentos manuais, sugestões e Configurações do canal
  */
 export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal"; canalSlug?: string }) {
-  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes" | "config" | "importar">(modo === "global" ? "dashboard" : "campanhas");
+  const [subAba, setSubAba] = useState<"campanhas" | "dashboard" | "budget" | "sugestoes" | "config" | "comparativo">(modo === "global" ? "dashboard" : "campanhas");
   const [canalNaoEncontrado, setCanalNaoEncontrado] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [salvando, setSalvando] = useState<boolean>(false);
@@ -267,7 +268,6 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
         setCanalSelecionado(escolhido.canal);
         setCanalSugestao(escolhido.canal);
         carregarConfiguracoesSugestao(escolhido.canal);
-        if (modo === "canal" && temImportacaoAds(escolhido.canal)) setSubAba("importar");
       }
     }
 
@@ -321,8 +321,18 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
     }
 
     const { data } = await query.order('id');
-    if (data) setLancamentos(data);
+    // as linhas que vieram da importação de planilhas têm a sua própria tabela (acima, com paginação): ficam fora do relatório manual
+    const importados = await idsImportadosDoMes();
+    if (data) setLancamentos(importados.size ? data.filter((d: any) => !importados.has(d.id)) : data);
     setLoading(false);
+  };
+
+  const idsImportadosDoMes = async (): Promise<Set<number>> => {
+    try {
+      if (modo !== "canal" || !canalSelecionado || mesSelecionado === "TODOS") return new Set();
+      const camps = await listarCampanhasSalvas(supabase, slugCanal(canalSelecionado), mesSelecionado);
+      return new Set(camps.flatMap((c) => c.ids || []));
+    } catch { return new Set(); }
   };
 
   const carregarDadosDashboard = async () => {
@@ -802,7 +812,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
   };
 
   const limparCanalInteiro = async () => {
-    if (!confirm(`ATENÇÃO: Tem certeza que deseja apagar TODOS os registos do canal "${canalSelecionado}" para o período ${mesSelecionado}?`)) return;
+    if (!confirm(`ATENÇÃO: Tem certeza que deseja apagar TODOS os lançamentos manuais do canal "${canalSelecionado}" para o período ${mesSelecionado}?`)) return;
 
     let query = supabase
       .from('ads_campanhas_lancamentos')
@@ -812,6 +822,9 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
     if (mesSelecionado !== "TODOS") {
       query = query.eq('mes_referencia', mesSelecionado);
     }
+    // não apaga o que veio das planilhas importadas (isso se apaga na própria campanha, acima)
+    const importados = await idsImportadosDoMes();
+    if (importados.size) query = query.not('id', 'in', `(${Array.from(importados).join(',')})`);
 
     const { error } = await query;
 
@@ -1074,7 +1087,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
         {/* NAVEGAÇÃO ENTRE ABAS */}
         <div className="flex flex-wrap gap-3 mb-6" data-abas-ads>
           {([
-            ...(modo === "canal" ? [["importar", "📥 Importar planilhas"] as const, ["campanhas", "📋 Lançamento manual"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
+            ...(modo === "canal" ? [["campanhas", "📋 Campanhas"] as const, ["comparativo", "🔄 Atual vs anterior"] as const, ["sugestoes", "💡 Sugestões de Ads"] as const, ["config", "⚙️ Configurações"] as const] : []),
             ...(modo === "global" ? [["dashboard", "📊 Análise global"] as const, ["budget", "⚖️ Disponibilizado x Usado"] as const] : []),
           ]).map(([id, rotulo]) => (
             <button
@@ -1096,30 +1109,21 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
           </div>
         )}
 
-        {modo === "canal" && subAba === "importar" && canalSelecionado && (
-          <ImportarAds canal={canalSelecionado} mes={mesSelecionado} setMes={setMesSelecionado} meses={mesesCompetencia.filter((m) => m !== "TODOS")} custosMap={custosMap} regras={regrasTarifacao} />
-        )}
+        {modo === "canal" && subAba === "comparativo" && canalSelecionado && <ComparativoAds key={canalSelecionado} canal={canalSelecionado} />}
 
         {modo === "canal" && subAba === "config" && canalSelecionado && <ConfigAds key={canalSelecionado} canal={canalSelecionado} />}
 
         {/* ===================== ABA 1: CAMPANHAS ===================== */}
         {modo === "canal" && subAba === "campanhas" && (
           <>
-            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl mb-8 flex items-center gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Selecione o Mês / Período:</label>
-                <select 
-                  value={mesSelecionado} 
-                  onChange={(e) => setMesSelecionado(e.target.value)}
-                  className="bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white outline-none cursor-pointer min-w-[180px]"
-                >
-                  {mesesCompetencia.filter(m => m !== "TODOS").map((m, i) => <option key={i} value={m}>{m}</option>)}
-                </select>
+            {canalSelecionado && (
+              <div className="mb-8">
+                <ImportarAds canal={canalSelecionado} mes={mesSelecionado} setMes={setMesSelecionado} meses={mesesCompetencia.filter((m) => m !== "TODOS")} custosMap={custosMap} regras={regrasTarifacao} />
               </div>
-            </div>
+            )}
 
-            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
-              <h2 className="text-lg font-bold text-white mb-2">➕ Lançamento de Anúncios</h2>
+            <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8" data-lancamento-manual>
+              <h2 className="text-lg font-bold text-white mb-2">✍️ Lançamento manual de anúncios</h2>
               <p className="text-xs text-slate-400 mb-6">
                 Insira o MLB, SKU, Unidades e Receita Ads para o canal <strong>{canalSelecionado}</strong> ({mesSelecionado}). <br/>
                 <span className="text-purple-400 font-bold">Dica:</span> Inicie o ID com <strong>LIVE</strong> para distribuir um investimento único por vários SKUs vendidos.
@@ -1291,7 +1295,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
                     onClick={limparCanalInteiro} 
                     className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-sm transition-all"
                   >
-                    🗑️ Excluir Tudo do Canal ({canalSelecionado})
+                    🗑️ Excluir lançamentos manuais ({canalSelecionado})
                   </button>
                 </div>
               </div>

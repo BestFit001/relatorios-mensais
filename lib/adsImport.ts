@@ -31,7 +31,7 @@ export type CfgCatalogo = {
 export type CfgAdsCanal = {
   campanha: CfgCampanha;
   catalogo: CfgCatalogo;
-  somarAfiliado: boolean;  // soma o custo de afiliados ao investimento no cálculo da margem
+  incluirAfiliado: boolean; // soma o custo de afiliados ao investimento (desligado: o valor repassado aos afiliados não entra na conta)
   impostoPct: number;      // % de imposto sobre a receita
   embalagemUn: number;     // R$ de embalagem por pedido
 };
@@ -42,7 +42,7 @@ export const CFG_PADRAO_TIKTOK: CfgAdsCanal = {
     investimento: "Custo", custoAfiliado: "Custo (afiliado)", pedidos: "Pedidos de SKU", receita: "Receita bruta", roi: "ROI", pdv: "",
   },
   catalogo: { aba: "Template", idProduto: "A", idSku: "D", skuSeller: "G", variacao: "E", nome: "C", preco: "F" },
-  somarAfiliado: true,
+  incluirAfiliado: false,
   impostoPct: 8,
   embalagemUn: 0.7,
 };
@@ -51,7 +51,7 @@ export const CFG_PADRAO_TIKTOK: CfgAdsCanal = {
 export const CFG_PADRAO_EM_BRANCO: CfgAdsCanal = {
   campanha: { aba: "", produto: "", idProduto: "", idSku: "", campanhaId: "", campanhaNome: "", investimento: "", custoAfiliado: "", pedidos: "", receita: "", roi: "", pdv: "" },
   catalogo: { aba: "", idProduto: "", idSku: "", skuSeller: "", variacao: "", nome: "", preco: "" },
-  somarAfiliado: true,
+  incluirAfiliado: false,
   impostoPct: 8,
   embalagemUn: 0.7,
 };
@@ -66,7 +66,7 @@ export function mesclarConfig(salva: any, padrao: CfgAdsCanal = CFG_PADRAO_TIKTO
   return {
     campanha: { ...p.campanha, ...(s.campanha || {}) },
     catalogo: { ...p.catalogo, ...(s.catalogo || {}) },
-    somarAfiliado: typeof s.somarAfiliado === "boolean" ? s.somarAfiliado : p.somarAfiliado,
+    incluirAfiliado: typeof s.incluirAfiliado === "boolean" ? s.incluirAfiliado : p.incluirAfiliado,
     impostoPct: Number.isFinite(Number(s.impostoPct)) && s.impostoPct !== "" && s.impostoPct !== null && s.impostoPct !== undefined ? Number(s.impostoPct) : p.impostoPct,
     embalagemUn: Number.isFinite(Number(s.embalagemUn)) && s.embalagemUn !== "" && s.embalagemUn !== null && s.embalagemUn !== undefined ? Number(s.embalagemUn) : p.embalagemUn,
   };
@@ -204,19 +204,56 @@ export function lerCatalogo(matriz: any[][], cfg: CfgCatalogo): LeituraCatalogo 
 
 // ---------- cálculo ----------
 export type CustoSku = { custo: number; produto?: string };
+export type CustosManuais = Record<string, { custo: number; nome?: string }>;   // chave = ID do produto (pai) do anúncio
 export type ProdutoCalculado = {
   campanhaId: string; campanhaNome: string; idProduto: string; produto: string;
   skus: string[]; skusComCusto: number; sku: string;          // sku = SKU do vendedor cujo custo foi usado (o 1º com custo; sem custo, o 1º do anúncio)
   pedidos: number; receita: number; pdv: number;
+  investimentoAnuncio?: number;                                 // custo do anúncio, sem afiliados
   investimento: number; custoAfiliado: number; roiPlataforma: number;
+  custoBase?: number;                                           // custo unitário vindo da base de custos (0 = sem custo cadastrado)
+  custoManual?: boolean;                                        // o custo usado foi informado à mão
+  semCustoBase?: boolean;
   custoUnit: number; custoProduto: number; imposto: number; tarifa: number; embalagem: number; frete: number;
   margemRs: number; margemPct: number;
   status: "ok" | "custo_parcial" | "sem_custo" | "sem_anuncio";
 };
 
 export type OpcoesCalculo = {
-  canal: string; regras: RegraTarifacao[]; custos: Map<string, CustoSku>; catalogo: Catalogo | null; cfg: CfgAdsCanal;
+  canal: string; regras: RegraTarifacao[]; custos: Map<string, CustoSku>; catalogo: Catalogo | null; cfg: CfgAdsCanal; custosManuais?: CustosManuais;
 };
+
+/** Custo informado à mão para este anúncio (só vale se for maior que zero). */
+export const custoManualDe = (m: CustosManuais | undefined, idProduto: string): number => {
+  const v = Number(m?.[idProduto]?.custo);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+};
+
+/**
+ * Recalcula imposto, tarifa, embalagem e margem de um produto a partir do que ficou guardado (pedidos, receita, investimento e custo da base),
+ * com a configuração, as regras do canal e os custos manuais de agora. É o que faz a margem mudar na hora quando o custo é informado.
+ */
+export function recalcularProduto(p: ProdutoCalculado, o: { canal: string; regras: RegraTarifacao[]; cfg: CfgAdsCanal; custosManuais?: CustosManuais }): ProdutoCalculado {
+  // legado: antes o padrão somava afiliados ao investimento; sem o campo novo, descontamos o afiliado para voltar ao custo puro do anúncio
+  const invAnuncio = p.investimentoAnuncio ?? Math.max(0, p.investimento - (p.custoAfiliado || 0));
+  const base = p.custoBase ?? p.custoUnit ?? 0;
+  const manual = custoManualDe(o.custosManuais, p.idProduto);
+  const custoUnit = manual > 0 ? manual : base;
+  const investimento = invAnuncio + (o.cfg.incluirAfiliado ? p.custoAfiliado || 0 : 0);
+  const pedidos = p.pedidos, receita = p.receita;
+  const regra = obterRegraCanal(o.regras, o.canal, p.pdv);
+  const tarifa = receita * (regra.comissao / 100) + regra.tarifa_fixa * pedidos;
+  const frete = regra.frete * pedidos;
+  const imposto = receita * (o.cfg.impostoPct / 100);
+  const embalagem = o.cfg.embalagemUn * pedidos;
+  const custoProduto = custoUnit * pedidos;
+  const margemRs = receita - (investimento + custoProduto + imposto + tarifa + embalagem + frete);
+  const status: ProdutoCalculado["status"] = custoUnit > 0 ? "ok" : p.skus.length === 0 ? "sem_anuncio" : "sem_custo";
+  return {
+    ...p, investimentoAnuncio: invAnuncio, investimento, custoBase: base, custoManual: manual > 0, semCustoBase: !(base > 0),
+    custoUnit, custoProduto, imposto, tarifa, embalagem, frete, margemRs, margemPct: receita > 0 ? margemRs / receita : 0, status,
+  };
+}
 
 export function calcularProdutos(linhas: LinhaCampanha[], o: OpcoesCalculo): ProdutoCalculado[] {
   // índice SKU do TikTok -> SKU do vendedor (quando a planilha da campanha já vem por SKU)
@@ -233,31 +270,22 @@ export function calcularProdutos(linhas: LinhaCampanha[], o: OpcoesCalculo): Pro
     const skus = Array.from(new Set(skusVend.map((s) => s.skuSeller)));
     // O anúncio vem só pelo ID do produto pai e todas as variações têm o mesmo custo: usa o 1º SKU do anúncio que tenha custo cadastrado.
     let skuCusto = "";
-    let custoUnit = 0;
+    let custoBase = 0;
     let comCusto = 0;
     for (const sk of skus) {
       const c = o.custos.get(normalizarSkuAds(sk));
-      if (c && c.custo > 0) { comCusto++; if (!skuCusto) { skuCusto = sk; custoUnit = c.custo; } }
+      if (c && c.custo > 0) { comCusto++; if (!skuCusto) { skuCusto = sk; custoBase = c.custo; } }
     }
-
     const pedidos = l.pedidos, receita = l.receita;
     const pdv = l.pdv > 0 ? l.pdv : pedidos > 0 ? receita / pedidos : 0;
-    const investimento = l.investimento + (o.cfg.somarAfiliado ? l.custoAfiliado : 0);
-    const regra = obterRegraCanal(o.regras, o.canal, pdv);
-    const tarifa = receita * (regra.comissao / 100) + regra.tarifa_fixa * pedidos;
-    const frete = regra.frete * pedidos;
-    const imposto = receita * (o.cfg.impostoPct / 100);
-    const embalagem = o.cfg.embalagemUn * pedidos;
-    const custoProduto = custoUnit * pedidos;
-    const margemRs = receita - (investimento + custoProduto + imposto + tarifa + embalagem + frete);
-    const status: ProdutoCalculado["status"] = skus.length === 0 ? "sem_anuncio" : !skuCusto ? "sem_custo" : "ok";
-
-    return {
+    const bruto: ProdutoCalculado = {
       campanhaId: l.campanhaId, campanhaNome: l.campanhaNome, idProduto: l.idProduto || l.idSku, produto: l.produto || nomeCat,
       skus, skusComCusto: comCusto, sku: skuCusto || skus[0] || "",
-      pedidos, receita, pdv, investimento, custoAfiliado: l.custoAfiliado, roiPlataforma: l.roiPlanilha || (l.investimento > 0 ? receita / l.investimento : 0),
-      custoUnit, custoProduto, imposto, tarifa, embalagem, frete, margemRs, margemPct: receita > 0 ? margemRs / receita : 0, status,
+      pedidos, receita, pdv, investimentoAnuncio: l.investimento, investimento: l.investimento, custoAfiliado: l.custoAfiliado,
+      roiPlataforma: l.roiPlanilha || (l.investimento > 0 ? receita / l.investimento : 0),
+      custoBase, custoUnit: custoBase, custoProduto: 0, imposto: 0, tarifa: 0, embalagem: 0, frete: 0, margemRs: 0, margemPct: 0, status: "ok",
     };
+    return recalcularProduto(bruto, { canal: o.canal, regras: o.regras, cfg: o.cfg, custosManuais: o.custosManuais });
   });
 }
 
@@ -279,6 +307,12 @@ export function totalizar(ps: ProdutoCalculado[]): TotaisCampanha {
 }
 
 /** Mês de competência ("MM/AAAA") sugerido pelo nome do arquivo (ex.: Product_data_2026-11-01_-_2026-11-15_...). */
+/** Período que o nome do arquivo informa (ex.: Product_data_2026-11-01_-_2026-11-15_...): { ini, fim } em AAAA-MM-DD. */
+export function periodoDoNomeDoArquivo(nome: string): { ini: string; fim: string } | null {
+  const m = String(nome || "").match(/(20\d{2}-\d{2}-\d{2})\D{1,6}(20\d{2}-\d{2}-\d{2})/);
+  return m ? { ini: m[1], fim: m[2] } : null;
+}
+
 export function mesDoNomeDoArquivo(nome: string): string | null {
   const m = String(nome || "").match(/(20\d{2})-(\d{2})-\d{2}/);
   return m ? `${m[2]}/${m[1]}` : null;

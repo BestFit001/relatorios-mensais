@@ -1,7 +1,7 @@
 // Gravação/leitura da importação de Ads por canal. Tudo em tabelas que já existem (sem migração):
 //  - config_regras_tiny: configuração de colunas, catálogo de anúncios (ID do TikTok -> SKU do vendedor) e as campanhas importadas
 //  - ads_campanhas_lancamentos: uma linha por produto, para a Análise global / Budget enxergarem o canal
-import { mesclarConfig, padraoDoCanal, type CfgAdsCanal, type Catalogo, type ProdutoCalculado } from "./adsImport";
+import { mesclarConfig, padraoDoCanal, periodoDoNomeDoArquivo, type CfgAdsCanal, type Catalogo, type CustosManuais, type ProdutoCalculado } from "./adsImport";
 import { paiDoSku } from "./skuPai";
 
 /** "TikTok Shop" -> "tiktok-shop" (usado na URL e nas chaves de configuração). */
@@ -15,10 +15,13 @@ export const mesIso = (mes: string) => { const [m, a] = String(mes).split("/"); 
 
 const kCfg = (slug: string) => `ads_import_cfg_${slug}`;
 const kCatalogo = (slug: string) => `ads_import_catalogo_${slug}`;
+const kCustosManuais = (slug: string) => `ads_import_custos_${slug}`;
+const kComparativo = (slug: string) => `ads_import_cmp_${slug}`;
 const kCampPrefixo = (slug: string, mes: string) => `ads_import_camp_${slug}_${mesIso(mes)}_`;
 
 export type CampanhaSalva = {
   id: string; nome: string; arquivo: string; importadoEm: string; mes: string;
+  periodo?: { ini: string; fim: string } | null;   // período que o nome do arquivo informa
   ids: number[];                         // linhas espelhadas em ads_campanhas_lancamentos
   ignoradas: number;                     // produtos da planilha sem investimento nem vendas
   produtos: ProdutoCalculado[];
@@ -75,7 +78,7 @@ function linhaLancamento(canal: string, mes: string, p: ProdutoCalculado) {
 }
 
 /** Salva (ou substitui) uma campanha importada: guarda o detalhe e espelha os produtos na tabela da Análise global. */
-export async function salvarCampanha(supabase: any, slug: string, canal: string, mes: string, camp: Omit<CampanhaSalva, "ids" | "importadoEm" | "mes">): Promise<string | null> {
+export async function salvarCampanha(supabase: any, slug: string, canal: string, mes: string, camp: Omit<CampanhaSalva, "ids" | "importadoEm" | "mes">, manterImportadoEm?: string): Promise<string | null> {
   const chave = kCampPrefixo(slug, mes) + camp.id;
   const anterior = paraJson(await lerChave(supabase, chave)) as CampanhaSalva | null;
   if (anterior?.ids?.length) {
@@ -89,7 +92,7 @@ export async function salvarCampanha(supabase: any, slug: string, canal: string,
     if (error) return "Não consegui gravar os produtos na análise: " + error.message;
     (data || []).forEach((d: any) => ids.push(d.id));
   }
-  const erro = await gravarChave(supabase, chave, JSON.stringify({ ...camp, mes, importadoEm: new Date().toISOString(), ids } satisfies CampanhaSalva));
+  const erro = await gravarChave(supabase, chave, JSON.stringify({ ...camp, periodo: camp.periodo ?? periodoDoNomeDoArquivo(camp.arquivo), mes, importadoEm: manterImportadoEm || new Date().toISOString(), ids } satisfies CampanhaSalva));
   return erro ? "Não consegui salvar a campanha: " + erro : null;
 }
 
@@ -100,4 +103,67 @@ export async function excluirCampanha(supabase: any, slug: string, mes: string, 
   }
   const { error } = await supabase.from("config_regras_tiny").delete().eq("campo", kCampPrefixo(slug, mes) + camp.id);
   return error ? "Não consegui apagar a campanha: " + error.message : null;
+}
+
+// ---------- custos informados à mão (por ID do produto/anúncio pai) ----------
+export async function carregarCustosManuais(supabase: any, slug: string): Promise<CustosManuais> {
+  const j = paraJson(await lerChave(supabase, kCustosManuais(slug)));
+  return j && typeof j === "object" ? (j as CustosManuais) : {};
+}
+export async function salvarCustosManuais(supabase: any, slug: string, m: CustosManuais): Promise<string | null> {
+  const erro = await gravarChave(supabase, kCustosManuais(slug), JSON.stringify(m));
+  return erro ? "Não consegui salvar os custos informados: " + erro : null;
+}
+
+/** Todas as campanhas salvas do canal, de qualquer mês (a mais recente primeiro). */
+export async function listarTodasCampanhasSalvas(supabase: any, slug: string): Promise<CampanhaSalva[]> {
+  try {
+    const { data, error } = await supabase.from("config_regras_tiny").select("campo, coluna").ilike("campo", `ads_import_camp_${slug}_%`);
+    if (error || !data) return [];
+    return (data as any[]).map((r) => paraJson(r.coluna)).filter((c) => c && c.id && Array.isArray(c.produtos)).sort((a: CampanhaSalva, b: CampanhaSalva) => String(b.importadoEm).localeCompare(String(a.importadoEm)));
+  } catch { return []; }
+}
+
+// ---------- comparativo "atual vs anterior": só as duas últimas planilhas enviadas ----------
+export type SnapProduto = { id: string; n: string; inv: number; af: number; rec: number; ped: number };   // inv = custo do anúncio (sem afiliados), af = afiliados
+export type Snapshot = { arquivo: string; importadoEm: string; mes: string; ini: string | null; fim: string | null; campanhas: string[]; produtos: SnapProduto[] };
+export type Comparativo = { atual: Snapshot | null; anterior: Snapshot | null };
+
+export async function carregarComparativo(supabase: any, slug: string): Promise<Comparativo> {
+  const j = paraJson(await lerChave(supabase, kComparativo(slug)));
+  return { atual: j?.atual ?? null, anterior: j?.anterior ?? null };
+}
+
+/** Junta os produtos de várias campanhas (mesmo ID de produto soma) num snapshot enxuto. */
+export function montarSnapshot(arquivo: string, mes: string, importadoEm: string, campanhas: { nome: string; produtos: ProdutoCalculado[] }[]): Snapshot {
+  const mapa = new Map<string, SnapProduto>();
+  for (const c of campanhas) for (const p of c.produtos) {
+    const af = p.custoAfiliado || 0;
+    const inv = p.investimentoAnuncio ?? Math.max(0, p.investimento - af);
+    const x = mapa.get(p.idProduto) || { id: p.idProduto, n: p.produto, inv: 0, af: 0, rec: 0, ped: 0 };
+    x.inv += inv; x.af += af; x.rec += p.receita; x.ped += p.pedidos; if (!x.n) x.n = p.produto;
+    mapa.set(p.idProduto, x);
+  }
+  const per = periodoDoNomeDoArquivo(arquivo);
+  const r2 = (n: number) => Number(n.toFixed(2));
+  return {
+    arquivo, importadoEm, mes, ini: per?.ini ?? null, fim: per?.fim ?? null, campanhas: campanhas.map((c) => c.nome),
+    produtos: Array.from(mapa.values()).map((x) => ({ ...x, inv: r2(x.inv), af: r2(x.af), rec: r2(x.rec) })),
+  };
+}
+
+const mesmoEnvio = (a: Snapshot, b: Snapshot) => (a.ini && a.fim && b.ini && b.fim ? a.ini === b.ini && a.fim === b.fim : a.arquivo === b.arquivo);
+
+/**
+ * Registra o envio mais recente. O que era "atual" vira "anterior" (some o que era anterior). Se for o mesmo período reenviado,
+ * só substitui o atual. Se ainda não havia comparativo mas já havia campanhas salvas, a mais recente delas vira o "atual" antes do novo envio.
+ */
+export async function registrarEnvioComparativo(supabase: any, slug: string, novo: Snapshot, semente?: Snapshot | null): Promise<string | null> {
+  const cmp = await carregarComparativo(supabase, slug);
+  let atual = cmp.atual, anterior = cmp.anterior;
+  if (!atual && semente && !mesmoEnvio(semente, novo)) atual = semente;
+  if (atual && mesmoEnvio(atual, novo)) { atual = novo; }
+  else { anterior = atual; atual = novo; }
+  const erro = await gravarChave(supabase, kComparativo(slug), JSON.stringify({ atual, anterior }));
+  return erro ? "Não consegui salvar o comparativo: " + erro : null;
 }

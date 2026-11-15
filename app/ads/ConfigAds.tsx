@@ -2,8 +2,8 @@
 // Adsense > (canal) > Configurações: colunas de cada planilha importada naquele canal e parâmetros do cálculo de margem.
 import React, { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { ehTikTok, mesclarConfig, padraoDoCanal, type CfgAdsCanal } from "../../lib/adsImport";
-import { carregarCfgAds, salvarCfgAds, slugCanal } from "../../lib/adsImportDb";
+import { ehTikTok, mesclarConfig, numeroBR, padraoDoCanal, type CfgAdsCanal, type CustosManuais } from "../../lib/adsImport";
+import { carregarCfgAds, carregarCustosManuais, salvarCfgAds, salvarCustosManuais, slugCanal } from "../../lib/adsImportDb";
 
 type Campo = { chave: string; rotulo: string; dica: string; obrigatorio?: boolean };
 
@@ -39,12 +39,17 @@ export default function ConfigAds({ canal }: { canal: string }) {
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+  const [manuais, setManuais] = useState<CustosManuais>({});
+  const [msgManual, setMsgManual] = useState<string>("");
+  const [novoId, setNovoId] = useState("");
+  const [novoCusto, setNovoCusto] = useState("");
 
   useEffect(() => {
     let vivo = true;
     (async () => {
       const c = await carregarCfgAds(supabase, slug, canal);
-      if (vivo) { setCfg(c); setCarregando(false); }
+      const m = await carregarCustosManuais(supabase, slug);
+      if (vivo) { setCfg(c); setManuais(m); setCarregando(false); }
     })();
     return () => { vivo = false; };
   }, [slug, canal]);
@@ -58,6 +63,27 @@ export default function ConfigAds({ canal }: { canal: string }) {
     setMsg(erro ? { tipo: "erro", texto: erro } : { tipo: "ok", texto: "Configuração salva. As próximas importações já usam essas colunas." });
   };
   const restaurar = () => { setCfg(padrao); setMsg({ tipo: "ok", texto: tiktok ? "Padrão restaurado: clique em Salvar para gravar." : "Campos limpos: clique em Salvar para gravar." }); };
+
+  const gravarManuais = async (novo: CustosManuais, aviso: string) => {
+    setManuais(novo);
+    const erro = await salvarCustosManuais(supabase, slug, novo);
+    setMsgManual(erro || aviso);
+  };
+  const adicionarManual = async () => {
+    const id = novoId.trim().replace(/\.0$/, ""); const custo = numeroBR(novoCusto);
+    if (!id || !(custo > 0)) { setMsgManual("Informe o ID do produto e um custo maior que zero."); return; }
+    await gravarManuais({ ...manuais, [id]: { custo, nome: manuais[id]?.nome } }, `Custo do produto ${id} salvo. A margem já usa esse valor na aba Campanhas.`);
+    setNovoId(""); setNovoCusto("");
+  };
+  const mudarManual = async (id: string, texto: string) => {
+    const custo = numeroBR(texto);
+    if (!(custo > 0)) { setMsgManual("O custo precisa ser maior que zero (para voltar ao custo da base, use Remover)."); return; }
+    await gravarManuais({ ...manuais, [id]: { ...manuais[id], custo } }, `Custo do produto ${id} atualizado.`);
+  };
+  const removerManual = async (id: string) => {
+    const { [id]: _fora, ...resto } = manuais;
+    await gravarManuais(resto, `Custo do produto ${id} removido: volta a valer o custo da base.`);
+  };
 
   const bloco = (titulo: string, subtitulo: string, grupo: "campanha" | "catalogo", campos: Campo[]) => (
     <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl" data-cfg-bloco={grupo}>
@@ -96,8 +122,8 @@ export default function ConfigAds({ canal }: { canal: string }) {
         <h3 className="text-sm font-black text-white mb-4">3. Cálculo da margem líquida</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           <label className="flex items-start gap-3 cursor-pointer md:col-span-3">
-            <input type="checkbox" data-cfg="somarAfiliado" checked={cfg.somarAfiliado} onChange={(e) => { setCfg((c) => ({ ...c, somarAfiliado: e.target.checked })); setMsg(null); }} className="mt-0.5 w-4 h-4 accent-purple-500" />
-            <span className="text-xs text-slate-300"><strong className="text-white">Somar o custo de afiliados ao investimento.</strong> <span className="text-slate-500">Ligado: a margem desconta custo + custo de afiliados. Desligado: só o custo do anúncio.</span></span>
+            <input type="checkbox" data-cfg="incluirAfiliado" checked={cfg.incluirAfiliado} onChange={(e) => { setCfg((c) => ({ ...c, incluirAfiliado: e.target.checked })); setMsg(null); }} className="mt-0.5 w-4 h-4 accent-purple-500" />
+            <span className="text-xs text-slate-300"><strong className="text-white">Incluir o custo de afiliados no investimento.</strong> <span className="text-slate-500">Desligado (padrão): só o custo do anúncio entra no investimento, na margem e no ROI. O valor destinado aos afiliados fica de fora.</span></span>
           </label>
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Imposto sobre a receita (%)</label>
@@ -109,6 +135,38 @@ export default function ConfigAds({ canal }: { canal: string }) {
           </div>
           <p className="text-[10px] text-slate-500 md:col-span-3">Comissão, tarifa fixa e frete do canal vêm da tabela de tarifação em Regras Gerais; o custo do produto vem da base de custos por SKU.</p>
         </div>
+      </div>
+
+      <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl" data-cfg-bloco="custos-manuais">
+        <h3 className="text-sm font-black text-white mb-1">4. Custos informados à mão</h3>
+        <p className="text-[11px] text-slate-400 mb-4">Para produtos sem custo na base de custos. Vale para o anúncio inteiro (ID do produto pai, o mesmo da planilha da campanha) e substitui o custo da base. A margem é recalculada na hora na aba Campanhas, onde também dá para digitar o custo direto na tabela.</p>
+        <div className="flex flex-wrap items-end gap-3 mb-4">
+          <div><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">ID do produto</label>
+            <input data-manual-novo-id value={novoId} onChange={(e) => setNovoId(e.target.value)} placeholder="Ex.: 1735023458288764396" className="w-64 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-purple-500 font-mono" /></div>
+          <div><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Custo unitário (R$)</label>
+            <input data-manual-novo-custo value={novoCusto} onChange={(e) => setNovoCusto(e.target.value)} placeholder="0,00" className="w-32 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-purple-500" /></div>
+          <button type="button" data-manual-adicionar onClick={adicionarManual} className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold py-2.5 px-5 rounded-xl text-xs cursor-pointer">Adicionar custo</button>
+        </div>
+        {Object.keys(manuais).length === 0 ? (
+          <p className="text-[11px] text-slate-500" data-manual-vazio>Nenhum custo informado à mão ainda.</p>
+        ) : (
+          <div className="overflow-x-auto border border-slate-800 rounded-xl">
+            <table className="w-full text-left text-xs" data-manual-lista>
+              <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider text-[10px]"><tr><th className="p-3">Produto</th><th className="p-3">ID</th><th className="p-3 text-right">Custo unit. (R$)</th><th className="p-3"></th></tr></thead>
+              <tbody className="divide-y divide-slate-800/70">
+                {Object.entries(manuais).map(([id, m]) => (
+                  <tr key={id} data-manual-linha={id}>
+                    <td className="p-3 text-slate-200 max-w-[360px] truncate">{m.nome || "—"}</td>
+                    <td className="p-3 font-mono text-[11px] text-slate-400">{id}</td>
+                    <td className="p-3 text-right"><input key={m.custo} defaultValue={String(m.custo).replace(".", ",")} onBlur={(e) => { if (numeroBR(e.target.value) !== m.custo) mudarManual(id, e.target.value); }} className="w-28 bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-right text-white outline-none focus:border-purple-500" /></td>
+                    <td className="p-3 text-right"><button type="button" onClick={() => removerManual(id)} className="text-[11px] font-bold text-rose-400 hover:text-rose-300 cursor-pointer">Remover</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {msgManual && <p data-manual-msg className="text-[11px] font-bold text-emerald-400 mt-3">{msgManual}</p>}
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

@@ -1,15 +1,16 @@
 "use client";
 // Adsense de um canal: envia a planilha da campanha + a planilha de anúncios, localiza o SKU do vendedor de cada
 // anúncio, busca o custo e calcula a margem líquida por produto (com paginação). As colunas vêm da aba Configurações.
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "../../lib/supabase";
 import {
-  calcularProdutos, ehTikTok, padraoDoCanal, lerCampanha, lerCatalogo, mesDoNomeDoArquivo, totalizar,
-  type CfgAdsCanal, type Catalogo, type CustoSku, type ProdutoCalculado,
+  calcularProdutos, numeroBR, padraoDoCanal, lerCampanha, lerCatalogo, mesDoNomeDoArquivo, recalcularProduto, totalizar,
+  type CfgAdsCanal, type Catalogo, type CustoSku, type CustosManuais, type ProdutoCalculado,
 } from "../../lib/adsImport";
 import {
-  carregarCatalogoAds, carregarCfgAds, excluirCampanha, listarCampanhasSalvas, salvarCampanha, salvarCatalogoAds, slugCanal, type CampanhaSalva,
+  carregarCatalogoAds, carregarCfgAds, carregarCustosManuais, excluirCampanha, listarCampanhasSalvas, listarTodasCampanhasSalvas, montarSnapshot,
+  registrarEnvioComparativo, salvarCampanha, salvarCatalogoAds, salvarCustosManuais, slugCanal, type CampanhaSalva,
 } from "../../lib/adsImportDb";
 
 type Props = { canal: string; mes: string; setMes: (m: string) => void; meses: string[]; custosMap: Map<string, any>; regras: any[] };
@@ -18,6 +19,7 @@ type Previa = { arquivo: string; campanhas: { id: string; nome: string; produtos
 const R$ = (v: number) => "R$ " + (v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const PCT = (v: number) => ((v || 0) * 100).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
 const NUM = (v: number) => (v || 0).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+const moedaInput = (v: number) => (v > 0 ? String(Number(v.toFixed(4))).replace(".", ",") : "");
 const quando = (iso?: string) => (iso ? new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—");
 
 async function lerPlanilha(arquivo: File, aba: string): Promise<any[][]> {
@@ -45,6 +47,17 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
   const [porPagina, setPorPagina] = useState(10);
   const [pagina, setPagina] = useState(1);
   const [aberto, setAberto] = useState<string | null>(null);
+  // custos informados à mão (por ID do produto pai)
+  const [manuais, setManuais] = useState<CustosManuais>({});
+  const [editando, setEditando] = useState<Record<string, string>>({});
+  const [prontos, setProntos] = useState(false);
+  const manuaisRef = useRef<CustosManuais>({});
+  const vivo = useRef({ canal, regras, cfg });
+  vivo.current = { canal, regras, cfg };
+  const timerSalvar = useRef<any>(null);
+  const pendenteSalvar = useRef(false);
+  const sincronizando = useRef(false);
+  const refazerSync = useRef(false);
 
   const custos = useMemo(() => {
     const m = new Map<string, CustoSku>();
@@ -52,7 +65,24 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
     return m;
   }, [custosMap]);
 
-  useEffect(() => { (async () => { setCfg(await carregarCfgAds(supabase, slug, canal)); setCatalogoSalvo(await carregarCatalogoAds(supabase, slug)); })(); }, [slug, canal]);
+  useEffect(() => {
+    let ativo = true;
+    setProntos(false);
+    (async () => {
+      const c = await carregarCfgAds(supabase, slug, canal);
+      const cat = await carregarCatalogoAds(supabase, slug);
+      const m = await carregarCustosManuais(supabase, slug);
+      if (!ativo) return;
+      setCfg(c); setCatalogoSalvo(cat); manuaisRef.current = m; setManuais(m); setProntos(true);
+    })();
+    return () => { ativo = false; };
+  }, [slug, canal]);
+
+  // sai da aba com um custo ainda sem gravar: grava antes de ir embora
+  useEffect(() => () => { if (pendenteSalvar.current) { clearTimeout(timerSalvar.current); salvarCustosManuais(supabase, slug, manuaisRef.current); } }, [slug]);
+
+  /** Aplica a configuração, as regras do canal e os custos informados de AGORA a um produto guardado. */
+  const aplicarAtual = (p: ProdutoCalculado) => recalcularProduto(p, { canal: vivo.current.canal, regras: vivo.current.regras, cfg: vivo.current.cfg, custosManuais: manuaisRef.current });
 
   const recarregarSalvas = async (manter?: string) => {
     const l = await listarCampanhasSalvas(supabase, slug, mes);
@@ -60,6 +90,48 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
     setSelecionada((atual) => (manter && l.some((c) => c.id === manter) ? manter : l.some((c) => c.id === atual) ? atual : l[0]?.id || ""));
   };
   useEffect(() => { setPrevia(null); recarregarSalvas(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [slug, mes]);
+
+  /** Mantém o que foi gravado na Análise global igual ao que a tela mostra (custos informados, configuração ou tarifas que mudaram). */
+  const sincronizar = async () => {
+    if (!vivo.current.regras.length) return;
+    if (sincronizando.current) { refazerSync.current = true; return; }
+    sincronizando.current = true;
+    try {
+      do {
+        refazerSync.current = false;
+        const lista = await listarCampanhasSalvas(supabase, slug, mes);
+        let mudou = false;
+        for (const c of lista) {
+          const novos = c.produtos.map(aplicarAtual);
+          const soma = (ps: ProdutoCalculado[], f: (p: ProdutoCalculado) => number) => ps.reduce((a, p) => a + f(p), 0);
+          const difere = Math.abs(soma(c.produtos, (p) => p.margemRs) - soma(novos, (p) => p.margemRs)) > 0.01 || Math.abs(soma(c.produtos, (p) => p.investimento) - soma(novos, (p) => p.investimento)) > 0.01;
+          if (!difere) continue;
+          const e = await salvarCampanha(supabase, slug, canal, mes, { id: c.id, nome: c.nome, arquivo: c.arquivo, ignoradas: c.ignoradas, periodo: c.periodo, produtos: novos }, c.importadoEm);
+          if (e) { setMsg({ tipo: "erro", texto: e }); break; }
+          mudou = true;
+        }
+        if (mudou) await recarregarSalvas();
+      } while (refazerSync.current);
+    } finally { sincronizando.current = false; }
+  };
+  useEffect(() => { if (prontos && salvas.length > 0 && regras.length > 0) sincronizar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [prontos, salvas, regras.length, cfg]);
+
+  const persistirManuais = async () => {
+    clearTimeout(timerSalvar.current);
+    pendenteSalvar.current = false;
+    const e = await salvarCustosManuais(supabase, slug, manuaisRef.current);
+    if (e) { setMsg({ tipo: "erro", texto: e }); return; }
+    await sincronizar();
+  };
+  const mudarCusto = (p: ProdutoCalculado, texto: string) => {
+    setEditando((x) => ({ ...x, [p.idProduto]: texto }));
+    const v = numeroBR(texto);
+    const novo = { ...manuaisRef.current };
+    if (v > 0) novo[p.idProduto] = { custo: v, nome: p.produto || novo[p.idProduto]?.nome }; else delete novo[p.idProduto];
+    manuaisRef.current = novo; setManuais(novo);
+    pendenteSalvar.current = true; clearTimeout(timerSalvar.current); timerSalvar.current = setTimeout(persistirManuais, 900);
+  };
+  const fecharEdicao = (id: string) => { setEditando((x) => { const { [id]: _, ...r } = x; return r; }); if (pendenteSalvar.current) persistirManuais(); };
 
   const escolherCampanha = (f: File | null) => {
     setArqCampanha(f); setMsg(null);
@@ -83,7 +155,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
       }
       const lcamp = lerCampanha(await lerPlanilha(arqCampanha, cfg.campanha.aba), cfg.campanha);
       if (lcamp.erro) { setMsg({ tipo: "erro", texto: lcamp.erro }); setProcessando(false); return; }
-      const calc = calcularProdutos(lcamp.linhas, { canal, regras, custos, catalogo: catalogoUsado, cfg });
+      const calc = calcularProdutos(lcamp.linhas, { canal, regras, custos, catalogo: catalogoUsado, cfg, custosManuais: manuaisRef.current });
       const grupos = new Map<string, { id: string; nome: string; produtos: ProdutoCalculado[] }>();
       for (const p of calc) {
         const id = p.campanhaId || "sem-id";
@@ -112,14 +184,25 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
       if (e) { setMsg({ tipo: "erro", texto: e }); setSalvando(false); return; }
       setCatalogoSalvo(previa.catalogoNovo);
     }
+    // comparativo "atual vs anterior": se ainda não havia nada, a campanha que já estava salva vira o ponto de partida
+    let semente = null as ReturnType<typeof montarSnapshot> | null;
+    try {
+      const todas = await listarTodasCampanhasSalvas(supabase, slug);
+      if (todas.length) {
+        const grupo = todas.filter((c) => c.arquivo === todas[0].arquivo);
+        semente = montarSnapshot(todas[0].arquivo, todas[0].mes, todas[0].importadoEm, grupo.map((c) => ({ nome: c.nome, produtos: c.produtos })));
+      }
+    } catch { /* sem ponto de partida */ }
     for (const c of previa.campanhas) {
-      const e = await salvarCampanha(supabase, slug, canal, mes, { id: c.id, nome: c.nome, arquivo: previa.arquivo, ignoradas: c.ignoradas, produtos: c.produtos });
+      const e = await salvarCampanha(supabase, slug, canal, mes, { id: c.id, nome: c.nome, arquivo: previa.arquivo, ignoradas: c.ignoradas, produtos: c.produtos.map(aplicarAtual) });
       if (e) { setMsg({ tipo: "erro", texto: e }); setSalvando(false); return; }
     }
+    const eCmp = await registrarEnvioComparativo(supabase, slug, montarSnapshot(previa.arquivo, mes, new Date().toISOString(), previa.campanhas.map((c) => ({ nome: c.nome, produtos: c.produtos.map(aplicarAtual) }))), semente);
+    if (eCmp) { setMsg({ tipo: "erro", texto: eCmp }); }
     const primeira = previa.campanhas[0]?.id;
     setPrevia(null); setArqCampanha(null); setArqCatalogo(null);
     await recarregarSalvas(primeira);
-    setMsg({ tipo: "ok", texto: `Salvo em ${mes}: os produtos já entram na Análise global do Adsense.` });
+    setMsg({ tipo: "ok", texto: `Salvo em ${mes}: os produtos já entram na Análise global e o comparativo "Atual vs anterior" foi atualizado.` });
     setSalvando(false);
   };
 
@@ -132,7 +215,11 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
   };
 
   // ---- o que está na tela: a prévia (ainda não salva) ou a campanha salva selecionada
-  const campanhasVisiveis = previa ? previa.campanhas.map((c) => ({ id: c.id, nome: c.nome, produtos: c.produtos })) : salvas.map((c) => ({ id: c.id, nome: c.nome, produtos: c.produtos }));
+  const campanhasVisiveis = useMemo(
+    () => (previa ? previa.campanhas : salvas).map((c) => ({ id: c.id, nome: c.nome, produtos: c.produtos.map(aplicarAtual) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [previa, salvas, cfg, manuais, regras, canal],
+  );
   const atual = campanhasVisiveis.find((c) => c.id === selecionada) || campanhasVisiveis[0];
   const salvaAtual = !previa ? salvas.find((c) => c.id === atual?.id) : undefined;
   const totais = useMemo(() => totalizar(atual?.produtos || []), [atual]);
@@ -141,7 +228,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
     const q = busca.trim().toLowerCase();
     let l = (atual?.produtos || []).filter((p) => {
       if (filtro === "negativos" && p.margemRs >= 0) return false;
-      if (filtro === "sem_custo" && p.status !== "sem_custo" && p.status !== "custo_parcial" && p.status !== "sem_anuncio") return false;
+      if (filtro === "sem_custo" && !p.semCustoBase && p.status !== "sem_anuncio") return false;   // inclui os que já receberam custo à mão (ficam marcados)
       if (!q) return true;
       return p.produto.toLowerCase().includes(q) || p.idProduto.includes(q) || p.skus.some((s) => s.toLowerCase().includes(q));
     });
@@ -227,7 +314,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-6" data-resumo-campanha>
-            {card("Investimento", R$(totais.investimento), cfg.somarAfiliado ? "custo + afiliados" : "só custo do anúncio")}
+            {card("Investimento", R$(totais.investimento), cfg.incluirAfiliado ? "custo + afiliados" : "só o custo do anúncio (sem afiliados)")}
             {card("Receita bruta", R$(totais.receita))}
             {card("ROI", NUM(totais.roi) + "x", "receita ÷ investimento")}
             {card("Margem líquida", R$(totais.margemRs), PCT(totais.margemPct) + " da receita", totais.margemRs >= 0 ? "text-emerald-400" : "text-rose-400")}
@@ -238,7 +325,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <input data-busca-produto value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar produto, ID ou SKU…" className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none focus:border-purple-500 w-64" />
             <select data-filtro value={filtro} onChange={(e) => setFiltro(e.target.value as any)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer">
-              <option value="todos">Todos os produtos</option><option value="negativos">Só margem negativa</option><option value="sem_custo">Só sem custo / sem SKU</option>
+              <option value="todos">Todos os produtos</option><option value="negativos">Só margem negativa</option><option value="sem_custo">Só sem custo na base / sem SKU</option>
             </select>
             <select data-ordem value={ordem} onChange={(e) => setOrdem(e.target.value as any)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer">
               <option value="receita">Ordenar: maior receita</option><option value="margemRs">Ordenar: maior margem (R$)</option><option value="margemPct">Ordenar: maior margem (%)</option>
@@ -257,12 +344,12 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
               <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                 <tr>
                   <th className="p-3 min-w-[260px]">Produto</th><th className="p-3">SKU seller</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Receita</th>
-                  <th className="p-3 text-right">PDV</th><th className="p-3 text-right">Invest.</th><th className="p-3 text-right">ROI</th><th className="p-3 text-right">Custo prod.</th>
+                  <th className="p-3 text-right">PDV</th><th className="p-3 text-right">Invest.</th><th className="p-3 text-right">ROI</th><th className="p-3 text-right">Custo unit.</th><th className="p-3 text-right">Custo prod.</th>
                   <th className="p-3 text-right">Imposto</th><th className="p-3 text-right">Tarifa</th><th className="p-3 text-right">Embal.</th><th className="p-3 text-right">Margem R$</th><th className="p-3 text-right">Margem %</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/70">
-                {visiveis.length === 0 && <tr><td colSpan={13} className="p-6 text-center text-slate-500">Nenhum produto com esse filtro.</td></tr>}
+                {visiveis.length === 0 && <tr><td colSpan={14} className="p-6 text-center text-slate-500">Nenhum produto com esse filtro.</td></tr>}
                 {visiveis.map((p) => {
                   const k = p.idProduto;
                   return (
@@ -270,7 +357,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
                       <tr data-produto={k} onClick={() => setAberto(aberto === k ? null : k)} className="hover:bg-slate-800/40 cursor-pointer">
                         <td className="p-3">
                           <div className="font-bold text-slate-100 whitespace-normal line-clamp-2 max-w-[340px]">{p.produto || "Produto sem nome"}</div>
-                          <div className="text-[10px] text-slate-500">ID {p.idProduto}{p.status === "sem_anuncio" && <span className="ml-2 text-amber-400 font-bold">sem anúncio na planilha</span>}{(p.status === "sem_custo") && <span className="ml-2 text-amber-400 font-bold">sem custo</span>}{p.status === "custo_parcial" && <span className="ml-2 text-amber-400 font-bold">custo parcial ({p.skusComCusto}/{p.skus.length})</span>}</div>
+                          <div className="text-[10px] text-slate-500">ID {p.idProduto}{p.status === "sem_anuncio" && <span className="ml-2 text-amber-400 font-bold">sem anúncio na planilha</span>}{p.status === "sem_custo" && <span className="ml-2 text-amber-400 font-bold">sem custo</span>}{p.custoManual && <span className="ml-2 text-emerald-400 font-bold">custo informado à mão</span>}</div>
                         </td>
                         <td className="p-3 font-mono text-[11px] text-slate-300">{p.sku || "—"}{p.skus.length > 1 && <span className="text-slate-500"> +{p.skus.length - 1}</span>}</td>
                         <td className="p-3 text-right">{NUM(p.pedidos)}</td>
@@ -278,6 +365,13 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
                         <td className="p-3 text-right text-slate-400">{R$(p.pdv)}</td>
                         <td className="p-3 text-right">{R$(p.investimento)}</td>
                         <td className="p-3 text-right">{NUM(p.roiPlataforma)}x</td>
+                        <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
+                          {p.semCustoBase || p.custoManual ? (
+                            <input data-custo-manual={k} inputMode="decimal" placeholder="informar" title={p.custoManual ? "Custo informado à mão" : "Sem custo na base: informe o custo unitário"}
+                              value={editando[k] ?? moedaInput(p.custoManual ? p.custoUnit : 0)} onChange={(e) => mudarCusto(p, e.target.value)} onBlur={() => fecharEdicao(k)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                              className={`w-24 text-right bg-slate-950 border rounded-lg p-1.5 text-xs text-white outline-none focus:border-purple-500 ${p.custoManual ? "border-emerald-700" : "border-amber-700"}`} />
+                          ) : <span className="text-slate-300">{R$(p.custoUnit)}</span>}
+                        </td>
                         <td className="p-3 text-right text-slate-400">{R$(p.custoProduto)}</td>
                         <td className="p-3 text-right text-slate-400">{R$(p.imposto)}</td>
                         <td className="p-3 text-right text-slate-400">{R$(p.tarifa + p.frete)}</td>
@@ -287,8 +381,14 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
                       </tr>
                       {aberto === k && (
                         <tr data-produto-detalhe={k} className="bg-slate-950/60">
-                          <td colSpan={13} className="p-4 whitespace-normal">
-                            <div className="text-[11px] text-slate-400 mb-1">SKUs do vendedor deste anúncio ({p.skus.length}) · custo unitário usado (SKU {p.sku}): <strong className="text-slate-200">{R$(p.custoUnit)}</strong> · custo de afiliados: {R$(p.custoAfiliado)}</div>
+                          <td colSpan={14} className="p-4 whitespace-normal">
+                            <div className="text-[11px] text-slate-400 mb-1">SKUs do vendedor deste anúncio ({p.skus.length}) · custo unitário usado{p.custoManual ? " (informado à mão)" : ` (SKU ${p.sku})`}: <strong className="text-slate-200">{R$(p.custoUnit)}</strong> · custo de afiliados: {R$(p.custoAfiliado)}{cfg.incluirAfiliado ? "" : " (fora do investimento)"}</div>
+                            <div className="flex flex-wrap items-center gap-2 mb-2" onClick={(e) => e.stopPropagation()}>
+                              <label className="text-[11px] text-slate-400">{p.custoManual ? "Custo informado à mão (R$):" : "Informar custo à mão (substitui o da base) (R$):"}</label>
+                              <input data-custo-manual-detalhe={k} inputMode="decimal" placeholder={p.custoBase ? moedaInput(p.custoBase) : "0,00"} value={editando[k] ?? moedaInput(p.custoManual ? p.custoUnit : 0)} onChange={(e) => mudarCusto(p, e.target.value)} onBlur={() => fecharEdicao(k)}
+                                className="w-28 text-right bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-xs text-white outline-none focus:border-purple-500" />
+                              {p.custoManual && <button type="button" onClick={() => mudarCusto(p, "")} className="text-[11px] font-bold text-slate-400 hover:text-white cursor-pointer">Voltar ao custo da base</button>}
+                            </div>
                             <div className="flex flex-wrap gap-1.5">{p.skus.length ? p.skus.map((s) => <span key={s} className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-300">{s}</span>) : <span className="text-[11px] text-amber-400">Nenhum SKU do vendedor encontrado para este ID de produto.</span>}</div>
                           </td>
                         </tr>
