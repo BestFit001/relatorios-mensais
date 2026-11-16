@@ -1,6 +1,7 @@
 "use client";
 // KPIs e variável dos analistas (a planilha "KPI E-C - Equipe Nova" dentro do app, alimentada pelos números do próprio app).
 // O admin vê a equipe toda e configura metas, regras e SKUs fora do cálculo; um analista liberado vê só o painel dos seus canais.
+import { acessoTotal } from "../../lib/perfis";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
@@ -79,7 +80,7 @@ export default function KpiPage() {
     let u: any = null;
     try { u = JSON.parse(localStorage.getItem("usuario_logado") || "null"); } catch { u = null; }
     if (!u?.email) { router.push("/login"); return; }
-    const admin = u.perfil === "admin";
+    const admin = acessoTotal(u.perfil);
     if (!admin && !(u.paginas_permitidas || []).includes("/kpi")) { router.push("/inicio"); return; }   // analista só entra quando o admin libera
     setUsuario({ email: String(u.email).trim().toLowerCase(), admin });
     setPronto(true);

@@ -1,24 +1,28 @@
-// Agenda: quem enxerga qual agenda e a senha de acesso (definida no primeiro acesso e pedida de novo a cada 30 dias).
+// Agenda: 3 agendas por área (E-commerce, Compras, Financeiro). Quem enxerga cada uma é definido por usuário na tela Admin
+// (usuarios_permissoes.agendas); o Admin Geral enxerga todas. A senha é criada no 1º acesso e pedida de novo a cada 30 dias.
 import { supabase } from "./supabase";
 
-export const GESTORA = "gisele@usebestfit.com.br";   // enxerga as 3 agendas
 export const AGENDAS = [
-  { chave: "eduardo", nome: "Eduardo" },
-  { chave: "juliana", nome: "Juliana" },
-  { chave: "felipe", nome: "Felipe" },
+  { chave: "ecommerce", nome: "E-commerce" },
+  { chave: "compras", nome: "Compras" },
+  { chave: "financeiro", nome: "Financeiro" },
 ] as const;
 export type ChaveAgenda = (typeof AGENDAS)[number]["chave"];
+export const nomeDaAgenda = (c: string | null | undefined) => AGENDAS.find((a) => a.chave === c)?.nome || String(c || "");
 export const DIAS_VALIDADE = 30;
 const MIN_SENHA = 6;
 
-const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
-
-/** Agenda a que uma tarefa pertence (pelo primeiro nome do responsável); null = responsável fora das 3 agendas. */
-export function agendaDaTarefa(responsavel: string | null | undefined): ChaveAgenda | null {
-  const r = semAcento(String(responsavel || ""));
-  if (!r) return null;
-  const a = AGENDAS.find((x) => r === x.chave || r.startsWith(x.chave + " "));
+/** Agenda a que uma tarefa pertence (coluna "area"); null = tarefa sem agenda (responsáveis antigos/outros). */
+export function agendaDaTarefa(t: { area?: string | null } | null | undefined): ChaveAgenda | null {
+  const a = AGENDAS.find((x) => x.chave === t?.area);
   return a ? a.chave : null;
+}
+
+/** Agendas que o usuário pode abrir: Admin Geral = todas; os demais = as que o Admin Geral marcou para ele. */
+export function agendasDoUsuario(perfil: string | null | undefined, agendas: unknown): ChaveAgenda[] {
+  if (perfil === "admin") return AGENDAS.map((a) => a.chave);
+  const lista = Array.isArray(agendas) ? agendas : [];
+  return AGENDAS.map((a) => a.chave).filter((c) => lista.includes(c));
 }
 
 async function sha256(texto: string): Promise<string> {
@@ -64,16 +68,3 @@ export function liberadaAgora(email: string): boolean {
 }
 export function registrarLiberacao(email: string) { try { localStorage.setItem(chaveLib(email), String(Date.now())); } catch { /* sem storage: pede a senha de novo */ } }
 export function limparLiberacao(email: string) { try { localStorage.removeItem(chaveLib(email)); } catch { /* ok */ } }
-
-// ---- vínculo agenda <-> e-mail ----
-export async function carregarDonos(): Promise<Record<string, string | null>> {
-  const out: Record<string, string | null> = {};
-  const { data } = await supabase.from("agenda_donos").select("chave, email");
-  for (const r of (data || []) as any[]) out[r.chave] = r.email ? String(r.email).toLowerCase() : null;
-  return out;
-}
-export async function salvarDono(chave: string, email: string): Promise<string | null> {
-  const nome = AGENDAS.find((a) => a.chave === chave)?.nome || chave;
-  const { error } = await supabase.from("agenda_donos").upsert({ chave, nome, email: email.trim().toLowerCase() || null }, { onConflict: "chave" });
-  return error ? "Não consegui salvar o e-mail: " + error.message : null;
-}

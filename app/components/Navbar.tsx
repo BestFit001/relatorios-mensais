@@ -1,4 +1,5 @@
 "use client";
+import { acessoTotal, nomeDoNivel } from "../../lib/perfis";
 import React, { useEffect, useState } from "react";
 import { nomePersonalizado, useNomes } from "../../lib/nomes";
 import Link from "next/link";
@@ -67,8 +68,9 @@ export default function Navbar() {
         const user = JSON.parse(usuarioLogado);
         setEmailUsuario(user.email || "");
         setPerfilUsuario(user.perfil || "compras");
-        if (user.perfil === "admin") {
-          setPaginasPermitidas(ROTAS_DISPONIVEIS.map((r) => r.id));
+        if (acessoTotal(user.perfil)) {
+          // Admin Geral vê tudo; Admin de Área vê tudo menos a tela Admin
+          setPaginasPermitidas(ROTAS_DISPONIVEIS.map((r) => r.id).filter((id) => user.perfil === "admin" || id !== "/admin"));
         } else {
           setPaginasPermitidas(user.paginas_permitidas || ["/"]);
         }
@@ -282,7 +284,7 @@ export default function Navbar() {
               <div className="hub-usuario-info">
                 {nomePersonalizado(emailUsuario) && <div className="hub-usuario-nome">{nomePersonalizado(emailUsuario)}</div>}
                 <div className="hub-usuario-email" data-usuario-email>{emailUsuario || "Utilizador"}</div>
-                <span className="hub-perfil">{perfilUsuario}</span>
+                <span className="hub-perfil">{nomeDoNivel(perfilUsuario)}</span>
               </div>
             </div>
           ) : (

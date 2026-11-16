@@ -1,4 +1,5 @@
 // Vídeos "com problemas" -> correções para os analistas dos canais. Só lógica (sem rede nem tela), para poder testar.
+import { acessoTotal } from "./perfis";
 import { normalizarNomeCanal } from "./vendasCanaisLogica";
 
 export const STATUS_SEM_ESTOQUE = "__sem_estoque";   // chave dentro de clipes_enviados (não é canal)
@@ -24,7 +25,7 @@ export function responsaveisDoCanal(resp: Responsavel[], canal: string): string[
 /** O analista só marca os canais dele; o administrador marca qualquer um. */
 export function podeMarcarCanal(usuario: { email: string; perfil: string } | null, resp: Responsavel[], canal: string): boolean {
   if (!usuario) return false;
-  if (usuario.perfil === "admin") return true;
+  if (acessoTotal(usuario.perfil)) return true;
   return responsaveisDoCanal(resp, canal).includes(email(usuario.email));
 }
 

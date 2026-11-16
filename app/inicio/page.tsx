@@ -1,4 +1,5 @@
 "use client";
+import { acessoTotal } from "../../lib/perfis";
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
@@ -250,7 +251,7 @@ export default function InicioPage() {
     setAnexos(a.data || []);
   };
 
-  const isAdmin = usuario?.perfil === "admin";
+  const isAdmin = acessoTotal(usuario?.perfil);
   const hoje = agoraSP(agora).data;
 
   // ---- Mês (mesma regra do Dashboard)
@@ -274,11 +275,11 @@ export default function InicioPage() {
       const email = String(u.email || "").trim().toLowerCase();
       if (!email) return;
       const atual = mapa.get(email);
-      if (!atual || (u.perfil === "admin" && atual.perfil !== "admin")) mapa.set(email, { email, perfil: String(u.perfil || "") });
+      if (!atual || (acessoTotal(u.perfil) && !acessoTotal(atual.perfil))) mapa.set(email, { email, perfil: String(u.perfil || "") });
     });
     return Array.from(mapa.values()).sort((a, b) => nomeDoEmail(a.email).localeCompare(nomeDoEmail(b.email)));
   }, [usuariosLista]);
-  const analistasNaoAdmin = analistas.filter((a) => a.perfil !== "admin");
+  const analistasNaoAdmin = analistas.filter((a) => !acessoTotal(a.perfil));
 
   const canaisDoEmail = (email: string) => new Set(mapeamentos.filter((m: any) => String(m.email).trim().toLowerCase() === email).map((m: any) => norm(m.canal)));
 

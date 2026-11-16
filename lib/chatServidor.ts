@@ -2,6 +2,7 @@
 // 1) quem é a pessoa: e-mail + senha do chat -> token assinado (HMAC) com validade de 30 dias;
 // 2) se ela participa da conversa: conferido em TODA leitura e gravação;
 // 3) mensagens, imagens (bucket privado, links temporários), grupos, cartões (tarefa, notificação, produto) e limpeza de 7 dias.
+import { acessoTotal } from "./perfis";
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseServidor } from "./concorrentes/servidor";
@@ -274,7 +275,7 @@ const cartaoTarefa = (t: any) => ({
 async function listarTarefas(sb: SupabaseClient, email: string) {
   const u = await usuarioDoApp(sb, email);
   const { data } = await sb.from("home_tarefas").select("id, titulo, descricao, prioridade, data_entrega, hora_entrega, responsavel_email, responsaveis, tipo, ciclo, concluida, criado_por").eq("concluida", false).order("id", { ascending: false }).limit(200);
-  return { tarefas: ((data as any[]) || []).filter((t) => visivelParaMim(t, email, u?.perfil === "admin")).slice(0, 60).map(cartaoTarefa) };
+  return { tarefas: ((data as any[]) || []).filter((t) => visivelParaMim(t, email, acessoTotal(u?.perfil))).slice(0, 60).map(cartaoTarefa) };
 }
 
 // cartão de produto: mensagem só com o SKU (10+ caracteres) ou só com o código pai (4–5 dígitos)
@@ -358,7 +359,7 @@ async function enviar(sb: SupabaseClient, email: string, d: any) {
     const t = (data as any[] | null)?.[0];
     if (!t) erro(404, "Tarefa não encontrada.");
     const u = await usuarioDoApp(sb, email);
-    if (!visivelParaMim(t, email, u?.perfil === "admin")) erro(403, "Você não tem acesso a esta tarefa.");
+    if (!visivelParaMim(t, email, acessoTotal(u?.perfil))) erro(403, "Você não tem acesso a esta tarefa.");
     payload = cartaoTarefa(t);
   } else {
     payload = limparNotificacao(d.payload);
