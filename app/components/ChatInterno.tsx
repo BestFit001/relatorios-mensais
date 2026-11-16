@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNomes } from "../../lib/nomes";
 import { usePathname } from "next/navigation";
 import { supabase } from "../../lib/supabase";
-import { tocarAlerta } from "../../lib/som";
+import { tocarMensagem } from "../../lib/som";
 import { SALA_GERAL_ID, ICONES_GRUPO, MAX_TEXTO, MAX_PDFS_POR_ENVIO, type MensagemChat, type SalaChat, nomeDoEmail, nomeDaSala, pdfDaMensagem, rotuloDia, chaveDia, tamanhoLegivel } from "../../lib/chat";
 import { chatApi, emailLogado, perfilLogado, tokenDoChat, sairDoChat, prepararImagem, validarPdf, type ItemCompartilhado } from "../../lib/chatCliente";
 import ChatMensagem from "./ChatMensagem";
@@ -32,6 +32,9 @@ export default function ChatInterno() {
   const [usuarios, setUsuarios] = useState<string[]>([]);
   const [souAdmin, setSouAdmin] = useState(false);
   const [salaId, setSalaId] = useState<string | null>(null);
+  // avisos que sobem na tela quando chega mensagem (um por conversa), até a pessoa abrir a conversa ou fechar
+  type AvisoMsg = { id: string; titulo: string; de: string; texto: string; icone: string; qtd: number };
+  const [avisosMsg, setAvisosMsg] = useState<AvisoMsg[]>([]);
   const [msgs, setMsgs] = useState<MensagemChat[]>([]);
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -73,7 +76,7 @@ export default function ChatInterno() {
   }, [aberto, telaCheia]);
 
   // ---------- sessão
-  const aoExpirar = useCallback(() => { setFase("pin"); setSalas([]); setMsgs([]); setSalaId(null); prevNaoLidas.current = null; }, []);
+  const aoExpirar = useCallback(() => { setAvisosMsg([]); setFase("pin"); setSalas([]); setMsgs([]); setSalaId(null); prevNaoLidas.current = null; }, []);
   useEffect(() => { window.addEventListener("chat:sessao-expirada", aoExpirar); return () => window.removeEventListener("chat:sessao-expirada", aoExpirar); }, [aoExpirar]);
 
   useEffect(() => {
@@ -100,8 +103,19 @@ export default function ChatInterno() {
     if (!prev) return;
     const vendo = vivo.current.aberto && !document.hidden ? vivo.current.salaId : null;
     const novas = lista.filter((s) => s.nao_lidas > (prev[s.id] || 0) && s.id !== vendo);
+    // some o aviso de quem já foi lido ou está aberto; os demais ficam
+    setAvisosMsg((l) => l.filter((a) => a.id !== vendo && (agora[a.id] || 0) > 0));
     if (novas.length === 0) return;
-    tocarAlerta(1);
+    setAvisosMsg((l) => {
+      const resto = l.filter((a) => !novas.some((s) => s.id === a.id));
+      // em conversa direta o título já é a pessoa, por isso "de" só aparece em grupo e no Geral
+      const novos = novas.map((s): AvisoMsg => ({
+        id: s.id, titulo: nomeDaSala(s, vivo.current.email), de: s.tipo !== "dm" && s.ultima ? nomeDoEmail(s.ultima.de) : "", texto: s.ultima?.texto || "Nova mensagem",
+        icone: s.tipo === "grupo" ? (s.icone || "👥") : s.tipo === "geral" ? "💬" : "👤", qtd: s.nao_lidas,
+      }));
+      return [...resto, ...novos].slice(-4);
+    });
+    tocarMensagem();
     try {
       if (document.hidden && "Notification" in window && Notification.permission === "granted") {
         const s = novas[0];
@@ -192,6 +206,17 @@ export default function ChatInterno() {
   }, []);
 
   const mostrarAviso = (t: string) => { setAviso(t); setTimeout(() => setAviso(""), 3500); };
+
+  // título da aba piscando enquanto há aviso e a aba está em segundo plano
+  useEffect(() => {
+    if (!avisosMsg.length) return;
+    const original = document.title;
+    let alterna = false;
+    const i = setInterval(() => { alterna = !alterna; document.title = document.hidden && alterna ? "💬 Nova mensagem no chat" : original; }, 1000);
+    return () => { clearInterval(i); document.title = original; };
+  }, [avisosMsg.length]);
+  const abrirAviso = (id: string) => { setAvisosMsg((l) => l.filter((a) => a.id !== id)); setAberto(true); setModal(null); abrirSala(id); };
+  const fecharAviso = (id: string) => setAvisosMsg((l) => l.filter((a) => a.id !== id));
 
   // ---------- enviar
   const enviarMsg = async (idSala: string, corpo: any): Promise<boolean> => {
@@ -613,6 +638,26 @@ export default function ChatInterno() {
       {imagemGrande && (
         <div className="fixed inset-0 z-[9500] bg-black/85 flex items-center justify-center p-4 cursor-zoom-out" onClick={() => setImagemGrande(null)} data-chat-lightbox>
           <img src={imagemGrande} alt="imagem ampliada" className="max-h-[92vh] max-w-[94vw] rounded-lg" />
+        </div>
+      )}
+
+      {avisosMsg.length > 0 && !(aberto && telaCheia) && (
+        <div data-chat-avisos className={`fixed right-5 z-[9400] flex flex-col gap-2 w-[min(22rem,calc(100vw-2.5rem))] ${aberto ? "top-4" : "bottom-24"}`}>
+          {avisosMsg.map((a) => (
+            <div key={a.id} data-chat-aviso={a.id} role="alert" className="chat-aviso-sobe flex items-start gap-3 rounded-2xl border border-indigo-400/60 bg-slate-900 p-3.5 shadow-2xl shadow-black/60">
+              <button type="button" onClick={() => abrirAviso(a.id)} data-chat-aviso-abrir className="flex flex-1 min-w-0 items-start gap-3 text-left cursor-pointer">
+                <span className="w-10 h-10 shrink-0 rounded-full bg-indigo-600/30 border border-indigo-500/50 flex items-center justify-center text-xl">{a.icone}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-black text-white truncate">{a.titulo}{a.qtd > 1 && <span className="ml-2 align-middle rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-black">{a.qtd} novas</span>}</span>
+                  {a.de && <span className="block text-[11px] font-bold text-indigo-300 truncate">{a.de}</span>}
+                  <span className="block text-xs text-slate-300 line-clamp-2 break-words">{a.texto}</span>
+                  <span className="block text-[10px] font-bold text-indigo-300 mt-1">Clique para responder</span>
+                </span>
+              </button>
+              <button type="button" onClick={() => fecharAviso(a.id)} data-chat-aviso-fechar aria-label="Dispensar aviso" className="text-slate-500 hover:text-white text-sm leading-none cursor-pointer">✕</button>
+            </div>
+          ))}
+          <style>{`@keyframes chatAvisoSobe{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}.chat-aviso-sobe{animation:chatAvisoSobe .35s ease-out}@media (prefers-reduced-motion:reduce){.chat-aviso-sobe{animation:none}}`}</style>
         </div>
       )}
 
