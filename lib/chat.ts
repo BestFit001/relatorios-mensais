@@ -5,6 +5,7 @@ export const DIAS_HISTORICO = 7;
 export const MAX_TEXTO = 2000;
 export const MAX_PDF_BYTES = 10 * 1024 * 1024;
 export const MAX_PDFS_POR_ENVIO = 10;
+export const MAX_FIXADAS = 3;   // conversas fixadas por pessoa (como no WhatsApp)
 
 export type TipoMsg = "texto" | "imagem" | "tarefa" | "notificacao" | "produto";
 export type MensagemChat = {
@@ -12,7 +13,7 @@ export type MensagemChat = {
 };
 export type SalaChat = {
   id: string; tipo: "geral" | "dm" | "grupo"; nome: string | null; criado_em: string;
-  membros: { email: string; papel: "admin" | "membro" }[]; nao_lidas: number; ultima: { texto: string; de: string; em: string } | null;
+  membros: { email: string; papel: "admin" | "membro" }[]; nao_lidas: number; fixada_em: string | null; ultima: { texto: string; de: string; em: string } | null;
 };
 
 /** PDF enviado no chat (ex.: etiquetas): vai como mensagem de texto com anexo e este bloco em payload.pdf. Quem recebe marca "conferido" e a mensagem fica verde para todos. */

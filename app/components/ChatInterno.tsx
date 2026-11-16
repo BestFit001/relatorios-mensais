@@ -323,6 +323,13 @@ export default function ChatInterno() {
   if (!email || pathname === "/login") return null;
 
   const Badge = ({ n }: { n: number }) => (n > 0 ? <span data-chat-badge className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shrink-0">{n > 99 ? "99+" : n}</span> : null);
+  const fixar = async (s: SalaChat, fixarAgora: boolean) => {
+    setErro("");
+    const r = await chatApi("fixar", { sala_id: s.id, fixar: fixarAgora });
+    if (!r.ok) return setErro(r.erro || "Não consegui fixar a conversa.");
+    setSalas((l) => l.map((x) => (x.id === s.id ? { ...x, fixada_em: fixarAgora ? new Date().toISOString() : null } : x)).sort((a, b) => (a.fixada_em ? 0 : 1) - (b.fixada_em ? 0 : 1)));
+    carregarSalas();
+  };
   const iconeSala = (s: SalaChat) => (s.tipo === "geral" ? "📢" : s.tipo === "grupo" ? "👥" : "👤");
   const itemCls = (ativo: boolean) => `w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 cursor-pointer transition ${ativo ? "bg-indigo-600/25 text-white" : "text-slate-300 hover:bg-slate-800/70"}`;
   const modalCls = "absolute inset-0 z-20 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4";
@@ -365,17 +372,22 @@ export default function ChatInterno() {
               <div className={`${salaId ? "hidden sm:flex" : "flex"} w-full ${telaCheia ? "sm:w-80" : "sm:w-60"} shrink-0 border-r border-slate-800 flex-col bg-slate-950/50`}>
                 <div className="p-2 flex gap-2">
                   <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar conversa ou pessoa..." data-chat-busca className={inputCls + " !py-1.5 !text-[11px]"} />
-                  <button type="button" onClick={() => { setModal("grupo"); setErro(""); }} data-chat-novo-grupo title="Novo grupo" className="shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-2.5 rounded-xl cursor-pointer">👥+</button>
+                </div>
+                <div className="px-2 pb-2">
+                  <button type="button" onClick={() => { setModal("grupo"); setErro(""); }} data-chat-novo-grupo title="Criar um grupo com várias pessoas" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold py-1.5 rounded-xl cursor-pointer">👥 Novo grupo</button>
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   {conversasFiltradas.map((s) => (
-                    <button key={s.id} type="button" data-chat-sala={s.tipo === "geral" ? "geral" : s.id} data-chat-nome={nomeDaSala(s, email)} onClick={() => abrirSala(s.id)} className={itemCls(salaId === s.id)}>
+                    <div key={s.id} className="relative group" data-chat-item data-fixada={s.fixada_em ? "sim" : "nao"}>
+                    <button type="button" data-chat-sala={s.tipo === "geral" ? "geral" : s.id} data-chat-nome={nomeDaSala(s, email)} onClick={() => abrirSala(s.id)} className={itemCls(salaId === s.id)}>
                       <span className="min-w-0">
                         <span className="flex items-center gap-1.5 font-bold truncate">{s.tipo === "dm" ? <Avatar email={s.membros.find((x) => x.email !== email)?.email || ""} tamanho={22} /> : <span>{iconeSala(s)}</span>}<span className="truncate">{nomeDaSala(s, email)}</span></span>
                         {s.ultima && <span className="block text-[10px] text-slate-500 truncate">{s.ultima.de === email ? "Você: " : s.tipo !== "dm" ? nomeDoEmail(s.ultima.de).split(" ")[0] + ": " : ""}{s.ultima.texto}</span>}
                       </span>
-                      <Badge n={s.nao_lidas} />
+                      <span className="flex items-center gap-1 shrink-0">{s.fixada_em && <span data-chat-icone-fixada title="Conversa fixada" className="text-[11px]">📌</span>}<Badge n={s.nao_lidas} /></span>
                     </button>
+                    <button type="button" data-chat-fixar-lista={s.tipo === "geral" ? "geral" : s.id} onClick={() => fixar(s, !s.fixada_em)} title={s.fixada_em ? "Desafixar" : "Fixar no topo"} aria-label={s.fixada_em ? "Desafixar conversa" : "Fixar conversa no topo"} className="absolute right-1 top-1 hidden group-hover:block bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[10px] rounded-md px-1.5 py-0.5 cursor-pointer">{s.fixada_em ? "Desafixar" : "📌 Fixar"}</button>
+                    </div>
                   ))}
                   {pessoasSemDm.length > 0 && <p className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase text-slate-500">Iniciar conversa</p>}
                   {pessoasSemDm.map((u) => (
@@ -399,6 +411,7 @@ export default function ChatInterno() {
                         <p className="text-xs font-bold text-slate-100 truncate" data-chat-titulo>{iconeSala(sala)} {nomeDaSala(sala, email)}</p>
                         {sala.tipo === "grupo" && <span className="text-[10px] text-slate-500">{sala.membros.length} membros</span>}
                         {sala.tipo === "geral" && <span className="text-[10px] text-slate-500">todos do sistema</span>}
+                        <button type="button" data-chat-fixar onClick={() => fixar(sala, !sala.fixada_em)} title={sala.fixada_em ? "Desafixar do topo" : "Fixar no topo da lista"} className={`text-[11px] font-bold cursor-pointer shrink-0 ml-1 ${sala.fixada_em ? "text-amber-300 hover:text-amber-200" : "text-slate-400 hover:text-white"}`}>{sala.fixada_em ? "📌 Fixada" : "📌 Fixar"}</button>
                       </div>
                       {pdfsPendentes > 0 && <span data-chat-pdfs-pendentes className="text-[10px] font-bold text-amber-300 bg-amber-950/50 border border-amber-800/60 rounded-full px-2 py-0.5 shrink-0">📄 {pdfsPendentes} PDF{pdfsPendentes > 1 ? "s" : ""} a conferir</span>}
                       {sala.tipo === "grupo" && <button type="button" onClick={() => setModal("membros")} data-chat-membros className="text-[11px] font-bold text-indigo-300 hover:text-indigo-200 cursor-pointer shrink-0">Membros</button>}

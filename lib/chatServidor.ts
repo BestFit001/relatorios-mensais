@@ -6,7 +6,7 @@ import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseServidor } from "./concorrentes/servidor";
 import { normalizarSkuPai } from "./skuPai";
-import { encurtarUrls, MAX_PDF_BYTES } from "./chat";
+import { encurtarUrls, MAX_FIXADAS, MAX_PDF_BYTES } from "./chat";
 import { extrairUrls, montarCartaoLink } from "./linkPreview";
 import { canalTemCadastro, normalizarNomeCanal } from "./vendasCanaisLogica";
 
@@ -112,7 +112,7 @@ const resumoDoTipo = (m: any): string =>
 
 async function listarSalas(sb: SupabaseClient, email: string) {
   await garantirGeral(sb, email);
-  const { data: mem } = await sb.from("chat_membros").select("sala_id, lido_ate, papel").eq("email", email);
+  const { data: mem } = await sb.from("chat_membros").select("sala_id, lido_ate, papel, fixada_em").eq("email", email);
   const meus = (mem as any[]) || [];
   const ids = meus.map((m) => m.sala_id);
   const [{ data: salas }, { data: msgs }, { data: membros }, usuarios, u] = await Promise.all([
@@ -123,6 +123,7 @@ async function listarSalas(sb: SupabaseClient, email: string) {
     usuarioDoApp(sb, email),
   ]);
   const lido = new Map(meus.map((m) => [m.sala_id, new Date(m.lido_ate).getTime()]));
+  const fixadaEm = new Map<string, string | null>(meus.map((m) => [m.sala_id, m.fixada_em || null]));
   const porSala = new Map<string, any[]>();
   ((msgs as any[]) || []).forEach((m) => { const l = porSala.get(m.sala_id); if (l) l.push(m); else porSala.set(m.sala_id, [m]); });
   const lista = ((salas as any[]) || []).map((s) => {
@@ -131,11 +132,12 @@ async function listarSalas(sb: SupabaseClient, email: string) {
     return {
       id: s.id, tipo: s.tipo, nome: s.nome, criado_em: s.criado_em,
       membros: ((membros as any[]) || []).filter((x) => x.sala_id === s.id).map((x) => ({ email: x.email, papel: x.papel })),
+      fixada_em: fixadaEm.get(s.id) || null,
       nao_lidas: ms.filter((m) => m.de_email !== email && new Date(m.criado_em).getTime() > (lido.get(s.id) || 0)).length,
       ultima: ultima ? { texto: resumoDoTipo(ultima), de: ultima.de_email, em: ultima.criado_em } : null,
       ordem: ultima ? ultima.criado_em : s.criado_em,
     };
-  }).sort((a, b) => String(b.ordem).localeCompare(String(a.ordem)));
+  }).sort((a, b) => (a.fixada_em ? 0 : 1) - (b.fixada_em ? 0 : 1) || String(b.ordem).localeCompare(String(a.ordem)));   // fixadas primeiro; depois a mais recente
   return { salas: lista, usuarios, sou_admin: u?.perfil === "admin" };
 }
 
@@ -222,6 +224,19 @@ async function lerMensagens(sb: SupabaseClient, email: string, d: any) {
   const lista = ((data as any[]) || []);
   if (!depois) lista.reverse();
   return { mensagens: await comLinks(sb, lista) };
+}
+
+/** Fixa ou solta uma conversa no topo da lista (só para quem fixou; até MAX_FIXADAS). */
+async function fixarConversa(sb: SupabaseClient, email: string, d: any) {
+  const id = await exigirMembro(sb, d.sala_id, email);
+  if (d.fixar) {
+    const { data } = await sb.from("chat_membros").select("sala_id, fixada_em").eq("email", email);
+    const ja = ((data as any[]) || []).filter((r) => r.fixada_em).map((r) => r.sala_id);
+    if (!ja.includes(id) && ja.length >= MAX_FIXADAS) erro(400, `Você já fixou ${MAX_FIXADAS} conversas. Solte uma para fixar outra.`);
+  }
+  const { error } = await sb.from("chat_membros").update({ fixada_em: d.fixar ? new Date().toISOString() : null }).eq("sala_id", id).eq("email", email);
+  if (error) erro(500, "Não consegui fixar: " + error.message);
+  return { ok: true };
 }
 
 async function marcarLido(sb: SupabaseClient, email: string, d: any) {
@@ -446,6 +461,7 @@ export async function tratarChat(acao: string, d: any, token: string | null): Pr
     switch (acao) {
       case "salas": corpo = await listarSalas(sb, email); break;
       case "mensagens": corpo = await lerMensagens(sb, email, d); break;
+      case "fixar": corpo = await fixarConversa(sb, email, d); break;
       case "ler": corpo = await marcarLido(sb, email, d); break;
       case "enviar": corpo = await enviar(sb, email, d); break;
       case "excluir": corpo = await excluirMensagem(sb, email, d); break;
