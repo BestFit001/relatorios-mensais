@@ -10,9 +10,11 @@ import { numeroBR } from "../../lib/adsImport";
 import { carregarBudgetCanal, carregarSaldoAds, definirSaldoAds, diasDeSaldoMisto, fixarReferenciaLives, gastoTotalPorCanal, projetarCompartilhado, projetarMes, registrarRecargaAds, salvarBudgetCanal, saldoAtualAds, situacaoBudget, type Projecao, type SaldoAds, type SituacaoBudget } from "../../lib/adsSaldo";
 import { ehMercadoLivre } from "../../lib/adsMlDb";
 
-export type CanalProjecao = { canal: string; invAtual: number; totFatAtual: number; budgetSugerido?: number };
+/** Dados do retorno dos anúncios do canal (da tabela de Ads): receita atribuída, margem líquida (já depois do anúncio) e investido, no mês e no anterior. */
+export type RetornoCanal = { fatAds: number; margem: number; inv: number; fatAdsAnt: number; margemAnt: number; invAnt: number };
+export type CanalProjecao = { canal: string; invAtual: number; totFatAtual: number; budgetSugerido?: number; retorno?: RetornoCanal };
 /** Lives do TikTok: custo do Adsense das lives (planilha enviada na aba Lives) e faturamento das vendas de lives no mês. */
-export type LivesProjecao = { gasto: number; faturamento: number };
+export type LivesProjecao = { gasto: number; faturamento: number; margem?: number };   // margem = líquido das vendas de lives − custo do Adsense das lives
 export const NOME_LIVES = "TikTok Lives";
 const CHAVE_EXCLUIDOS = "ads_proj_canais_excluidos";
 
@@ -22,6 +24,7 @@ type Linha = {
   recarga: number | null; dura: number | null; // recarga: a parte do próprio quadrante (a soma Shop + Lives só aparece no quadro do topo); dura: no TikTok, Shop + Lives juntos
   budget?: number | null; sit?: SituacaoBudget | null; budgetSugerido?: number;
   contaSaldo: boolean;                        // o saldo compartilhado entra uma vez só nos totais
+  ret?: RetornoCanal | null;                  // base do ROAS/ROI (null = sem dados de retorno)
 };
 
 const R$ = (v: number) => (v < 0 ? "-R$ " : "R$ ") + Math.abs(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -29,6 +32,19 @@ const NUM1 = (v: number) => (v || 0).toLocaleString("pt-BR", { minimumFractionDi
 const dataCurta = (d: Date) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
 /** Valor em reais digitado à mão: "2.000" é dois mil (e não dois), "2.000,50" e "2000,5" também valem. */
 const dinheiroBR = (t: string): number => (/^\d{1,3}(\.\d{3})+$/.test(t.trim()) ? Number(t.trim().replace(/\./g, "")) : numeroBR(t));
+/** ROAS = receita ÷ investido (x). ROI = margem líquida ÷ investido (%). ROAS de equilíbrio = receita ÷ (margem antes do anúncio): abaixo dele o anúncio dá prejuízo. */
+export function retornoDoCanal(r: RetornoCanal | null | undefined, fator: number) {
+  if (!r || !(r.inv > 0)) return null;
+  const antes = r.margem + r.inv;   // margem antes de descontar o anúncio
+  return {
+    roas: r.fatAds / r.inv, roi: (r.margem / r.inv) * 100,
+    roasEq: antes > 0 && r.fatAds > 0 ? r.fatAds / antes : null,
+    fatPrev: r.fatAds * fator, lucroPrev: r.margem * fator,
+    roasAnt: r.invAnt > 0 ? r.fatAdsAnt / r.invAnt : null, roiAnt: r.invAnt > 0 ? (r.margemAnt / r.invAnt) * 100 : null,
+  };
+}
+const PCT1 = (v: number) => `${v < 0 ? "-" : ""}${Math.abs(v).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+const ROASX = (v: number) => `${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`;
 const quando = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? "" : `${dataCurta(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
 export default function ProjecaoAds({ mes, canais, lives = null, solo = false }: { mes: string; canais: CanalProjecao[]; lives?: LivesProjecao | null; solo?: boolean }) {
@@ -90,7 +106,7 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
       if (ehMercadoLivre(c.canal)) {
         const proj = projetarMes({ gasto: c.invAtual, faturamento: c.totFatAtual, mes, hoje, diasOverride: diasNum, saldo: null });
         const b = budgets[c.canal] ?? null;
-        lista.push({ tipo: "ml", canal: c.canal, invAtual: c.invAtual, totFatAtual: c.totFatAtual, proj, saldo: null, recarga: null, dura: null, budget: b, sit: b !== null ? situacaoBudget({ budget: b, gasto: c.invAtual, proj }) : null, budgetSugerido: c.budgetSugerido, contaSaldo: false });
+        lista.push({ ret: c.retorno || null, tipo: "ml", canal: c.canal, invAtual: c.invAtual, totFatAtual: c.totFatAtual, proj, saldo: null, recarga: null, dura: null, budget: b, sit: b !== null ? situacaoBudget({ budget: b, gasto: c.invAtual, proj }) : null, budgetSugerido: c.budgetSugerido, contaSaldo: false });
         continue;
       }
       const ehTT = c.canal === canalTT && !!lives;
@@ -100,15 +116,15 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
         const comp = projetarCompartilhado([proj, projLives], saldo);
         const duraMista = saldo === null ? null : saldo <= 0 ? 0 : diasDeSaldoMisto(saldo, hoje, proj.ritmoDia, projLives.ritmoDia);
         const parteLivesRec = comp.recargaSugerida === null ? null : comp.falta > 0 ? comp.recargaSugerida * (projLives.faltaGastar / comp.falta) : 0;
-        lista.push({ tipo: "ads", canal: c.canal, invAtual: c.invAtual, totFatAtual: c.totFatAtual, proj, saldo, recarga: comp.recargaSugerida === null ? null : comp.recargaSugerida - (parteLivesRec || 0), dura: duraMista, contaSaldo: true });
-      } else lista.push({ tipo: "ads", canal: c.canal, invAtual: c.invAtual, totFatAtual: c.totFatAtual, proj, saldo, recarga: proj.recargaSugerida, dura: proj.saldoSuficienteAte, contaSaldo: true });
+        lista.push({ ret: c.retorno || null, tipo: "ads", canal: c.canal, invAtual: c.invAtual, totFatAtual: c.totFatAtual, proj, saldo, recarga: comp.recargaSugerida === null ? null : comp.recargaSugerida - (parteLivesRec || 0), dura: duraMista, contaSaldo: true });
+      } else lista.push({ ret: c.retorno || null, tipo: "ads", canal: c.canal, invAtual: c.invAtual, totFatAtual: c.totFatAtual, proj, saldo, recarga: proj.recargaSugerida, dura: proj.saldoSuficienteAte, contaSaldo: true });
     }
     if (lives && projLives) {
       const comp = projetarCompartilhado(projShop ? [projShop, projLives] : [projLives], saldoTT);
       const duraMista = saldoTT === null ? null : saldoTT <= 0 ? 0 : diasDeSaldoMisto(saldoTT, hoje, projShop?.ritmoDia || 0, projLives.ritmoDia);
       // cada quadrante mostra a própria recarga: o total (Shop + Lives) fica só no quadro do topo
       const parte = comp.recargaSugerida !== null && comp.falta > 0 ? comp.recargaSugerida * (projLives.faltaGastar / comp.falta) : comp.recargaSugerida === null ? null : 0;
-      lista.push({ tipo: "lives", canal: NOME_LIVES, invAtual: gastoLives, totFatAtual: lives.faturamento, proj: projLives, saldo: saldoTT, recarga: parte, dura: duraMista, contaSaldo: !shopSelecionado });
+      lista.push({ ret: lives.margem !== undefined ? { fatAds: lives.faturamento, margem: lives.margem, inv: gastoLives, fatAdsAnt: 0, margemAnt: 0, invAnt: 0 } : null, tipo: "lives", canal: NOME_LIVES, invAtual: gastoLives, totFatAtual: lives.faturamento, proj: projLives, saldo: saldoTT, recarga: parte, dura: duraMista, contaSaldo: !shopSelecionado });
     }
     return lista;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,6 +137,10 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
     recarga: t.recarga + (l.recarga || 0), saldo: t.saldo + (l.contaSaldo ? l.saldo || 0 : 0), semSaldo: t.semSaldo + (l.contaSaldo && l.tipo !== "ml" && l.saldo === null ? 1 : 0),
   }), { gasto: 0, previsto: 0, recarga: 0, saldo: 0, semSaldo: 0 });
   const totML = mls.reduce((t, l) => ({ budget: t.budget + (l.budget || 0), ultrapassou: t.ultrapassou + (l.sit?.ultrapassou || 0), vaiPassar: t.vaiPassar + (l.sit?.previstoUltrapassa || 0), sem: t.sem + (l.budget === null ? 1 : 0) }), { budget: 0, ultrapassou: 0, vaiPassar: 0, sem: 0 });
+
+  // ROAS/ROI geral dos canais marcados: soma das receitas, margens e investimentos de cada canal (as Lives entram como mais um canal)
+  const totRet = linhas.reduce((t, l) => (l.ret && l.ret.inv > 0 ? { fat: t.fat + l.ret.fatAds, margem: t.margem + l.ret.margem, inv: t.inv + l.ret.inv, fatAnt: t.fatAnt + l.ret.fatAdsAnt, margemAnt: t.margemAnt + l.ret.margemAnt, invAnt: t.invAnt + l.ret.invAnt, n: t.n + 1 } : t), { fat: 0, margem: 0, inv: 0, fatAnt: 0, margemAnt: 0, invAnt: 0, n: 0 });
+  const retGeral = totRet.inv > 0 ? retornoDoCanal({ fatAds: totRet.fat, margem: totRet.margem, inv: totRet.inv, fatAdsAnt: totRet.fatAnt, margemAnt: totRet.margemAnt, invAnt: totRet.invAnt }, 1) : null;
 
   const falha = (canal: string, texto: string) => setMsg((m) => ({ ...m, [canal]: { tipo: "erro", texto } }));
   const sucesso = (canal: string, texto: string) => setMsg((m) => ({ ...m, [canal]: { tipo: "ok", texto } }));
@@ -177,6 +197,30 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
       {linha("Ads previsto no mês", R$(l.proj.adsProjetadoMes), "data-proj-previsto", "text-indigo-300")}
     </>
   );
+  const blocoRetorno = (l: Linha) => {
+    const fator = l.proj.diasDecorridos > 0 ? l.proj.diasMes / l.proj.diasDecorridos : 1;
+    const r = retornoDoCanal(l.ret, l.proj.encerrado ? 1 : fator);
+    if (!r) return <p className="text-[11px] text-slate-500 mt-3" data-proj-sem-retorno>ROAS e ROI: sem anúncios com investimento enviados neste mês.</p>;
+    const dROAS = r.roasAnt !== null ? r.roas - r.roasAnt : null, dROI = r.roiAnt !== null ? r.roi - r.roiAnt : null;
+    const abaixo = r.roasEq !== null && r.roas < r.roasEq;
+    return (
+      <div className="mt-3 pt-3 border-t border-slate-700/70" data-proj-retorno>
+        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Retorno dos anúncios {l.tipo === "lives" ? "(lives)" : ""}</p>
+        {linha(l.tipo === "lives" ? "Faturamento das lives" : "Receita dos anúncios até agora", R$(l.ret!.fatAds), "data-proj-fat-ads")}
+        {linha("Margem líquida (já depois do anúncio)", R$(l.ret!.margem), "data-proj-margem", l.ret!.margem >= 0 ? "text-emerald-300" : "text-rose-400")}
+        {linha("ROAS (receita ÷ investido)", <>{ROASX(r.roas)}{dROAS !== null && <span className={`ml-2 text-[10px] ${dROAS >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{dROAS >= 0 ? "▲" : "▼"} {ROASX(Math.abs(dROAS))} vs mês anterior</span>}</>, "data-proj-roas", "text-indigo-300")}
+        {linha("ROI (margem ÷ investido)", <>{PCT1(r.roi)}{dROI !== null && <span className={`ml-2 text-[10px] ${dROI >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{dROI >= 0 ? "▲" : "▼"} {PCT1(Math.abs(dROI))} vs mês anterior</span>}</>, "data-proj-roi", r.roi >= 0 ? "text-emerald-300" : "text-rose-400")}
+        {linha("ROAS de equilíbrio (abaixo dele dá prejuízo)", r.roasEq === null ? "—" : ROASX(r.roasEq), "data-proj-roas-eq", abaixo ? "text-rose-400" : "text-slate-200")}
+        {l.proj.encerrado ? null : (
+          <>
+            {linha("Receita dos anúncios prevista no mês", R$(r.fatPrev), "data-proj-fat-ads-prev")}
+            {linha("Lucro previsto no mês (após anúncio)", R$(r.lucroPrev), "data-proj-lucro-prev", r.lucroPrev >= 0 ? "text-emerald-300" : "text-rose-400")}
+          </>
+        )}
+        {abaixo && <p className="text-[10px] text-rose-300 mt-1" data-proj-alerta-roas>O ROAS está abaixo do equilíbrio: os anúncios estão custando mais do que a margem que geram.</p>}
+      </div>
+    );
+  };
   const msgCanal = (canal: string) => msg[canal] && <p data-proj-msg={canal} className={`text-[11px] font-bold mt-2 ${msg[canal].tipo === "ok" ? "text-emerald-400" : "text-rose-400"}`}>{msg[canal].texto}</p>;
 
   return (
@@ -224,6 +268,13 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
             {mls.length > 0 && card("Mercado Livre acima do budget", R$(totML.ultrapassou), totML.sem > 0 ? `${totML.sem} canal(is) sem budget informado` : totML.vaiPassar > 0 ? `+ ${R$(totML.vaiPassar)} previstos até o fim do mês` : "dentro do budget no ritmo atual", totML.ultrapassou > 0 ? "text-rose-300" : "text-emerald-300", "data-proj-total-ml-excesso")}
           </div>
 
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5" data-proj-retorno-total>
+            {card("ROAS geral", retGeral ? ROASX(retGeral.roas) : "—", retGeral ? `receita dos anúncios ${R$(totRet.fat)} ÷ investido ${R$(totRet.inv)}` : "sem anúncios com investimento nos canais marcados", "text-indigo-300", "data-proj-total-roas")}
+            {card("ROI geral", retGeral ? PCT1(retGeral.roi) : "—", retGeral ? `margem líquida ${R$(totRet.margem)} ÷ investido` : "margem ÷ investido em anúncios", retGeral && retGeral.roi < 0 ? "text-rose-400" : "text-emerald-300", "data-proj-total-roi")}
+            {card("Lucro previsto no mês", retGeral ? R$(linhas.reduce((t, l) => { const rr = retornoDoCanal(l.ret, l.proj.encerrado || !(l.proj.diasDecorridos > 0) ? 1 : l.proj.diasMes / l.proj.diasDecorridos); return t + (rr?.lucroPrev || 0); }, 0)) : "—", "margem após anúncios, no ritmo atual", "text-emerald-300", "data-proj-total-lucro-prev")}
+            {card("ROAS de equilíbrio geral", retGeral && retGeral.roasEq !== null ? ROASX(retGeral.roasEq) : "—", retGeral && retGeral.roasEq !== null ? (retGeral.roas >= retGeral.roasEq ? "ROAS atual está acima do equilíbrio" : "ROAS atual está abaixo do equilíbrio") : "receita ÷ margem antes do anúncio", retGeral && retGeral.roasEq !== null && retGeral.roas < retGeral.roasEq ? "text-rose-400" : "text-slate-200", "data-proj-total-roas-eq")}
+          </div>
+
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {linhas.map((l) => {
               if (l.tipo === "ml") {
@@ -246,6 +297,7 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
                     {linha("Ads previsto no mês (manter o crescimento)", R$(l.proj.adsProjetadoMes), "data-proj-previsto", "text-indigo-300")}
                     {linha("Previsto acima do budget", !sit ? "—" : R$(sit.previstoUltrapassa), "data-proj-prev-acima", sit && sit.previstoUltrapassa > 0 ? "text-amber-300" : "text-slate-200")}
                     {linha(l.proj.encerrado ? "Falta gastar" : `Dá para gastar por dia (${l.proj.diasRestantes} dia(s))`, !sit ? "—" : l.proj.encerrado ? R$(l.proj.faltaGastar) : sit.cabePorDia === null ? "—" : `${R$(sit.cabePorDia)}/dia`, "data-proj-cabe-dia")}
+                    {blocoRetorno(l)}
                     <div className="mt-4">
                       <label className={rotuloCampo}>Budget do mês</label>
                       <div className="flex flex-wrap gap-2">
@@ -277,6 +329,8 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
                   {linha(compartilhado ? `Saldo atual (${canalTT} + Lives)` : "Saldo atual", l.saldo === null ? "não informado" : R$(l.saldo), "data-proj-saldo", l.saldo === null ? "text-slate-500" : l.saldo <= 0 ? "text-rose-400" : "text-emerald-300")}
                   {linha(compartilhado ? "Saldo dura (os dois juntos)" : "Saldo dura", l.saldo === null ? "—" : l.dura === null ? "sem gasto no mês" : l.saldo <= 0 ? "acabou" : `${NUM1(l.dura)} dia(s)${acabaEm && !l.proj.encerrado && l.dura < l.proj.diasRestantes ? ` · até ${dataCurta(acabaEm)}` : ""}`, "data-proj-dura")}
                   {linha(compartilhado ? `Recarga sugerida (${l.tipo === "lives" ? "TikTok Lives" : canalTT})` : "Recarga sugerida", l.recarga === null ? "informe o saldo" : R$(l.recarga), "data-proj-recarga", l.recarga ? "text-amber-300" : "text-slate-200")}
+
+                  {blocoRetorno(l)}
 
                   {l.tipo === "ads" ? (
                     <>
@@ -313,6 +367,7 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
               );
             })}
           </div>
+          <p className="text-[10px] text-slate-500 mt-4" data-proj-legenda-retorno>ROAS = receita dos anúncios ÷ investido. ROI = margem líquida ÷ investido (a margem já vem depois de custo do produto, imposto, tarifa, frete e do próprio anúncio). ROAS de equilíbrio = receita ÷ (margem + investido): abaixo dele o anúncio dá prejuízo. Previsto = valor até agora ÷ dias considerados × dias do mês. As Lives entram com o faturamento delas e o custo do Adsense das lives.</p>
           <p className="text-[10px] text-slate-500 mt-4" data-proj-legenda>Ads previsto = gasto até agora ÷ dias considerados × dias do mês. Recarga sugerida = o que ainda falta gastar no mês − saldo atual (zero se o saldo já cobre); no TikTok o saldo é um só: a recarga total é o que falta no Shop e nas Lives menos o saldo, repartida entre os dois quadrantes pelo que cada um ainda vai gastar (a soma aparece no quadro do topo). Lives: a média e a projeção contam só segunda a sexta. Saldo atual = saldo informado + recargas − o que as planilhas novas gastaram depois dele. Mercado Livre: ultrapassou = gasto − budget do mês; previsto acima do budget = gasto projetado no ritmo atual − budget.</p>
         </>
       )}

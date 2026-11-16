@@ -435,7 +435,7 @@ export default function MapeamentoPage() {
         {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} onCadastrarVarios={registrarCadastros} paraExclusao={paraExclusao} paiManual={paiManual} onEditarPai={editarPai} />}
 
         {/* ═════════════ SUB-ABA: SKUs PARA EXCLUSÃO ═════════════ */}
-        {subAba === "exclusao" && <SkusParaExclusao itens={itens} visiveis={visiveis} paraExclusao={paraExclusao} loading={loading} />}
+        {subAba === "exclusao" && <SkusParaExclusao itens={itens} visiveis={visiveis} paraExclusao={paraExclusao} loading={loading} paiManual={paiManual} />}
 
         {/* ═════════════ SUB-ABA: GRÁFICOS ═════════════ */}
         {subAba === "graficos" && (

@@ -313,6 +313,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
       let margemRsAtual = itensA.reduce((sum, i) => sum + Number(i.margem_liquida_rs || 0), 0);
       let invAtual = itensA.reduce((sum, i) => sum + Number(i.investimento || 0), 0);
 
+      const fatAdsBase = fatAdsAtual, margemBase = margemRsAtual;   // só dos anúncios (sem as Lives): a projeção mostra as Lives à parte
       if (isTikTok && livesAtualRaw) {
         const livesMesAtual = livesAtualRaw.filter(l => verificarDataNoPeriodo(l.data_venda, mesSelecionado));
         const repasseLivesAtual = livesMesAtual.reduce((sum, l) => sum + Number(l.repasse || 0), 0);
@@ -364,7 +365,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
       const roiAnt = invAnt > 0 ? (margemRsAnt / invAnt) * 100 : null;
 
       return {
-        canal, fatAdsAtual, fatAdsAnt, diffAds, roasAtual, roasAnt, invAtual, invAnt, roiAtual, roiAnt,
+        canal, fatAdsBase, margemBase, fatAdsAtual, fatAdsAnt, diffAds, roasAtual, roasAnt, invAtual, invAnt, roiAtual, roiAnt,
         tacosAtual, tacosAnt, margemRsAtual, margemRsAnt, diffMargemRs,
         totFatAtual, totFatAnt, fatAutoAtual: fatAutoAtual > 0 ? fatAutoAtual : fatLegadoAtual, fatManualAtual,
         gastoAuto, gastoManual, gastoEfetivo, repAds
@@ -377,7 +378,8 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
     const livesMes = (livesAtualRaw || []).filter((l: any) => verificarDataNoPeriodo(l.data_venda, mesSelecionado));
     const custoLives = (metricasLivesRaw || []).reduce((t: number, m: any) => t + Number(m.custo_total || 0), 0);
     const fatLives = livesMes.reduce((t: number, l: any) => t + (l.valor_pago !== null && l.valor_pago !== undefined ? Number(l.valor_pago) : Number(l.repasse)) || 0, 0);
-    setLivesProj(livesMes.length > 0 || custoLives > 0 ? { gasto: custoLives, faturamento: fatLives } : null);
+    const liquidezLives = livesMes.reduce((t: number, l: any) => t + Number(l.liquidez || 0), 0);
+    setLivesProj(livesMes.length > 0 || custoLives > 0 ? { gasto: custoLives, faturamento: fatLives, margem: liquidezLives - custoLives } : null);
     setAtualizadoEm(new Date()); ultimaAtualizacao.current = Date.now();
     setLoading(false);
   };
@@ -1295,7 +1297,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
               </div>
             </div>
             {loading ? <p className="p-8 text-center text-slate-400">A processar projeção...</p> : (
-              <ProjecaoAds solo mes={mesSelecionado} lives={livesProj} canais={dadosComparativo.map((d) => ({ canal: d.canal, invAtual: d.gastoEfetivo || 0, totFatAtual: d.totFatAtual || 0, budgetSugerido: (d.totFatAnt * metaTacosGlobal) / 100 }))} />
+              <ProjecaoAds solo mes={mesSelecionado} lives={livesProj} canais={dadosComparativo.map((d) => ({ canal: d.canal, invAtual: d.gastoEfetivo || 0, totFatAtual: d.totFatAtual || 0, budgetSugerido: (d.totFatAnt * metaTacosGlobal) / 100, retorno: { fatAds: d.fatAdsBase || 0, margem: d.margemBase || 0, inv: d.invAtual || 0, fatAdsAnt: d.fatAdsAnt || 0, margemAnt: d.margemRsAnt || 0, invAnt: d.invAnt || 0 } }))} />
             )}
           </div>
         )}
