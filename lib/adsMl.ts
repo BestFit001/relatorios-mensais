@@ -77,6 +77,8 @@ export function numML(v: any): number {
 }
 const norm = (v: any) => String(v ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 const mlbDe = (v: any) => String(v ?? "").trim().toUpperCase();
+/** Identifica a campanha pelo nome (sem acento/maiúscula). Sem nome na planilha = uma campanha só, "sem-campanha". */
+export const chaveCampanha = (nome: any): string => norm(nome) || "sem-campanha";
 
 function acharCabecalho(linhas: any[][], chave: string): number {
   for (let i = 0; i < Math.min(linhas.length, 15); i++) if ((linhas[i] || []).some((c) => norm(c).startsWith(chave))) return i;
@@ -235,11 +237,17 @@ export type AnaliseML = {
   tot: { investimento: number; receita: number; receitaDir: number; receitaInd: number; unidades: number; liquidez: number; roas: number; roi: number | null; acos: number | null; semCusto: number; semCadastro: number; semVendaMlb: number };
   haloTot: { un: number; rec: number; lucroAntesAds: number; mlbs: number };
   porAcao: Record<Acao, { n: number; investimento: number; liquidez: number }>;
-  semCruzamento: boolean;       // sem a planilha de vendas: usa as colunas da planilha de patrocinados
+  semCruzamento: boolean;       // nenhuma campanha tem planilha de vendas: usa as colunas da planilha de patrocinados
+  campanhasSemVendas: string[]; // campanhas (nomes) cujos anúncios ainda não foram cruzados, quando outras já foram
 };
 
 export function analisarML(anuncios: AnuncioPat[], vendas: VendaPat[] | null, ctx: Contexto, cfg: CfgRecomendacao): AnaliseML {
   const patrocinados = new Set(anuncios.map((a) => a.mlb));
+  // Cada campanha tem a sua planilha de vendas: um anúncio só é cruzado se a campanha dele já tem vendas enviadas (as outras usam as colunas da planilha de patrocinados)
+  const chavesVendas = new Set((vendas || []).map((v) => chaveCampanha(v.campanha)));
+  const patsVendas = new Set((vendas || []).map((v) => v.pat));
+  const nomesBatem = anuncios.some((a) => chavesVendas.has(chaveCampanha(a.campanha)));   // se os nomes não batem em nenhum, vale a planilha de vendas para todos
+  const coberto = (a: AnuncioPat) => !!vendas && vendas.length > 0 && (chavesVendas.has(chaveCampanha(a.campanha)) || patsVendas.has(a.mlb) || !nomesBatem);
   const temVendas = !!vendas;
   const porPat = new Map<string, VendaPat[]>();
   for (const v of vendas || []) porPat.set(v.pat, [...(porPat.get(v.pat) || []), v]);
@@ -247,7 +255,8 @@ export function analisarML(anuncios: AnuncioPat[], vendas: VendaPat[] | null, ct
 
   const lista: AnaliseAnuncio[] = anuncios.map((a) => {
     // sem a planilha de vendas: aproveita o que a de patrocinados já traz (direta e indireta pelo custo do próprio anúncio)
-    const linhas: { vend: string; titulo: string; un: number; rec: number }[] = temVendas
+    const comVendas = temVendas && coberto(a);
+    const linhas: { vend: string; titulo: string; un: number; rec: number }[] = comVendas
       ? (porPat.get(a.mlb) || []).map((v) => ({ vend: v.vend, titulo: v.tituloVend, un: v.un, rec: v.rec }))
       : [{ vend: a.mlb, titulo: a.titulo, un: a.vendasDir + a.vendasInd, rec: a.recDir + a.recInd || a.receita }].filter((l) => l.un > 0 || l.rec > 0);
     const itens: ItemVendido[] = linhas.map((l) => {
@@ -255,7 +264,7 @@ export function analisarML(anuncios: AnuncioPat[], vendas: VendaPat[] | null, ct
       const direta = l.vend === a.mlb;
       const conta = contaDaVenda(l.rec, l.un, r);
       const patr = patrocinados.has(l.vend);
-      if (temVendas && !direta && !patr) {
+      if (comVendas && !direta && !patr) {
         const h = haloMap.get(l.vend) || { mlb: l.vend, titulo: l.titulo, un: 0, rec: 0, sku: r.sku, semCusto: r.semCusto, semCadastro: r.semCadastro, conta: zero(), patrocinadores: [] };
         h.un += l.un; h.rec += l.rec; h.conta = somarConta(h.conta, conta);
         h.patrocinadores.push({ mlb: a.mlb, titulo: a.titulo, un: l.un, rec: l.rec });
@@ -274,7 +283,7 @@ export function analisarML(anuncios: AnuncioPat[], vendas: VendaPat[] | null, ct
     const rec = recomendar({ status: a.status, investimento: a.investimento, receitaTotal, liquidez, roi, roas, unidades }, cfg);
     return {
       ...a, unidades, receitaTotal, roas, acos: receitaTotal > 0 ? (a.investimento / receitaTotal) * 100 : null, roi, margemPct: receitaTotal > 0 ? (liquidez / receitaTotal) * 100 : null,
-      conta, liquidez, liquidezDireta: liqDir, liquidezIndireta: liqInd, itens, semVendas: itens.length === 0, semCruzamento: !temVendas,
+      conta, liquidez, liquidezDireta: liqDir, liquidezIndireta: liqInd, itens, semVendas: itens.length === 0, semCruzamento: !comVendas,
       semCusto: itens.some((i) => i.semCusto), acao: rec.acao, motivo: rec.motivo,
     };
   }).sort((x, y) => y.liquidez - x.liquidez);
@@ -294,23 +303,65 @@ export function analisarML(anuncios: AnuncioPat[], vendas: VendaPat[] | null, ct
   lista.forEach((a) => { const p = porAcao[a.acao]; p.n++; p.investimento += a.investimento; p.liquidez += a.liquidez; });
   const halo = Array.from(haloMap.values()).sort((x, y) => y.conta.lucroAntesAds - x.conta.lucroAntesAds);
   return {
-    anuncios: lista, halo, tot, porAcao, semCruzamento: !temVendas,
+    anuncios: lista, halo, tot, porAcao, semCruzamento: lista.length > 0 && lista.every((a) => a.semCruzamento),
+    campanhasSemVendas: lista.some((a) => !a.semCruzamento) ? Array.from(new Set(lista.filter((a) => a.semCruzamento).map((a) => a.campanha || "Sem nome"))) : [],
     haloTot: { un: halo.reduce((t, h) => t + h.un, 0), rec: halo.reduce((t, h) => t + h.rec, 0), lucroAntesAds: halo.reduce((t, h) => t + h.conta.lucroAntesAds, 0), mlbs: halo.length },
   };
 }
 
 // ---------- resumo guardado para o "Atual vs anterior" ----------
-export type ResumoAnuncio = { mlb: string; t: string; inv: number; rec: number; liq: number; un: number; acao: Acao };
+// O anterior é guardado POR CAMPANHA (uma "peça" por campanha): reenviar a campanha troca só a peça dela; as outras ficam como estão.
+export type ResumoAnuncio = { mlb: string; t: string; inv: number; rec: number; liq: number; un: number; acao: Acao; c?: string };   // c = chave da campanha
+export type PecaResumo = { chave: string; nome: string; mes: string; arquivo: string; importadoEm: string; periodo: Periodo; comVendas: boolean; haloUn: number; haloRec: number };
 export type ResumoML = {
   mes: string; arquivo: string; importadoEm: string; periodo: Periodo; comVendas: boolean;
   tot: { inv: number; rec: number; liq: number; roi: number | null; roas: number; un: number; haloUn: number; haloRec: number };
   anuncios: ResumoAnuncio[];
+  pecas?: PecaResumo[];            // ausente nos resumos antigos (um só bloco)
 };
-export function resumirAnalise(a: AnaliseML, meta: { mes: string; arquivo: string; importadoEm: string; periodo: Periodo }): ResumoML {
-  const r2 = (n: number) => Number((n || 0).toFixed(2));
+const r2 = (n: number) => Number((n || 0).toFixed(2));
+export const CHAVE_LEGADO = "__antigo";
+
+/** Resumo de UMA campanha (a análise precisa ter sido feita só com os anúncios e vendas dela). */
+export function resumirCampanha(a: AnaliseML, meta: { chave: string; nome: string; mes: string; arquivo: string; importadoEm: string; periodo: Periodo }): { peca: PecaResumo; anuncios: ResumoAnuncio[] } {
   return {
-    ...meta, comVendas: !a.semCruzamento,
-    tot: { inv: r2(a.tot.investimento), rec: r2(a.tot.receita), liq: r2(a.tot.liquidez), roi: a.tot.roi === null ? null : Number(a.tot.roi.toFixed(2)), roas: Number(a.tot.roas.toFixed(4)), un: a.tot.unidades, haloUn: a.haloTot.un, haloRec: r2(a.haloTot.rec) },
-    anuncios: a.anuncios.map((x) => ({ mlb: x.mlb, t: x.titulo, inv: r2(x.investimento), rec: r2(x.receitaTotal), liq: r2(x.liquidez), un: x.unidades, acao: x.acao })),
+    peca: { ...meta, comVendas: !a.semCruzamento, haloUn: a.haloTot.un, haloRec: r2(a.haloTot.rec) },
+    anuncios: a.anuncios.map((x) => ({ mlb: x.mlb, t: x.titulo, inv: r2(x.investimento), rec: r2(x.receitaTotal), liq: r2(x.liquidez), un: x.unidades, acao: x.acao, c: meta.chave })),
+  };
+}
+
+/** Peças de um resumo (os antigos viram uma peça só). */
+export function pecasDoResumo(r: ResumoML | null): PecaResumo[] {
+  if (!r) return [];
+  if (r.pecas && r.pecas.length) return r.pecas;
+  return [{ chave: CHAVE_LEGADO, nome: "Relatório anterior", mes: r.mes, arquivo: r.arquivo, importadoEm: r.importadoEm, periodo: r.periodo, comVendas: r.comVendas, haloUn: r.tot.haloUn, haloRec: r.tot.haloRec }];
+}
+
+/** Junta as peças novas ao anterior que já existe: a peça da mesma campanha é trocada, as demais ficam. */
+export function mesclarAnterior(atual: ResumoML | null, novas: { peca: PecaResumo; anuncios: ResumoAnuncio[] }[]): ResumoML | null {
+  const chavesNovas = new Set(novas.map((n) => n.peca.chave));
+  const mantidas = pecasDoResumo(atual).filter((p) => !chavesNovas.has(p.chave));
+  const anunciosMantidos = (atual?.anuncios || []).filter((x) => !chavesNovas.has(x.c || CHAVE_LEGADO) && mantidas.some((p) => p.chave === (x.c || CHAVE_LEGADO)));
+  const pecas = [...mantidas, ...novas.map((n) => n.peca)];
+  const anuncios = [...anunciosMantidos, ...novas.flatMap((n) => n.anuncios)];
+  if (!pecas.length) return null;
+  return construirResumo(pecas, anuncios);
+}
+/** Tira uma campanha do anterior. */
+export function removerDoAnterior(atual: ResumoML | null, chave: string): ResumoML | null {
+  if (!atual) return null;
+  const pecas = pecasDoResumo(atual).filter((p) => p.chave !== chave);
+  if (!pecas.length) return null;
+  return construirResumo(pecas, atual.anuncios.filter((x) => (x.c || CHAVE_LEGADO) !== chave));
+}
+function construirResumo(pecas: PecaResumo[], anuncios: ResumoAnuncio[]): ResumoML {
+  const inv = anuncios.reduce((t, x) => t + x.inv, 0), rec = anuncios.reduce((t, x) => t + x.rec, 0), liq = anuncios.reduce((t, x) => t + x.liq, 0);
+  const recente = [...pecas].sort((a, b) => String(b.importadoEm).localeCompare(String(a.importadoEm)))[0];
+  const inis = pecas.map((p) => p.periodo.ini).filter(Boolean) as string[], fins = pecas.map((p) => p.periodo.fim).filter(Boolean) as string[];
+  return {
+    mes: recente.mes, arquivo: pecas.length > 1 ? `${pecas.length} campanhas` : recente.arquivo, importadoEm: recente.importadoEm,
+    periodo: { ini: inis.length ? inis.sort()[0] : null, fim: fins.length ? fins.sort().reverse()[0] : null }, comVendas: pecas.every((p) => p.comVendas),
+    tot: { inv: r2(inv), rec: r2(rec), liq: r2(liq), roi: inv > 0 ? Number(((liq / inv) * 100).toFixed(2)) : null, roas: inv > 0 ? Number((rec / inv).toFixed(4)) : 0, un: anuncios.reduce((t, x) => t + x.un, 0), haloUn: pecas.reduce((t, p) => t + p.haloUn, 0), haloRec: r2(pecas.reduce((t, p) => t + p.haloRec, 0)) },
+    anuncios, pecas,
   };
 }

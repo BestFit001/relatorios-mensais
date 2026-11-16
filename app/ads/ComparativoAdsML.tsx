@@ -1,15 +1,17 @@
 "use client";
 // Mercado Livre > Atual vs anterior: compara o relatório em vigor com o anterior, anúncio a anúncio (investimento, retorno, liquidez).
-// Só o atual e um resumo do anterior ficam guardados.
+// Por campanha: compara cada campanha em vigor com o envio anterior DELA; campanhas novas entram na lista sem desequilibrar os totais.
 import React, { useMemo, useState } from "react";
 import { useDadosML } from "./useDadosML";
+import { CHAVE_LEGADO, chaveCampanha, pecasDoResumo, type AnaliseAnuncio, type ResumoAnuncio } from "../../lib/adsMl";
+import { campanhasDoAtual } from "../../lib/adsMlDb";
 import { NUM, PCT, R$, ROAS, dataBR, quando } from "./fmtML";
 
-type Linha = { mlb: string; titulo: string; situacao: "melhorou" | "piorou" | "estavel" | "novo" | "saiu"; invAnt: number; invAtu: number; recAnt: number; recAtu: number; liqAnt: number; liqAtu: number; dLiq: number };
-const ROTULO = { melhorou: "↑ Melhorou", piorou: "↓ Piorou", estavel: "= Estável", novo: "★ Novo no Ads", saiu: "✕ Saiu do Ads" } as const;
+type Linha = { mlb: string; titulo: string; situacao: "melhorou" | "piorou" | "estavel" | "novo" | "saiu" | "semant"; invAnt: number; invAtu: number; recAnt: number; recAtu: number; liqAnt: number; liqAtu: number; dLiq: number };
+const ROTULO = { melhorou: "↑ Melhorou", piorou: "↓ Piorou", estavel: "= Estável", novo: "★ Novo no Ads", saiu: "✕ Saiu do Ads", semant: "• Campanha sem anterior" } as const;
 const COR = {
   melhorou: "bg-emerald-950/60 text-emerald-300 border-emerald-800", piorou: "bg-rose-950/60 text-rose-300 border-rose-800", estavel: "bg-slate-800 text-slate-300 border-slate-700",
-  novo: "bg-sky-950/60 text-sky-300 border-sky-800", saiu: "bg-amber-950/50 text-amber-300 border-amber-800",
+  novo: "bg-sky-950/60 text-sky-300 border-sky-800", saiu: "bg-amber-950/50 text-amber-300 border-amber-800", semant: "bg-slate-800 text-slate-300 border-slate-600",
 } as const;
 const sinal = (v: number) => (v > 0.005 ? "+" : "");
 const cor = (v: number) => (v > 0.005 ? "text-emerald-400" : v < -0.005 ? "text-rose-400" : "text-slate-400");
@@ -18,24 +20,46 @@ export default function ComparativoAdsML({ canal }: { canal: string }) {
   const { atual, anterior, analise, carregando } = useDadosML(canal);
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState<"todos" | Linha["situacao"]>("todos");
+  const [campFiltro, setCampFiltro] = useState<string>("todas");
   const [ordem, setOrdem] = useState<"variacao" | "queda" | "investimento">("variacao");
   const [porPagina, setPorPagina] = useState(10);
   const [pag, setPag] = useState(1);
 
-  const { linhas, cont } = useMemo(() => {
-    const cont = { melhorou: 0, piorou: 0, estavel: 0, novo: 0, saiu: 0 };
-    if (!analise || !anterior) return { linhas: [] as Linha[], cont };
-    const ant = new Map(anterior.anuncios.map((a) => [a.mlb, a]));
-    const atu = new Map(analise.anuncios.map((a) => [a.mlb, a]));
+  // campanhas: as em vigor, as que têm envio anterior e as comparáveis (nas duas listas)
+  const escopo = useMemo(() => {
+    const emVigor = campanhasDoAtual(atual);
+    const pecas = pecasDoResumo(anterior);
+    const legado = pecas.length === 1 && pecas[0].chave === CHAVE_LEGADO;
+    const chavesAnt = new Set(pecas.map((p) => p.chave));
+    const comparaveis = legado ? emVigor.map((c) => c.chave) : emVigor.filter((c) => chavesAnt.has(c.chave)).map((c) => c.chave);
+    const novas = legado ? [] : emVigor.filter((c) => !chavesAnt.has(c.chave));
+    const semNovoEnvio = legado ? [] : pecas.filter((p) => !emVigor.some((c) => c.chave === p.chave));
+    const ativas = campFiltro === "todas" ? comparaveis : comparaveis.filter((k) => k === campFiltro);
+    return { emVigor, legado, comparaveis, novas, semNovoEnvio, ativas };
+  }, [atual, anterior, campFiltro]);
+
+  const { linhas, cont, antEsc, atuEsc } = useMemo(() => {
+    const cont = { melhorou: 0, piorou: 0, estavel: 0, novo: 0, saiu: 0, semant: 0 };
+    if (!analise || !anterior) return { linhas: [] as Linha[], cont, antEsc: [] as ResumoAnuncio[], atuEsc: [] as AnaliseAnuncio[] };
+    const ativas = new Set(escopo.ativas);
+    const chAnt = (a: { c?: string }) => (escopo.legado ? CHAVE_LEGADO : a.c || CHAVE_LEGADO);
+    const antEsc = anterior.anuncios.filter((a) => escopo.legado || ativas.has(chAnt(a)));
+    const atuEsc = analise.anuncios.filter((a) => escopo.legado || ativas.has(chaveCampanha(a.campanha)));
+    // linhas: o que está nas campanhas comparadas + os anúncios das campanhas novas (aparecem como "novo no Ads")
+    const novasChaves = new Set(escopo.novas.map((c) => c.chave));
+    const extras = campFiltro === "todas" ? analise.anuncios.filter((a) => novasChaves.has(chaveCampanha(a.campanha))) : campFiltro && novasChaves.has(campFiltro) ? analise.anuncios.filter((a) => chaveCampanha(a.campanha) === campFiltro) : [];
+    const extraSet = new Set(extras.map((a) => a.mlb));
+    const ant = new Map(antEsc.map((a) => [a.mlb, a]));
+    const atu = new Map([...atuEsc, ...extras].map((a) => [a.mlb, a]));
     const ls: Linha[] = Array.from(new Set([...ant.keys(), ...atu.keys()])).map((mlb) => {
       const a = ant.get(mlb), b = atu.get(mlb);
       const liqAnt = a?.liq || 0, liqAtu = b?.liquidez || 0, dLiq = liqAtu - liqAnt;
-      const situacao: Linha["situacao"] = !a ? "novo" : !b ? "saiu" : Math.abs(dLiq) < 0.5 ? "estavel" : dLiq > 0 ? "melhorou" : "piorou";
+      const situacao: Linha["situacao"] = !a ? (extraSet.has(mlb) ? "semant" : "novo") : !b ? "saiu" : Math.abs(dLiq) < 0.5 ? "estavel" : dLiq > 0 ? "melhorou" : "piorou";
       cont[situacao]++;
       return { mlb, titulo: b?.titulo || a?.t || mlb, situacao, invAnt: a?.inv || 0, invAtu: b?.investimento || 0, recAnt: a?.rec || 0, recAtu: b?.receitaTotal || 0, liqAnt, liqAtu, dLiq };
     });
-    return { linhas: ls, cont };
-  }, [analise, anterior]);
+    return { linhas: ls, cont, antEsc, atuEsc };
+  }, [analise, anterior, escopo, campFiltro]);
 
   const visiveis = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -47,7 +71,11 @@ export default function ComparativoAdsML({ canal }: { canal: string }) {
   if (!atual || !analise) return <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center text-sm text-slate-500">Nenhum relatório do Mercado Livre enviado. Envie as planilhas na sub-aba Campanhas.</div>;
   if (!anterior) return <div data-sem-anterior className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center text-sm text-slate-400">Ainda não há relatório anterior para comparar. Quando você enviar uma nova planilha de anúncios patrocinados de outro período, o relatório em vigor ({atual.mes}) passa a ser o anterior e esta tela mostra a diferença.</div>;
 
-  const t = analise.tot, a = anterior.tot;
+  const soma = <T,>(l: T[], f: (x: T) => number) => l.reduce((n, x) => n + f(x), 0);
+  const aInv = soma(antEsc, (x) => x.inv), aRec = soma(antEsc, (x) => x.rec), aLiq = soma(antEsc, (x) => x.liq);
+  const tInv = soma(atuEsc, (x) => x.investimento), tRec = soma(atuEsc, (x) => x.receitaTotal), tLiq = soma(atuEsc, (x) => x.liquidez);
+  const a = { inv: aInv, rec: aRec, liq: aLiq, roas: aInv > 0 ? aRec / aInv : 0, roi: aInv > 0 ? (aLiq / aInv) * 100 : null as number | null };
+  const t = { investimento: tInv, receita: tRec, liquidez: tLiq, roas: tInv > 0 ? tRec / tInv : 0, roi: tInv > 0 ? (tLiq / tInv) * 100 : null as number | null };
   const dRoi = (t.roi ?? 0) - (a.roi ?? 0);
   const quad = (titulo: string, ant: string, atu: string, delta: string, c: string) => (
     <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
@@ -63,6 +91,19 @@ export default function ComparativoAdsML({ canal }: { canal: string }) {
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
         <h2 className="text-lg font-bold text-white">🔄 Atual vs anterior — {canal}</h2>
         <p className="text-xs text-slate-400 mt-1 mb-5">Atual: <strong className="text-slate-200">{atual.mes}</strong> ({dataBR(atual.pads.periodo.ini)} a {dataBR(atual.pads.periodo.fim)}, enviado em {quando(atual.pads.importadoEm)}) · Anterior: <strong className="text-slate-200">{anterior.mes}</strong> ({dataBR(anterior.periodo.ini)} a {dataBR(anterior.periodo.fim)}, enviado em {quando(anterior.importadoEm)}).{!analise.semCruzamento === !anterior.comVendas ? "" : " Um dos relatórios está sem a planilha de vendas, então a liquidez não é totalmente comparável."}</p>
+        {(escopo.emVigor.length > 1 || escopo.novas.length > 0 || escopo.semNovoEnvio.length > 0) && (
+          <div className="mb-4 space-y-2" data-campanhas-cmp-ml>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Campanha</span>
+              <select data-filtro-campanha value={campFiltro} onChange={(e) => { setCampFiltro(e.target.value); setPag(1); setFiltro("todos"); }} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
+                <option value="todas">Todas as comparáveis ({escopo.comparaveis.length})</option>
+                {escopo.emVigor.map((c) => <option key={c.chave} value={c.chave}>{c.nome}{escopo.novas.some((n) => n.chave === c.chave) ? " (sem anterior)" : ""}</option>)}
+              </select>
+            </div>
+            {escopo.novas.length > 0 && <p data-aviso-novas-cmp className="text-[11px] text-sky-300 bg-sky-950/20 border border-sky-900/40 rounded-xl p-2.5">Sem envio anterior para comparar: <strong>{escopo.novas.map((c) => c.nome).join(", ")}</strong>. Os anúncios aparecem na lista, mas ficam fora dos totais abaixo até a campanha ser enviada de novo com outro período.</p>}
+            {escopo.semNovoEnvio.length > 0 && <p data-aviso-sem-envio-cmp className="text-[11px] text-slate-400 bg-slate-950 border border-slate-800 rounded-xl p-2.5">Sem novo envio (fora da comparação): <strong>{escopo.semNovoEnvio.map((p) => p.nome).join(", ")}</strong>.</p>}
+          </div>
+        )}
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3" data-cards-cmp-ml>
           {quad("Investimento", R$(a.inv), R$(t.investimento), `${sinal(t.investimento - a.inv)}${R$(t.investimento - a.inv)}`, cor(-(t.investimento - a.inv)))}
           {quad("Retorno", R$(a.rec), R$(t.receita), `${sinal(t.receita - a.rec)}${R$(t.receita - a.rec)}`, cor(t.receita - a.rec))}

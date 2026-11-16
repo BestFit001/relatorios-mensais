@@ -1,7 +1,7 @@
 "use client";
 // Análise dos anúncios patrocinados do Mercado Livre (ROI, ROAS, liquidez e recomendação) e as vendas que vieram sem patrocínio.
 import React, { useMemo, useState } from "react";
-import type { Acao, AnaliseAnuncio } from "../../lib/adsMl";
+import { chaveCampanha, type Acao, type AnaliseAnuncio } from "../../lib/adsMl";
 import { useDadosML } from "./useDadosML";
 import { NUM, ORDEM_ACOES, PCT, R$, ROAS, ROTULO_ACAO, dataBR } from "./fmtML";
 
@@ -42,14 +42,16 @@ export default function AnaliseAdsML({ canal, visao }: Props) {
   const [porPagina, setPorPagina] = useState(10);
   const [pag, setPag] = useState(1);
   const [aberto, setAberto] = useState<string | null>(null);
+  const [campanha, setCampanha] = useState<string>("todas");
 
   const lista = useMemo(() => {
     if (!analise) return [] as AnaliseAnuncio[];
     const q = busca.trim().toLowerCase();
-    const f = analise.anuncios.filter((a) => (acao === "todas" || a.acao === acao) && (!q || a.titulo.toLowerCase().includes(q) || a.mlb.toLowerCase().includes(q) || a.itens.some((i) => i.sku.toLowerCase().includes(q))));
+    const f = analise.anuncios.filter((a) => (acao === "todas" || a.acao === acao) && (campanha === "todas" || chaveCampanha(a.campanha) === campanha) && (!q || a.titulo.toLowerCase().includes(q) || a.mlb.toLowerCase().includes(q) || a.itens.some((i) => i.sku.toLowerCase().includes(q))));
     const v: Record<string, (a: AnaliseAnuncio) => number> = { liquidez: (a) => a.liquidez, roi: (a) => a.roi ?? -1e9, roas: (a) => a.roas, investimento: (a) => a.investimento, receita: (a) => a.receitaTotal, indireta: (a) => a.liquidezIndireta };
     return [...f].sort((x, y) => v[ordem](y) - v[ordem](x));
-  }, [analise, busca, acao, ordem]);
+  }, [analise, busca, acao, ordem, campanha]);
+  const campanhas = useMemo(() => { const m = new Map<string, string>(); (analise?.anuncios || []).forEach((a) => m.set(chaveCampanha(a.campanha), a.campanha || "Sem nome")); return Array.from(m.entries()); }, [analise]);
 
   const [buscaHalo, setBuscaHalo] = useState("");
   const halo = useMemo(() => {
@@ -163,6 +165,12 @@ export default function AnaliseAdsML({ canal, visao }: Props) {
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <input data-busca-ml value={busca} onChange={(e) => { setBusca(e.target.value); setPag(1); }} placeholder="Buscar título, MLB ou SKU…" className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none focus:border-purple-500 w-64" />
+          {campanhas.length > 1 && (
+            <select data-filtro-campanha-ml value={campanha} onChange={(e) => { setCampanha(e.target.value); setPag(1); }} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer">
+              <option value="todas">Todas as campanhas ({campanhas.length})</option>
+              {campanhas.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+            </select>
+          )}
           <select data-ordem-ml value={ordem} onChange={(e) => { setOrdem(e.target.value as any); setPag(1); }} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer">
             <option value="liquidez">Ordenar: maior liquidez</option><option value="roi">Ordenar: maior ROI</option><option value="roas">Ordenar: maior ROAS</option>
             <option value="investimento">Ordenar: maior investimento</option><option value="receita">Ordenar: maior retorno</option><option value="indireta">Ordenar: mais vendas indiretas</option>
