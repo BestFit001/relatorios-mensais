@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import Avatar from "./Avatar";
-import { type MensagemChat, horaSP, nomeDoEmail, rotaDaNotificacao, rotuloDoLink, URL_NO_TEXTO } from "../../lib/chat";
+import { type MensagemChat, horaSP, nomeDoEmail, pdfDaMensagem, rotaDaNotificacao, rotuloDoLink, tamanhoLegivel, URL_NO_TEXTO } from "../../lib/chat";
 
 const chip = "px-1.5 py-0.5 rounded text-[10px] font-bold border";
 
@@ -110,8 +110,36 @@ function CartaoNotificacao({ p, abrir }: { p: any; abrir: () => void }) {
   );
 }
 
-export default function ChatMensagem({ m, minha, mostrarNome, onImagem, onImagemErro, onExcluir }: {
-  m: MensagemChat; minha: boolean; mostrarNome: boolean; onImagem: (url: string) => void; onImagemErro: () => void; onExcluir: (id: string) => void;
+/** PDF (ex.: etiquetas): abre em outra aba e tem o "check" de conferido; conferido deixa a mensagem toda verde para todo mundo. */
+function CartaoPdf({ m, pdf, minha, meuEmail, onConferir }: { m: MensagemChat; pdf: NonNullable<ReturnType<typeof pdfDaMensagem>>; minha: boolean; meuEmail: string; onConferir: (id: string, marcar: boolean) => void }) {
+  const conferido = !!pdf.conferido_em;
+  const podeDesfazer = conferido && (minha || (pdf.conferido_por || "").toLowerCase() === meuEmail.toLowerCase());
+  return (
+    <div className="w-60 sm:w-72 space-y-2 my-1" data-chat-pdf data-conferido={conferido ? "1" : "0"}>
+      <div className="flex items-start gap-2">
+        <span className="text-2xl leading-none" aria-hidden>📄</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold leading-snug break-words" data-pdf-nome>{pdf.nome}</p>
+          <p className="text-[10px] opacity-70">PDF{pdf.tamanho ? ` · ${tamanhoLegivel(pdf.tamanho)}` : ""}</p>
+        </div>
+      </div>
+      {m.anexo_url
+        ? <a href={m.anexo_url} target="_blank" rel="noopener noreferrer" data-pdf-abrir className="block text-center text-[11px] font-bold rounded-lg py-1.5 bg-black/25 hover:bg-black/40 no-underline text-inherit">Abrir PDF ↗</a>
+        : <p className="text-[11px] italic opacity-70">arquivo indisponível</p>}
+      {!conferido ? (
+        <button type="button" onClick={() => onConferir(m.id, true)} data-pdf-conferir className="w-full text-[11px] font-bold rounded-lg py-1.5 border border-white/40 hover:bg-white/15 cursor-pointer">☐ Marcar como conferido</button>
+      ) : (
+        <div className="flex items-center justify-between gap-2 text-[11px] font-bold rounded-lg py-1.5 px-2 bg-black/20" data-pdf-conferido-info>
+          <span>✅ Conferido{pdf.conferido_por ? ` por ${nomeDoEmail(pdf.conferido_por).split(" ")[0]}` : ""}{pdf.conferido_em ? ` às ${horaSP(pdf.conferido_em)}` : ""}</span>
+          {podeDesfazer && <button type="button" onClick={() => onConferir(m.id, false)} data-pdf-desfazer className="text-[10px] underline opacity-80 hover:opacity-100 cursor-pointer shrink-0">desfazer</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function ChatMensagem({ m, minha, meuEmail, mostrarNome, onImagem, onImagemErro, onExcluir, onConferir }: {
+  m: MensagemChat; minha: boolean; meuEmail: string; mostrarNome: boolean; onImagem: (url: string) => void; onImagemErro: () => void; onExcluir: (id: string) => void; onConferir: (id: string, marcar: boolean) => void;
 }) {
   const router = useRouter();
   const [confirmando, setConfirmando] = useState(false);
@@ -128,14 +156,17 @@ export default function ChatMensagem({ m, minha, mostrarNome, onImagem, onImagem
       </div>
     );
   }
+  const pdf = pdfDaMensagem(m);
+  const conferido = !!pdf?.conferido_em;
   const card = m.tipo === "produto" || m.tipo === "tarefa" || m.tipo === "notificacao";
   const ehLink = m.tipo === "produto" && p?.tipo === "link";
   const links: any[] = m.tipo === "texto" && Array.isArray(p?.links) ? p.links : [];
   return (
-    <div className={`flex items-end gap-1.5 ${minha ? "justify-end" : "justify-start"}`} data-chat-msg data-tipo={m.tipo}>
+    <div className={`flex items-end gap-1.5 ${minha ? "justify-end" : "justify-start"}`} data-chat-msg data-tipo={pdf ? "pdf" : m.tipo} data-conferido={pdf ? (conferido ? "1" : "0") : undefined}>
       {!minha && <Avatar email={m.de_email} tamanho={28} />}
-      <div className={`max-w-[88%] rounded-2xl px-3 py-1.5 text-xs ${minha ? "bg-indigo-600 text-white rounded-br-sm" : "bg-slate-800 text-slate-100 rounded-bl-sm"}`}>
-        {mostrarNome && !minha && <p className="text-[10px] font-bold text-indigo-300">{nomeDoEmail(m.de_email)}</p>}
+      <div className={`max-w-[88%] rounded-2xl px-3 py-1.5 text-xs ${conferido ? `bg-emerald-700 text-white ${minha ? "rounded-br-sm" : "rounded-bl-sm"}` : minha ? "bg-indigo-600 text-white rounded-br-sm" : "bg-slate-800 text-slate-100 rounded-bl-sm"}`}>
+        {mostrarNome && !minha && <p className={`text-[10px] font-bold ${conferido ? "text-emerald-100" : "text-indigo-300"}`}>{nomeDoEmail(m.de_email)}</p>}
+        {pdf && <CartaoPdf m={m} pdf={pdf} minha={minha} meuEmail={meuEmail} onConferir={onConferir} />}
         {m.tipo === "imagem" && (
           m.anexo_url
             ? <img src={m.anexo_url} alt={m.texto || "imagem enviada"} onClick={() => onImagem(m.anexo_url!)} onError={onImagemErro} data-chat-imagem className="max-h-56 max-w-full rounded-lg cursor-zoom-in my-1" />
@@ -151,7 +182,7 @@ export default function ChatMensagem({ m, minha, mostrarNome, onImagem, onImagem
         )}
         {m.texto && m.tipo !== "produto" && <TextoComLinks texto={m.texto} />}
         {links.length > 0 && <div className="flex flex-wrap gap-2 my-1">{links.map((l, i) => <CartaoLink key={i} p={l} />)}</div>}
-        <div className={`flex items-center justify-end gap-2 mt-0.5 text-[9px] ${minha ? "text-indigo-200" : "text-slate-500"}`}>
+        <div className={`flex items-center justify-end gap-2 mt-0.5 text-[9px] ${conferido ? "text-emerald-100" : minha ? "text-indigo-200" : "text-slate-500"}`}>
           {minha && !confirmando && <button type="button" onClick={() => setConfirmando(true)} data-chat-excluir title="Excluir mensagem" className="opacity-60 hover:opacity-100 cursor-pointer">🗑 excluir</button>}
           {minha && confirmando && (
             <span className="flex items-center gap-1.5 text-[10px] font-bold">

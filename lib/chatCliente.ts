@@ -1,5 +1,5 @@
 // Chat interno — lado do navegador: sessão do chat, chamadas à API, compressão de imagem e o atalho "compartilhar no chat".
-import type { TipoMsg } from "./chat";
+import { MAX_PDF_BYTES, type TipoMsg } from "./chat";
 
 const CHAVE_SESSAO = "chat_sessao_v1";
 export const MAX_IMAGEM_BYTES = 4 * 1024 * 1024;
@@ -54,6 +54,15 @@ export async function prepararImagem(file: File): Promise<{ blob: Blob; mime: st
     if (blob.size > MAX_IMAGEM_BYTES) return { erro: "Imagem grande demais mesmo depois de reduzida." };
     return { blob, mime: "image/jpeg" };
   } catch { return { erro: "Não consegui abrir essa imagem." }; }
+}
+
+/** Confere se o arquivo é um PDF utilizável no chat (tipo e tamanho). */
+export function validarPdf(file: File): string | null {
+  const ehPdf = file.type === "application/pdf" || (!file.type && /\.pdf$/i.test(file.name));
+  if (!ehPdf) return `“${file.name}” não é um PDF.`;
+  if (file.size === 0) return `“${file.name}” está vazio.`;
+  if (file.size > MAX_PDF_BYTES) return `“${file.name}” passa de 10 MB.`;
+  return null;
 }
 
 export type ItemCompartilhado = { tipo: Extract<TipoMsg, "tarefa" | "notificacao">; tarefa_id?: number | string; payload?: any };

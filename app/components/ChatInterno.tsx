@@ -8,8 +8,8 @@ import { useNomes } from "../../lib/nomes";
 import { usePathname } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { tocarAlerta } from "../../lib/som";
-import { SALA_GERAL_ID, MAX_TEXTO, type MensagemChat, type SalaChat, nomeDoEmail, nomeDaSala, rotuloDia, chaveDia } from "../../lib/chat";
-import { chatApi, emailLogado, perfilLogado, tokenDoChat, sairDoChat, prepararImagem, type ItemCompartilhado } from "../../lib/chatCliente";
+import { SALA_GERAL_ID, MAX_TEXTO, MAX_PDFS_POR_ENVIO, type MensagemChat, type SalaChat, nomeDoEmail, nomeDaSala, pdfDaMensagem, rotuloDia, chaveDia, tamanhoLegivel } from "../../lib/chat";
+import { chatApi, emailLogado, perfilLogado, tokenDoChat, sairDoChat, prepararImagem, validarPdf, type ItemCompartilhado } from "../../lib/chatCliente";
 import ChatMensagem from "./ChatMensagem";
 import ChatPin from "./ChatPin";
 import Avatar from "./Avatar";
@@ -41,6 +41,7 @@ export default function ChatInterno() {
   const [modal, setModal] = useState<Modal>(null);
   const [menuAnexo, setMenuAnexo] = useState(false);
   const [anexo, setAnexo] = useState<{ blob: Blob; mime: string; url: string } | null>(null);
+  const [pdfs, setPdfs] = useState<File[]>([]);   // PDFs escolhidos, esperando o envio (cada um vira uma mensagem)
   const [imagemGrande, setImagemGrande] = useState<string | null>(null);
   const [pendente, setPendente] = useState<ItemCompartilhado | null>(null);   // tarefa/notificação esperando a pessoa escolher a conversa
   const [nomeGrupo, setNomeGrupo] = useState("");
@@ -49,12 +50,14 @@ export default function ChatInterno() {
   const [alvoReset, setAlvoReset] = useState("");
   const fimRef = useRef<HTMLDivElement>(null);
   const arquivoRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
   const canalRef = useRef<any>(null);
   const prevNaoLidas = useRef<Record<string, number> | null>(null);
   const vivo = useRef({ email: "", aberto: false, salaId: null as string | null, fase: "verificando" as Fase, msgs: [] as MensagemChat[], lightbox: false });
   vivo.current = { email, aberto, salaId, fase, msgs, lightbox: !!imagemGrande };
 
   const sala = useMemo(() => salas.find((s) => s.id === salaId) || null, [salas, salaId]);
+  const pdfsPendentes = useMemo(() => msgs.filter((m) => { const p = pdfDaMensagem(m); return !!p && !p.conferido_em; }).length, [msgs]);
   const totalNaoLidas = salas.reduce((a, s) => a + (s.nao_lidas || 0), 0);
 
   useEffect(() => { setEmail(emailLogado()); }, [pathname]);
@@ -129,7 +132,7 @@ export default function ChatInterno() {
         if (trocar || prev.length === 0) return novas;
         const antigas = new Map(prev.map((x) => [x.id, x]));
         let mudou = prev.length !== novas.length;
-        const lista = novas.map((n) => { const p = antigas.get(n.id); if (p && !!p.payload?.excluida === !!n.payload?.excluida) return p; mudou = true; return n; });
+        const lista = novas.map((n) => { const p = antigas.get(n.id); if (p && !!p.payload?.excluida === !!n.payload?.excluida && (p.payload?.pdf?.conferido_em || null) === (n.payload?.pdf?.conferido_em || null)) return p; mudou = true; return n; });
         return mudou ? lista : prev;
       });
       return;
@@ -154,17 +157,17 @@ export default function ChatInterno() {
     if (fase !== "ok") return;
     try {
       const canal = supabase.channel("chat-aviso", { config: { broadcast: { self: false } } })
-        .on("broadcast", { event: "novo" }, (p: any) => { carregarSalas(); if (p?.payload?.sala_id && p.payload.sala_id === vivo.current.salaId) carregarMsgs(!!p.payload.excluiu); })
+        .on("broadcast", { event: "novo" }, (p: any) => { carregarSalas(); if (p?.payload?.sala_id && p.payload.sala_id === vivo.current.salaId) carregarMsgs(!!p.payload.excluiu || !!p.payload.atualizou); })
         .subscribe();
       canalRef.current = canal;
       return () => { canalRef.current = null; try { supabase.removeChannel(canal); } catch { /* ignora */ } };
     } catch { /* sem tempo real: segue a consulta de reserva */ }
   }, [fase, carregarSalas, carregarMsgs]);
-  const avisarOutros = (id: string, excluiu = false) => { try { canalRef.current?.send({ type: "broadcast", event: "novo", payload: { sala_id: id, excluiu } }); } catch { /* ignora */ } };
+  const avisarOutros = (id: string, excluiu = false, atualizou = false) => { try { canalRef.current?.send({ type: "broadcast", event: "novo", payload: { sala_id: id, excluiu, atualizou } }); } catch { /* ignora */ } };
 
   // escolher a conversa
   const abrirSala = useCallback((id: string) => {
-    setSalaId(id); setMsgs([]); setErro(""); setMenuAnexo(false);
+    setSalaId(id); setMsgs([]); setErro(""); setMenuAnexo(false); setPdfs([]);
     vivo.current.salaId = id; vivo.current.msgs = [];
     carregarMsgs(true);
   }, [carregarMsgs]);
@@ -200,10 +203,24 @@ export default function ChatInterno() {
   const enviar = async () => {
     if (!salaId || enviando) return;
     const t = texto.trim();
-    if (!t && !anexo) return;
+    if (!t && !anexo && pdfs.length === 0) return;
     setEnviando(true); setErro("");
     let ok = false;
-    if (anexo) {
+    if (pdfs.length) {
+      // cada PDF é uma mensagem; a legenda vai junto do primeiro
+      ok = true;
+      for (let i = 0; i < pdfs.length; i++) {
+        const f = pdfs[i];
+        const up = await chatApi<{ path: string; token: string }>("upload_url", { sala_id: salaId, mime: "application/pdf" });
+        if (!up.ok) { setErro(up.erro || "Não consegui enviar o PDF."); ok = false; break; }
+        const { error } = await supabase.storage.from("chat-anexos").uploadToSignedUrl(up.dados.path, up.dados.token, f, { contentType: "application/pdf" });
+        if (error) { setErro(`Não consegui enviar “${f.name}”: ` + error.message); ok = false; break; }
+        const enviou = await enviarMsg(salaId, { tipo: "pdf", anexo_path: up.dados.path, nome: f.name, tamanho: f.size, texto: i === 0 ? t || undefined : undefined });
+        if (!enviou) { ok = false; break; }
+        setPdfs((l) => l.filter((x) => x !== f));
+      }
+      if (ok) setPdfs([]);
+    } else if (anexo) {
       const up = await chatApi<{ path: string; token: string }>("upload_url", { sala_id: salaId, mime: anexo.mime });
       if (!up.ok) { setErro(up.erro || "Não consegui enviar a imagem."); setEnviando(false); return; }
       const { error } = await supabase.storage.from("chat-anexos").uploadToSignedUrl(up.dados.path, up.dados.token, anexo.blob, { contentType: anexo.mime });
@@ -225,9 +242,28 @@ export default function ChatInterno() {
     carregarSalas();
   };
 
+  const escolherPdfs = (lista: File[]) => {
+    if (lista.length === 0) return;
+    setErro(""); setMenuAnexo(false);
+    const ruim = lista.map(validarPdf).find(Boolean);
+    if (ruim) return setErro(ruim);
+    if (pdfs.length + lista.length > MAX_PDFS_POR_ENVIO) return setErro(`No máximo ${MAX_PDFS_POR_ENVIO} PDFs por envio.`);
+    if (anexo) { URL.revokeObjectURL(anexo.url); setAnexo(null); }
+    setPdfs((l) => [...l, ...lista.filter((f) => !l.some((x) => x.name === f.name && x.size === f.size))]);
+  };
+
+  const conferirPdf = async (id: string, marcar: boolean) => {
+    const r = await chatApi<{ mensagem: MensagemChat }>("conferir", { id, conferido: marcar });
+    if (!r.ok) return setErro(r.erro || "Não consegui marcar o PDF.");
+    setMsgs((l) => l.map((x) => (x.id === id ? r.dados.mensagem : x)));
+    if (vivo.current.salaId) avisarOutros(vivo.current.salaId, false, true);
+    carregarSalas();
+  };
+
   const escolherImagem = async (f: File | undefined | null) => {
     if (!f) return;
     setErro(""); setMenuAnexo(false);
+    setPdfs([]);
     const r = await prepararImagem(f);
     if ("erro" in r) return setErro(r.erro);
     if (anexo) URL.revokeObjectURL(anexo.url);
@@ -364,6 +400,7 @@ export default function ChatInterno() {
                         {sala.tipo === "grupo" && <span className="text-[10px] text-slate-500">{sala.membros.length} membros</span>}
                         {sala.tipo === "geral" && <span className="text-[10px] text-slate-500">todos do sistema</span>}
                       </div>
+                      {pdfsPendentes > 0 && <span data-chat-pdfs-pendentes className="text-[10px] font-bold text-amber-300 bg-amber-950/50 border border-amber-800/60 rounded-full px-2 py-0.5 shrink-0">📄 {pdfsPendentes} PDF{pdfsPendentes > 1 ? "s" : ""} a conferir</span>}
                       {sala.tipo === "grupo" && <button type="button" onClick={() => setModal("membros")} data-chat-membros className="text-[11px] font-bold text-indigo-300 hover:text-indigo-200 cursor-pointer shrink-0">Membros</button>}
                     </div>
                     <div className={`flex-1 overflow-y-auto py-3 space-y-1.5 ${telaCheia ? "px-[max(1rem,8%)]" : "px-3"}`} data-chat-mensagens>
@@ -371,7 +408,7 @@ export default function ChatInterno() {
                       {msgs.map((m, i) => (
                         <React.Fragment key={m.id}>
                           {(i === 0 || chaveDia(msgs[i - 1].criado_em) !== chaveDia(m.criado_em)) && <p className="text-center text-[10px] font-bold text-slate-500 uppercase py-1">{rotuloDia(m.criado_em)}</p>}
-                          <ChatMensagem m={m} minha={m.de_email === email} mostrarNome={sala.tipo !== "dm"} onImagem={setImagemGrande} onImagemErro={() => carregarMsgs(true, true)} onExcluir={excluirMsg} />
+                          <ChatMensagem m={m} minha={m.de_email === email} meuEmail={email} mostrarNome={sala.tipo !== "dm"} onImagem={setImagemGrande} onImagemErro={() => carregarMsgs(true, true)} onExcluir={excluirMsg} onConferir={conferirPdf} />
                         </React.Fragment>
                       ))}
                       <div ref={fimRef} />
@@ -385,24 +422,37 @@ export default function ChatInterno() {
                         <button type="button" onClick={() => { URL.revokeObjectURL(anexo.url); setAnexo(null); }} className="text-slate-400 hover:text-white cursor-pointer px-2">✕</button>
                       </div>
                     )}
+                    {pdfs.length > 0 && (
+                      <div className="mx-3 mb-2 bg-slate-950 border border-slate-700 rounded-xl p-2 space-y-1" data-chat-previa-pdf>
+                        {pdfs.map((f) => (
+                          <div key={f.name + f.size} className="flex items-center gap-2 text-[11px] text-slate-300">
+                            <span>📄</span><span className="flex-1 truncate">{f.name}</span><span className="text-slate-500">{tamanhoLegivel(f.size)}</span>
+                            <button type="button" onClick={() => setPdfs((l) => l.filter((x) => x !== f))} aria-label={`Remover ${f.name}`} className="text-slate-400 hover:text-white cursor-pointer px-1">✕</button>
+                          </div>
+                        ))}
+                        <p className="text-[10px] text-slate-500">{pdfs.length === 1 ? "PDF pronto para enviar." : `${pdfs.length} PDFs prontos: cada um vai como uma mensagem para ser conferido separadamente.`} Se quiser, escreva uma legenda.</p>
+                      </div>
+                    )}
                     <form onSubmit={(e) => { e.preventDefault(); enviar(); }} className="p-3 border-t border-slate-800 flex items-end gap-2 shrink-0">
                       <div className="relative">
                         <button type="button" onClick={() => setMenuAnexo((v) => !v)} data-chat-anexar aria-label="Anexar" className="h-9 w-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-base cursor-pointer">📎</button>
                         {menuAnexo && (
                           <div className="absolute bottom-11 left-0 w-44 bg-slate-950 border border-slate-700 rounded-xl overflow-hidden shadow-xl z-10">
                             <button type="button" onClick={() => arquivoRef.current?.click()} data-chat-anexar-imagem className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 cursor-pointer">🖼️ Imagem</button>
+                            <button type="button" onClick={() => pdfRef.current?.click()} data-chat-anexar-pdf className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 cursor-pointer">📄 PDF (etiquetas)</button>
                             <button type="button" onClick={abrirTarefas} data-chat-anexar-tarefa className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 cursor-pointer">📝 Tarefa</button>
                             <p className="px-3 py-2 text-[10px] text-slate-500 border-t border-slate-800">Notificações: use 💬 nos cartões da tela Início.</p>
                           </div>
                         )}
                         <input ref={arquivoRef} type="file" accept="image/*" hidden data-chat-arquivo onChange={(e) => { escolherImagem(e.target.files?.[0]); e.target.value = ""; }} />
+                        <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple hidden data-chat-arquivo-pdf onChange={(e) => { escolherPdfs(Array.from(e.target.files || [])); e.target.value = ""; }} />
                       </div>
                       <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={1} maxLength={MAX_TEXTO} data-chat-texto
-                        placeholder={anexo ? "Legenda (opcional)..." : `Mensagem para ${nomeDaSala(sala, email)}... (SKU ou link vira card)`}
+                        placeholder={anexo || pdfs.length ? "Legenda (opcional)..." : `Mensagem para ${nomeDaSala(sala, email)}... (SKU ou link vira card)`}
                         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
-                        onPaste={(e) => { const f = Array.from(e.clipboardData.files || []).find((x) => x.type.startsWith("image/")); if (f) { e.preventDefault(); escolherImagem(f); } }}
+                        onPaste={(e) => { const arq = Array.from(e.clipboardData.files || []); const pdfsColados = arq.filter((x) => x.type === "application/pdf"); if (pdfsColados.length) { e.preventDefault(); escolherPdfs(pdfsColados); return; } const f = arq.find((x) => x.type.startsWith("image/")); if (f) { e.preventDefault(); escolherImagem(f); } }}
                         className="flex-1 resize-none max-h-24 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500" />
-                      <button type="submit" disabled={enviando || (!texto.trim() && !anexo)} data-chat-enviar className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-bold px-4 h-9 rounded-xl cursor-pointer">{enviando ? "…" : "Enviar"}</button>
+                      <button type="submit" disabled={enviando || (!texto.trim() && !anexo && pdfs.length === 0)} data-chat-enviar className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-bold px-4 h-9 rounded-xl cursor-pointer">{enviando ? "…" : "Enviar"}</button>
                     </form>
                   </>
                 )}

@@ -6,7 +6,7 @@ import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseServidor } from "./concorrentes/servidor";
 import { normalizarSkuPai } from "./skuPai";
-import { encurtarUrls } from "./chat";
+import { encurtarUrls, MAX_PDF_BYTES } from "./chat";
 import { extrairUrls, montarCartaoLink } from "./linkPreview";
 import { canalTemCadastro, normalizarNomeCanal } from "./vendasCanaisLogica";
 
@@ -14,7 +14,7 @@ export const SALA_GERAL_ID = "00000000-0000-4000-8000-000000000001";
 const BUCKET = "chat-anexos";
 const DIAS = 7;
 const MAX_TEXTO = 2000;
-const MIMES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+const MIMES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "application/pdf": "pdf" };
 
 class ErroChat extends Error { constructor(public status: number, msg: string) { super(msg); } }
 const erro = (status: number, msg: string): never => { throw new ErroChat(status, msg); };
@@ -108,7 +108,7 @@ async function exigirMembro(sb: SupabaseClient, salaId: any, email: string): Pro
 }
 
 const resumoDoTipo = (m: any): string =>
-  m.payload?.excluida ? "🚫 Mensagem excluída" : m.tipo === "produto" && m.payload?.tipo === "link" ? `🔗 ${m.payload.titulo || m.payload.site || "Link"}` : m.tipo === "imagem" ? "📷 Foto" : m.tipo === "produto" ? `🔎 ${m.payload?.produto || m.payload?.sku || "Produto"}` : m.tipo === "tarefa" ? "📝 Tarefa" : m.tipo === "notificacao" ? "🔔 Notificação" : encurtarUrls(String(m.texto || "")).slice(0, 80);
+  m.payload?.excluida ? "🚫 Mensagem excluída" : m.payload?.pdf ? `📄 ${m.payload.pdf.nome || "PDF"}${m.payload.pdf.conferido_em ? " ✔" : ""}` : m.tipo === "produto" && m.payload?.tipo === "link" ? `🔗 ${m.payload.titulo || m.payload.site || "Link"}` : m.tipo === "imagem" ? "📷 Foto" : m.tipo === "produto" ? `🔎 ${m.payload?.produto || m.payload?.sku || "Produto"}` : m.tipo === "tarefa" ? "📝 Tarefa" : m.tipo === "notificacao" ? "🔔 Notificação" : encurtarUrls(String(m.texto || "")).slice(0, 80);
 
 async function listarSalas(sb: SupabaseClient, email: string) {
   await garantirGeral(sb, email);
@@ -233,7 +233,7 @@ async function marcarLido(sb: SupabaseClient, email: string, d: any) {
 async function urlDeUpload(sb: SupabaseClient, email: string, d: any) {
   const id = await exigirMembro(sb, d.sala_id, email);
   const ext = MIMES[String(d.mime || "")];
-  if (!ext) erro(400, "Só imagens JPG, PNG, WEBP ou GIF.");
+  if (!ext) erro(400, "Só imagens (JPG, PNG, WEBP, GIF) ou PDF.");
   const path = `${id}/${randomUUID()}.${ext}`;
   const { data, error } = await sb.storage.from(BUCKET).createSignedUploadUrl(path);
   if (error || !data) return erro(500, "Não consegui preparar o envio da imagem: " + (error?.message || ""));
@@ -306,7 +306,7 @@ async function cartaoProduto(sb: SupabaseClient, t: string): Promise<any | null>
 
 async function enviar(sb: SupabaseClient, email: string, d: any) {
   const id = await exigirMembro(sb, d.sala_id, email);
-  let tipo = ["texto", "imagem", "tarefa", "notificacao"].includes(d.tipo) ? String(d.tipo) : "texto";
+  let tipo = ["texto", "imagem", "pdf", "tarefa", "notificacao"].includes(d.tipo) ? String(d.tipo) : "texto";
   let msg: string | null = limiteTexto(d.texto, MAX_TEXTO) || null;
   let payload: any = null, anexo: string | null = null;
   if (tipo === "texto") {
@@ -325,6 +325,19 @@ async function enviar(sb: SupabaseClient, email: string, d: any) {
   } else if (tipo === "imagem") {
     anexo = String(d.anexo_path || "");
     if (!anexo.startsWith(id + "/") || anexo.includes("..")) erro(400, "Imagem inválida.");
+  } else if (tipo === "pdf") {
+    // PDF (ex.: etiquetas): fica guardado como mensagem de texto com anexo; payload.pdf guarda o nome e o "conferido"
+    anexo = String(d.anexo_path || "");
+    if (!anexo.startsWith(id + "/") || anexo.includes("..") || !/\.pdf$/i.test(anexo)) erro(400, "PDF inválido.");
+    const [pasta, arquivo] = [anexo.slice(0, anexo.lastIndexOf("/")), anexo.slice(anexo.lastIndexOf("/") + 1)];
+    const { data: achados } = await sb.storage.from(BUCKET).list(pasta, { search: arquivo, limit: 5 });
+    const f = ((achados as any[]) || []).find((x) => x.name === arquivo);
+    if (!f) erro(400, "O arquivo não chegou ao servidor. Tente enviar de novo.");
+    const tamanho = Number(f.metadata?.size) || Number(d.tamanho) || 0;
+    if (tamanho > MAX_PDF_BYTES) { await sb.storage.from(BUCKET).remove([anexo]); erro(400, "PDF grande demais (máximo 10 MB)."); }
+    const nome = texto(String(d.nome ?? "").replace(/[\\/\u0000-\u001f]/g, " "), 120) || "etiqueta.pdf";
+    payload = { pdf: { nome: /\.pdf$/i.test(nome) ? nome : nome + ".pdf", tamanho, conferido_por: null, conferido_em: null } };
+    tipo = "texto";
   } else if (tipo === "tarefa") {
     const { data } = await sb.from("home_tarefas").select("*").eq("id", d.tarefa_id).limit(1);
     const t = (data as any[] | null)?.[0];
@@ -361,6 +374,32 @@ async function excluirMensagem(sb: SupabaseClient, email: string, d: any) {
   if (error) return erro(500, "Não consegui excluir: " + error.message);
   if (m.anexo_path) await sb.storage.from(BUCKET).remove([m.anexo_path]);
   return { mensagem: (await comLinks(sb, [{ ...m, ...nova }]))[0] };
+}
+
+/** Marca (ou desmarca) um PDF como conferido. Qualquer participante da conversa marca; desfazer: só quem conferiu ou quem enviou. */
+async function conferirPdf(sb: SupabaseClient, email: string, d: any) {
+  const idMsg = String(d.id || "");
+  if (!/^[0-9a-f-]{36}$/i.test(idMsg)) erro(400, "Mensagem inválida.");
+  const { data } = await sb.from("chat_mensagens").select("*").eq("id", idMsg).limit(1);
+  const m = (data as any[] | null)?.[0];
+  if (!m) erro(404, "Mensagem não encontrada.");
+  await exigirMembro(sb, m.sala_id, email);
+  const pdf = m.payload?.pdf;
+  if (!pdf || m.payload?.excluida) erro(400, "Esta mensagem não é um PDF.");
+  const marcar = d.conferido !== false;
+  let novo = pdf;
+  if (marcar) {
+    if (pdf.conferido_em) return { mensagem: (await comLinks(sb, [m]))[0] };
+    novo = { ...pdf, conferido_por: email, conferido_em: new Date().toISOString() };
+  } else {
+    if (!pdf.conferido_em) return { mensagem: (await comLinks(sb, [m]))[0] };
+    if (limpoEmail(pdf.conferido_por) !== email && limpoEmail(m.de_email) !== email) erro(403, "Só quem conferiu ou quem enviou o PDF pode desfazer.");
+    novo = { ...pdf, conferido_por: null, conferido_em: null };
+  }
+  const payload = { ...m.payload, pdf: novo };
+  const { error } = await sb.from("chat_mensagens").update({ payload }).eq("id", idMsg);
+  if (error) return erro(500, "Não consegui salvar: " + error.message);
+  return { mensagem: (await comLinks(sb, [{ ...m, payload }]))[0] };
 }
 
 // ---------------------------------------------------------------- limpeza (7 dias)
@@ -410,6 +449,7 @@ export async function tratarChat(acao: string, d: any, token: string | null): Pr
       case "ler": corpo = await marcarLido(sb, email, d); break;
       case "enviar": corpo = await enviar(sb, email, d); break;
       case "excluir": corpo = await excluirMensagem(sb, email, d); break;
+      case "conferir": corpo = await conferirPdf(sb, email, d); break;
       case "upload_url": corpo = await urlDeUpload(sb, email, d); break;
       case "criar_dm": corpo = await criarDm(sb, email, d); break;
       case "criar_grupo": corpo = await criarGrupo(sb, email, d); break;

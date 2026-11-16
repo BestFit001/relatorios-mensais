@@ -3,6 +3,8 @@ import { nomeDeExibicao } from "./nomesBase";
 export const SALA_GERAL_ID = "00000000-0000-4000-8000-000000000001";
 export const DIAS_HISTORICO = 7;
 export const MAX_TEXTO = 2000;
+export const MAX_PDF_BYTES = 10 * 1024 * 1024;
+export const MAX_PDFS_POR_ENVIO = 10;
 
 export type TipoMsg = "texto" | "imagem" | "tarefa" | "notificacao" | "produto";
 export type MensagemChat = {
@@ -12,6 +14,11 @@ export type SalaChat = {
   id: string; tipo: "geral" | "dm" | "grupo"; nome: string | null; criado_em: string;
   membros: { email: string; papel: "admin" | "membro" }[]; nao_lidas: number; ultima: { texto: string; de: string; em: string } | null;
 };
+
+/** PDF enviado no chat (ex.: etiquetas): vai como mensagem de texto com anexo e este bloco em payload.pdf. Quem recebe marca "conferido" e a mensagem fica verde para todos. */
+export type PdfChat = { nome: string; tamanho: number; conferido_por: string | null; conferido_em: string | null };
+export const pdfDaMensagem = (m: Pick<MensagemChat, "payload">): PdfChat | null => (m.payload && !m.payload.excluida && m.payload.pdf && typeof m.payload.pdf === "object" ? (m.payload.pdf as PdfChat) : null);
+export const tamanhoLegivel = (b: number): string => (b >= 1024 * 1024 ? (b / 1024 / 1024).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
 
 /** Nome para exibir: o definido pelo admin ou, sem ele, o que vem do e-mail ("ana.silva@x.com" -> "Ana Silva"). */
 export function nomeDoEmail(email: string): string {
