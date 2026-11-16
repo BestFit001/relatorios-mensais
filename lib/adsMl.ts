@@ -241,6 +241,21 @@ export type AnaliseML = {
   campanhasSemVendas: string[]; // campanhas (nomes) cujos anúncios ainda não foram cruzados, quando outras já foram
 };
 
+// Totais de qualquer conjunto de anúncios (todas as campanhas = "Geral", ou uma campanha só).
+export function totaisAnuncios(lista: AnaliseAnuncio[]): AnaliseML["tot"] {
+  const tot = lista.reduce((t, a) => ({
+    investimento: t.investimento + a.investimento, receita: t.receita + a.receitaTotal,
+    receitaDir: t.receitaDir + a.itens.filter((i) => i.direta).reduce((s, i) => s + i.rec, 0), receitaInd: t.receitaInd + a.itens.filter((i) => !i.direta).reduce((s, i) => s + i.rec, 0),
+    unidades: t.unidades + a.unidades, liquidez: t.liquidez + a.liquidez, roas: 0, roi: null as number | null, acos: null as number | null,
+    semCusto: t.semCusto + (a.semCusto ? 1 : 0), semCadastro: t.semCadastro + (a.itens.some((i) => i.semCadastro) ? 1 : 0), semVendaMlb: 0,
+  }), { investimento: 0, receita: 0, receitaDir: 0, receitaInd: 0, unidades: 0, liquidez: 0, roas: 0, roi: null as number | null, acos: null as number | null, semCusto: 0, semCadastro: 0, semVendaMlb: 0 });
+  tot.roas = tot.investimento > 0 ? tot.receita / tot.investimento : 0;
+  tot.roi = tot.investimento > 0 ? (tot.liquidez / tot.investimento) * 100 : null;
+  tot.acos = tot.receita > 0 ? (tot.investimento / tot.receita) * 100 : null;
+  tot.semVendaMlb = lista.filter((a) => a.semVendas).length;
+  return tot;
+}
+
 export function analisarML(anuncios: AnuncioPat[], vendas: VendaPat[] | null, ctx: Contexto, cfg: CfgRecomendacao): AnaliseML {
   const patrocinados = new Set(anuncios.map((a) => a.mlb));
   // Cada campanha tem a sua planilha de vendas: um anúncio só é cruzado se a campanha dele já tem vendas enviadas (as outras usam as colunas da planilha de patrocinados)
@@ -288,16 +303,7 @@ export function analisarML(anuncios: AnuncioPat[], vendas: VendaPat[] | null, ct
     };
   }).sort((x, y) => y.liquidez - x.liquidez);
 
-  const tot = lista.reduce((t, a) => ({
-    investimento: t.investimento + a.investimento, receita: t.receita + a.receitaTotal,
-    receitaDir: t.receitaDir + a.itens.filter((i) => i.direta).reduce((s, i) => s + i.rec, 0), receitaInd: t.receitaInd + a.itens.filter((i) => !i.direta).reduce((s, i) => s + i.rec, 0),
-    unidades: t.unidades + a.unidades, liquidez: t.liquidez + a.liquidez, roas: 0, roi: null as number | null, acos: null as number | null,
-    semCusto: t.semCusto + (a.semCusto ? 1 : 0), semCadastro: t.semCadastro + (a.itens.some((i) => i.semCadastro) ? 1 : 0), semVendaMlb: 0,
-  }), { investimento: 0, receita: 0, receitaDir: 0, receitaInd: 0, unidades: 0, liquidez: 0, roas: 0, roi: null as number | null, acos: null as number | null, semCusto: 0, semCadastro: 0, semVendaMlb: 0 });
-  tot.roas = tot.investimento > 0 ? tot.receita / tot.investimento : 0;
-  tot.roi = tot.investimento > 0 ? (tot.liquidez / tot.investimento) * 100 : null;
-  tot.acos = tot.receita > 0 ? (tot.investimento / tot.receita) * 100 : null;
-  tot.semVendaMlb = lista.filter((a) => a.semVendas).length;
+  const tot = totaisAnuncios(lista);
 
   const porAcao = { escalar: { n: 0, investimento: 0, liquidez: 0 }, manter: { n: 0, investimento: 0, liquidez: 0 }, revisar: { n: 0, investimento: 0, liquidez: 0 }, retirar: { n: 0, investimento: 0, liquidez: 0 }, reativar: { n: 0, investimento: 0, liquidez: 0 }, aguardar: { n: 0, investimento: 0, liquidez: 0 } } as AnaliseML["porAcao"];
   lista.forEach((a) => { const p = porAcao[a.acao]; p.n++; p.investimento += a.investimento; p.liquidez += a.liquidez; });

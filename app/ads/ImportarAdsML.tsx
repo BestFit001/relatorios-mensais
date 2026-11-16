@@ -6,7 +6,8 @@ import * as XLSX from "xlsx";
 import { supabase } from "../../lib/supabase";
 import { lerRelatorioPatrocinados, lerRelatorioVendas, mesDoPeriodo, type LeituraPads, type LeituraVendas } from "../../lib/adsMl";
 import { campanhasDoAtual, excluirAtualML, excluirCampanhaML, planejarPads, registrarEnvio } from "../../lib/adsMlDb";
-import { chaveCampanha } from "../../lib/adsMl";
+import { chaveCampanha, totaisAnuncios } from "../../lib/adsMl";
+import SeletorCampanhaML from "./SeletorCampanhaML";
 import { useDadosML } from "./useDadosML";
 import { NUM, R$, ROAS, PCT, dataBR, quando } from "./fmtML";
 
@@ -35,6 +36,7 @@ export default function ImportarAdsML({ canal, mes, setMes, meses, onMudou }: Pr
   const [lendo, setLendo] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "ok" | "erro" | "aviso"; texto: string } | null>(null);
+  const [campSel, setCampSel] = useState<string>("todas");   // "todas" = Geral (soma das campanhas)
 
   const escolherPads = async (f: File | null) => {
     setArqPads(f); setLidoPads(null); setMsg(null);
@@ -99,8 +101,15 @@ export default function ImportarAdsML({ canal, mes, setMes, meses, onMudou }: Pr
 
   const camps = campanhasDoAtual(atual);
   const plano = lidoPads ? planejarPads(atual, lidoPads.anuncios, lidoPads.periodo, mes === "TODOS" ? (meses[0] || "") : mes) : null;
-  const invPorCamp = new Map<string, number>(); (analise?.anuncios || []).forEach((a) => invPorCamp.set(chaveCampanha(a.campanha), (invPorCamp.get(chaveCampanha(a.campanha)) || 0) + a.investimento));
-  const t = analise?.tot;
+  const porCamp = new Map<string, ReturnType<typeof totaisAnuncios>>();
+  camps.forEach((c) => porCamp.set(c.chave, totaisAnuncios((analise?.anuncios || []).filter((a) => chaveCampanha(a.campanha) === c.chave))));
+  const sel = campSel !== "todas" && camps.some((c) => c.chave === campSel) ? campSel : "todas";
+  const anunciosSel = (analise?.anuncios || []).filter((a) => sel === "todas" || chaveCampanha(a.campanha) === sel);
+  const t = analise ? (sel === "todas" ? analise.tot : porCamp.get(sel) || totaisAnuncios([])) : null;
+  const nomeSel = sel === "todas" ? "" : camps.find((c) => c.chave === sel)?.nome || "";
+  const indiretos = new Set<string>(); let indUn = 0;
+  anunciosSel.forEach((a) => a.itens.filter((i) => !a.semCruzamento && !i.direta && !i.patrocinado).forEach((i) => { indiretos.add(i.mlb); indUn += i.un; }));
+  const geral = analise?.tot;
   return (
     <div className="space-y-6" data-importar-ml>
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
@@ -158,19 +167,33 @@ export default function ImportarAdsML({ canal, mes, setMes, meses, onMudou }: Pr
           <p className="text-[11px] text-slate-500 mb-3">Campanhas de períodos que se sobrepõem convivem: o resumo, a Análise global e o “Atual vs anterior” somam todas.</p>
           <div className="overflow-x-auto border border-slate-800 rounded-xl">
             <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-              <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold text-[10px]"><tr><th className="p-3">Campanha</th><th className="p-3">Período</th><th className="p-3 text-right">Anúncios</th><th className="p-3 text-right">Investimento</th><th className="p-3">Último envio</th><th className="p-3"></th></tr></thead>
+              <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold text-[10px]"><tr><th className="p-3">Campanha</th><th className="p-3">Período</th><th className="p-3 text-right">Anúncios</th><th className="p-3 text-right">Investimento</th><th className="p-3 text-right">Retorno</th><th className="p-3 text-right">Liquidez</th><th className="p-3 text-right">ROI</th><th className="p-3">Último envio</th><th className="p-3"></th></tr></thead>
               <tbody className="divide-y divide-slate-800/70">
                 {camps.map((c) => (
                   <tr key={c.chave} data-camp-ml={c.chave}>
                     <td className="p-3 font-bold text-slate-100">{c.nome}</td>
                     <td className="p-3 text-slate-300">{dataBR(c.periodo.ini)} a {dataBR(c.periodo.fim)}</td>
                     <td className="p-3 text-right">{c.n}</td>
-                    <td className="p-3 text-right">{R$(invPorCamp.get(c.chave) || 0)}</td>
+                    <td className="p-3 text-right">{R$(porCamp.get(c.chave)?.investimento || 0)}</td>
+                    <td className="p-3 text-right">{R$(porCamp.get(c.chave)?.receita || 0)}</td>
+                    <td className={`p-3 text-right font-bold ${(porCamp.get(c.chave)?.liquidez || 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{R$(porCamp.get(c.chave)?.liquidez || 0)}</td>
+                    <td className="p-3 text-right">{PCT(porCamp.get(c.chave)?.roi ?? null)}</td>
                     <td className="p-3 text-slate-400">{quando(c.importadoEm)}</td>
                     <td className="p-3 text-right"><button type="button" data-apagar-camp-ml={c.chave} disabled={salvando} onClick={() => apagarCampanha(c.chave, c.nome)} className="text-[11px] font-bold text-rose-400 hover:text-rose-300 cursor-pointer">🗑️ apagar</button></td>
                   </tr>
                 ))}
               </tbody>
+              {camps.length > 1 && geral && (
+                <tfoot data-camp-geral className="bg-slate-950 border-t border-slate-700 font-bold text-slate-100">
+                  <tr>
+                    <td className="p-3">Geral (soma das campanhas)</td><td className="p-3 text-slate-500 font-normal">—</td>
+                    <td className="p-3 text-right">{camps.reduce((n, c) => n + c.n, 0)}</td>
+                    <td className="p-3 text-right">{R$(geral.investimento)}</td><td className="p-3 text-right">{R$(geral.receita)}</td>
+                    <td className={`p-3 text-right ${geral.liquidez >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{R$(geral.liquidez)}</td>
+                    <td className="p-3 text-right">{PCT(geral.roi)}</td><td className="p-3"></td><td className="p-3"></td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>
@@ -178,18 +201,19 @@ export default function ImportarAdsML({ canal, mes, setMes, meses, onMudou }: Pr
       {analise && t && (
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl" data-resumo-ml>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-            <h3 className="text-sm font-bold text-white">Resumo de {mesAtual}</h3>
+            <h3 className="text-sm font-bold text-white" data-titulo-resumo-ml>Resumo de {mesAtual} — {sel === "todas" ? (camps.length > 1 ? `Geral (soma das ${camps.length} campanhas)` : "Geral") : nomeSel}</h3>
             <span className="text-[11px] text-slate-500">Detalhe por anúncio e recomendações na sub-aba “Análise dos anúncios”.</span>
           </div>
+          {camps.length > 1 && <div className="mb-4"><SeletorCampanhaML attr={{ "data-seletor-resumo-ml": "" }} valor={sel} onChange={setCampSel} opcoes={camps.map((c) => ({ chave: c.chave, nome: c.nome }))} /></div>}
           {!analise.semCruzamento && analise.campanhasSemVendas.length > 0 && <p data-aviso-camp-sem-vendas className="text-[11px] text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-3 mb-4">Falta a planilha de vendas de: <strong>{analise.campanhasSemVendas.join(", ")}</strong>. Até enviar, a liquidez dessas campanhas usa só as vendas da planilha de patrocinados.</p>}
           {analise.semCruzamento && <p className="text-[11px] text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-3 mb-4">Falta a planilha de vendas: por enquanto a liquidez usa só as vendas informadas na planilha de patrocinados. Envie a de vendas para cruzar com o que foi vendido sem patrocínio.</p>}
           <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-            {card("Investimento", R$(t.investimento), `${analise.anuncios.length} anúncios`)}
+            {card("Investimento", R$(t.investimento), `${anunciosSel.length} anúncios`)}
             {card("Retorno", R$(t.receita), `${R$(t.receitaDir)} diretas · ${R$(t.receitaInd)} indiretas`)}
             {card("ROAS", ROAS(t.roas), "retorno ÷ investimento")}
             {card("Liquidez", R$(t.liquidez), "após custo, taxas e anúncio", t.liquidez >= 0 ? "text-emerald-400" : "text-rose-400")}
             {card("ROI", PCT(t.roi), "liquidez ÷ investimento", (t.roi ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400")}
-            {card("Vendas s/ patrocínio", String(analise.haloTot.mlbs), `${NUM(analise.haloTot.un)} un. puxadas pelos anúncios`)}
+            {card("Vendas s/ patrocínio", String(sel === "todas" ? analise.haloTot.mlbs : indiretos.size), `${NUM(sel === "todas" ? analise.haloTot.un : indUn)} un. puxadas pelos anúncios`)}
           </div>
           {(t.semCusto > 0 || t.semCadastro > 0) && <p className="text-[11px] text-amber-300 mt-3" data-aviso-custo>⚠ {t.semCadastro > 0 ? `${t.semCadastro} anúncio(s) com MLB que não está no cadastro de anúncios do ML (usei comissão de 14% e frete padrão). ` : ""}{t.semCusto > 0 ? `${t.semCusto} anúncio(s) com SKU sem custo cadastrado: a liquidez deles está maior que a real.` : ""}</p>}
         </div>

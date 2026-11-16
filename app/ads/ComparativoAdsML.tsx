@@ -4,9 +4,11 @@
 import React, { useMemo, useState } from "react";
 import { useDadosML } from "./useDadosML";
 import { CHAVE_LEGADO, chaveCampanha, pecasDoResumo, type AnaliseAnuncio, type ResumoAnuncio } from "../../lib/adsMl";
+import SeletorCampanhaML from "./SeletorCampanhaML";
 import { campanhasDoAtual } from "../../lib/adsMlDb";
 import { NUM, PCT, R$, ROAS, dataBR, quando } from "./fmtML";
 
+type Tot = { inv: number; rec: number; liq: number; roi: number | null };
 type Linha = { mlb: string; titulo: string; situacao: "melhorou" | "piorou" | "estavel" | "novo" | "saiu" | "semant"; invAnt: number; invAtu: number; recAnt: number; recAtu: number; liqAnt: number; liqAtu: number; dLiq: number };
 const ROTULO = { melhorou: "↑ Melhorou", piorou: "↓ Piorou", estavel: "= Estável", novo: "★ Novo no Ads", saiu: "✕ Saiu do Ads", semant: "• Campanha sem anterior" } as const;
 const COR = {
@@ -61,6 +63,19 @@ export default function ComparativoAdsML({ canal }: { canal: string }) {
     return { linhas: ls, cont, antEsc, atuEsc };
   }, [analise, anterior, escopo, campFiltro]);
 
+  // quadro por campanha (independente do filtro): antes × agora de cada uma; o Geral soma só as que têm os dois lados
+  const porCamp = useMemo(() => {
+    if (!analise || !anterior || escopo.legado) return [] as { chave: string; nome: string; status: "comparada" | "sem-anterior" | "sem-novo-envio"; ant: Tot | null; atu: Tot | null }[];
+    const tot = (inv: number, rec: number, liq: number): Tot => ({ inv, rec, liq, roi: inv > 0 ? (liq / inv) * 100 : null });
+    const dosAnt = (k: string) => { const l = anterior.anuncios.filter((a) => (a.c || CHAVE_LEGADO) === k); return tot(l.reduce((n, x) => n + x.inv, 0), l.reduce((n, x) => n + x.rec, 0), l.reduce((n, x) => n + x.liq, 0)); };
+    const dosAtu = (k: string) => { const l = analise.anuncios.filter((a) => chaveCampanha(a.campanha) === k); return tot(l.reduce((n, x) => n + x.investimento, 0), l.reduce((n, x) => n + x.receitaTotal, 0), l.reduce((n, x) => n + x.liquidez, 0)); };
+    const chavesAnt = new Set(pecasDoResumo(anterior).map((p) => p.chave));
+    return [
+      ...escopo.emVigor.map((c) => ({ chave: c.chave, nome: c.nome, status: (chavesAnt.has(c.chave) ? "comparada" : "sem-anterior") as "comparada" | "sem-anterior", ant: chavesAnt.has(c.chave) ? dosAnt(c.chave) : null, atu: dosAtu(c.chave) })),
+      ...escopo.semNovoEnvio.map((p) => ({ chave: p.chave, nome: p.nome, status: "sem-novo-envio" as const, ant: dosAnt(p.chave), atu: null })),
+    ];
+  }, [analise, anterior, escopo]);
+
   const visiveis = useMemo(() => {
     const q = busca.trim().toLowerCase();
     const f = linhas.filter((l) => (filtro === "todos" || l.situacao === filtro) && (!q || l.titulo.toLowerCase().includes(q) || l.mlb.toLowerCase().includes(q)));
@@ -93,17 +108,12 @@ export default function ComparativoAdsML({ canal }: { canal: string }) {
         <p className="text-xs text-slate-400 mt-1 mb-5">Atual: <strong className="text-slate-200">{atual.mes}</strong> ({dataBR(atual.pads.periodo.ini)} a {dataBR(atual.pads.periodo.fim)}, enviado em {quando(atual.pads.importadoEm)}) · Anterior: <strong className="text-slate-200">{anterior.mes}</strong> ({dataBR(anterior.periodo.ini)} a {dataBR(anterior.periodo.fim)}, enviado em {quando(anterior.importadoEm)}).{!analise.semCruzamento === !anterior.comVendas ? "" : " Um dos relatórios está sem a planilha de vendas, então a liquidez não é totalmente comparável."}</p>
         {(escopo.emVigor.length > 1 || escopo.novas.length > 0 || escopo.semNovoEnvio.length > 0) && (
           <div className="mb-4 space-y-2" data-campanhas-cmp-ml>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Campanha</span>
-              <select data-filtro-campanha value={campFiltro} onChange={(e) => { setCampFiltro(e.target.value); setPag(1); setFiltro("todos"); }} className="bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white outline-none cursor-pointer">
-                <option value="todas">Todas as comparáveis ({escopo.comparaveis.length})</option>
-                {escopo.emVigor.map((c) => <option key={c.chave} value={c.chave}>{c.nome}{escopo.novas.some((n) => n.chave === c.chave) ? " (sem anterior)" : ""}</option>)}
-              </select>
-            </div>
+            <SeletorCampanhaML attr={{ "data-filtro-campanha": "" }} valor={campFiltro} onChange={(v) => { setCampFiltro(v); setPag(1); setFiltro("todos"); }} geral={escopo.comparaveis.length > 1 ? `Geral (soma das ${escopo.comparaveis.length} campanhas)` : "Geral"} opcoes={escopo.emVigor.map((c) => ({ chave: c.chave, nome: c.nome, nota: escopo.novas.some((n) => n.chave === c.chave) ? "sem anterior" : undefined }))} />
             {escopo.novas.length > 0 && <p data-aviso-novas-cmp className="text-[11px] text-sky-300 bg-sky-950/20 border border-sky-900/40 rounded-xl p-2.5">Sem envio anterior para comparar: <strong>{escopo.novas.map((c) => c.nome).join(", ")}</strong>. Os anúncios aparecem na lista, mas ficam fora dos totais abaixo até a campanha ser enviada de novo com outro período.</p>}
             {escopo.semNovoEnvio.length > 0 && <p data-aviso-sem-envio-cmp className="text-[11px] text-slate-400 bg-slate-950 border border-slate-800 rounded-xl p-2.5">Sem novo envio (fora da comparação): <strong>{escopo.semNovoEnvio.map((p) => p.nome).join(", ")}</strong>.</p>}
           </div>
         )}
+        {escopo.emVigor.length > 1 && <div data-titulo-cmp-ml className="text-[11px] font-bold text-slate-300 mb-2">{campFiltro === "todas" ? (escopo.comparaveis.length > 1 ? `Geral: soma das ${escopo.comparaveis.length} campanhas comparadas` : "Geral") : escopo.emVigor.find((c) => c.chave === campFiltro)?.nome}</div>}
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3" data-cards-cmp-ml>
           {quad("Investimento", R$(a.inv), R$(t.investimento), `${sinal(t.investimento - a.inv)}${R$(t.investimento - a.inv)}`, cor(-(t.investimento - a.inv)))}
           {quad("Retorno", R$(a.rec), R$(t.receita), `${sinal(t.receita - a.rec)}${R$(t.receita - a.rec)}`, cor(t.receita - a.rec))}
@@ -111,6 +121,37 @@ export default function ComparativoAdsML({ canal }: { canal: string }) {
           {quad("Liquidez", R$(a.liq), R$(t.liquidez), `${sinal(t.liquidez - a.liq)}${R$(t.liquidez - a.liq)}`, cor(t.liquidez - a.liq))}
           {quad("ROI", PCT(a.roi), PCT(t.roi), `${sinal(dRoi)}${dRoi.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} p.p.`, cor(dRoi))}
         </div>
+        {campFiltro === "todas" && porCamp.length > 1 && (
+          <div className="mt-5 overflow-x-auto border border-slate-800 rounded-xl" data-tabela-campanhas-cmp>
+            <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+              <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold text-[10px]">
+                <tr><th className="p-3">Campanha</th><th className="p-3 text-right">Invest. antes</th><th className="p-3 text-right">Invest. agora</th><th className="p-3 text-right">Retorno antes</th><th className="p-3 text-right">Retorno agora</th><th className="p-3 text-right">Liquidez antes</th><th className="p-3 text-right">Liquidez agora</th><th className="p-3 text-right">ROI antes</th><th className="p-3 text-right">ROI agora</th><th className="p-3 text-right">Variação da liquidez</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/70">
+                {porCamp.map((c) => (
+                  <tr key={c.chave} data-camp-cmp={c.chave} className="hover:bg-slate-800/40 cursor-pointer" onClick={() => c.status !== "sem-novo-envio" && (setCampFiltro(c.chave), setPag(1), setFiltro("todos"))}>
+                    <td className="p-3"><div className="font-bold text-slate-100">{c.nome}</div>{c.status !== "comparada" && <div className="text-[10px] text-slate-500">{c.status === "sem-anterior" ? "sem anterior: fora do Geral" : "sem novo envio: fora do Geral"}</div>}</td>
+                    <td className="p-3 text-right text-slate-400">{c.ant ? R$(c.ant.inv) : "—"}</td><td className="p-3 text-right">{c.atu ? R$(c.atu.inv) : "—"}</td>
+                    <td className="p-3 text-right text-slate-400">{c.ant ? R$(c.ant.rec) : "—"}</td><td className="p-3 text-right">{c.atu ? R$(c.atu.rec) : "—"}</td>
+                    <td className="p-3 text-right text-slate-400">{c.ant ? R$(c.ant.liq) : "—"}</td><td className="p-3 text-right">{c.atu ? R$(c.atu.liq) : "—"}</td>
+                    <td className="p-3 text-right text-slate-400">{c.ant ? PCT(c.ant.roi) : "—"}</td><td className="p-3 text-right">{c.atu ? PCT(c.atu.roi) : "—"}</td>
+                    <td className={`p-3 text-right font-bold ${c.status === "comparada" && c.ant && c.atu ? cor(c.atu.liq - c.ant.liq) : "text-slate-500"}`}>{c.status === "comparada" && c.ant && c.atu ? `${sinal(c.atu.liq - c.ant.liq)}${R$(c.atu.liq - c.ant.liq)}` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot data-camp-geral-cmp className="bg-slate-950 border-t border-slate-700 font-bold text-slate-100">
+                <tr>
+                  <td className="p-3">Geral (soma das comparadas)</td>
+                  <td className="p-3 text-right text-slate-400">{R$(a.inv)}</td><td className="p-3 text-right">{R$(t.investimento)}</td>
+                  <td className="p-3 text-right text-slate-400">{R$(a.rec)}</td><td className="p-3 text-right">{R$(t.receita)}</td>
+                  <td className="p-3 text-right text-slate-400">{R$(a.liq)}</td><td className="p-3 text-right">{R$(t.liquidez)}</td>
+                  <td className="p-3 text-right text-slate-400">{PCT(a.roi)}</td><td className="p-3 text-right">{PCT(t.roi)}</td>
+                  <td className={`p-3 text-right ${cor(t.liquidez - a.liq)}`}>{sinal(t.liquidez - a.liq)}{R$(t.liquidez - a.liq)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2 mt-5">
           <button type="button" onClick={() => { setFiltro("todos"); setPag(1); }} className={`px-3 py-2 rounded-xl text-[11px] font-bold border cursor-pointer ${filtro === "todos" ? "bg-purple-600 border-purple-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400"}`}>Todos ({linhas.length})</button>
           {(Object.keys(ROTULO) as (keyof typeof ROTULO)[]).filter((k) => cont[k] > 0).map((k) => (

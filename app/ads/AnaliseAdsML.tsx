@@ -1,7 +1,8 @@
 "use client";
 // Análise dos anúncios patrocinados do Mercado Livre (ROI, ROAS, liquidez e recomendação) e as vendas que vieram sem patrocínio.
 import React, { useMemo, useState } from "react";
-import { chaveCampanha, type Acao, type AnaliseAnuncio } from "../../lib/adsMl";
+import { chaveCampanha, totaisAnuncios, type Acao, type AnaliseAnuncio } from "../../lib/adsMl";
+import SeletorCampanhaML from "./SeletorCampanhaML";
 import { useDadosML } from "./useDadosML";
 import { NUM, ORDEM_ACOES, PCT, R$, ROAS, ROTULO_ACAO, dataBR } from "./fmtML";
 
@@ -63,7 +64,12 @@ export default function AnaliseAdsML({ canal, visao }: Props) {
 
   if (carregando) return <div className="text-sm text-slate-500 p-6">Carregando…</div>;
   if (!analise || !pads) return <div data-sem-dados-ml className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center text-sm text-slate-500">Nenhuma planilha do Mercado Livre enviada. Envie as planilhas na sub-aba Campanhas.</div>;
-  const t = analise.tot;
+  // "Geral" = todas as campanhas somadas; escolhendo uma campanha, os cartões e os filtros passam a ser só dela
+  const base = campanha === "todas" ? analise.anuncios : analise.anuncios.filter((a) => chaveCampanha(a.campanha) === campanha);
+  const t = campanha === "todas" ? analise.tot : totaisAnuncios(base);
+  const porAcao = { escalar: { n: 0, liquidez: 0 }, manter: { n: 0, liquidez: 0 }, revisar: { n: 0, liquidez: 0 }, retirar: { n: 0, liquidez: 0 }, reativar: { n: 0, liquidez: 0 }, aguardar: { n: 0, liquidez: 0 } } as Record<Acao, { n: number; liquidez: number }>;
+  base.forEach((a) => { porAcao[a.acao].n++; porAcao[a.acao].liquidez += a.liquidez; });
+  const nomeCamp = campanha === "todas" ? "" : campanhas.find(([k]) => k === campanha)?.[1] || "";
   const inicio = (pag - 1) * porPagina;
 
   // ---------------- VENDAS SEM PATROCÍNIO ----------------
@@ -141,10 +147,11 @@ export default function AnaliseAdsML({ canal, visao }: Props) {
     <div className="space-y-6" data-analise-ml>
       {!vendas && <div className="text-[11px] text-amber-300 bg-amber-950/20 border border-amber-900/40 rounded-xl p-3">Sem a planilha de vendas, a liquidez usa só as vendas que a planilha de patrocinados informa. Envie a de vendas na sub-aba Campanhas para cruzar com os produtos vendidos sem patrocínio.</div>}
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
-        <h2 className="text-lg font-bold text-white">📈 Análise dos anúncios — {mes}</h2>
+        <h2 className="text-lg font-bold text-white">📈 Análise dos anúncios — {mes}{campanhas.length > 1 && <span data-titulo-analise-camp className="text-slate-400 font-semibold"> · {campanha === "todas" ? `Geral (soma das ${campanhas.length} campanhas)` : nomeCamp}</span>}</h2>
         <p className="text-xs text-slate-400 mt-1 mb-5 max-w-3xl">Liquidez = retorno atribuído ao anúncio (diretas + indiretas) − custo do SKU − imposto − tarifa − frete − embalagem − investimento. ROI = liquidez ÷ investimento. ROAS = retorno ÷ investimento. Período {dataBR(pads.periodo.ini)} a {dataBR(pads.periodo.fim)}.</p>
+        {campanhas.length > 1 && <div className="mb-4"><SeletorCampanhaML attr={{ "data-filtro-campanha-ml": "" }} valor={campanha} onChange={(v) => { setCampanha(v); setAcao("todas"); setPag(1); }} opcoes={campanhas.map(([k, n]) => ({ chave: k, nome: n }))} /></div>}
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-3" data-cards-ml>
-          {card("Investimento", R$(t.investimento), `${analise.anuncios.length} anúncios`)}
+          {card("Investimento", R$(t.investimento), `${base.length} anúncios`)}
           {card("Retorno", R$(t.receita), `${NUM(t.unidades)} unidades`)}
           {card("ROAS", ROAS(t.roas), `ACOS ${PCT(t.acos)}`)}
           {card("Liquidez", R$(t.liquidez), undefined, cor(t.liquidez))}
@@ -152,10 +159,10 @@ export default function AnaliseAdsML({ canal, visao }: Props) {
           {card("Diretas × indiretas", `${R$(t.receitaDir)}`, `${R$(t.receitaInd)} indiretas`)}
         </div>
         <div className="flex flex-wrap gap-2 mt-5" data-acoes-ml>
-          <button type="button" onClick={() => { setAcao("todas"); setPag(1); }} className={`px-3 py-2 rounded-xl text-[11px] font-bold border cursor-pointer ${acao === "todas" ? "bg-purple-600 border-purple-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400"}`}>Todos ({analise.anuncios.length})</button>
-          {ORDEM_ACOES.filter((a) => analise.porAcao[a].n > 0).map((a) => (
+          <button type="button" onClick={() => { setAcao("todas"); setPag(1); }} className={`px-3 py-2 rounded-xl text-[11px] font-bold border cursor-pointer ${acao === "todas" ? "bg-purple-600 border-purple-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400"}`}>Todos ({base.length})</button>
+          {ORDEM_ACOES.filter((a) => porAcao[a].n > 0).map((a) => (
             <button key={a} type="button" data-filtro-acao={a} onClick={() => { setAcao(a); setPag(1); }} title={ROTULO_ACAO[a].dica} className={`px-3 py-2 rounded-xl text-[11px] font-bold border cursor-pointer ${acao === a ? "bg-purple-600 border-purple-400 text-white" : ROTULO_ACAO[a].cor}`}>
-              {ROTULO_ACAO[a].rotulo} ({analise.porAcao[a].n}) · {R$(analise.porAcao[a].liquidez)}
+              {ROTULO_ACAO[a].rotulo} ({porAcao[a].n}) · {R$(porAcao[a].liquidez)}
             </button>
           ))}
         </div>
@@ -165,12 +172,6 @@ export default function AnaliseAdsML({ canal, visao }: Props) {
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <input data-busca-ml value={busca} onChange={(e) => { setBusca(e.target.value); setPag(1); }} placeholder="Buscar título, MLB ou SKU…" className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none focus:border-purple-500 w-64" />
-          {campanhas.length > 1 && (
-            <select data-filtro-campanha-ml value={campanha} onChange={(e) => { setCampanha(e.target.value); setPag(1); }} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer">
-              <option value="todas">Todas as campanhas ({campanhas.length})</option>
-              {campanhas.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
-            </select>
-          )}
           <select data-ordem-ml value={ordem} onChange={(e) => { setOrdem(e.target.value as any); setPag(1); }} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none cursor-pointer">
             <option value="liquidez">Ordenar: maior liquidez</option><option value="roi">Ordenar: maior ROI</option><option value="roas">Ordenar: maior ROAS</option>
             <option value="investimento">Ordenar: maior investimento</option><option value="receita">Ordenar: maior retorno</option><option value="indireta">Ordenar: mais vendas indiretas</option>
