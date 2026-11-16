@@ -14,6 +14,8 @@ export interface RotaMenu {
   porCanal?: boolean;
   /** de onde vêm os canais do grupo: "ads" (visíveis em Regras Gerais, padrão) ou "afiliados" (escolhidos na Configuração de Afiliados) */
   fonteCanais?: "ads" | "afiliados";
+  /** true = no menu vira um grupo com as sub-abas da Agenda: "Painel geral" (Admin Geral) + as agendas que a pessoa pode abrir */
+  porAgenda?: boolean;
   /** nome do 1º item do grupo, que abre a própria rota (padrão: "Análise global") */
   primeiroItem?: string;
 }
@@ -66,7 +68,7 @@ export const SECOES_MENU: SecaoMenu[] = [
   ] },
   { titulo: "Compras", icone: "🛒", submenu: false, rotas: [{ id: "/compras", nome: "Compras" }] },
   { titulo: "Gestão", icone: "📅", submenu: true, rotas: [
-    { id: "/agenda", nome: "Agenda" },
+    { id: "/agenda", nome: "Agenda", porAgenda: true },
     { id: "/kpi", nome: "KPIs e variável" },
   ] },
   { titulo: "Configurações", icone: "⚙️", submenu: true, rotas: [

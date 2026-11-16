@@ -1,12 +1,13 @@
 "use client";
 import { acessoTotal, nomeDoNivel } from "../../lib/perfis";
-import React, { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import { nomePersonalizado, useNomes } from "../../lib/nomes";
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { ROTAS_DISPONIVEIS, SECOES_MENU, secaoDoCaminho } from "@/lib/rotasMenu";
 import { slugCanal } from "@/lib/adsImportDb";
+import { AGENDAS, agendasDoUsuario, type ChaveAgenda } from "@/lib/agendaAcesso";
 import { carregarCanaisAfiliados, EVENTO_CANAIS_AFILIADOS } from "@/lib/afiliadosDb";
 import Avatar from "./Avatar";
 import { abrirEscolhaDeAvatar } from "./EscolherAvatar";
@@ -21,6 +22,22 @@ const ICONES_SECAO: Record<string, LucideIcon> = {
   Marketing: Megaphone, Financeiro: Wallet, Compras: ShoppingCart, Gestão: CalendarDays, Configurações: Settings,
 };
 
+/** Sub-abas da Agenda no menu: "Painel geral" (só o Admin Geral) + uma por agenda que a pessoa pode abrir. */
+function SubAbasAgenda({ ehGeral, agendas }: { ehGeral: boolean; agendas: ChaveAgenda[] }) {
+  const sp = useSearchParams();
+  const pathname = usePathname();
+  const atual = pathname === "/agenda" ? sp.get("agenda") || (ehGeral ? "geral" : agendas.length > 1 ? "todas" : agendas[0] || "") : "";
+  return (
+    <div className="hub-subsub" data-menu-agenda>
+      {ehGeral && <Link href="/agenda?agenda=geral" className="hub-subitem" data-ativo={atual === "geral"} data-sub-agenda="geral">Painel geral</Link>}
+      {!ehGeral && agendas.length > 1 && <Link href="/agenda?agenda=todas" className="hub-subitem" data-ativo={atual === "todas"} data-sub-agenda="todas">Todas as minhas</Link>}
+      {AGENDAS.filter((a) => agendas.includes(a.chave)).map((a) => (
+        <Link key={a.chave} href={`/agenda?agenda=${a.chave}`} className="hub-subitem" data-ativo={atual === a.chave} data-sub-agenda={a.chave}>{a.nome}</Link>
+      ))}
+    </div>
+  );
+}
+
 export default function Navbar() {
   useNomes();
   const router = useRouter();
@@ -30,6 +47,7 @@ export default function Navbar() {
   const [emailUsuario, setEmailUsuario] = useState("");
   const [menuExpandido, setMenuExpandido] = useState<string | null>(null);
   const [canaisAds, setCanaisAds] = useState<string[]>([]);      // canais visíveis no Adsense (Regras Gerais)
+  const [agendasMenu, setAgendasMenu] = useState<{ geral: boolean; agendas: ChaveAgenda[] } | null>(null);   // sub-abas da Agenda (do banco, sempre atuais)
   const [canaisAfil, setCanaisAfil] = useState<string[]>([]);      // canais escolhidos em Afiliados > Configurações
   const [gruposAbertos, setGruposAbertos] = useState<Record<string, boolean>>({});
   const [sidebarAberta, setSidebarAberta] = useState(false);
@@ -81,6 +99,19 @@ export default function Navbar() {
 
     carregarLogoGlobal();
   }, []);
+
+  // Sub-abas da Agenda: o que o Admin Geral liberou para esta pessoa (lido do banco, não do login guardado)
+  useEffect(() => {
+    const email = emailUsuario.trim().toLowerCase();
+    if (!email) return;
+    let ativo = true;
+    (async () => {
+      const { data } = await supabase.from("usuarios_permissoes").select("perfil, agendas").ilike("email", email).limit(1);
+      const u: any = (data || [])[0];
+      if (ativo && u) setAgendasMenu({ geral: u.perfil === "admin", agendas: agendasDoUsuario(u.perfil, u.agendas) });
+    })();
+    return () => { ativo = false; };
+  }, [emailUsuario]);
 
   const toggleSidebar = () => {
     const novoEstado = !sidebarAberta;
@@ -250,7 +281,15 @@ export default function Navbar() {
                 </button>
                 {sidebarAberta && aberta && (
                   <div className="hub-sub">
-                    {visiveis.map((r) => r.porCanal ? (
+                    {visiveis.map((r) => r.porAgenda && agendasMenu ? (
+                      <div key={r.id} data-menu-grupo={r.id}>
+                        <button type="button" onClick={() => setGruposAbertos((g) => ({ ...g, [r.id]: !g[r.id] }))} className="hub-subitem hub-subgrupo" data-ativo={pathname === r.id} aria-expanded={!!gruposAbertos[r.id]}>
+                          <span>{r.rotulo || r.nome}</span>
+                          <ChevronDown size={12} className="hub-seta" data-aberta={!!gruposAbertos[r.id]} />
+                        </button>
+                        {gruposAbertos[r.id] && <Suspense fallback={null}><SubAbasAgenda ehGeral={agendasMenu.geral} agendas={agendasMenu.agendas} /></Suspense>}
+                      </div>
+                    ) : r.porCanal ? (
                       <div key={r.id} data-menu-adsense={r.id === "/ads" ? "" : undefined} data-menu-grupo={r.id}>
                         <button type="button" onClick={() => setGruposAbertos((g) => ({ ...g, [r.id]: !g[r.id] }))} className="hub-subitem hub-subgrupo" data-ativo={pathname === r.id || !!pathname?.startsWith(r.id + "/")} aria-expanded={!!gruposAbertos[r.id]}>
                           <span>{r.rotulo || r.nome}</span>
@@ -307,6 +346,9 @@ export default function Navbar() {
         .min-h-screen {
           padding-left: ${sidebarAberta ? '15rem' : '4rem'} !important;
           transition: padding-left 0.25s ease !important;
+        }
+        @media print {
+          .min-h-screen { padding-left: 0 !important; }
         }
         @media (max-width: 768px) {
           aside.hub-aside {

@@ -1,15 +1,22 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { Suspense, useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Navbar from "../components/Navbar";
 import PortaoSenhaAgenda from "./PortaoSenhaAgenda";
 import { AGENDAS, agendaDaTarefa, agendasDoUsuario, liberadaAgora, limparLiberacao, nomeDaAgenda, type ChaveAgenda } from "../../lib/agendaAcesso";
 
 const STATUS_ANDAMENTO = "Em andamento";
 
+// useSearchParams exige Suspense no build: a página é um invólucro; o conteúdo está em AgendaConteudo
 export default function AgendaPage() {
+  return <Suspense fallback={null}><AgendaConteudo /></Suspense>;
+}
+
+function AgendaConteudo() {
   const router = useRouter();
+  const sp = useSearchParams();
+  const agendaUrl = sp.get("agenda") || "";
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
@@ -63,6 +70,30 @@ export default function AgendaPage() {
   }, [router]);
 
   useEffect(() => { if (acesso.estado === "liberado") carregarTarefas(); }, [acesso.estado]);
+
+  // A sub-aba escolhida no menu lateral (?agenda=geral|ecommerce|compras|financeiro|sem) define o que aparece aqui
+  useEffect(() => {
+    if (acesso.estado === "verificando" || acesso.estado === "negado") return;
+    const padrao = acesso.agendas.length > 1 ? "todas" : acesso.agendas[0];
+    let alvo: "todas" | ChaveAgenda | "outras" = padrao as any;
+    if (agendaUrl === "geral" && acesso.geral) alvo = "todas";
+    else if (agendaUrl === "sem" && acesso.geral) alvo = "outras";
+    else if (agendaUrl === "todas") alvo = "todas";
+    else if (acesso.agendas.includes(agendaUrl as ChaveAgenda)) alvo = agendaUrl as ChaveAgenda;
+    setAgendaSel(alvo);
+  }, [agendaUrl, acesso.estado, acesso.geral, acesso.agendas]);
+  const abrirAgenda = (c: "todas" | ChaveAgenda | "outras") => {
+    setAgendaSel(c);
+    router.replace(`/agenda?agenda=${c === "todas" ? (acesso.geral ? "geral" : "todas") : c === "outras" ? "sem" : c}`, { scroll: false });
+  };
+
+  // Admin Geral: manda uma tarefa que ainda não tem agenda para a agenda escolhida
+  const enviarParaAgenda = async (id: number, chave: string) => {
+    if (!chave) return;
+    const { error } = await supabase.from('agenda_tarefas').update({ area: chave, responsavel: nomeDaAgenda(chave) }).eq('id', id);
+    if (error) alert("Erro ao enviar para a agenda: " + error.message);
+    else carregarTarefas();
+  };
 
   const carregarTarefas = async () => {
     setLoading(true);
@@ -284,13 +315,20 @@ export default function AgendaPage() {
         {acesso.gestora && (
           <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 shadow-xl mb-6" data-agendas-gestora>
             <div className="flex flex-wrap gap-2">
-              {([["todas", "Todas"], ...AGENDAS.filter(a => acesso.agendas.includes(a.chave)).map(a => [a.chave, a.nome] as const), ...(temOutras ? [["outras", "Outros responsáveis"] as const] : [])] as const).map(([c, n]) => (
-                <button key={c} type="button" data-agenda={c} onClick={() => setAgendaSel(c as any)}
+              {([["todas", acesso.geral ? "Painel geral" : "Todas as minhas"], ...AGENDAS.filter(a => acesso.agendas.includes(a.chave)).map(a => [a.chave, a.nome] as const), ...(temOutras ? [["outras", "Sem agenda"] as const] : [])] as const).map(([c, n]) => (
+                <button key={c} type="button" data-agenda={c} onClick={() => abrirAgenda(c as any)}
                   className={`px-4 py-2 rounded-xl text-xs font-bold border cursor-pointer ${agendaSel === c ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:border-slate-500"}`}>
                   {n} <span className="opacity-70 font-normal">({qtdAgenda(c as any)} em aberto)</span>
                 </button>
               ))}
             </div>
+            {acesso.geral && (
+              <p className="text-[11px] text-slate-500 mt-3" data-ajuda-painel>
+                {agendaSel === "todas" ? "Painel geral: aqui ficam todas as solicitações. Ao adicionar, escolha para qual agenda ela vai; cada pessoa vê só a sub-aba da própria agenda no menu."
+                  : agendaSel === "outras" ? "Solicitações antigas sem agenda definida. Use “Enviar para…” na coluna Agenda para direcionar cada uma."
+                  : `Agenda ${nomeAgenda(agendaSel)}: o que aparece para quem usa esta agenda.`}
+              </p>
+            )}
           </div>
         )}
 
@@ -319,7 +357,7 @@ export default function AgendaPage() {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Agenda</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Enviar para a agenda</label>
               {acesso.gestora ? (
                 <select data-responsavel-novo value={responsavelNovo()} onChange={e => setNovaTarefa({...novaTarefa, responsavel: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none cursor-pointer" required>
                   <option value="" disabled>Escolha…</option>
@@ -507,7 +545,7 @@ export default function AgendaPage() {
                     <th className="p-3 w-16 text-center">Nº</th>
                     <th className="p-3 min-w-[250px]">Atividade / Solicitação</th>
                     {!visaoSimplificada && <th className="p-3">Assunto</th>}
-                    {!visaoSimplificada && <th className="p-3">Responsável</th>}
+                    {!visaoSimplificada && <th className="p-3">Agenda</th>}
                     {!visaoSimplificada && <th className="p-3 text-center">Dt. Solicitação</th>}
                     {!visaoSimplificada && <th className="p-3 text-center">Prioridade</th>}
                     {!visaoSimplificada && <th className="p-3 text-center">Dt. Entrega</th>}
@@ -570,7 +608,19 @@ export default function AgendaPage() {
                                 </select>
                               ) : <span className="text-slate-300 font-bold">{dadosEdicao.responsavel}</span>
                             ) : (
-                              <span className="bg-amber-400/20 text-amber-400 px-2 py-1 rounded font-bold">{item.responsavel}</span>
+                              agendaDaTarefa(item) ? (
+                                <span className="bg-amber-400/20 text-amber-400 px-2 py-1 rounded font-bold" data-agenda-da-tarefa={agendaDaTarefa(item)}>{nomeAgenda(agendaDaTarefa(item) || "")}</span>
+                              ) : (
+                                <div className="flex flex-col gap-1">
+                                  <span className="bg-slate-700/50 text-slate-300 px-2 py-1 rounded font-bold" data-sem-agenda>{item.responsavel || "Sem agenda"}</span>
+                                  {acesso.geral && (
+                                    <select data-enviar-agenda defaultValue="" onChange={e => enviarParaAgenda(item.id, e.target.value)} className="w-28 bg-slate-900 border border-indigo-500/50 rounded p-1 text-[11px] text-indigo-300 cursor-pointer">
+                                      <option value="" disabled>Enviar para…</option>
+                                      {AGENDAS.filter(a => acesso.agendas.includes(a.chave)).map(a => <option key={a.chave} value={a.chave}>{a.nome}</option>)}
+                                    </select>
+                                  )}
+                                </div>
+                              )
                             )}
                           </td>
                         )}

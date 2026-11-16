@@ -113,7 +113,7 @@ const resumoDoTipo = (m: any): string =>
 
 async function listarSalas(sb: SupabaseClient, email: string) {
   await garantirGeral(sb, email);
-  const { data: mem } = await sb.from("chat_membros").select("sala_id, lido_ate, papel, fixada_em").eq("email", email);
+  const { data: mem } = await sb.from("chat_membros").select("sala_id, lido_ate, papel, fixada_em, oculta_em, limpa_em").eq("email", email);
   const meus = (mem as any[]) || [];
   const ids = meus.map((m) => m.sala_id);
   const [{ data: salas }, { data: msgs }, { data: membros }, usuarios, u] = await Promise.all([
@@ -125,13 +125,20 @@ async function listarSalas(sb: SupabaseClient, email: string) {
   ]);
   const lido = new Map(meus.map((m) => [m.sala_id, new Date(m.lido_ate).getTime()]));
   const fixadaEm = new Map<string, string | null>(meus.map((m) => [m.sala_id, m.fixada_em || null]));
+  const limpaEm = new Map<string, string>(meus.map((m) => [m.sala_id, m.limpa_em || ""]));      // histórico apagado só para esta pessoa
+  const ocultaEm = new Map<string, string>(meus.map((m) => [m.sala_id, m.oculta_em || ""]));    // conversa "excluída": some da lista até chegar mensagem nova
   const porSala = new Map<string, any[]>();
   ((msgs as any[]) || []).forEach((m) => { const l = porSala.get(m.sala_id); if (l) l.push(m); else porSala.set(m.sala_id, [m]); });
-  const lista = ((salas as any[]) || []).map((s) => {
-    const ms = porSala.get(s.id) || [];   // mais novas primeiro
+  const lista = ((salas as any[]) || []).filter((s) => {
+    const o = ocultaEm.get(s.id);
+    if (!o || s.tipo === "geral") return true;
+    return (porSala.get(s.id) || []).some((m) => m.criado_em > o);   // chegou mensagem depois de excluir: a conversa volta
+  }).map((s) => {
+    const corteMeu = limpaEm.get(s.id) || "";
+    const ms = (porSala.get(s.id) || []).filter((m) => m.criado_em > corteMeu);   // mais novas primeiro
     const ultima = ms[0];
     return {
-      id: s.id, tipo: s.tipo, nome: s.nome, criado_em: s.criado_em,
+      id: s.id, tipo: s.tipo, nome: s.nome, icone: s.icone || null, criado_em: s.criado_em,
       membros: ((membros as any[]) || []).filter((x) => x.sala_id === s.id).map((x) => ({ email: x.email, papel: x.papel })),
       fixada_em: fixadaEm.get(s.id) || null,
       nao_lidas: ms.filter((m) => m.de_email !== email && new Date(m.criado_em).getTime() > (lido.get(s.id) || 0)).length,
@@ -155,8 +162,29 @@ async function criarDm(sb: SupabaseClient, email: string, d: any) {
   }
   if (!id) erro(500, "Não consegui abrir a conversa.");
   await sb.from("chat_membros").upsert([{ sala_id: id, email }, { sala_id: id, email: com }], { onConflict: "sala_id,email", ignoreDuplicates: true });
+  await sb.from("chat_membros").update({ oculta_em: null }).eq("sala_id", id).eq("email", email);   // quem excluiu e voltou a conversar: a conversa reaparece (o histórico antigo continua apagado)
   return { sala_id: id };
 }
+
+/** "Excluir conversa": conversa direta some da lista só para esta pessoa e o histórico anterior é apagado para ela. Grupo: só o admin do grupo apaga (para todos). */
+async function excluirConversa(sb: SupabaseClient, email: string, d: any) {
+  const id = await exigirMembro(sb, d.sala_id, email);
+  if (id === SALA_GERAL_ID) erro(400, "A sala Geral não pode ser excluída.");
+  const { data: s } = await sb.from("chat_salas").select("tipo").eq("id", id).limit(1);
+  const tipo = (s as any[])?.[0]?.tipo;
+  if (tipo === "grupo") {
+    if ((await papelNaSala(sb, id, email)) !== "admin") erro(403, "Só quem administra o grupo pode excluí-lo. Você pode sair do grupo.");
+    await apagarSala(sb, id);
+    return { apagado: true };
+  }
+  const agora = new Date().toISOString();
+  const { error } = await sb.from("chat_membros").update({ oculta_em: agora, limpa_em: agora, fixada_em: null }).eq("sala_id", id).eq("email", email);
+  if (error) erro(500, "Não consegui excluir a conversa: " + error.message);
+  return { ok: true };
+}
+
+/** Ícone do grupo: um emoji curto (ou vazio = padrão 👥). */
+const iconeValido = (v: any): string | null => { const t = typeof v === "string" ? Array.from(v.trim()).slice(0, 4).join("") : ""; return t || null; };
 
 async function criarGrupo(sb: SupabaseClient, email: string, d: any) {
   const nome = texto(d.nome, 40);
@@ -164,7 +192,7 @@ async function criarGrupo(sb: SupabaseClient, email: string, d: any) {
   const validos = new Set(await todosUsuarios(sb));
   const membros = Array.from(new Set((Array.isArray(d.membros) ? d.membros : []).map(limpoEmail))).filter((m) => m && m !== email && validos.has(m as string)) as string[];
   if (membros.length === 0) erro(400, "Escolha pelo menos uma pessoa para o grupo.");
-  const { data, error } = await sb.from("chat_salas").insert({ tipo: "grupo", nome, criado_por: email }).select("id").single();
+  const { data, error } = await sb.from("chat_salas").insert({ tipo: "grupo", nome, criado_por: email, icone: iconeValido(d.icone) }).select("id").single();
   if (error || !data) return erro(500, "Não consegui criar o grupo: " + (error?.message || ""));
   const id = (data as any).id as string;
   await sb.from("chat_membros").insert([{ sala_id: id, email, papel: "admin" }, ...membros.map((m) => ({ sala_id: id, email: m, papel: "membro" }))]);
@@ -184,6 +212,7 @@ async function editarGrupo(sb: SupabaseClient, email: string, d: any) {
     return { saiu: true };
   }
   if ((await papelNaSala(sb, id, email)) !== "admin") erro(403, "Só quem administra o grupo pode fazer isso.");
+  if (d.icone !== undefined) await sb.from("chat_salas").update({ icone: iconeValido(d.icone) }).eq("id", id);
   if (d.nome !== undefined) { const nome = texto(d.nome, 40); if (!nome) erro(400, "O nome não pode ficar vazio."); await sb.from("chat_salas").update({ nome }).eq("id", id); }
   if (Array.isArray(d.adicionar) && d.adicionar.length) {
     const validos = new Set(await todosUsuarios(sb));
@@ -218,7 +247,9 @@ async function comLinks(sb: SupabaseClient, msgs: any[]) {
 
 async function lerMensagens(sb: SupabaseClient, email: string, d: any) {
   const id = await exigirMembro(sb, d.sala_id, email);
-  const corte = corteISO();
+  const { data: meu } = await sb.from("chat_membros").select("limpa_em").eq("sala_id", id).eq("email", email).limit(1);
+  const limpa = String((meu as any[] | null)?.[0]?.limpa_em || "");
+  const corte = limpa && limpa > corteISO() ? limpa : corteISO();
   const depois = typeof d.depois === "string" && d.depois > corte ? d.depois : null;
   let q = sb.from("chat_mensagens").select("*").eq("sala_id", id).gt("criado_em", depois || corte);
   const { data } = depois ? await q.order("criado_em", { ascending: true }).limit(300) : await q.order("criado_em", { ascending: false }).limit(300);
@@ -462,6 +493,7 @@ export async function tratarChat(acao: string, d: any, token: string | null): Pr
     switch (acao) {
       case "salas": corpo = await listarSalas(sb, email); break;
       case "mensagens": corpo = await lerMensagens(sb, email, d); break;
+      case "excluir_conversa": corpo = await excluirConversa(sb, email, d); break;
       case "fixar": corpo = await fixarConversa(sb, email, d); break;
       case "ler": corpo = await marcarLido(sb, email, d); break;
       case "enviar": corpo = await enviar(sb, email, d); break;

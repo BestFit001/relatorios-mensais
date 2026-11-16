@@ -144,6 +144,7 @@ export default function PlpPage() {
   const [filtroModalidade, setFiltroModalidade] = useState("TODOS"); // Padrão: "TODOS" (Todas as modalidades)
   const [termoPesquisaPedido, setTermoPesquisaPedido] = useState("");
   const [pedidos, setPedidos] = useState<any[]>([]);
+  const [selecionados, setSelecionados] = useState<Set<number>>(new Set());   // pedidos marcados na auditoria para exclusão em massa
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -517,6 +518,31 @@ export default function PlpPage() {
     buscarPedidos();
   };
 
+  // Some da seleção o que já não está na lista filtrada (mudou o filtro, a pesquisa ou foi excluído)
+  useEffect(() => {
+    setSelecionados((atual) => {
+      if (atual.size === 0) return atual;
+      const existentes = new Set(pedidos.map((p) => p.id));
+      const novo = new Set(Array.from(atual).filter((id) => existentes.has(id)));
+      return novo.size === atual.size ? atual : novo;
+    });
+  }, [pedidos]);
+
+  const alternarSelecionado = (id: number) => setSelecionados((a) => { const n = new Set(a); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  const handleExcluirSelecionados = async () => {
+    const ids = Array.from(selecionados);
+    if (ids.length === 0) return;
+    if (!confirm(`Remover ${ids.length} pedido(s) selecionado(s)? Isso não pode ser desfeito.`)) return;
+    setLoading(true);
+    for (let i = 0; i < ids.length; i += 100) {
+      const { error } = await supabase.from("plp_pedidos").delete().in("id", ids.slice(i, i + 100));
+      if (error) { alert("Erro ao excluir: " + error.message); break; }
+    }
+    setSelecionados(new Set());
+    buscarPedidos();
+  };
+
   const handleLimparPeriodo = async () => {
     if (!confirm(`Remover TODOS os ${pedidos.length} pedidos deste filtro?`)) return;
     const ids = pedidos.map((p) => p.id);
@@ -550,47 +576,61 @@ export default function PlpPage() {
     window.print();
   };
 
-  // AGRUPA OS PEDIDOS EM COLUNAS:
-  // Se for "Apenas Flex" ou se estiver em "Todas as Modalidades", os pedidos FLEX ganham uma coluna dedicada com o título "FLEX"
-  const gerarColunasPorCanal = (listaPedidos: any[], maxLinhasPorColuna = 26) => {
-    const mapa = new Map<string, string[]>();
-
+  // MONTA A FOLHA: seções por canal (e FLEX numa seção só, com subtítulo por canal) fluindo em colunas, 4 colunas por página A4 deitada.
+  // Sem buracos: a coluna seguinte continua de onde a anterior parou ("cont." repete o nome da seção).
+  const NOME_MODALIDADE: Record<string, string> = { FLEX: "Flex", AGENCIA: "Agência", CORREIOS: "Correios" };
+  const montarPaginas = (listaPedidos: any[]) => {
+    type Linha = { t: "secao" | "sub" | "pedido"; texto: string; qtd?: number; idx?: number; numero?: string; cont?: boolean };
+    const secoes = new Map<string, { titulo: string; flex: boolean; subs: Map<string, string[]> }>();
     for (const p of listaPedidos) {
-      let grupoKey = String(p.canal || "Geral").trim();
-
-      // REGRA: Se a modalidade for FLEX e estivermos exibindo junto no manifesto geral, agrupa sob a coluna "FLEX"
-      if (p.modalidade === "FLEX" && filtroModalidade === "TODOS") {
-        grupoKey = "FLEX";
-      } else {
-        grupoKey = canais.find((cn) => cn.trim().toLowerCase() === grupoKey.toLowerCase()) || grupoKey;
-      }
-
-      if (!mapa.has(grupoKey)) mapa.set(grupoKey, []);
-      mapa.get(grupoKey)!.push(p.numero_pedido);
+      const canalBruto = String(p.canal || "Geral").trim();
+      const canal = canais.find((cn) => cn.trim().toLowerCase() === canalBruto.toLowerCase()) || canalBruto;
+      const flexJunto = p.modalidade === "FLEX" && filtroModalidade === "TODOS";
+      const chave = flexJunto ? "__FLEX__" : canal;
+      if (!secoes.has(chave)) secoes.set(chave, { titulo: flexJunto ? "FLEX" : canal, flex: flexJunto, subs: new Map() });
+      const sec = secoes.get(chave)!;
+      const sub = flexJunto ? canal : (NOME_MODALIDADE[p.modalidade] || String(p.modalidade || ""));
+      if (!sec.subs.has(sub)) sec.subs.set(sub, []);
+      sec.subs.get(sub)!.push(p.numero_pedido);
     }
-
-    const colunas: { canal: string; totalCanal: number; pedidos: { idx: number; numero: string }[] }[] = [];
-
-    mapa.forEach((peds, grupoNome) => {
-      const total = peds.length;
-      for (let i = 0; i < total; i += maxLinhasPorColuna) {
-        const pedSlice = peds.slice(i, i + maxLinhasPorColuna);
-        colunas.push({
-          canal: i === 0 ? grupoNome : `${grupoNome} (cont.)`,
-          totalCanal: total,
-          pedidos: pedSlice.map((num, j) => ({ idx: i + j + 1, numero: num }))
-        });
+    const ordenadas = Array.from(secoes.values()).sort((x, y) => (x.flex === y.flex ? x.titulo.localeCompare(y.titulo) : x.flex ? -1 : 1));   // FLEX primeiro
+    const CAP_PAG1 = 27, CAP_DEMAIS = 34, COLS = 4;
+    const colunas: Linha[][] = [[]];
+    const cap = () => (Math.floor((colunas.length - 1) / COLS) === 0 ? CAP_PAG1 : CAP_DEMAIS);
+    const novaColuna = () => colunas.push([]);
+    const garante = (precisa: number, cont?: { titulo: string; qtd: number }) => {   // abre coluna nova se não couber `precisa` linhas
+      if (colunas[colunas.length - 1].length + precisa > cap() && colunas[colunas.length - 1].length > 0) { novaColuna(); if (cont) colunas[colunas.length - 1].push({ t: "secao", texto: cont.titulo, qtd: cont.qtd, cont: true }); }
+    };
+    for (const sec of ordenadas) {
+      const total = Array.from(sec.subs.values()).reduce((n, l) => n + l.length, 0);
+      garante(4);
+      colunas[colunas.length - 1].push({ t: "secao", texto: sec.titulo, qtd: total });
+      const varias = sec.subs.size > 1;
+      let n = 0;
+      const subs = Array.from(sec.subs.entries()).sort((x, y) => x[0].localeCompare(y[0]));
+      for (const [nomeSub, nums] of subs) {
+        if (varias) { garante(3, { titulo: sec.titulo, qtd: total }); colunas[colunas.length - 1].push({ t: "sub", texto: nomeSub, qtd: nums.length }); }
+        for (const num of nums) {
+          garante(1, { titulo: sec.titulo, qtd: total });
+          n += 1;
+          colunas[colunas.length - 1].push({ t: "pedido", texto: "", idx: n, numero: num });
+        }
       }
-    });
-
-    return colunas;
+    }
+    const paginas: Linha[][][] = [];
+    for (let i = 0; i < colunas.length; i += COLS) paginas.push(colunas.slice(i, i + COLS));
+    const ultima = paginas[paginas.length - 1] || [];
+    const altura = ultima.reduce((m, c) => Math.max(m, c.length), 0);
+    const assinaturaEmPaginaPropria = paginas.length > 0 && altura + 7 > (paginas.length === 1 ? CAP_PAG1 : CAP_DEMAIS);
+    return { paginas, assinaturaEmPaginaPropria };
   };
 
   const pedidosFiltradosPesquisa = termoPesquisaPedido.trim()
     ? pedidos.filter((p) => String(p.numero_pedido).toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase()))
     : pedidos;
 
-  const colunasPorCanal = gerarColunasPorCanal(pedidosFiltradosPesquisa, 26);
+  const { paginas: paginasFolha, assinaturaEmPaginaPropria } = montarPaginas(pedidosFiltradosPesquisa);
+  const dataBR = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
 
   const kpis = {
     total: pedidosFiltradosPesquisa.length,
@@ -614,45 +654,51 @@ export default function PlpPage() {
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans print:p-0 print:bg-white print:text-black">
       
-      {/* CSS DE IMPRESSÃO MINIMALISTA A4 PAISAGEM */}
+      {/* FOLHA DA PLP (tela e impressão A4 paisagem) */}
       <style jsx global>{`
+        .plp-folha { color: #111; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        .plp-pagina { background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+        .plp-topo { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; border-bottom: 2.5px solid #111; padding-bottom: 8px; margin-bottom: 8px; }
+        .plp-titulo h1 { font-size: 21px; font-weight: 900; line-height: 1.1; margin: 0; letter-spacing: .01em; }
+        .plp-titulo p { font-size: 11px; color: #555; margin: 2px 0 0; }
+        .plp-infos { display: flex; gap: 8px; }
+        .plp-info { border: 1px solid #111; border-radius: 4px; padding: 3px 10px 4px; min-width: 120px; }
+        .plp-info small { display: block; font-size: 9px; color: #555; }
+        .plp-info strong { display: block; font-size: 12.5px; line-height: 1.25; }
+        .plp-resumo { display: flex; gap: 8px; margin-bottom: 10px; }
+        .plp-resumo div { flex: 1; border: 1px solid #111; border-radius: 4px; padding: 3px 10px; display: flex; align-items: baseline; justify-content: space-between; }
+        .plp-resumo div.total { flex: 1.4; background: #111; color: #fff; }
+        .plp-resumo small { font-size: 10.5px; font-weight: 700; }
+        .plp-resumo b { font-size: 19px; font-weight: 900; font-variant-numeric: tabular-nums; }
+        .plp-faixa { display: flex; justify-content: space-between; font-size: 10px; color: #555; border-bottom: 1px solid #111; padding-bottom: 3px; margin-bottom: 8px; }
+        .plp-colunas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; align-items: start; }
+        .plp-col { border: 1px solid #111; }
+        .plp-linha { display: flex; align-items: center; height: 5.4mm; font-size: 10.5px; border-bottom: .5px solid #d4d4d8; padding: 0 5px; }
+        .plp-linha:last-child { border-bottom: 0; }
+        .plp-secao { background: #111; color: #fff; font-weight: 800; font-size: 11px; justify-content: space-between; border-bottom: 0; }
+        .plp-secao.cont { background: #52525b; font-weight: 700; }
+        .plp-secao.flex { background: #111; }
+        .plp-sub { background: #e4e4e7; font-weight: 700; font-size: 9.5px; justify-content: space-between; }
+        .plp-par { background: #f4f4f5; }
+        .plp-n { width: 8mm; text-align: right; color: #71717a; font-size: 9px; padding-right: 6px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+        .plp-num { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; font-size: 11px; letter-spacing: .01em; }
+        .plp-ck { width: 3.2mm; height: 3.2mm; border: 1px solid #111; border-radius: 1px; flex-shrink: 0; }
+        .plp-achado { background: #e9d5ff !important; color: #3b0764; }
+        .plp-vazio { padding: 28px; text-align: center; color: #71717a; font-size: 12px; font-style: italic; border: 1px dashed #cbd5e1; border-radius: 6px; }
+        .plp-fecho { margin-top: 10px; break-inside: avoid; }
+        .plp-total { display: flex; justify-content: space-between; align-items: center; background: #111; color: #fff; padding: 5px 10px; font-weight: 800; font-size: 12px; }
+        .plp-total b { font-size: 16px; font-variant-numeric: tabular-nums; }
+        .plp-assinaturas { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; margin-top: 26px; font-size: 11px; }
+        .plp-assinaturas div { border-top: 1px solid #111; padding-top: 3px; }
+        .plp-assinaturas small { display: block; color: #666; font-size: 9.5px; }
+        .plp-rodape { text-align: center; font-size: 8.5px; color: #888; margin-top: 8px; }
         @media print {
-          @page {
-            size: A4 landscape;
-            margin: 6mm 8mm;
-          }
-          html, body {
-            background: #ffffff !important;
-            color: #000000 !important;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-          nav, header, button, .print-hide {
-            display: none !important;
-          }
-          .folha-print-manifesto {
-            width: 100% !important;
-            border: 1.5px solid #000000 !important;
-            background: #ffffff !important;
-            color: #000000 !important;
-            padding: 6px 8px !important;
-            box-shadow: none !important;
-          }
-          .bloco-assinatura-print {
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-          }
-          table {
-            border-collapse: collapse !important;
-            width: 100% !important;
-          }
-          td, th {
-            border: 1px solid #d1d5db !important;
-            padding: 2.5px 5px !important;
-            font-size: 10px !important;
-            line-height: 1.2 !important;
-          }
+          @page { size: A4 landscape; margin: 6mm 8mm; }
+          html, body { background: #ffffff !important; color: #000000 !important; margin: 0 !important; padding: 0 !important; }
+          nav, header, button, .print-hide { display: none !important; }
+          .plp-folha, .plp-secao, .plp-sub, .plp-par, .plp-resumo div.total, .plp-total, .plp-achado { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .plp-pagina { border: 0; border-radius: 0; padding: 0; margin: 0; break-after: page; page-break-after: always; }
+          .plp-pagina:last-child { break-after: auto; page-break-after: auto; }
         }
       `}</style>
 
@@ -1012,110 +1058,108 @@ export default function PlpPage() {
             </div>
 
             {/* ======================================================== */}
-            {/* DOCUMENTO DE IMPRESSÃO (A4 PAISAGEM - COLUNAS POR CANAL) */}
+            {/* DOCUMENTO DE IMPRESSÃO (A4 PAISAGEM): páginas com 4 colunas */}
             {/* ======================================================== */}
-            <div className="folha-print-manifesto bg-white text-black p-4 rounded-xl border border-slate-300 shadow-xl">
-              
-              {/* CABEÇALHO */}
-              <div className="border-b-2 border-black pb-2 mb-3">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h1 className="text-base font-black uppercase tracking-wide">PLP DE ENVIOS — BEST FIT</h1>
-                    <p className="text-[10px] text-gray-700">Controle de Expedição e Autorização de Envio</p>
-                  </div>
-                  <div className="text-right text-[11px] leading-tight">
-                    <p>Data de Envio: <strong>{filtroDataInicio === filtroDataFim ? filtroDataInicio : `${filtroDataInicio} a ${filtroDataFim}`}</strong></p>
-                    <p>Modalidade de Envio: <strong className="uppercase">{formatarMetodoEnvioTexto()}</strong></p>
-                    <p>Colaborador(es) do Canal: <strong>{analistaDocumento || "Expedição"}</strong></p>
-                  </div>
-                </div>
-              </div>
-
-              {/* LISTAS DE PEDIDOS AGRUPADAS POR CANAL LADO A LADO */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 print:grid-cols-4 gap-3">
-                {colunasPorCanal.map((col, cIdx) => {
-                  const contemBusca = termoPesquisaPedido.trim() && col.pedidos.some(p => p.numero.toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase()));
-
-                  return (
-                    <div
-                      key={cIdx}
-                      className={`border rounded print:rounded-none overflow-hidden self-start ${
-                        contemBusca ? "border-2 border-purple-600 shadow-md" : "border-black"
-                      }`}
-                    >
-                      {/* TÍTULO DO CANAL (O Flex ganha destaque próprio quando em 'Todas as modalidades') */}
-                      <div className={`border-b border-black font-bold text-xs p-1.5 text-center uppercase tracking-wide ${
-                        col.canal === "FLEX" ? "bg-amber-100 text-amber-950 font-black" : contemBusca ? "bg-purple-100 text-purple-900" : "bg-gray-100"
-                      }`}>
-                        {col.canal} <span className="text-[10px] text-gray-600 font-normal">({col.pedidos.length})</span>
-                      </div>
-
-                      {/* LISTA SEQUENCIAL DE PEDIDOS DO CANAL */}
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-gray-50 border-b border-gray-300 text-[9px] uppercase font-bold text-gray-700">
-                            <th className="p-1 text-center w-8 border-r border-gray-300">#</th>
-                            <th className="p-1">Número do Pedido</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200 text-[10px] font-mono">
-                          {col.pedidos.map((p) => {
-                            const matchItem = termoPesquisaPedido.trim() && p.numero.toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase());
-                            return (
-                              <tr key={p.idx} className={`h-5 ${matchItem ? "bg-purple-200 text-purple-950 font-extrabold" : "hover:bg-gray-50"}`}>
-                                <td className="p-0.5 text-center text-gray-500 border-r border-gray-200 w-8">{p.idx}</td>
-                                <td className={`p-0.5 pl-1.5 font-bold ${matchItem ? "text-purple-950 underline decoration-purple-600 decoration-2" : "text-black"}`}>
-                                  {p.numero}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+            <div className="folha-print-manifesto plp-folha" data-plp-folha>
+              {(() => {
+                const totalPag = paginasFolha.length + (assinaturaEmPaginaPropria ? 1 : 0);
+                const termo = termoPesquisaPedido.trim().toLowerCase();
+                const fecho = (
+                  <div className="plp-fecho" data-plp-fecho>
+                    <div className="plp-total"><span>Total de volumes conferidos</span><b>{kpis.total} pacotes</b></div>
+                    <div className="plp-assinaturas">
+                      <div><strong>Colaborador(es) do canal: {analistaDocumento || "Expedição"}</strong><small>Assinatura e data</small></div>
+                      <div><strong>Responsável pela embalagem</strong><small>Assinatura e data</small></div>
                     </div>
-                  );
-                })}
-
-                {pedidosFiltradosPesquisa.length === 0 && (
-                  <div className="col-span-4 p-8 text-center text-gray-500 italic text-xs border border-dashed border-gray-300 rounded">
-                    Nenhum pedido encontrado para a pesquisa ou filtros selecionados.
+                    <p className="plp-rodape">Documento para controle interno · PLP de envios Best Fit</p>
                   </div>
-                )}
-              </div>
-
-              {/* BLOCO DE TOTALIZADOR E 2 ASSINATURAS */}
-              <div className="bloco-assinatura-print mt-3">
-                <div className="flex justify-between items-center border-t-2 border-black p-1.5 bg-gray-100 text-xs font-bold">
-                  <span>TOTAL DE VOLUMES CONFERIDOS:</span>
-                  <span className="font-mono text-sm">{kpis.total} pacotes</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-8 pt-4 mt-2 border-t border-gray-300 text-[11px]">
-                  <div className="border-t border-black pt-1">
-                    <p className="font-bold">Colaborador(es) do Canal ({analistaDocumento || "Expedição"}):</p>
-                    <p className="text-gray-500 mt-2">Assinatura: _________________________________________</p>
-                  </div>
-                  <div className="border-t border-black pt-1">
-                    <p className="font-bold">Responsável pela Embalagem:</p>
-                    <p className="text-gray-500 mt-2">Assinatura: _________________________________________</p>
-                  </div>
-                </div>
-
-                <div className="text-[8px] text-gray-400 text-center pt-2">
-                  Documento para controle interno — PLP de Envios Best Fit
-                </div>
-              </div>
+                );
+                const faixa = (n: number) => (
+                  <div className="plp-faixa"><span>PLP de envios · {filtroDataInicio === filtroDataFim ? dataBR(filtroDataInicio) : `${dataBR(filtroDataInicio)} a ${dataBR(filtroDataFim)}`} · {formatarMetodoEnvioTexto()}</span><span>Página {n} de {totalPag}</span></div>
+                );
+                if (paginasFolha.length === 0) {
+                  return <div className="plp-pagina"><div className="plp-vazio">Nenhum pedido encontrado para a pesquisa ou filtros selecionados.</div></div>;
+                }
+                return (
+                  <>
+                    {paginasFolha.map((cols, pIdx) => (
+                      <div key={pIdx} className="plp-pagina" data-plp-pagina={pIdx + 1}>
+                        {pIdx === 0 ? (
+                          <>
+                            <div className="plp-topo">
+                              <div className="plp-titulo">
+                                <h1>PLP de envios · Best Fit</h1>
+                                <p>Controle de expedição e autorização de envio</p>
+                              </div>
+                              <div className="plp-infos">
+                                <div className="plp-info"><small>Data de envio</small><strong>{filtroDataInicio === filtroDataFim ? dataBR(filtroDataInicio) : `${dataBR(filtroDataInicio)} a ${dataBR(filtroDataFim)}`}</strong></div>
+                                <div className="plp-info"><small>Modalidade</small><strong>{formatarMetodoEnvioTexto()}</strong></div>
+                                <div className="plp-info"><small>Colaborador(es) do canal</small><strong>{analistaDocumento || "Expedição"}</strong></div>
+                              </div>
+                            </div>
+                            <div className="plp-resumo" data-plp-resumo>
+                              <div className="total"><small>Total de volumes</small><b>{kpis.total}</b></div>
+                              {kpis.flex > 0 && <div><small>Flex</small><b>{kpis.flex}</b></div>}
+                              {kpis.agencia > 0 && <div><small>Agência</small><b>{kpis.agencia}</b></div>}
+                              {kpis.correios > 0 && <div><small>Correios</small><b>{kpis.correios}</b></div>}
+                            </div>
+                          </>
+                        ) : faixa(pIdx + 1)}
+                        <div className="plp-colunas">
+                          {cols.map((col, cIdx) => (
+                            <div key={cIdx} className="plp-col">
+                              {col.map((l, lIdx) => {
+                                if (l.t === "secao") return <div key={lIdx} className={`plp-linha plp-secao${l.cont ? " cont" : ""}${l.texto === "FLEX" ? " flex" : ""}`} data-plp-secao={l.texto}><span>{l.texto}{l.cont ? " (cont.)" : ""}</span><span>{l.qtd}</span></div>;
+                                if (l.t === "sub") return <div key={lIdx} className="plp-linha plp-sub"><span>{l.texto}</span><span>{l.qtd}</span></div>;
+                                const achou = !!termo && String(l.numero).toLowerCase().includes(termo);
+                                return (
+                                  <div key={lIdx} className={`plp-linha${(l.idx || 0) % 2 === 0 ? " plp-par" : ""}${achou ? " plp-achado" : ""}`} data-plp-pedido>
+                                    <span className="plp-n">{l.idx}</span><span className="plp-num">{l.numero}</span><span className="plp-ck" />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                        {pIdx === paginasFolha.length - 1 && !assinaturaEmPaginaPropria && fecho}
+                      </div>
+                    ))}
+                    {assinaturaEmPaginaPropria && <div className="plp-pagina" data-plp-pagina={totalPag}>{faixa(totalPag)}{fecho}</div>}
+                  </>
+                );
+              })()}
             </div>
 
             {/* TABELA DE AUDITORIA INDIVIDUAL EM TELA */}
             <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-3 print:hidden">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                Auditoria e Exclusão Individual ({pedidosFiltradosPesquisa.length})
-              </h3>
-              <div className="overflow-x-auto max-h-[300px]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-white">Auditoria e exclusão de pedidos ({pedidosFiltradosPesquisa.length})</h3>
+                  <p className="text-[11px] text-slate-500">Use os filtros acima (data, canal, modalidade ou pesquisa), marque os pedidos e exclua de uma vez.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2" data-plp-acoes-massa>
+                  <button type="button" data-plp-selecionar-todos onClick={() => setSelecionados(new Set(pedidosFiltradosPesquisa.map((p) => p.id)))} disabled={pedidosFiltradosPesquisa.length === 0}
+                    className="bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-700 text-slate-200 text-[11px] font-bold py-1.5 px-3 rounded-lg cursor-pointer">
+                    Selecionar todos os {pedidosFiltradosPesquisa.length} do filtro
+                  </button>
+                  {selecionados.size > 0 && (
+                    <button type="button" data-plp-limpar-selecao onClick={() => setSelecionados(new Set())} className="text-[11px] font-bold text-slate-400 hover:text-white cursor-pointer px-2">Limpar seleção</button>
+                  )}
+                  <button type="button" data-plp-excluir-selecionados onClick={handleExcluirSelecionados} disabled={selecionados.size === 0 || loading}
+                    className="bg-rose-950/80 hover:bg-rose-900 disabled:opacity-40 text-rose-300 border border-rose-800 text-[11px] font-bold py-1.5 px-3 rounded-lg cursor-pointer">
+                    🗑️ Excluir selecionados ({selecionados.size})
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-x-auto max-h-[420px]">
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase text-[10px]">
                     <tr>
+                      <th className="p-2 text-center w-8">
+                        <input type="checkbox" data-plp-marcar-tudo aria-label="Selecionar todos do filtro" className="cursor-pointer accent-rose-500"
+                          checked={pedidosFiltradosPesquisa.length > 0 && selecionados.size === pedidosFiltradosPesquisa.length}
+                          onChange={(e) => setSelecionados(e.target.checked ? new Set(pedidosFiltradosPesquisa.map((p) => p.id)) : new Set())} />
+                      </th>
                       <th className="p-2 text-center">#</th>
                       <th className="p-2">Data</th>
                       <th className="p-2">N.º do Pedido</th>
@@ -1129,7 +1173,8 @@ export default function PlpPage() {
                     {pedidosFiltradosPesquisa.map((item, idx) => {
                       const matchItem = termoPesquisaPedido.trim() && String(item.numero_pedido).toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase());
                       return (
-                        <tr key={item.id} className={`transition-colors ${matchItem ? "bg-purple-950/60 font-bold" : "hover:bg-slate-800/40"}`}>
+                        <tr key={item.id} data-plp-linha-auditoria className={`transition-colors ${selecionados.has(item.id) ? "bg-rose-950/30" : matchItem ? "bg-purple-950/60 font-bold" : "hover:bg-slate-800/40"}`}>
+                          <td className="p-2 text-center"><input type="checkbox" data-plp-marcar aria-label={`Selecionar pedido ${item.numero_pedido}`} className="cursor-pointer accent-rose-500" checked={selecionados.has(item.id)} onChange={() => alternarSelecionado(item.id)} /></td>
                           <td className="p-2 text-center font-mono text-slate-500">{idx + 1}</td>
                           <td className="p-2 font-mono text-slate-300">{item.data_envio}</td>
                           <td className={`p-2 font-mono ${matchItem ? "text-purple-300 underline" : "text-white font-bold"}`}>{item.numero_pedido}</td>

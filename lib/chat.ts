@@ -7,12 +7,15 @@ export const MAX_PDF_BYTES = 10 * 1024 * 1024;
 export const MAX_PDFS_POR_ENVIO = 10;
 export const MAX_FIXADAS = 3;   // conversas fixadas por pessoa (como no WhatsApp)
 
+/** Ícones para os grupos (o que a pessoa escolhe ao criar/editar). */
+export const ICONES_GRUPO = ["✉️", "💌", "📦", "🚚", "⚠️", "🚨", "🔥", "🐞", "❌", "🛠️", "🔧", "💥", "🧯", "🆘", "🤯", "😡", "🧩", "🧾", "💰", "📣", "🛒", "📸", "🎯", "⭐"];
+
 export type TipoMsg = "texto" | "imagem" | "tarefa" | "notificacao" | "produto";
 export type MensagemChat = {
   id: string; sala_id: string; de_email: string; tipo: TipoMsg; texto: string | null; payload: any | null; criado_em: string; anexo_url: string | null;
 };
 export type SalaChat = {
-  id: string; tipo: "geral" | "dm" | "grupo"; nome: string | null; criado_em: string;
+  id: string; tipo: "geral" | "dm" | "grupo"; nome: string | null; icone?: string | null; criado_em: string;
   membros: { email: string; papel: "admin" | "membro" }[]; nao_lidas: number; fixada_em: string | null; ultima: { texto: string; de: string; em: string } | null;
 };
 

@@ -8,7 +8,7 @@ import { useNomes } from "../../lib/nomes";
 import { usePathname } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { tocarAlerta } from "../../lib/som";
-import { SALA_GERAL_ID, MAX_TEXTO, MAX_PDFS_POR_ENVIO, type MensagemChat, type SalaChat, nomeDoEmail, nomeDaSala, pdfDaMensagem, rotuloDia, chaveDia, tamanhoLegivel } from "../../lib/chat";
+import { SALA_GERAL_ID, ICONES_GRUPO, MAX_TEXTO, MAX_PDFS_POR_ENVIO, type MensagemChat, type SalaChat, nomeDoEmail, nomeDaSala, pdfDaMensagem, rotuloDia, chaveDia, tamanhoLegivel } from "../../lib/chat";
 import { chatApi, emailLogado, perfilLogado, tokenDoChat, sairDoChat, prepararImagem, validarPdf, type ItemCompartilhado } from "../../lib/chatCliente";
 import ChatMensagem from "./ChatMensagem";
 import ChatPin from "./ChatPin";
@@ -45,6 +45,8 @@ export default function ChatInterno() {
   const [imagemGrande, setImagemGrande] = useState<string | null>(null);
   const [pendente, setPendente] = useState<ItemCompartilhado | null>(null);   // tarefa/notificação esperando a pessoa escolher a conversa
   const [nomeGrupo, setNomeGrupo] = useState("");
+  const [iconeGrupo, setIconeGrupo] = useState("");   // emoji escolhido para o grupo (vazio = 👥)
+  const [nomeEdicao, setNomeEdicao] = useState("");
   const [escolhidos, setEscolhidos] = useState<Set<string>>(new Set());
   const [tarefas, setTarefas] = useState<any[] | null>(null);
   const [alvoReset, setAlvoReset] = useState("");
@@ -280,9 +282,9 @@ export default function ChatInterno() {
   const clicarPessoa = async (com: string) => { const id = await abrirDm(com); if (id) abrirSala(id); };
 
   const criarGrupo = async () => {
-    const r = await chatApi<{ sala_id: string }>("criar_grupo", { nome: nomeGrupo, membros: Array.from(escolhidos) });
+    const r = await chatApi<{ sala_id: string }>("criar_grupo", { nome: nomeGrupo, icone: iconeGrupo, membros: Array.from(escolhidos) });
     if (!r.ok) return setErro(r.erro || "Não consegui criar o grupo.");
-    setModal(null); setNomeGrupo(""); setEscolhidos(new Set());
+    setModal(null); setNomeGrupo(""); setIconeGrupo(""); setEscolhidos(new Set());
     await carregarSalas(); avisarOutros(r.dados.sala_id); abrirSala(r.dados.sala_id);
   };
 
@@ -292,6 +294,18 @@ export default function ChatInterno() {
     if (!r.ok) return setErro(r.erro || "Não consegui salvar.");
     await carregarSalas(); avisarOutros(salaId);
     if (corpo.sair) { setModal(null); setSalaId(null); setMsgs([]); }
+  };
+
+  // "Excluir conversa": conversa direta some da lista (só para você) e volta a ser "Iniciar conversa"; grupo: só o admin apaga, para todos
+  const excluirConversa = async () => {
+    if (!sala || sala.tipo === "geral") return;
+    const ehGrupo = sala.tipo === "grupo";
+    if (!confirm(ehGrupo ? `Excluir o grupo "${sala.nome}" para todos? As mensagens serão apagadas.` : `Excluir a conversa com ${nomeDaSala(sala, email)}? Ela some da sua lista e as mensagens somem só para você.`)) return;
+    const id = sala.id;
+    const r = await chatApi("excluir_conversa", { sala_id: id });
+    if (!r.ok) return setErro(r.erro || "Não consegui excluir a conversa.");
+    setModal(null); setSalaId(null); setMsgs([]); vivo.current.salaId = null; vivo.current.msgs = [];
+    await carregarSalas(); if (ehGrupo) avisarOutros(id);
   };
 
   const enviarCompartilhado = async (idSala: string) => {
@@ -330,13 +344,24 @@ export default function ChatInterno() {
     setSalas((l) => l.map((x) => (x.id === s.id ? { ...x, fixada_em: fixarAgora ? new Date().toISOString() : null } : x)).sort((a, b) => (a.fixada_em ? 0 : 1) - (b.fixada_em ? 0 : 1)));
     carregarSalas();
   };
-  const iconeSala = (s: SalaChat) => (s.tipo === "geral" ? "📢" : s.tipo === "grupo" ? "👥" : "👤");
+  const iconeSala = (s: SalaChat) => (s.tipo === "geral" ? "📢" : s.tipo === "grupo" ? s.icone || "👥" : "👤");
   const itemCls = (ativo: boolean) => `w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 cursor-pointer transition ${ativo ? "bg-indigo-600/25 text-white" : "text-slate-300 hover:bg-slate-800/70"}`;
   const modalCls = "absolute inset-0 z-20 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4";
   const caixaCls = "w-full max-w-sm max-h-full overflow-y-auto bg-slate-900 border border-slate-700 rounded-2xl p-4 space-y-3 shadow-2xl";
   const inputCls = "w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500";
   const souAdminDoGrupo = sala?.tipo === "grupo" && sala.membros.some((m) => m.email === email && m.papel === "admin");
   const ehAdminApp = souAdmin || perfilLogado() === "admin";
+
+  const seletorIcone = (valor: string, aoEscolher: (i: string) => void) => (
+    <div data-chat-icones>
+      <p className="text-[10px] font-bold uppercase text-slate-500 mb-1">Imagem do grupo</p>
+      <div className="grid grid-cols-8 gap-1">
+        {ICONES_GRUPO.map((i) => (
+          <button key={i} type="button" data-chat-icone={i} onClick={() => aoEscolher(i)} className={`h-8 rounded-lg text-base cursor-pointer border ${valor === i ? "bg-indigo-600/40 border-indigo-400" : "bg-slate-950 border-slate-700 hover:border-slate-500"}`}>{i}</button>
+        ))}
+      </div>
+    </div>
+  );
 
   const listaPessoas = (aoEscolher: (e: string) => void, marcados?: Set<string>) => (
     <div className="max-h-56 overflow-y-auto border border-slate-800 rounded-xl divide-y divide-slate-800/70">
@@ -381,7 +406,7 @@ export default function ChatInterno() {
                     <div key={s.id} className="relative group" data-chat-item data-fixada={s.fixada_em ? "sim" : "nao"}>
                     <button type="button" data-chat-sala={s.tipo === "geral" ? "geral" : s.id} data-chat-nome={nomeDaSala(s, email)} onClick={() => abrirSala(s.id)} className={itemCls(salaId === s.id)}>
                       <span className="min-w-0">
-                        <span className="flex items-center gap-1.5 font-bold truncate">{s.tipo === "dm" ? <Avatar email={s.membros.find((x) => x.email !== email)?.email || ""} tamanho={22} /> : <span>{iconeSala(s)}</span>}<span className="truncate">{nomeDaSala(s, email)}</span></span>
+                        <span className="flex items-center gap-1.5 font-bold truncate">{s.tipo === "dm" ? <Avatar email={s.membros.find((x) => x.email !== email)?.email || ""} tamanho={22} /> : <span className={s.tipo === "grupo" ? "text-base leading-none" : ""}>{iconeSala(s)}</span>}<span className="truncate">{nomeDaSala(s, email)}</span></span>
                         {s.ultima && <span className="block text-[10px] text-slate-500 truncate">{s.ultima.de === email ? "Você: " : s.tipo !== "dm" ? nomeDoEmail(s.ultima.de).split(" ")[0] + ": " : ""}{s.ultima.texto}</span>}
                       </span>
                       <span className="flex items-center gap-1 shrink-0">{s.fixada_em && <span data-chat-icone-fixada title="Conversa fixada" className="text-[11px]">📌</span>}<Badge n={s.nao_lidas} /></span>
@@ -414,7 +439,10 @@ export default function ChatInterno() {
                         <button type="button" data-chat-fixar onClick={() => fixar(sala, !sala.fixada_em)} title={sala.fixada_em ? "Desafixar do topo" : "Fixar no topo da lista"} className={`text-[11px] font-bold cursor-pointer shrink-0 ml-1 ${sala.fixada_em ? "text-amber-300 hover:text-amber-200" : "text-slate-400 hover:text-white"}`}>{sala.fixada_em ? "📌 Fixada" : "📌 Fixar"}</button>
                       </div>
                       {pdfsPendentes > 0 && <span data-chat-pdfs-pendentes className="text-[10px] font-bold text-amber-300 bg-amber-950/50 border border-amber-800/60 rounded-full px-2 py-0.5 shrink-0">📄 {pdfsPendentes} PDF{pdfsPendentes > 1 ? "s" : ""} a conferir</span>}
-                      {sala.tipo === "grupo" && <button type="button" onClick={() => setModal("membros")} data-chat-membros className="text-[11px] font-bold text-indigo-300 hover:text-indigo-200 cursor-pointer shrink-0">Membros</button>}
+                      <div className="flex items-center gap-3 shrink-0">
+                        {(sala.tipo === "dm" || (sala.tipo === "grupo" && souAdminDoGrupo)) && <button type="button" onClick={excluirConversa} data-chat-excluir-conversa title={sala.tipo === "grupo" ? "Excluir o grupo para todos" : "Excluir esta conversa (some só para você)"} className="text-[11px] font-bold text-rose-400 hover:text-rose-300 cursor-pointer">🗑 Excluir</button>}
+                        {sala.tipo === "grupo" && <button type="button" onClick={() => { setNomeEdicao(sala.nome || ""); setModal("membros"); }} data-chat-membros className="text-[11px] font-bold text-indigo-300 hover:text-indigo-200 cursor-pointer">Membros</button>}
+                      </div>
                     </div>
                     <div className={`flex-1 overflow-y-auto py-3 space-y-1.5 ${telaCheia ? "px-[max(1rem,8%)]" : "px-3"}`} data-chat-mensagens>
                       {msgs.length === 0 && <p className="text-center text-[11px] text-slate-500 mt-6">Nenhuma mensagem ainda. Comece a conversa!</p>}
@@ -478,6 +506,7 @@ export default function ChatInterno() {
             <div className={modalCls} data-chat-modal="grupo"><div className={caixaCls}>
               <h3 className="text-sm font-black text-white">👥 Novo grupo</h3>
               <input value={nomeGrupo} onChange={(e) => setNomeGrupo(e.target.value)} maxLength={40} placeholder="Nome do grupo" data-chat-grupo-nome className={inputCls} />
+              {seletorIcone(iconeGrupo, setIconeGrupo)}
               <p className="text-[10px] font-bold uppercase text-slate-500">Quem participa ({escolhidos.size})</p>
               {listaPessoas((u) => setEscolhidos((s) => { const n = new Set(s); if (n.has(u)) n.delete(u); else n.add(u); return n; }), escolhidos)}
               {erro && <p className="text-[11px] text-rose-400">{erro}</p>}
@@ -490,7 +519,14 @@ export default function ChatInterno() {
 
           {modal === "membros" && sala?.tipo === "grupo" && (
             <div className={modalCls} data-chat-modal="membros"><div className={caixaCls}>
-              <h3 className="text-sm font-black text-white">👥 {sala.nome}</h3>
+              <h3 className="text-sm font-black text-white">{iconeSala(sala)} {sala.nome}</h3>
+              {souAdminDoGrupo && (
+                <div className="space-y-2" data-chat-editar-grupo>
+                  <input value={nomeEdicao} onChange={(e) => setNomeEdicao(e.target.value)} maxLength={40} placeholder="Nome do grupo" data-chat-grupo-nome-edicao className={inputCls} />
+                  {seletorIcone(sala.icone || "", (i) => editarGrupo({ icone: i }))}
+                  {nomeEdicao.trim() && nomeEdicao.trim() !== sala.nome && <button type="button" onClick={() => editarGrupo({ nome: nomeEdicao })} data-chat-salvar-nome className="bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer">Salvar nome</button>}
+                </div>
+              )}
               <div className="border border-slate-800 rounded-xl divide-y divide-slate-800/70">
                 {sala.membros.map((m) => (
                   <div key={m.email} className="px-3 py-2 text-xs flex items-center justify-between gap-2 text-slate-200">

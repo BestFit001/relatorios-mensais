@@ -110,15 +110,21 @@ export default function ImportarAdsML({ canal, mes, setMes, meses, onMudou }: Pr
   const indiretos = new Set<string>(); let indUn = 0;
   anunciosSel.forEach((a) => a.itens.filter((i) => !a.semCruzamento && !i.direta && !i.patrocinado).forEach((i) => { indiretos.add(i.mlb); indUn += i.un; }));
   const geral = analise?.tot;
+  const mesCorrente = `${String(new Date().getMonth() + 1).padStart(2, "0")}/${new Date().getFullYear()}`;
   return (
     <div className="space-y-6" data-importar-ml>
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
+        {mesAtual && mesAtual !== mesCorrente && (
+          <div data-aviso-mes className="mb-4 bg-amber-950/30 border border-amber-900/50 text-amber-200 text-xs rounded-xl px-4 py-3">
+            ⚠️ O relatório em vigor é de <strong>{mesAtual}</strong>{pads?.periodo?.ini ? ` (período ${dataBR(pads.periodo.ini)} a ${dataBR(pads.periodo.fim)})` : ""}, e o mês atual é <strong>{mesCorrente}</strong>. A competência vem do período que está <em>dentro da planilha</em> (campo “Desde”), não da data do envio. Para ver {mesCorrente} aqui, exporte o relatório do Mercado Livre com o período do mês atual e envie de novo.
+          </div>
+        )}
         <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
           <div>
             <h2 className="text-lg font-bold text-white">📥 Importar planilhas — {canal}</h2>
             <p className="text-xs text-slate-400 mt-1 max-w-3xl">Envie o <strong>Relatório de anúncios patrocinados</strong> (só entram os anúncios com investimento acima de R$ 0,00) e o <strong>Relatório de vendas</strong> do mesmo período. Cada campanha tem o seu envio: <strong>uma campanha nova é somada às que já estão em vigor</strong>, e reenviar a mesma campanha atualiza só ela (o envio anterior dela fica guardado para a comparação em “Atual vs anterior”). O app acha o SKU de cada MLB no cadastro de anúncios, busca o custo e calcula a liquidez real de cada anúncio, inclusive as vendas de outros produtos que ele puxou.</p>
           </div>
-          {mesAtual && <div data-competencia className="text-right"><div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Em vigor</div><div className="text-sm font-black text-white">{mesAtual}</div><div className="text-[10px] text-slate-500">{anterior ? `anterior guardada: ${anterior.mes}` : "sem relatório anterior"}</div></div>}
+          {mesAtual && <div data-competencia className="text-right"><div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Em vigor</div><div className="text-sm font-black text-white">{mesAtual}</div>{pads?.periodo?.ini && <div className="text-[10px] text-slate-300" data-periodo-vigor>período {dataBR(pads.periodo.ini)} a {dataBR(pads.periodo.fim)}</div>}<div className="text-[10px] text-slate-500">{anterior ? `anterior guardada: ${anterior.mes}` : "sem relatório anterior"}</div></div>}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div>
@@ -151,6 +157,7 @@ export default function ImportarAdsML({ canal, mes, setMes, meses, onMudou }: Pr
               </ul>
             )}
             <div className="text-slate-400">Confira e clique em Salvar. A competência vem do período da planilha{lidoPads ? ` (${mesDoPeriodo(lidoPads.periodo) || "não informado"})` : ""}.</div>
+            {lidoPads && mesDoPeriodo(lidoPads.periodo) && mesDoPeriodo(lidoPads.periodo) !== mesCorrente && <div data-aviso-mes-previa className="text-amber-300">⚠️ O período desta planilha é de {mesDoPeriodo(lidoPads.periodo)}, não do mês atual ({mesCorrente}). Se queria o mês atual, exporte o relatório com o período certo antes de salvar.</div>}
           </div>
         )}
         <div className="flex flex-wrap items-center gap-3 mt-5">
