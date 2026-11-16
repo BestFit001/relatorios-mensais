@@ -35,3 +35,27 @@ export async function limparParaExclusao(): Promise<string | null> {
   const { error } = await supabase.from("skus_para_exclusao").delete().neq("sku", "");
   return error ? "Não consegui limpar a lista: " + error.message : null;
 }
+
+// ---- Exclusão por canal: marca (sku, canal) quando o SKU já foi excluído daquele canal (tabela skus_exclusao_canais) ----
+export const chaveExclusaoCanal = (skuNorm: string, canal: string) => skuNorm + "\u0001" + canal;
+
+export async function carregarExclusoesCanal(): Promise<Set<string>> {
+  const out = new Set<string>();
+  try {
+    for (let de = 0; ; de += 1000) {
+      const { data, error } = await supabase.from("skus_exclusao_canais").select("sku, canal").range(de, de + 999);
+      if (error || !data || data.length === 0) break;
+      for (const r of data as any[]) out.add(chaveExclusaoCanal(String(r.sku), String(r.canal)));
+      if (data.length < 1000) break;
+    }
+  } catch { /* sem a tabela: nada marcado */ }
+  return out;
+}
+
+/** Marca (ou desmarca) que o SKU foi excluído do canal. Devolve a mensagem de erro, ou null. */
+export async function marcarExclusaoCanal(skuNorm: string, canal: string, excluido: boolean): Promise<string | null> {
+  const { error } = excluido
+    ? await supabase.from("skus_exclusao_canais").upsert({ sku: skuNorm, canal, excluido_em: new Date().toISOString() }, { onConflict: "sku,canal" })
+    : await supabase.from("skus_exclusao_canais").delete().eq("sku", skuNorm).eq("canal", canal);
+  return error ? "Não consegui salvar: " + error.message : null;
+}

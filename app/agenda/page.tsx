@@ -3,6 +3,8 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
+import PortaoSenhaAgenda from "./PortaoSenhaAgenda";
+import { AGENDAS, GESTORA, agendaDaTarefa, carregarDonos, liberadaAgora, limparLiberacao, redefinirSenha, salvarDono, type ChaveAgenda } from "../../lib/agendaAcesso";
 
 const STATUS_ANDAMENTO = "Em andamento";
 
@@ -10,6 +12,13 @@ export default function AgendaPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
+
+  // Acesso: a Gisele enxerga as 3 agendas; cada administrado só a sua. Todos passam pela senha (pedida de novo a cada 30 dias).
+  const [acesso, setAcesso] = useState<{ estado: "verificando" | "negado" | "senha" | "liberado"; email: string; gestora: boolean; dono: ChaveAgenda | null }>({ estado: "verificando", email: "", gestora: false, dono: null });
+  const [donos, setDonos] = useState<Record<string, string | null>>({});
+  const [agendaSel, setAgendaSel] = useState<"todas" | ChaveAgenda | "outras">("todas");
+  const [emailDono, setEmailDono] = useState("");
+  const [avisoAcesso, setAvisoAcesso] = useState("");
 
   // Estados de Exibição e Filtros
   const [visaoSimplificada, setVisaoSimplificada] = useState(false);
@@ -49,8 +58,18 @@ export default function AgendaPage() {
       router.push("/");
       return;
     }
-    carregarTarefas();
+    const email = String(user.email || "").trim().toLowerCase();
+    (async () => {
+      const d = await carregarDonos();
+      setDonos(d);
+      const gestora = email === GESTORA;
+      const dono = gestora ? null : ((AGENDAS.find((a) => d[a.chave] === email)?.chave as ChaveAgenda | undefined) ?? null);
+      if (!gestora && !dono) { setAcesso({ estado: "negado", email, gestora, dono }); return; }
+      setAcesso({ estado: liberadaAgora(email) ? "liberado" : "senha", email, gestora, dono });
+    })();
   }, [router]);
+
+  useEffect(() => { if (acesso.estado === "liberado") carregarTarefas(); }, [acesso.estado]);
 
   const carregarTarefas = async () => {
     setLoading(true);
@@ -83,6 +102,9 @@ export default function AgendaPage() {
     return publicUrlData.publicUrl;
   };
 
+  // Responsável da nova tarefa: o administrado só cria na própria agenda; a Gisele escolhe (padrão = a agenda aberta)
+  const responsavelNovo = () => acesso.gestora ? (novaTarefa.responsavel || (agendaSel !== "todas" && agendaSel !== "outras" ? nomeAgenda(agendaSel) : "")) : nomeAgenda(acesso.dono || "");
+
   const adicionarTarefa = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
@@ -97,7 +119,7 @@ export default function AgendaPage() {
       const insercao = {
         atividade: novaTarefa.atividade.trim(),
         assunto: novaTarefa.assunto.trim().toUpperCase(),
-        responsavel: novaTarefa.responsavel.trim(),
+        responsavel: responsavelNovo(),
         prioridade: novaTarefa.prioridade,
         data_solicitacao: hoje,
         data_entrega: prazoIndeterminadoNovo ? null : (novaTarefa.data_entrega || null),
@@ -202,8 +224,19 @@ export default function AgendaPage() {
     else carregarTarefas();
   };
 
+  // Agenda em exibição: o administrado só vê a dele; a Gisele escolhe (todas | uma | responsáveis fora das 3 agendas)
+  const agendaAtiva = acesso.gestora ? agendaSel : (acesso.dono as ChaveAgenda);
+  const tarefasDaAgenda = tarefas.filter(t => {
+    if (agendaAtiva === "todas") return true;
+    const a = agendaDaTarefa(t.responsavel);
+    return agendaAtiva === "outras" ? a === null : a === agendaAtiva;
+  });
+  const nomeAgenda = (c: string) => AGENDAS.find(a => a.chave === c)?.nome || c;
+  const qtdAgenda = (c: "todas" | ChaveAgenda | "outras") => tarefas.filter(t => !t.finalizado && (c === "todas" || (c === "outras" ? agendaDaTarefa(t.responsavel) === null : agendaDaTarefa(t.responsavel) === c))).length;
+  const temOutras = acesso.gestora && tarefas.some(t => agendaDaTarefa(t.responsavel) === null);
+
   // Filtragem: Abas de Pendentes / Em Andamento / Concluídos + Filtros de Topo
-  const dadosFiltrados = tarefas.filter(t => {
+  const dadosFiltrados = tarefasDaAgenda.filter(t => {
     const matchAssunto = filtroAssunto === "" || t.assunto === filtroAssunto;
     const matchPrioridade = filtroPrioridade === "" || t.prioridade === filtroPrioridade;
     
@@ -219,9 +252,33 @@ export default function AgendaPage() {
     return matchAssunto && matchPrioridade && matchAba;
   });
 
-  const totalPendentes = tarefas.filter(t => !t.finalizado && !emAndamento(t)).length;
-  const totalEmAndamento = tarefas.filter(t => emAndamento(t)).length;
-  const totalConcluidos = tarefas.filter(t => !!t.finalizado).length;
+  const totalPendentes = tarefasDaAgenda.filter(t => !t.finalizado && !emAndamento(t)).length;
+  const totalEmAndamento = tarefasDaAgenda.filter(t => emAndamento(t)).length;
+  const totalConcluidos = tarefasDaAgenda.filter(t => !!t.finalizado).length;
+
+  if (acesso.estado === "verificando") return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">Carregando…</div>;
+  if (acesso.estado === "negado") return (
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-slate-100">
+      <div data-sem-agenda className="max-w-sm bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center space-y-3">
+        <h1 className="text-lg font-black text-white">Agenda de Ações</h1>
+        <p className="text-sm text-slate-400">Seu e-mail ({acesso.email || "sem e-mail"}) não está ligado a nenhuma agenda. Peça para a Gisele vincular o seu e-mail à sua agenda.</p>
+      </div>
+    </div>
+  );
+  if (acesso.estado === "senha") return <PortaoSenhaAgenda email={acesso.email} onLiberado={() => setAcesso(a => ({ ...a, estado: "liberado" }))} />;
+
+  const salvarEmailDono = async (chave: ChaveAgenda) => {
+    const falha = await salvarDono(chave, emailDono);
+    setAvisoAcesso(falha || `✅ ${nomeAgenda(chave)} passa a abrir a própria agenda com o e-mail ${emailDono.trim().toLowerCase() || "(nenhum)"}.`);
+    if (!falha) setDonos({ ...donos, [chave]: emailDono.trim().toLowerCase() || null });
+  };
+  const redefinirDono = async (chave: ChaveAgenda) => {
+    const email = donos[chave];
+    if (!email) { setAvisoAcesso("Informe antes o e-mail de " + nomeAgenda(chave) + "."); return; }
+    if (!confirm(`Redefinir a senha da agenda de ${nomeAgenda(chave)}? Ela cria outra senha no próximo acesso.`)) return;
+    const falha = await redefinirSenha(email);
+    setAvisoAcesso(falha || `✅ Senha de ${nomeAgenda(chave)} redefinida: no próximo acesso ela cria uma nova.`);
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -229,11 +286,37 @@ export default function AgendaPage() {
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Agenda de Ações</h1>
+            <h1 className="text-2xl font-black text-white tracking-tight">{acesso.gestora ? "Agenda de Ações" : `Agenda de ${nomeAgenda(acesso.dono || "")}`}</h1>
             <p className="text-sm font-medium text-slate-400">Gestão de Tarefas e Prazos Administrativos</p>
           </div>
-          <Navbar />
+          <div className="flex items-center gap-3">
+            <button type="button" data-bloquear-agenda onClick={() => { limparLiberacao(acesso.email); setAcesso(a => ({ ...a, estado: "senha" })); }} className="bg-slate-900 border border-slate-800 text-slate-300 hover:text-white text-[11px] font-bold py-2 px-3 rounded-xl cursor-pointer" title="Pede a senha de novo">🔒 Bloquear</button>
+            <Navbar />
+          </div>
         </div>
+
+        {acesso.gestora && (
+          <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 shadow-xl mb-6 space-y-3" data-agendas-gestora>
+            <div className="flex flex-wrap gap-2">
+              {([["todas", "Todas"], ...AGENDAS.map(a => [a.chave, a.nome] as const), ...(temOutras ? [["outras", "Outros responsáveis"] as const] : [])] as const).map(([c, n]) => (
+                <button key={c} type="button" data-agenda={c} onClick={() => { setAgendaSel(c as any); setEmailDono(c !== "todas" && c !== "outras" ? donos[c] || "" : ""); setAvisoAcesso(""); }}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold border cursor-pointer ${agendaSel === c ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:border-slate-500"}`}>
+                  {n} <span className="opacity-70 font-normal">({qtdAgenda(c as any)} em aberto)</span>
+                </button>
+              ))}
+            </div>
+            {agendaSel !== "todas" && agendaSel !== "outras" && (
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400" data-acesso-dono>
+                <span>E-mail de acesso de {nomeAgenda(agendaSel)}:</span>
+                <input data-email-dono type="email" value={emailDono} onChange={e => setEmailDono(e.target.value)} placeholder="nome@usebestfit.com.br" className="bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white outline-none focus:border-indigo-500 w-64" />
+                <button type="button" data-salvar-email-dono onClick={() => salvarEmailDono(agendaSel)} className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-2 px-3 rounded-lg cursor-pointer">Salvar</button>
+                <button type="button" data-redefinir-senha onClick={() => redefinirDono(agendaSel)} className="text-rose-400 hover:text-rose-300 font-bold cursor-pointer">Redefinir senha</button>
+                {!donos[agendaSel] && <span className="text-amber-300 font-bold">sem e-mail: ninguém abre esta agenda além de você</span>}
+              </div>
+            )}
+            {avisoAcesso && <p data-aviso-acesso className="text-[11px] font-bold text-emerald-300">{avisoAcesso}</p>}
+          </div>
+        )}
 
         {/* FORMULÁRIO DE INSERÇÃO */}
         <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 shadow-xl mb-8">
@@ -261,13 +344,14 @@ export default function AgendaPage() {
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Responsável</label>
-              <input 
-                type="text" 
-                value={novaTarefa.responsavel} 
-                onChange={e => setNovaTarefa({...novaTarefa, responsavel: e.target.value})} 
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none focus:border-indigo-500" 
-                required 
-              />
+              {acesso.gestora ? (
+                <select data-responsavel-novo value={responsavelNovo()} onChange={e => setNovaTarefa({...novaTarefa, responsavel: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-white outline-none cursor-pointer" required>
+                  <option value="" disabled>Escolha…</option>
+                  {AGENDAS.map(a => <option key={a.chave} value={a.nome}>{a.nome}</option>)}
+                </select>
+              ) : (
+                <input type="text" readOnly value={nomeAgenda(acesso.dono || "")} className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300 outline-none" />
+              )}
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Prioridade</label>
@@ -453,8 +537,8 @@ export default function AgendaPage() {
                     {!visaoSimplificada && <th className="p-3 text-center">Dt. Entrega</th>}
                     {!visaoSimplificada && <th className="p-3 text-center">Anexo</th>}
                     <th className="p-3 min-w-[200px]">Tratativa</th>
-                    {!visaoSimplificada && <th className="p-3 text-center">Concluído</th>}
-                    {!visaoSimplificada && <th className="p-3">Status Entrega</th>}
+                    <th className="p-3 text-center">Concluído</th>
+                    <th className="p-3">Status Entrega</th>
                     <th className="p-3 text-center">Ações</th>
                   </tr>
                 </thead>
@@ -503,12 +587,12 @@ export default function AgendaPage() {
                         {!visaoSimplificada && (
                           <td className="p-3">
                             {isEditing ? (
-                              <input 
-                                type="text" 
-                                value={dadosEdicao.responsavel} 
-                                onChange={e => setDadosEdicao({...dadosEdicao, responsavel: e.target.value})} 
-                                className="w-24 bg-slate-900 border border-slate-700 rounded p-1.5 text-white" 
-                              />
+                              acesso.gestora ? (
+                                <select value={dadosEdicao.responsavel} onChange={e => setDadosEdicao({...dadosEdicao, responsavel: e.target.value})} className="w-28 bg-slate-900 border border-slate-700 rounded p-1.5 text-white cursor-pointer">
+                                  {!AGENDAS.some(a => a.nome === dadosEdicao.responsavel) && <option value={dadosEdicao.responsavel}>{dadosEdicao.responsavel || "—"}</option>}
+                                  {AGENDAS.map(a => <option key={a.chave} value={a.nome}>{a.nome}</option>)}
+                                </select>
+                              ) : <span className="text-slate-300 font-bold">{dadosEdicao.responsavel}</span>
                             ) : (
                               <span className="bg-amber-400/20 text-amber-400 px-2 py-1 rounded font-bold">{item.responsavel}</span>
                             )}
@@ -612,7 +696,6 @@ export default function AgendaPage() {
                           )}
                         </td>
 
-                        {!visaoSimplificada && (
                           <td className="p-3 text-center">
                             <input 
                               type="checkbox" 
@@ -622,9 +705,7 @@ export default function AgendaPage() {
                               title={item.finalizado ? "Reabrir (volta para Pendentes)" : "Mover para Concluídos"}
                             />
                           </td>
-                        )}
 
-                        {!visaoSimplificada && (
                           <td className="p-3">
                             {item.finalizado ? (
                               <span className={`font-bold text-[10px] uppercase ${item.status_entrega?.includes('antecedência') ? 'text-indigo-400' : item.status_entrega?.includes('atraso') ? 'text-rose-400' : 'text-emerald-400'}`}>
@@ -638,7 +719,6 @@ export default function AgendaPage() {
                               </button>
                             )}
                           </td>
-                        )}
 
                         <td className="p-3 text-center">
                           {isEditing ? (

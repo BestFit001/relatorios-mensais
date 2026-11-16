@@ -7,6 +7,7 @@ import { buscarTudo } from "../../lib/buscarTudo";
 import ConfigMapaCadastros from "../components/ConfigMapaCadastros";
 import CanaisDoMapa from "../components/CanaisDoMapa";
 import SkusPorCanal from "../components/SkusPorCanal";
+import SkusParaExclusao from "../components/SkusParaExclusao";
 import { carregarPaiManual, salvarPaiManual } from "../../lib/skuPaiDb";
 import { normalizarSkuPai, paiPadrao } from "../../lib/skuPai";
 import { carregarParaExclusao } from "../../lib/skusExclusao";
@@ -111,7 +112,7 @@ export default function MapeamentoPage() {
   const [paiManual, setPaiManual] = useState<Map<string, string>>(new Map());   // ajustes do SKU pai (sku normalizado -> pai)
   const [paraExclusao, setParaExclusao] = useState<Set<string>>(new Set());     // SKUs marcados "Para exclusão" (normalizados)
 
-  const [subAba, setSubAba] = useState<"progresso" | "skus" | "graficos" | "config">("progresso");
+  const [subAba, setSubAba] = useState<"progresso" | "skus" | "exclusao" | "graficos" | "config">("progresso");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
   const [filtroEstoque, setFiltroEstoque] = useState("ComEstoque");
   const [pesquisaSku, setPesquisaSku] = useState("");
@@ -378,6 +379,9 @@ export default function MapeamentoPage() {
           <button data-subaba="skus" onClick={() => setSubAba("skus")} className={classeAba(subAba === "skus")}>
             SKUs por canal
           </button>
+          <button data-subaba="exclusao" onClick={() => setSubAba("exclusao")} className={classeAba(subAba === "exclusao")}>
+            SKUs para exclusão{paraExclusao.size > 0 && <span className="ml-1.5 opacity-80">({fmtInt(paraExclusao.size)})</span>}
+          </button>
           <button data-subaba="graficos" onClick={() => setSubAba("graficos")} className={classeAba(subAba === "graficos")}>
             Gráficos
           </button>
@@ -430,6 +434,9 @@ export default function MapeamentoPage() {
         {/* ═════════════ SUB-ABA: SKUs POR CANAL ═════════════ */}
         {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} onCadastrarVarios={registrarCadastros} paraExclusao={paraExclusao} paiManual={paiManual} onEditarPai={editarPai} />}
 
+        {/* ═════════════ SUB-ABA: SKUs PARA EXCLUSÃO ═════════════ */}
+        {subAba === "exclusao" && <SkusParaExclusao itens={itens} visiveis={visiveis} paraExclusao={paraExclusao} loading={loading} />}
+
         {/* ═════════════ SUB-ABA: GRÁFICOS ═════════════ */}
         {subAba === "graficos" && (
           <div data-painel-graficos className="space-y-8">
@@ -445,7 +452,7 @@ export default function MapeamentoPage() {
                   </p>
                   <div className="flex flex-col lg:flex-row items-center gap-10">
                     <Rosca valores={resumoGrupos.totais} total={resumoGrupos.geral} />
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 w-full">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-1 w-full">
                       {GRUPOS.map((g) => {
                         const n = resumoGrupos.totais[g.id];
                         const pct = resumoGrupos.geral > 0 ? (n / resumoGrupos.geral) * 100 : 0;
@@ -470,6 +477,15 @@ export default function MapeamentoPage() {
                           </button>
                         );
                       })}
+                      <button type="button" data-grupo-exclusao onClick={() => setSubAba("exclusao")} title="Ver a lista de SKUs para exclusão" className="text-left bg-slate-950 p-5 rounded-xl border border-slate-800 hover:border-slate-600 transition-colors">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="w-3 h-3 rounded-sm bg-slate-400" />
+                          <span className="text-xs font-bold text-slate-300">SKUs para exclusão</span>
+                        </div>
+                        <div data-total-exclusao-graficos className="text-3xl font-black text-slate-200">{fmtInt(paraExclusao.size)}</div>
+                        <div className="text-[11px] text-slate-400 mt-1">marcados em Configurações</div>
+                        <div className="text-[10px] text-slate-500 mt-2">Não entram em “SKUs por canal”</div>
+                      </button>
                     </div>
                   </div>
                   {resumoGrupos.totais[G_OBSOLETO] === 0 && (
