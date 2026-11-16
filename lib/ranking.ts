@@ -2,6 +2,8 @@
 // Os valores de cada canal vêm de calcularResumoCanais (mesmos números do Dashboard e do Início).
 import type { ResumoCanal } from "./resumoCanais";
 import { nomeDeExibicao } from "./nomesBase";
+import { normalizarNomeCanal, canalTemCadastro } from "./vendasCanaisLogica";
+import { normalizarSkuPai } from "./skuPai";
 
 export const normTxt = (v: any) => String(v ?? "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ");
 /** Magalu e Magazine Luiza são o mesmo canal. */
@@ -11,9 +13,18 @@ export interface Totais {
   /** faturamento já abatido de devoluções e cancelamentos (o que o Dashboard chama de "com redutor") */
   faturado: number; bruto: number; lucro: number; repasse: number; pedidos: number; unidades: number; ads: number; meta: number; devolucoes: number; cancelados: number;
   ticket: number; margemBruta: number; liquidez: number; progressoMeta: number; roas: number; cadastros: number;
+  /** SKUs com estoque que ainda não estão cadastrados nos canais (posição de hoje) */
+  cadFaltam: number;
+  /** cadastros marcados como feitos no período (Mapa de Cadastros ou Novos produtos) */
+  cadFeitos: number;
+  /** exclusões de SKU marcadas por canal no período (Mapa de Cadastros > Exclusão) */
+  cadExcluidos: number;
 }
 
-export function totalizar(canais: ResumoCanal[], cadastros: (canal: string) => number = () => 0): Totais {
+/** Números de cadastro de um canal, vindos das tabelas do Mapa (ver calcularFaltamPorCanal e contarEventosPorCanal). */
+export type ExtraCadastro = (canal: string) => { faltam: number; feitos: number; excluidos: number };
+
+export function totalizar(canais: ResumoCanal[], cadastros: (canal: string) => number = () => 0, extra?: ExtraCadastro): Totais {
   const soma = (f: (c: ResumoCanal) => number) => canais.reduce((a, c) => a + (f(c) || 0), 0);
   const faturado = soma((c) => c.faturadoComRedutor), bruto = soma((c) => c.faturadoBruto), lucro = soma((c) => c.lucroLiquidoReal), repasse = soma((c) => c.repasseLiquidoTotal);
   const pedidos = soma((c) => c.pedidos), ads = soma((c) => c.adsGasto), meta = soma((c) => c.metaValor);
@@ -25,6 +36,9 @@ export function totalizar(canais: ResumoCanal[], cadastros: (canal: string) => n
     progressoMeta: meta > 0 ? (faturado / meta) * 100 : 0,
     roas: ads > 0 ? faturado / ads : 0,
     cadastros: canais.reduce((a, c) => a + cadastros(c.canal), 0),
+    cadFaltam: extra ? canais.reduce((a, c) => a + extra(c.canal).faltam, 0) : 0,
+    cadFeitos: extra ? canais.reduce((a, c) => a + extra(c.canal).feitos, 0) : 0,
+    cadExcluidos: extra ? canais.reduce((a, c) => a + extra(c.canal).excluidos, 0) : 0,
   };
 }
 
@@ -37,7 +51,7 @@ export const nomeDoEmail = (email: string) => nomeDeExibicao(email);
  * Canal sem responsável fica em "Sem analista" (email null), fora da classificação.
  * Só entram analistas que têm ao menos um canal.
  */
-export function agruparPorAnalista(resumo: ResumoCanal[], mapeamentos: { email: string; canal: string }[], cadastros: (canal: string) => number = () => 0): AnalistaRanking[] {
+export function agruparPorAnalista(resumo: ResumoCanal[], mapeamentos: { email: string; canal: string }[], cadastros: (canal: string) => number = () => 0, extra?: ExtraCadastro): AnalistaRanking[] {
   const porEmail = new Map<string, Set<string>>();
   mapeamentos.forEach((m) => {
     const e = String(m.email || "").trim().toLowerCase(); if (!e) return;
@@ -49,14 +63,14 @@ export function agruparPorAnalista(resumo: ResumoCanal[], mapeamentos: { email: 
     const canais = resumo.filter((r) => chaves.has(chaveCanal(r.canal)));
     if (!canais.length) return;
     canais.forEach((c) => comDono.add(chaveCanal(c.canal)));
-    lista.push({ email, nome: nomeDoEmail(email), canais, total: totalizar(canais, cadastros) });
+    lista.push({ email, nome: nomeDoEmail(email), canais, total: totalizar(canais, cadastros, extra) });
   });
   const orfaos = resumo.filter((r) => !comDono.has(chaveCanal(r.canal)) && (r.faturadoBruto > 0 || r.adsGasto > 0 || r.metaValor > 0));   // canal sem dono e sem movimento no mês não aparece
-  if (orfaos.length) lista.push({ email: null, nome: "Sem analista", canais: orfaos, total: totalizar(orfaos, cadastros) });
+  if (orfaos.length) lista.push({ email: null, nome: "Sem analista", canais: orfaos, total: totalizar(orfaos, cadastros, extra) });
   return lista;
 }
 
-export type MetricaId = "faturado" | "lucro" | "margemBruta" | "liquidez" | "ticket" | "pedidos" | "unidades" | "ads" | "roas" | "progressoMeta" | "cadastros";
+export type MetricaId = "faturado" | "lucro" | "margemBruta" | "liquidez" | "ticket" | "pedidos" | "unidades" | "ads" | "roas" | "progressoMeta" | "cadastros" | "cadFaltam" | "cadFeitos" | "cadExcluidos";
 export type Formato = "moeda" | "pct" | "num" | "x";
 export const METRICAS: { id: MetricaId; rotulo: string; formato: Formato; dica: string }[] = [
   { id: "faturado", rotulo: "Faturamento", formato: "moeda", dica: "Vendas faturadas no período, já abatidas devoluções e cancelamentos" },
@@ -70,9 +84,16 @@ export const METRICAS: { id: MetricaId; rotulo: string; formato: Formato; dica: 
   { id: "roas", rotulo: "Retorno dos Ads", formato: "x", dica: "Faturamento ÷ investimento em Ads (quantos reais vendidos para cada R$ 1 investido)" },
   { id: "progressoMeta", rotulo: "% da meta", formato: "pct", dica: "Faturamento ÷ meta (em períodos fora do mês fechado, a meta é proporcional aos dias)" },
   { id: "cadastros", rotulo: "Cadastros", formato: "num", dica: "SKUs marcados como cadastrados nos canais do analista (posição de hoje; não varia por período)" },
+  { id: "cadFaltam", rotulo: "Faltam cadastrar", formato: "num", dica: "SKUs com estoque (não obsoletos e fora da lista de exclusão) que ainda não estão cadastrados nos canais do analista. Posição de hoje; não varia por período" },
+  { id: "cadFeitos", rotulo: "Cadastros feitos", formato: "num", dica: "Cadastros marcados como feitos no período, no Mapa de Cadastros ou em Novos produtos > Canais, nos canais do analista (registro a partir de 16/11/2026)" },
+  { id: "cadExcluidos", rotulo: "SKUs excluídos", formato: "num", dica: "Exclusões marcadas por canal no período, na aba Exclusão do Mapa de Cadastros, nos canais do analista" },
 ];
+/** Métricas que só existem "hoje" (sem histórico): não têm variação nem gráfico de evolução. */
+export const SEM_HISTORICO: MetricaId[] = ["cadastros", "cadFaltam"];
+/** Métricas de cadastro que vêm das tabelas do Mapa (carregadas depois da tela principal). */
+export const METRICAS_CADASTRO: MetricaId[] = ["cadFaltam", "cadFeitos", "cadExcluidos"];
 /** Métricas em que um valor menor é melhor (para pintar a variação). */
-export const MENOR_E_MELHOR: MetricaId[] = ["ads"];
+export const MENOR_E_MELHOR: MetricaId[] = ["ads", "cadFaltam"];
 
 export const valorDa = (t: Totais, m: MetricaId): number => t[m];
 
@@ -126,3 +147,100 @@ export function datasDeCadastro(linhas: { data_cadastro?: string | null }[]): st
   return out;
 }
 export const contarNoPeriodo = (datas: string[], inicio: string, fim: string) => datas.reduce((n, d) => (d >= inicio && d <= fim ? n + 1 : n), 0);
+
+
+// ---------------------------------------------------------------------------------------------
+// Cadastros por canal: o que falta, o que foi feito e o que foi excluído (Mapa de Cadastros)
+// ---------------------------------------------------------------------------------------------
+/** Mesmo padrão do Mapa de Cadastros: só letras e números, minúsculo, sem aspas nem ".0". */
+export const normalizarSkuMapa = (valor: any) => {
+  if (valor === null || valor === undefined) return "";
+  let s = String(valor).trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
+  if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
+  return s.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+};
+
+export interface DadosFaltam {
+  base: { sku: any; estoque: any }[];
+  status: { sku: any; status: any }[];
+  presentes: { canal: any; sku: any }[];
+  /** SKUs da lista "Para exclusão" (como gravados: normalizarSkuPai) */
+  paraExclusao: Set<string>;
+  /** nomes normalizados (normalizarNomeCanal) dos canais ocultos no Mapa */
+  ocultos: Set<string>;
+}
+
+/**
+ * SKUs que faltam cadastrar em cada canal (chave = chaveCanal): têm estoque > 0, não são obsoletos, não estão na lista
+ * "Para exclusão" e não estão marcados como presentes no canal. Canais sem catálogo (clubes) e ocultos no Mapa ficam de fora (0).
+ */
+export function calcularFaltamPorCanal(canais: string[], d: DadosFaltam): Map<string, number> {
+  const candidatos = new Set<string>();
+  const statusPor = new Map<string, string>();
+  d.status.forEach((s) => statusPor.set(normalizarSkuMapa(s.sku), String(s.status || "")));
+  d.base.forEach((b) => {
+    const k = normalizarSkuMapa(b.sku); if (!k) return;
+    if (!(Number(b.estoque || 0) > 0)) return;
+    if ((statusPor.get(k) || "Normal") === "Obsoleto") return;
+    if (d.paraExclusao.has(normalizarSkuPai(b.sku))) return;
+    candidatos.add(k);
+  });
+  const presencaPorCanal = new Map<string, Set<string>>();
+  d.presentes.forEach((m) => {
+    const c = normalizarNomeCanal(m.canal);
+    (presencaPorCanal.get(c) || presencaPorCanal.set(c, new Set()).get(c)!).add(normalizarSkuMapa(m.sku));
+  });
+  const out = new Map<string, number>();
+  canais.forEach((canal) => {
+    const chave = chaveCanal(canal), nome = normalizarNomeCanal(canal);
+    if (!canalTemCadastro(canal) || d.ocultos.has(nome)) { out.set(chave, out.get(chave) || 0); return; }
+    const pres = presencaPorCanal.get(nome);
+    let falta = 0; candidatos.forEach((k) => { if (!pres || !pres.has(k)) falta++; });
+    out.set(chave, (out.get(chave) || 0) + falta);
+  });
+  return out;
+}
+
+/** Evento datado de cadastro/exclusão: canal (chaveCanal) e dia (AAAA-MM-DD, fuso de São Paulo). */
+export interface EventoCadastro { canal: string; dia: string }
+export const diaSP = (iso: any): string => { const d = iso ? new Date(iso) : null; return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }) : ""; };
+export function eventosDeCadastro(linhas: { canal?: any; feito_em?: any; excluido_em?: any }[], campo: "feito_em" | "excluido_em"): EventoCadastro[] {
+  const out: EventoCadastro[] = [];
+  linhas.forEach((l) => { const dia = diaSP((l as any)[campo]); if (dia) out.push({ canal: chaveCanal(l.canal), dia }); });
+  return out;
+}
+/** Quantos eventos cada canal (chaveCanal) teve entre `inicio` e `fim` (AAAA-MM-DD, inclusive). */
+export function contarEventosPorCanal(eventos: EventoCadastro[], inicio: string, fim: string): Map<string, number> {
+  const m = new Map<string, number>();
+  eventos.forEach((e) => { if (e.dia >= inicio && e.dia <= fim) m.set(e.canal, (m.get(e.canal) || 0) + 1); });
+  return m;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Comparativo de Adsense entre analistas (e canais)
+// ---------------------------------------------------------------------------------------------
+export interface MetricasAds {
+  ads: number; participacao: number; faturado: number; roas: number; tacos: number; lucro: number; lucroAposAds: number; roi: number; pedidos: number; adsPorPedido: number;
+}
+/** Números de Ads derivados dos totais. Razões sem investimento (ou sem faturamento) ficam NaN e aparecem como "—". */
+export function metricasAds(t: Totais, adsDaEmpresa: number): MetricasAds {
+  const razao = (a: number, b: number) => (b > 0 ? a / b : NaN);
+  return {
+    ads: t.ads, participacao: adsDaEmpresa > 0 ? (t.ads / adsDaEmpresa) * 100 : NaN, faturado: t.faturado,
+    roas: razao(t.faturado, t.ads), tacos: t.faturado > 0 && t.ads > 0 ? (t.ads / t.faturado) * 100 : NaN,
+    lucro: t.lucro, lucroAposAds: t.lucro - t.ads, roi: t.ads > 0 ? ((t.lucro - t.ads) / t.ads) * 100 : NaN,
+    pedidos: t.pedidos, adsPorPedido: razao(t.ads, t.pedidos),
+  };
+}
+export const LINHAS_ADS: { id: keyof MetricasAds; rotulo: string; formato: Formato; dica: string; melhor: "max" | "min" | null }[] = [
+  { id: "ads", rotulo: "Investimento em Ads", formato: "moeda", dica: "Gasto lançado na aba Adsense nos canais do analista", melhor: null },
+  { id: "participacao", rotulo: "% do investimento total", formato: "pct", dica: "Parte do investimento em Ads de toda a empresa", melhor: null },
+  { id: "faturado", rotulo: "Faturamento", formato: "moeda", dica: "Faturamento já abatido de devoluções e cancelamentos", melhor: "max" },
+  { id: "roas", rotulo: "ROAS", formato: "x", dica: "Faturamento ÷ investimento: quantos reais vendidos para cada R$ 1 em Ads", melhor: "max" },
+  { id: "tacos", rotulo: "Ads ÷ faturamento", formato: "pct", dica: "Quanto do faturamento foi gasto em Ads (quanto menor, melhor)", melhor: "min" },
+  { id: "lucro", rotulo: "Lucro líquido", formato: "moeda", dica: "Lucro antes de descontar o investimento em Ads", melhor: "max" },
+  { id: "lucroAposAds", rotulo: "Lucro após Ads", formato: "moeda", dica: "Lucro líquido − investimento em Ads", melhor: "max" },
+  { id: "roi", rotulo: "ROI dos Ads", formato: "pct", dica: "(Lucro líquido − Ads) ÷ Ads: quanto sobra de lucro para cada R$ 1 investido", melhor: "max" },
+  { id: "pedidos", rotulo: "Pedidos", formato: "num", dica: "Pedidos faturados no período", melhor: null },
+  { id: "adsPorPedido", rotulo: "Ads por pedido", formato: "moeda", dica: "Investimento ÷ pedidos (quanto menor, melhor)", melhor: "min" },
+];

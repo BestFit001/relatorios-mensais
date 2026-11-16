@@ -4,6 +4,7 @@ import { supabase } from "../../lib/supabase";
 import { normalizarNomeCanal } from "../../lib/vendasCanaisLogica";
 import { agruparPorPai, statusDoGrupo, paginar, emLotes, type Presenca } from "../../lib/cadastroCanais";
 import Paginacao from "./Paginacao";
+import { registrarCadastrosFeitos, removerCadastrosFeitos } from "../../lib/cadastrosFeitos";
 
 type Avisar = (tipo: "ok" | "erro", texto: string) => void;
 
@@ -108,6 +109,7 @@ export default function CadastrosCanais({ cadastros, setCadastros, canais, prese
       const res = await Promise.all(itens.map((it: any) => supabase.from("produtos_novos_cadastrados").update({ canais_enviados: novos.get(it.sku) }).eq("sku", it.sku)));
       const erro = res.find((r) => r.error)?.error;
       if (erro) throw new Error(erro.message);
+      for (const c of lista) { if (valor) registrarCadastrosFeitos(itens.map((i: any) => i.sku as string), c, "novos"); else removerCadastrosFeitos(itens.map((i: any) => i.sku as string), c); }   // data para o Ranking
       if (completou) avisar("ok", `Pai ${pai}: cadastrado em todos os canais ✓`);
     } catch (e: any) {
       setCadastros((l) => l.map((i) => (originais.has(i.sku) ? { ...i, canais_enviados: originais.get(i.sku) } : i)));

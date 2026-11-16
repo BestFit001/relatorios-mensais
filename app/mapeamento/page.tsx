@@ -9,6 +9,7 @@ import CanaisDoMapa from "../components/CanaisDoMapa";
 import SkusPorCanal from "../components/SkusPorCanal";
 import SkusParaExclusao from "../components/SkusParaExclusao";
 import { carregarPaiManual, salvarPaiManual } from "../../lib/skuPaiDb";
+import { registrarCadastrosFeitos } from "../../lib/cadastrosFeitos";
 import { normalizarSkuPai, paiPadrao } from "../../lib/skuPai";
 import { carregarParaExclusao } from "../../lib/skusExclusao";
 import { canaisSemRepeticao, canalTemCadastro, normalizarNomeCanal, normalizarSkuVenda, pendentesDeRegistro } from "../../lib/vendasCanaisLogica";
@@ -276,6 +277,7 @@ export default function MapeamentoPage() {
       const { error } = await supabase.from("mapeamento_canais_skus").upsert(lote, { onConflict: "canal,sku" });
       if (error) return "Não consegui gravar o cadastro: " + error.message;
     }
+    registrarCadastrosFeitos(skus, canal, "mapa");   // data do cadastro para o Ranking (não bloqueia se falhar)
     const idx = canais.findIndex((c) => c === canal);
     if (idx >= 0) {
       const set = new Set(skus);
