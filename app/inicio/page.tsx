@@ -19,6 +19,8 @@ import { correcoesVisiveis, correcaoConcluida, podeMarcarCanal, type Correcao, t
 import { campoResolucao, campoSemAcaoLinha, lerResolucoes, lerSemAcaoLinhas, resolucaoVale, rotuloStatus, serializarResolucao, type Resolucao, type StatusResolucao } from "../../lib/notifResolucao";
 import { resumirDevolucoesPorCanal, type ResumoCanalDev } from "../../lib/devolucaoMotivos";
 import { foraDePromocao, type PromoValidade, type MarcaPromovido } from "../../lib/foraPromocao";
+import { avisoPendente, type Monitorado } from "../../lib/estoqueConcorrencia/regras";
+import { CAMPO_CANAIS_ESTOQUE, canaisVisiveis as canaisEstoqueVisiveis } from "../../lib/estoqueConcorrencia/config";
 
 // ---------------------------------------------------------------------------------------------
 // Tela inicial: canais de cada analista (números do Dashboard), notificações e tarefas do administrador
@@ -49,9 +51,10 @@ async function buscarTudo(tabela: string): Promise<any[]> {
 }
 
 type Notificacao = {
-  id: string; tipo: "full" | "devolucao" | "tarefa" | "promocao" | "correcao"; nivel: "critico" | "atencao" | "info"; titulo: string; detalhe: string; canal?: string;
+  id: string; tipo: "full" | "devolucao" | "tarefa" | "promocao" | "correcao" | "estoque"; nivel: "critico" | "atencao" | "info"; titulo: string; detalhe: string; canal?: string;
   /** situação que a marcação "Resolvido / Sem ação efetiva" encerra: se mudar, a notificação volta a aparecer */
   ref?: string;
+  estoqueId?: string; url?: string;
   /** só informa (ex.: devoluções que não afetaram a reputação): não conta nem aparece em "Todas" */
   informativa?: boolean;
   /** card de devoluções do canal por motivo */
@@ -90,7 +93,7 @@ export default function InicioPage() {
   const [aba, setAba] = useState<"andamento" | "concluidas" | "todos">("andamento");
   const [pagina, setPagina] = useState(1);
   const [filtroResp, setFiltroResp] = useState("TODOS");
-  const [filtroNotif, setFiltroNotif] = useState<"todas" | "full" | "devolucao" | "tarefa" | "promocao" | "correcao">("todas");
+  const [filtroNotif, setFiltroNotif] = useState<"todas" | "full" | "devolucao" | "tarefa" | "promocao" | "correcao" | "estoque">("todas");
   // Correções de vídeo: produtos marcados "Com problemas" na aba Vídeos, por canal (cada analista marca o(s) canal(is) dele)
   const [correcoes, setCorrecoes] = useState<Correcao[]>([]);
   const [resolucoes, setResolucoes] = useState<Map<string, Resolucao>>(new Map());   // marcações "Resolvido / Sem ação efetiva" das notificações
@@ -166,6 +169,32 @@ export default function InicioPage() {
     setCorrecoesCanais((k.data || []) as CorrecaoCanal[]);
   };
   useEffect(() => { carregarCorrecoes(); }, []);
+
+  // "Acabou na concorrência": anúncios acompanhados (Ferramentas > Acompanhamento de estoque) que esgotaram e ainda não foram marcados como vistos.
+  // Só aparece para quem tem acesso à página e só nos canais deixados à vista na sub-aba Configurações.
+  const [acabouConc, setAcabouConc] = useState<Monitorado[]>([]);
+  const carregarAcabouConc = async () => {
+    try {
+      const u = JSON.parse(localStorage.getItem("usuario_logado") || "{}");
+      const pode = acessoTotal(String(u.perfil || "")) || (Array.isArray(u.paginas_permitidas) && u.paginas_permitidas.includes("/estoque-concorrencia"));
+      if (!pode) { setAcabouConc([]); return; }
+      const [m, c] = await Promise.all([
+        supabase.from("estoque_monitorados").select("*").eq("ativo", true).eq("status", "esgotado").is("aviso_visto_em", null).order("esgotou_em", { ascending: false }).limit(200),
+        supabase.from("config_regras_tiny").select("coluna").eq("campo", CAMPO_CANAIS_ESTOQUE).maybeSingle(),
+      ]);
+      if (m.error) { setAcabouConc([]); return; }
+      const visiveis = canaisEstoqueVisiveis(c.data ? String((c.data as any).coluna ?? "") : null);
+      setAcabouConc(((m.data || []) as Monitorado[]).filter((x) => avisoPendente(x) && visiveis.includes(x.canal)));
+    } catch { setAcabouConc([]); }
+  };
+  useEffect(() => { carregarAcabouConc(); }, []);
+  const marcarAcabouVisto = async (id: string) => {
+    try {
+      const r = await fetch("/api/estoque-concorrencia/itens", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [id], visto: true }) });
+      if (!r.ok) throw new Error();
+    } catch { /* a lista recarrega abaixo e o aviso continua se não salvou */ }
+    await carregarAcabouConc();
+  };
 
   // Encerra UMA linha (canal) da correção como "Resolvido" ou "Sem ação efetiva", ou reabre. Quando todos os canais estão encerrados, a correção fecha:
   // com pelo menos um "Resolvido" o produto volta para os pendentes da aba Vídeos, com a tag "Corrigido".
@@ -544,6 +573,11 @@ export default function InicioPage() {
       lista.push({ id: "promo-fora", tipo: "promocao", nivel: "atencao", titulo: `${foraPromo.length} anúncio(s) do Mercado Livre fora de promoção`, detalhe: "A promoção venceu e eles não estão em outra campanha. Veja a lista na aba “Itens fora de promoção”." });
     }
 
+    // Anúncios da concorrência que acabaram (um aviso por anúncio, até alguém marcar como visto)
+    acabouConc.forEach((m) => {
+      lista.push({ id: `estoque-${m.id}`, estoqueId: m.id, tipo: "estoque", nivel: "atencao", titulo: `Acabou na concorrência: ${m.titulo || m.item_id}`, detalhe: `${m.vendedor ? m.vendedor + " · " : ""}${m.item_id}${m.esgotou_em ? " · visto em " + new Date(m.esgotou_em).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }) : ""}`, url: m.url });
+    });
+
     // Vídeos com problema: um aviso por produto, com os canais que ainda faltam corrigir
     correcoesVisiveis(correcoes, correcoesCanais, mapeamentos, { admin: isAdmin, email: emailAlvo }).forEach(({ correcao, canais }) => {
       const faltam = canais.filter((c) => !c.feito).map((c) => c.canal);
@@ -605,7 +639,7 @@ export default function InicioPage() {
     });
     return lista;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saldoFull, lancFull, lancPropria, nomesVisiveis, mesBarra, mesIso, db.devolucoes, minhasTarefas, conclusoes, hoje, hojeInfo.hora, isAdmin, emailRef, foraPromo, correcoes, correcoesCanais, mapeamentos, emailAlvo]);
+  }, [saldoFull, lancFull, lancPropria, nomesVisiveis, mesBarra, mesIso, db.devolucoes, minhasTarefas, conclusoes, hoje, hojeInfo.hora, isAdmin, emailRef, foraPromo, correcoes, correcoesCanais, mapeamentos, emailAlvo, acabouConc]);
 
   // marcadas como "Resolvido" / "Sem ação efetiva" saem da lista (e voltam se a situação mudar, ex.: chegaram mais devoluções)
   const estaResolvida = (n: Notificacao) => n.ref !== undefined && resolucaoVale(resolucoes.get(n.id), n.ref);
@@ -618,7 +652,7 @@ export default function InicioPage() {
 
   // ---------------------------------------------------------------------------------------------
   const corNivel = (nivel: string) => (nivel === "critico" ? "border-rose-800/60 bg-rose-950/30 text-rose-200" : nivel === "atencao" ? "border-amber-800/60 bg-amber-950/20 text-amber-200" : "border-slate-700 bg-slate-900 text-slate-200");
-  const iconeTipo = (tipo: string) => (tipo === "full" ? "📦" : tipo === "devolucao" ? "↩️" : tipo === "promocao" ? "🏷️" : tipo === "correcao" ? "🛠️" : "📝");
+  const iconeTipo = (tipo: string) => (tipo === "full" ? "📦" : tipo === "devolucao" ? "↩️" : tipo === "promocao" ? "🏷️" : tipo === "correcao" ? "🛠️" : tipo === "estoque" ? "🚨" : "📝");
   const devs = (n: number) => `${n} ${n === 1 ? "devolução" : "devoluções"}`;
   // uma linha (canal) da correção de vídeo, com "Resolvido" e "Sem ação efetiva"
   const linhaCorrecao = (c: CorrecaoCanal) => {
@@ -1085,7 +1119,7 @@ export default function InicioPage() {
           <div className="xl:col-span-2 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
             <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider mb-3">🔔 Notificações</h2>
             <div className="flex flex-wrap gap-2 mb-4">
-              {([["todas", "Todas", totalPendentes], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["tarefa", "📝 Tarefas", contar("tarefa")], ["promocao", "🏷️ Itens fora de promoção", foraPromo.length], ["correcao", "🛠️ Correções", listaCorrecoes.length]] as const).map(([k, nome, n]) => (
+              {([["todas", "Todas", totalPendentes], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["tarefa", "📝 Tarefas", contar("tarefa")], ["promocao", "🏷️ Itens fora de promoção", foraPromo.length], ["correcao", "🛠️ Correções", listaCorrecoes.length], ["estoque", "🚨 Acabou na concorrência", contar("estoque")]] as const).map(([k, nome, n]) => (
                 <button key={k} data-notif-aba={k} onClick={() => setFiltroNotif(k)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer ${filtroNotif === k ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>{nome} ({n})</button>
               ))}
             </div>
@@ -1187,6 +1221,20 @@ export default function InicioPage() {
                     </div>
                     <div className="mt-2 pt-2 border-t border-white/10 space-y-1.5">
                       {correcoesCanais.filter((x) => x.correcao_id === n.correcaoId && listaCorrecoes.some((l) => l.correcao.id === n.correcaoId && l.canais.some((k) => k.id === x.id))).map((c) => linhaCorrecao(c))}
+                    </div>
+                  </div>
+                ) : n.tipo === "estoque" ? (
+                  <div key={n.id} data-notif-estoque={n.estoqueId} className="border-2 border-rose-500/70 bg-rose-950/30 text-rose-100 rounded-xl p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold">{iconeTipo(n.tipo)} {n.titulo}</div>
+                        <div className="text-[11px] opacity-80 mt-0.5">{n.detalhe}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {n.url && <a href={n.url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-600/60 bg-slate-900/50 text-slate-200 hover:text-white">Abrir anúncio</a>}
+                      <a href="/estoque-concorrencia" className="text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-600/60 bg-slate-900/50 text-slate-200 hover:text-white">Ver acompanhamento</a>
+                      <button type="button" data-visto-estoque={n.estoqueId} onClick={() => marcarAcabouVisto(n.estoqueId!)} className="text-[10px] font-bold px-2 py-1 rounded-lg border border-rose-700 bg-rose-900/50 text-rose-100 hover:bg-rose-800 cursor-pointer">Marcar como visto</button>
                     </div>
                   </div>
                 ) : (

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { capturarDiario } from "../../../../lib/concorrentes/captura";
+import { capturarEstoque } from "../../../../lib/estoqueConcorrencia/servidor";
 import { autorizarCron, supabaseServidor } from "../../../../lib/concorrentes/servidor";
 
 export const runtime = "nodejs";
@@ -17,8 +18,13 @@ async function tratar(req: Request) {
   if (auth === "negado") return NextResponse.json({ erro: "não autorizado" }, { status: 401 });
   try {
     const forcar = new URL(req.url).searchParams.get("forcar") === "1";
-    const resumo = await capturarDiario(supabaseServidor(), { forcar });
-    return NextResponse.json(resumo);
+    const db = supabaseServidor();
+    const t0 = Date.now();
+    const resumo = await capturarDiario(db, { forcar, orcamentoMs: 40_000 });   // sobra tempo para a leitura de estoque (a rota para em 60 s)
+    // Acompanhamento de estoque da concorrência: roda na mesma chamada diária (com o tempo que sobrar) e nunca derruba a captura de preços
+    let estoque: unknown = null;
+    try { estoque = await capturarEstoque(db, { forcar, orcamentoMs: Math.max(6_000, 54_000 - (Date.now() - t0)) }); } catch (e: any) { estoque = { erro: e?.message || "falha na leitura de estoque" }; }
+    return NextResponse.json({ ...resumo, estoque });
   } catch (e: any) {
     return NextResponse.json({ erro: e?.message || "falha na captura diária" }, { status: 500 });
   }

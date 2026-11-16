@@ -38,8 +38,6 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/ranking", nome: "Ranking" },
     { id: "/reputacao", nome: "Reputação" },
     { id: "/lives", nome: "Lives" },
-    { id: "/concorrentes", nome: "Análise da concorrência" },
-    { id: "/analise-mercado", nome: "Análise de mercado (aba da Análise da concorrência)", oculta: true },
   ] },
   { titulo: "Promoções", icone: "🏷️", submenu: true, rotas: [
     { id: "/promocoes/ml", nome: "Mercado Livre", prefixo: "🟡" },
@@ -51,6 +49,9 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/calculadora", nome: "Calculadora" },
     { id: "/produtos", nome: "Novos Cadastros" },
     { id: "/padronizacao", nome: "Padronização IA" },
+    { id: "/concorrentes", nome: "Análise da concorrência" },
+    { id: "/analise-mercado", nome: "Análise de mercado (aba da Análise da concorrência)", oculta: true },
+    { id: "/estoque-concorrencia", nome: "Acompanhamento de estoque" },
   ] },
   { titulo: "Expedição", icone: "🚚", submenu: true, rotas: [
     { id: "/devolucoes", nome: "Devoluções" },

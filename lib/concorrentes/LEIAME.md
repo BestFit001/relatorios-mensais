@@ -1,6 +1,6 @@
 # Monitor de concorrentes
 
-Página **Análise da concorrência** (`/concorrentes`). Abas: **Mercado Livre | Shopee | Amazon | Pesquisa de preços | Análise de mercado**.
+Página **Análise da concorrência** (`/concorrentes`, menu Ferramentas; veja também `lib/estoqueConcorrencia/LEIAME.md`). Abas: **Mercado Livre | Shopee | Amazon | Pesquisa de preços | Análise de mercado**.
 As três primeiras acompanham, todo dia, preço e vendas dos anúncios de categorias/buscas; a quarta procura o item no Google; a quinta é a antiga página Análise de mercado (`/analise-mercado` redireciona para `/concorrentes?aba=analise-mercado`).
 
 ## Arquitetura
