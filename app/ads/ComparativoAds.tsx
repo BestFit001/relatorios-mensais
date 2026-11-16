@@ -1,15 +1,16 @@
 "use client";
-// Adsense > (canal) > Atual vs anterior: compara a última planilha de campanha enviada com a anterior a ela, produto a produto
-// (investido, arrecadado e ROI), mostrando se o desempenho cresceu ou caiu. Só as duas últimas ficam guardadas.
+// Adsense > (canal) > Atual vs anterior: compara CADA campanha com o envio anterior DELA MESMA (nunca uma campanha com outra),
+// produto a produto (investido, arrecadado e ROI). A visão "Geral" soma só as campanhas que têm atual e anterior.
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { padraoDoCanal, type CfgAdsCanal } from "../../lib/adsImport";
-import { carregarCfgAds, carregarComparativo, slugCanal, type Comparativo, type Snapshot } from "../../lib/adsImportDb";
+import { carregarCfgAds, carregarComparativoCampanhas, somarSnapshots, slugCanal, type CmpCampanha, type Snapshot } from "../../lib/adsImportDb";
 
 const R$ = (v: number) => "R$ " + (v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const NUM = (v: number) => (v || 0).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
 const dia = (iso: string | null) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : "");
 const quando = (iso?: string) => (iso ? new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—");
+const GERAL = "__geral";
 const periodoTxt = (s: Snapshot) => (s.ini && s.fim ? `${dia(s.ini)} a ${dia(s.fim)}/${s.fim.slice(0, 4)}` : s.mes);
 
 type Situacao = "crescimento" | "queda" | "estavel" | "novo" | "saiu";
@@ -29,7 +30,8 @@ const sinal = (v: number) => (v > 0.005 ? "+" : "");
 
 export default function ComparativoAds({ canal }: { canal: string }) {
   const slug = slugCanal(canal);
-  const [cmp, setCmp] = useState<Comparativo | null>(null);
+  const [camps, setCamps] = useState<CmpCampanha[] | null>(null);
+  const [sel, setSel] = useState<string>(GERAL);
   const [cfg, setCfg] = useState<CfgAdsCanal>(padraoDoCanal(canal));
   const [medida, setMedida] = useState<"roi" | "receita">("roi");
   const [busca, setBusca] = useState("");
@@ -41,11 +43,37 @@ export default function ComparativoAds({ canal }: { canal: string }) {
   useEffect(() => {
     let ativo = true;
     (async () => {
-      const [c, f] = await Promise.all([carregarComparativo(supabase, slug), carregarCfgAds(supabase, slug, canal)]);
-      if (ativo) { setCmp(c); setCfg(f); }
+      const [c, f] = await Promise.all([carregarComparativoCampanhas(supabase, slug), carregarCfgAds(supabase, slug, canal)]);
+      if (ativo) { setCamps(c); setCfg(f); }
     })();
     return () => { ativo = false; };
   }, [slug, canal]);
+
+  const lista = camps || [];
+  const varias = lista.length > 1;
+  const geralAtivo = varias && sel === GERAL;
+  const escolhida = geralAtivo ? null : lista.find((c) => c.id === sel) || lista[0] || null;
+  const comparaveis = useMemo(() => lista.filter((c) => c.atual && c.anterior), [lista]);
+  const semAnterior = useMemo(() => lista.filter((c) => !c.anterior), [lista]);
+  // quando só há uma campanha comparável, "Geral" = ela mesma; com várias, a soma dos pares atual/anterior
+  const cmp = useMemo<{ atual: Snapshot | null; anterior: Snapshot | null } | null>(() => {
+    if (!camps) return null;
+    if (geralAtivo) {
+      if (comparaveis.length === 0) return { atual: null, anterior: null };
+      return { atual: somarSnapshots(comparaveis.map((c) => c.atual as Snapshot), "Geral"), anterior: somarSnapshots(comparaveis.map((c) => c.anterior as Snapshot), "Geral") };
+    }
+    return escolhida ? { atual: escolhida.atual, anterior: escolhida.anterior } : { atual: null, anterior: null };
+  }, [camps, geralAtivo, comparaveis, escolhida]);
+  const rotuloCamp = (c: CmpCampanha) => {
+    const nome = c.nome.replace(/^\[Auto-created\]\s*/i, "");
+    return lista.filter((x) => x.nome === c.nome).length > 1 && c.id !== "sem-id" ? `${nome} · …${c.id.slice(-4)}` : nome;
+  };
+  const resumoCamp = useMemo(() => comparaveis.map((c) => {
+    const inv = (x: { inv: number; af: number }) => x.inv + (cfg.incluirAfiliado ? x.af : 0);
+    const soma = (sn: Snapshot) => sn.produtos.reduce((a, p) => ({ inv: a.inv + inv(p), rec: a.rec + p.rec }), { inv: 0, rec: 0 });
+    const a = soma(c.anterior as Snapshot), b = soma(c.atual as Snapshot);
+    return { c, invAnt: a.inv, invAtu: b.inv, recAnt: a.rec, recAtu: b.rec, roiAnt: a.inv > 0 ? a.rec / a.inv : 0, roiAtu: b.inv > 0 ? b.rec / b.inv : 0 };
+  }), [comparaveis, cfg]);
 
   const { linhas, tot } = useMemo(() => {
     const vazio = { linhas: [] as Linha[], tot: null as null | { invAnt: number; invAtu: number; recAnt: number; recAtu: number; pedAnt: number; pedAtu: number; sobe: number; cai: number; igual: number; novos: number; sairam: number } };
@@ -85,19 +113,39 @@ export default function ComparativoAds({ canal }: { canal: string }) {
   const visiveis = filtradas.slice((pag - 1) * porPagina, pag * porPagina);
   const botoes = useMemo(() => Array.from({ length: totalPaginas }, (_, i) => i + 1).filter((n) => n === 1 || n === totalPaginas || Math.abs(n - pag) <= 2), [totalPaginas, pag]);
 
-  if (!cmp) return <p className="p-8 text-center text-slate-400">Carregando comparativo…</p>;
+  if (!camps || !cmp) return <p className="p-8 text-center text-slate-400">Carregando comparativo…</p>;
 
-  if (!cmp.atual) {
+  const seletor = varias && (
+    <div className="flex flex-wrap items-center gap-2" data-cmp-campanhas>
+      <button type="button" data-cmp-chip={GERAL} aria-pressed={geralAtivo} onClick={() => setSel(GERAL)}
+        className={`px-3 py-2 rounded-xl text-[11px] font-bold border cursor-pointer ${geralAtivo ? "bg-purple-600 border-purple-400 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:border-slate-500"}`}>
+        Geral <span className="font-normal opacity-80">(soma das {comparaveis.length} campanha{comparaveis.length === 1 ? "" : "s"} comparável{comparaveis.length === 1 ? "" : "is"})</span>
+      </button>
+      {lista.map((c) => (
+        <button key={c.id} type="button" data-cmp-chip={c.id} aria-pressed={!geralAtivo && escolhida?.id === c.id} onClick={() => setSel(c.id)} title={c.nome + " · ID " + c.id}
+          className={`px-3 py-2 rounded-xl text-[11px] font-bold border cursor-pointer max-w-xs truncate ${!geralAtivo && escolhida?.id === c.id ? "bg-purple-600 border-purple-400 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:border-slate-500"}`}>
+          {rotuloCamp(c)}{!c.anterior && <span className="ml-1.5 font-normal text-slate-500">sem anterior</span>}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (lista.length === 0) {
     return (
       <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center text-sm text-slate-400" data-cmp-vazio>
         Ainda não há nenhuma planilha de campanha enviada para {canal}. Envie a primeira na aba Campanhas; quando enviar a seguinte, o comparativo aparece aqui.
       </div>
     );
   }
-  if (!cmp.anterior || !tot) {
+  if (!cmp.atual || !cmp.anterior || !tot) {
     return (
-      <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center text-sm text-slate-400" data-cmp-sem-anterior>
-        Só existe uma planilha por enquanto: <strong className="text-slate-200">{cmp.atual.arquivo}</strong> ({periodoTxt(cmp.atual)}). Na próxima vez que você enviar uma planilha na aba Campanhas, ela vira a “atual” e esta passa a ser a “anterior”.
+      <div className="space-y-4" data-comparativo-ads>
+        {seletor && <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800">{seletor}</div>}
+        <div className="bg-slate-900/90 p-8 rounded-2xl border border-slate-800 text-center text-sm text-slate-400" data-cmp-sem-anterior>
+          {geralAtivo
+            ? <>Nenhuma campanha tem dois envios ainda, então não há o que comparar no Geral. Cada campanha só é comparada com o envio anterior <strong className="text-slate-200">dela mesma</strong>: quando você reenviar a planilha de uma delas, ela entra aqui.</>
+            : <>Só existe um envio de <strong className="text-slate-200">{escolhida ? rotuloCamp(escolhida) : "esta campanha"}</strong>{cmp.atual ? <> ({periodoTxt(cmp.atual)})</> : null}. Na próxima vez que você enviar a planilha desta campanha, este envio vira o “anterior” e o comparativo aparece.</>}
+        </div>
       </div>
     );
   }
@@ -129,21 +177,48 @@ export default function ComparativoAds({ canal }: { canal: string }) {
   return (
     <div className="space-y-6" data-comparativo-ads>
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
-        <h2 className="text-lg font-bold text-white">🔄 Atual vs anterior — {canal}</h2>
-        <p className="text-xs text-slate-400 mt-1">Compara a última planilha de campanha enviada com a anterior a ela. Só essas duas ficam guardadas: cada novo envio substitui a mais antiga.</p>
+        <h2 className="text-lg font-bold text-white">🔄 Atual vs anterior — {canal}{geralAtivo ? " · Geral" : escolhida && varias ? ` · ${rotuloCamp(escolhida)}` : ""}</h2>
+        <p className="text-xs text-slate-400 mt-1">Cada campanha é comparada com o envio anterior <strong className="text-slate-300">dela mesma</strong>. O Geral soma apenas as campanhas que têm atual e anterior, para não misturar campanhas diferentes.</p>
+        {seletor && <div className="mt-4">{seletor}</div>}
+        {geralAtivo && semAnterior.length > 0 && (
+          <p className="text-[11px] text-amber-300/90 mt-3" data-cmp-fora-do-geral>Fora do Geral por ainda não ter envio anterior: {semAnterior.map(rotuloCamp).join(", ")}.</p>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
           <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3" data-cmp-anterior>
             <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Anterior</div>
             <div className="text-sm font-bold text-white mt-0.5">{periodoTxt(cmp.anterior)}</div>
-            <div className="text-[10px] text-slate-500 truncate" title={cmp.anterior.arquivo}>{cmp.anterior.arquivo} · enviada em {quando(cmp.anterior.importadoEm)}</div>
+            {!geralAtivo && <div className="text-[10px] text-slate-500 truncate" title={cmp.anterior.arquivo}>{cmp.anterior.arquivo} · enviada em {quando(cmp.anterior.importadoEm)}</div>}
           </div>
           <div className="bg-slate-950/70 border border-purple-900/60 rounded-xl p-3" data-cmp-atual>
             <div className="text-[10px] font-bold text-purple-300 uppercase tracking-wider">Atual</div>
             <div className="text-sm font-bold text-white mt-0.5">{periodoTxt(cmp.atual)}</div>
-            <div className="text-[10px] text-slate-500 truncate" title={cmp.atual.arquivo}>{cmp.atual.arquivo} · enviada em {quando(cmp.atual.importadoEm)}</div>
+            {!geralAtivo && <div className="text-[10px] text-slate-500 truncate" title={cmp.atual.arquivo}>{cmp.atual.arquivo} · enviada em {quando(cmp.atual.importadoEm)}</div>}
           </div>
         </div>
       </div>
+
+      {geralAtivo && (
+        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl" data-cmp-por-campanha>
+          <h3 className="text-sm font-bold text-white mb-3">Campanha a campanha (cada uma contra o próprio envio anterior)</h3>
+          <div className="overflow-x-auto border border-slate-800 rounded-xl">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                <tr><th className="p-3">Campanha</th><th className="p-3 text-right">Investido</th><th className="p-3 text-right">Arrecadado</th><th className="p-3 text-right">ROI</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/70">
+                {resumoCamp.map((r) => (
+                  <tr key={r.c.id} data-cmp-camp-linha={r.c.id} onClick={() => setSel(r.c.id)} className="hover:bg-slate-800/40 cursor-pointer" title="Abrir só esta campanha">
+                    <td className="p-3 font-bold text-slate-100">{rotuloCamp(r.c)}</td>
+                    {cel(r.invAnt, r.invAtu, R$, null)}
+                    {cel(r.recAnt, r.recAtu, R$)}
+                    {cel(r.roiAnt, r.roiAtu, (v) => NUM(v) + "x")}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" data-cmp-resumo>

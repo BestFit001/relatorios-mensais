@@ -317,3 +317,19 @@ export function mesDoNomeDoArquivo(nome: string): string | null {
   const m = String(nome || "").match(/(20\d{2})-(\d{2})-\d{2}/);
   return m ? `${m[2]}/${m[1]}` : null;
 }
+
+
+/** Consolida os produtos de várias campanhas (mesmo ID de produto soma): a visão "Geral" da aba Campanhas. */
+export function consolidarProdutos(listas: ProdutoCalculado[][]): ProdutoCalculado[] {
+  const mapa = new Map<string, ProdutoCalculado>();
+  for (const l of listas) for (const p of l) {
+    const x = mapa.get(p.idProduto);
+    if (!x) { mapa.set(p.idProduto, { ...p, skus: [...p.skus] }); continue; }
+    x.pedidos += p.pedidos; x.receita += p.receita; x.pdv += p.pdv; x.investimento += p.investimento; x.custoProduto += p.custoProduto;
+    x.imposto += p.imposto; x.tarifa += p.tarifa; x.frete += p.frete; x.embalagem += p.embalagem; x.margemRs += p.margemRs; x.custoAfiliado += p.custoAfiliado;
+    if (x.investimentoAnuncio !== undefined || p.investimentoAnuncio !== undefined) x.investimentoAnuncio = (x.investimentoAnuncio ?? 0) + (p.investimentoAnuncio ?? 0);
+    for (const sku of p.skus) if (!x.skus.includes(sku)) x.skus.push(sku);
+    if (!x.produto) x.produto = p.produto;
+  }
+  return Array.from(mapa.values()).map((x) => ({ ...x, margemPct: x.receita > 0 ? (x.margemRs / x.receita) * 100 : 0, roiPlataforma: x.investimento > 0 ? x.receita / x.investimento : 0 }));
+}

@@ -5,14 +5,15 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "../../lib/supabase";
 import {
-  calcularProdutos, numeroBR, padraoDoCanal, lerCampanha, lerCatalogo, mesDoNomeDoArquivo, recalcularProduto, totalizar,
+  calcularProdutos, consolidarProdutos, numeroBR, padraoDoCanal, lerCampanha, lerCatalogo, mesDoNomeDoArquivo, recalcularProduto, totalizar,
   type CfgAdsCanal, type Catalogo, type CustoSku, type CustosManuais, type ProdutoCalculado,
 } from "../../lib/adsImport";
 import {
-  carregarCatalogoAds, carregarCfgAds, carregarCustosManuais, excluirCampanha, listarCampanhasSalvas, listarTodasCampanhasSalvas, montarSnapshot,
-  registrarEnvioComparativo, salvarCampanha, salvarCatalogoAds, salvarCustosManuais, slugCanal, type CampanhaSalva,
+  carregarCatalogoAds, carregarCfgAds, carregarCustosManuais, excluirCampanha, listarCampanhasSalvas, montarSnapshot,
+  registrarEnvioCampanhas, salvarCampanha, sementesDasCampanhas, salvarCatalogoAds, salvarCustosManuais, slugCanal, type CampanhaSalva,
 } from "../../lib/adsImportDb";
 
+const GERAL = "__geral";   // aba "Geral": todas as campanhas somadas
 type Props = { canal: string; mes: string; setMes: (m: string) => void; meses: string[]; custosMap: Map<string, any>; regras: any[] };
 type Previa = { arquivo: string; campanhas: { id: string; nome: string; produtos: ProdutoCalculado[]; ignoradas: number }[]; catalogoNovo: Catalogo | null; avisos: string[] };
 
@@ -87,7 +88,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
   const recarregarSalvas = async (manter?: string) => {
     const l = await listarCampanhasSalvas(supabase, slug, mes);
     setSalvas(l);
-    setSelecionada((atual) => (manter && l.some((c) => c.id === manter) ? manter : l.some((c) => c.id === atual) ? atual : l[0]?.id || ""));
+    setSelecionada((atual) => (manter && l.some((c) => c.id === manter) ? manter : l.some((c) => c.id === atual) || (atual === GERAL && l.length > 1) ? atual : l.length > 1 ? GERAL : l[0]?.id || ""));
   };
   useEffect(() => { setPrevia(null); recarregarSalvas(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [slug, mes]);
 
@@ -169,7 +170,7 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
       if (semCusto) avisos.push(`${semCusto} produto(s) têm SKU sem custo cadastrado (ou só parte das variações): confira na tabela os marcados "sem custo".`);
       if (lcamp.ignoradasSemMovimento) avisos.push(`${lcamp.ignoradasSemMovimento} produto(s) sem investimento nem vendas foram deixados de fora.`);
       setPrevia({ arquivo: arqCampanha.name, campanhas, catalogoNovo, avisos });
-      setSelecionada(campanhas[0]?.id || ""); setPagina(1); setAberto(null);
+      setSelecionada(campanhas.length > 1 ? GERAL : campanhas[0]?.id || ""); setPagina(1); setAberto(null);
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: "Não consegui ler as planilhas: " + (e?.message || e) });
     }
@@ -184,25 +185,20 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
       if (e) { setMsg({ tipo: "erro", texto: e }); setSalvando(false); return; }
       setCatalogoSalvo(previa.catalogoNovo);
     }
-    // comparativo "atual vs anterior": se ainda não havia nada, a campanha que já estava salva vira o ponto de partida
-    let semente = null as ReturnType<typeof montarSnapshot> | null;
-    try {
-      const todas = await listarTodasCampanhasSalvas(supabase, slug);
-      if (todas.length) {
-        const grupo = todas.filter((c) => c.arquivo === todas[0].arquivo);
-        semente = montarSnapshot(todas[0].arquivo, todas[0].mes, todas[0].importadoEm, grupo.map((c) => ({ nome: c.nome, produtos: c.produtos })));
-      }
-    } catch { /* sem ponto de partida */ }
+    // comparativo "atual vs anterior" é POR CAMPANHA: o que estava salvo de cada uma antes deste envio é o ponto de partida dela
+    let sementes = new Map<string, ReturnType<typeof montarSnapshot>>();
+    try { sementes = await sementesDasCampanhas(supabase, slug); } catch { /* sem ponto de partida */ }
     for (const c of previa.campanhas) {
       const e = await salvarCampanha(supabase, slug, canal, mes, { id: c.id, nome: c.nome, arquivo: previa.arquivo, ignoradas: c.ignoradas, produtos: c.produtos.map(aplicarAtual) });
       if (e) { setMsg({ tipo: "erro", texto: e }); setSalvando(false); return; }
     }
-    const eCmp = await registrarEnvioComparativo(supabase, slug, montarSnapshot(previa.arquivo, mes, new Date().toISOString(), previa.campanhas.map((c) => ({ nome: c.nome, produtos: c.produtos.map(aplicarAtual) }))), semente);
+    const agora = new Date().toISOString();
+    const eCmp = await registrarEnvioCampanhas(supabase, slug, previa.campanhas.map((c) => ({ id: c.id, nome: c.nome, novo: montarSnapshot(previa.arquivo, mes, agora, [{ nome: c.nome, produtos: c.produtos.map(aplicarAtual) }]), semente: sementes.get(c.id) ?? null })));
     if (eCmp) { setMsg({ tipo: "erro", texto: eCmp }); }
     const primeira = previa.campanhas[0]?.id;
     setPrevia(null); setArqCampanha(null); setArqCatalogo(null);
     await recarregarSalvas(primeira);
-    setMsg({ tipo: "ok", texto: `Salvo em ${mes}: os produtos já entram na Análise global e o comparativo "Atual vs anterior" foi atualizado.` });
+    setMsg({ tipo: "ok", texto: `Salvo em ${mes}: os produtos já entram na Análise global e o comparativo "Atual vs anterior" de cada campanha foi atualizado.` });
     setSalvando(false);
   };
 
@@ -220,8 +216,17 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [previa, salvas, cfg, manuais, regras, canal],
   );
-  const atual = campanhasVisiveis.find((c) => c.id === selecionada) || campanhasVisiveis[0];
-  const salvaAtual = !previa ? salvas.find((c) => c.id === atual?.id) : undefined;
+  const varias = campanhasVisiveis.length > 1;
+  const geralAtivo = varias && selecionada === GERAL;
+  const geral = useMemo(() => ({ id: GERAL, nome: "Geral", produtos: consolidarProdutos(campanhasVisiveis.map((c) => c.produtos)) }), [campanhasVisiveis]);
+  const atual = geralAtivo ? geral : campanhasVisiveis.find((c) => c.id === selecionada) || campanhasVisiveis[0];
+  const salvaAtual = !previa && !geralAtivo ? salvas.find((c) => c.id === atual?.id) : undefined;
+  // campanhas com o mesmo nome (comum no TikTok) ganham o final do ID para dar para distinguir
+  const rotuloCampanha = (c: { id: string; nome: string }) => {
+    const nome = c.nome.replace(/^\[Auto-created\]\s*/i, "");
+    return campanhasVisiveis.filter((x) => x.nome === c.nome).length > 1 && c.id !== "sem-id" ? `${nome} · …${c.id.slice(-4)}` : nome;
+  };
+  const resumoPorCampanha = useMemo(() => campanhasVisiveis.map((c) => ({ id: c.id, nome: c.nome, t: totalizar(c.produtos) })), [campanhasVisiveis]);
   const totais = useMemo(() => totalizar(atual?.produtos || []), [atual]);
 
   const linhas = useMemo(() => {
@@ -303,16 +308,43 @@ export default function ImportarAds({ canal, mes, setMes, meses, custosMap, regr
       ) : atual && (
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl" data-campanhas>
           <div className="flex flex-wrap items-center gap-2 mb-5">
+            {varias && (
+              <button type="button" data-campanha={GERAL} onClick={() => setSelecionada(GERAL)} title="Todas as campanhas somadas"
+                className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer border ${geralAtivo ? "bg-purple-600 border-purple-400 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:text-white"}`}>
+                Geral <span className="font-normal opacity-80">(soma das {campanhasVisiveis.length} campanhas)</span>
+              </button>
+            )}
             {campanhasVisiveis.map((c) => (
-              <button key={c.id} type="button" data-campanha={c.id} onClick={() => setSelecionada(c.id)} title={c.nome}
+              <button key={c.id} type="button" data-campanha={c.id} onClick={() => setSelecionada(c.id)} title={c.nome + " · ID " + c.id}
                 className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer max-w-xs truncate border ${atual.id === c.id ? "bg-purple-600 border-purple-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>
-                {c.nome.replace(/^\[Auto-created\]\s*/i, "")}
+                {rotuloCampanha(c)}
               </button>
             ))}
             {salvaAtual && <span className="text-[10px] text-slate-500 ml-2">importada em {quando(salvaAtual.importadoEm)} · {salvaAtual.arquivo}</span>}
             {salvaAtual && <button type="button" data-apagar-campanha onClick={() => apagar(salvaAtual)} className="ml-auto text-[11px] font-bold text-rose-400 hover:text-rose-300 cursor-pointer">🗑️ Apagar esta campanha</button>}
           </div>
 
+          {geralAtivo && (
+            <div className="mb-5 overflow-x-auto border border-slate-800 rounded-xl" data-geral-campanhas>
+              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                  <tr><th className="p-3">Campanha</th><th className="p-3 text-right">Produtos</th><th className="p-3 text-right">Pedidos</th><th className="p-3 text-right">Receita</th><th className="p-3 text-right">Invest.</th><th className="p-3 text-right">ROI</th><th className="p-3 text-right">Margem R$</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/70">
+                  {resumoPorCampanha.map((r) => (
+                    <tr key={r.id} data-geral-linha={r.id} onClick={() => setSelecionada(r.id)} className="hover:bg-slate-800/40 cursor-pointer" title="Abrir só esta campanha">
+                      <td className="p-3 font-bold text-slate-100">{rotuloCampanha({ id: r.id, nome: r.nome })}</td>
+                      <td className="p-3 text-right">{r.t.produtos}</td><td className="p-3 text-right">{NUM(r.t.pedidos)}</td><td className="p-3 text-right">{R$(r.t.receita)}</td><td className="p-3 text-right">{R$(r.t.investimento)}</td>
+                      <td className="p-3 text-right">{NUM(r.t.roi)}x</td><td className={`p-3 text-right font-bold ${r.t.margemRs >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{R$(r.t.margemRs)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-slate-950 border-t border-slate-700 font-bold text-slate-100">
+                  <tr><td className="p-3">Geral (soma)</td><td className="p-3 text-right">{totais.produtos}</td><td className="p-3 text-right">{NUM(totais.pedidos)}</td><td className="p-3 text-right">{R$(totais.receita)}</td><td className="p-3 text-right">{R$(totais.investimento)}</td><td className="p-3 text-right">{NUM(totais.roi)}x</td><td className={`p-3 text-right ${totais.margemRs >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{R$(totais.margemRs)}</td></tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
           <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-6" data-resumo-campanha>
             {card("Investimento", R$(totais.investimento), cfg.incluirAfiliado ? "custo + afiliados" : "só o custo do anúncio (sem afiliados)")}
             {card("Receita bruta", R$(totais.receita))}

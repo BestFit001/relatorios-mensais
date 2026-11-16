@@ -167,3 +167,67 @@ export async function registrarEnvioComparativo(supabase: any, slug: string, nov
   const erro = await gravarChave(supabase, kComparativo(slug), JSON.stringify({ atual, anterior }));
   return erro ? "Não consegui salvar o comparativo: " + erro : null;
 }
+
+// ---------- comparativo "atual vs anterior" POR CAMPANHA ----------
+// Cada campanha guarda o seu envio atual e o anterior dela. O "Geral" soma as campanhas que já têm os dois lados
+// (comparar a melhor campanha de ontem com a mais simples de hoje não faz sentido).
+const kCmpCamp = (slug: string) => `ads_import_cmpc_${slug}`;
+export type CmpCampanha = { id: string; nome: string; atual: Snapshot | null; anterior: Snapshot | null };
+
+const snapDaSalva = (c: CampanhaSalva): Snapshot => montarSnapshot(c.arquivo, c.mes, c.importadoEm, [{ nome: c.nome, produtos: c.produtos }]);
+
+/** O que há de mais recente salvo de cada campanha (qualquer mês): serve de "atual" quando ainda não há comparativo guardado dela. */
+async function maisRecentePorCampanha(supabase: any, slug: string): Promise<Map<string, CampanhaSalva>> {
+  const m = new Map<string, CampanhaSalva>();
+  for (const c of await listarTodasCampanhasSalvas(supabase, slug)) if (!m.has(c.id)) m.set(c.id, c);   // já vem da mais recente para a mais antiga
+  return m;
+}
+
+export async function carregarComparativoCampanhas(supabase: any, slug: string): Promise<CmpCampanha[]> {
+  const guardado: Record<string, CmpCampanha> = paraJson(await lerChave(supabase, kCmpCamp(slug)))?.campanhas || {};
+  const salvas = await maisRecentePorCampanha(supabase, slug);
+  const out: CmpCampanha[] = [];
+  for (const [id, c] of salvas) {
+    const g = guardado[id];
+    out.push(g ? { ...g, id, nome: c.nome || g.nome } : { id, nome: c.nome, atual: snapDaSalva(c), anterior: null });
+  }
+  return out.sort((a, b) => String(b.atual?.importadoEm || "").localeCompare(String(a.atual?.importadoEm || "")));
+}
+
+/** Registra o envio de cada campanha: o atual dela vira o anterior; mesmo período reenviado só substitui o atual. */
+export async function registrarEnvioCampanhas(supabase: any, slug: string, envios: { id: string; nome: string; novo: Snapshot; semente?: Snapshot | null }[]): Promise<string | null> {
+  const guardado: Record<string, CmpCampanha> = paraJson(await lerChave(supabase, kCmpCamp(slug)))?.campanhas || {};
+  for (const e of envios) {
+    const g = guardado[e.id];
+    let atual: Snapshot | null = g?.atual ?? null, anterior: Snapshot | null = g?.anterior ?? null;
+    if (!atual && e.semente && !mesmoEnvio(e.semente, e.novo)) atual = e.semente;
+    if (atual && mesmoEnvio(atual, e.novo)) atual = e.novo; else { anterior = atual; atual = e.novo; }
+    guardado[e.id] = { id: e.id, nome: e.nome, atual, anterior };
+  }
+  const erro = await gravarChave(supabase, kCmpCamp(slug), JSON.stringify({ campanhas: guardado }));
+  return erro ? "Não consegui salvar o comparativo: " + erro : null;
+}
+
+/** Semente de uma campanha: o que estava salvo dela (de qualquer mês) antes do novo envio. */
+export async function sementesDasCampanhas(supabase: any, slug: string): Promise<Map<string, Snapshot>> {
+  const m = new Map<string, Snapshot>();
+  for (const [id, c] of await maisRecentePorCampanha(supabase, slug)) m.set(id, snapDaSalva(c));
+  return m;
+}
+
+/** Soma vários snapshots (mesmo ID de produto soma): usado no "Geral". */
+export function somarSnapshots(snaps: Snapshot[], rotulo: string): Snapshot {
+  const mapa = new Map<string, SnapProduto>();
+  for (const sn of snaps) for (const p of sn.produtos) {
+    const x = mapa.get(p.id) || { id: p.id, n: p.n, inv: 0, af: 0, rec: 0, ped: 0 };
+    x.inv += p.inv; x.af += p.af; x.rec += p.rec; x.ped += p.ped; if (!x.n) x.n = p.n;
+    mapa.set(p.id, x);
+  }
+  const datas = (k: "ini" | "fim") => snaps.map((x) => x[k]).filter(Boolean) as string[];
+  const r2 = (n: number) => Number(n.toFixed(2));
+  return {
+    arquivo: rotulo, importadoEm: snaps.map((x) => x.importadoEm).sort().pop() || "", mes: snaps[0]?.mes || "",
+    ini: datas("ini").sort()[0] ?? null, fim: datas("fim").sort().pop() ?? null, campanhas: snaps.flatMap((x) => x.campanhas),
+    produtos: Array.from(mapa.values()).map((x) => ({ ...x, inv: r2(x.inv), af: r2(x.af), rec: r2(x.rec) })),
+  };
+}
