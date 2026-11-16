@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import ProjecaoAds from "./ProjecaoAds";
+import ProjecaoAds, { type LivesProjecao } from "./ProjecaoAds";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
@@ -129,6 +129,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
   const [canaisAtivos, setCanaisAtivos] = useState<any[]>([]);
   const [lancamentos, setLancamentos] = useState<any[]>([]);
   const [dadosComparativo, setDadosComparativo] = useState<any[]>([]);
+  const [livesProj, setLivesProj] = useState<LivesProjecao | null>(null);   // Lives do TikTok: custo do Adsense e faturamento do mês (Projeção mensal)
 
   // CORRIGIDO: Inicialização de Map sem conflito de parênteses angulares no TypeScript
   const [custosMap, setCustosMap] = useState(() => new Map<string, any>());
@@ -372,6 +373,11 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
 
     if (pedido !== pedidoDash.current) return;   // chegou uma atualização mais nova enquanto esta rodava
     setDadosComparativo(consolidado);
+    // Lives: só entram na projeção se já houver vendas de lives no mês ou custo de Adsense de lives enviado
+    const livesMes = (livesAtualRaw || []).filter((l: any) => verificarDataNoPeriodo(l.data_venda, mesSelecionado));
+    const custoLives = (metricasLivesRaw || []).reduce((t: number, m: any) => t + Number(m.custo_total || 0), 0);
+    const fatLives = livesMes.reduce((t: number, l: any) => t + (l.valor_pago !== null && l.valor_pago !== undefined ? Number(l.valor_pago) : Number(l.repasse)) || 0, 0);
+    setLivesProj(livesMes.length > 0 || custoLives > 0 ? { gasto: custoLives, faturamento: fatLives } : null);
     setAtualizadoEm(new Date()); ultimaAtualizacao.current = Date.now();
     setLoading(false);
   };
@@ -1289,7 +1295,7 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
               </div>
             </div>
             {loading ? <p className="p-8 text-center text-slate-400">A processar projeção...</p> : (
-              <ProjecaoAds solo mes={mesSelecionado} canais={dadosComparativo.map((d) => ({ canal: d.canal, invAtual: d.gastoEfetivo || 0, totFatAtual: d.totFatAtual || 0 }))} />
+              <ProjecaoAds solo mes={mesSelecionado} lives={livesProj} canais={dadosComparativo.map((d) => ({ canal: d.canal, invAtual: d.gastoEfetivo || 0, totFatAtual: d.totFatAtual || 0, budgetSugerido: (d.totFatAnt * metaTacosGlobal) / 100 }))} />
             )}
           </div>
         )}
