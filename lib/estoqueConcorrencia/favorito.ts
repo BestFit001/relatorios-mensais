@@ -42,11 +42,12 @@ export const FAVORITO_ESTOQUE_JS = String.raw`(async function () {${LER_ESTOQUE_
     });
   }
   try {
-    if (!/(^|\.)mercadolivre\.com\.br$/i.test(host)) { erro("Abra uma página do Mercado Livre (mercadolivre.com.br) e clique de novo."); return; }
+    if (/^(www\.)?(localhost|127\.0\.0\.1)/i.test(host) || /vercel\.app$/i.test(host)) { erro("Abra uma página do site do canal (ex.: a página de um produto) e clique de novo, não a do painel."); return; }
     var lista = await pedirLista();
+    var canalLista = typeof lista.canal === "string" ? lista.canal : "mercadolivre";
     var daqui = [], outros = {}, total = 0;
     lista.itens.forEach(function (it) {
-      if (!it || !/^MLB\d{6,}$/.test(it.item_id)) { return; }
+      if (!it || !/^[A-Za-z0-9._:-]{3,80}$/.test(it.item_id) || typeof it.url !== "string") { return; }
       total++;
       var h = ""; try { h = new URL(it.url).hostname.toLowerCase(); } catch (e) {}
       if (h === host) { daqui.push(it); } else { outros[h || "?"] = (outros[h || "?"] || 0) + 1; }
@@ -62,7 +63,7 @@ export const FAVORITO_ESTOQUE_JS = String.raw`(async function () {${LER_ESTOQUE_
         } else {
           if (!r.ok) { throw new Error("erro " + r.status); }
           if (/\/(captcha|account-verification|gz\/|login)/i.test(new URL(r.url).pathname)) { throw new Error("o site pediu verificação"); }
-          var l = lerEstoqueHtml(await r.text());
+          var l = lerEstoqueHtml(await r.text(), canalLista, it.item_id);
           l.item_id = it.item_id;
           lidos.push(l);
         }
@@ -76,7 +77,7 @@ export const FAVORITO_ESTOQUE_JS = String.raw`(async function () {${LER_ESTOQUE_
     if (!lidos.length) { erro("Não consegui ler nenhum anúncio (" + esc(falhas[0] ? falhas[0].motivo : "sem resposta") + "). Confira se está logado e se a página abre normalmente, e tente de novo."); return; }
     var acabaram = lidos.filter(function (a) { return a.status === "esgotado"; }).length;
     var semSinal = lidos.filter(function (a) { return a.status === "desconhecido"; }).length;
-    var payload = { v: 1, canal: "mercadolivre", tipo: "estoque", pagina_url: location.href, coletado_em: new Date().toISOString(), lidos: lidos, falhas: falhas };
+    var payload = { v: 1, canal: canalLista, tipo: "estoque", pagina_url: location.href, coletado_em: new Date().toISOString(), lidos: lidos, falhas: falhas };
     var json = JSON.stringify(payload);
     var partes = [lidos.length + " de " + total + " lidos", acabaram + " sem estoque"];
     if (semSinal) { partes.push(semSinal + " sem informação de estoque na página"); }
@@ -102,9 +103,9 @@ export const FAVORITO_ESTOQUE_JS = String.raw`(async function () {${LER_ESTOQUE_
 /** Endereço do favorito “Ler estoque” (arraste para a barra de favoritos). */
 export const favoritoEstoqueHref = () => "javascript:" + encodeURIComponent(FAVORITO_ESTOQUE_JS);
 
-export interface ListaEstoque { v: 1; tipo: "lista_estoque"; gerado_em: string; itens: { item_id: string; url: string }[] }
-/** Lista que o painel copia para o favorito ler (os anúncios acompanhados e ativos). */
-export function montarListaEstoque(itens: { item_id: string; url: string }[], agora: Date = new Date()): ListaEstoque {
+export interface ListaEstoque { v: 1; tipo: "lista_estoque"; canal: string; gerado_em: string; itens: { item_id: string; url: string }[] }
+/** Lista que o painel copia para o favorito ler (os anúncios acompanhados e ativos de UM canal). */
+export function montarListaEstoque(itens: { item_id: string; url: string }[], canal: string = "mercadolivre", agora: Date = new Date()): ListaEstoque {
   const vistos = new Set<string>();
-  return { v: 1, tipo: "lista_estoque", gerado_em: agora.toISOString(), itens: itens.filter((i) => (vistos.has(i.item_id) ? false : (vistos.add(i.item_id), true))).map((i) => ({ item_id: i.item_id, url: i.url })) };
+  return { v: 1, tipo: "lista_estoque", canal, gerado_em: agora.toISOString(), itens: itens.filter((i) => (vistos.has(i.item_id) ? false : (vistos.add(i.item_id), true))).map((i) => ({ item_id: i.item_id, url: i.url })) };
 }

@@ -20,6 +20,7 @@ import { campoResolucao, campoSemAcaoLinha, lerResolucoes, lerSemAcaoLinhas, res
 import { resumirDevolucoesPorCanal, type ResumoCanalDev } from "../../lib/devolucaoMotivos";
 import { foraDePromocao, type PromoValidade, type MarcaPromovido } from "../../lib/foraPromocao";
 import { avisoPendente, type Monitorado } from "../../lib/estoqueConcorrencia/regras";
+import { canalEstoque } from "../../lib/estoqueConcorrencia/links";
 import { CAMPO_CANAIS_ESTOQUE, canaisVisiveis as canaisEstoqueVisiveis } from "../../lib/estoqueConcorrencia/config";
 
 // ---------------------------------------------------------------------------------------------
@@ -575,7 +576,7 @@ export default function InicioPage() {
 
     // Anúncios da concorrência que acabaram (um aviso por anúncio, até alguém marcar como visto)
     acabouConc.forEach((m) => {
-      lista.push({ id: `estoque-${m.id}`, estoqueId: m.id, tipo: "estoque", nivel: "atencao", titulo: `Acabou na concorrência: ${m.titulo || m.item_id}`, detalhe: `${m.vendedor ? m.vendedor + " · " : ""}${m.item_id}${m.esgotou_em ? " · visto em " + new Date(m.esgotou_em).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }) : ""}`, url: m.url });
+      lista.push({ id: `estoque-${m.id}`, estoqueId: m.id, tipo: "estoque", nivel: "atencao", titulo: `Acabou na concorrência${m.canal !== "mercadolivre" ? " (" + (canalEstoque(m.canal)?.nome ?? m.canal) + ")" : ""}: ${m.titulo || m.item_id}`, detalhe: `${m.vendedor ? m.vendedor + " · " : ""}${m.item_id}${m.esgotou_em ? " · visto em " + new Date(m.esgotou_em).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }) : ""}`, url: m.url });
     });
 
     // Vídeos com problema: um aviso por produto, com os canais que ainda faltam corrigir

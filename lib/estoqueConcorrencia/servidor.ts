@@ -7,7 +7,8 @@ import { comLimite, hojeSP } from "../concorrentes/calculos";
 import { modoManual } from "../concorrentes/captura";
 import { ErroValidacao } from "../concorrentes/tipos";
 import { lerEstoqueHtml, type LeituraEstoque, type StatusEstoque } from "./leitor";
-import { lerLinksColados, CANAL_PADRAO_ESTOQUE } from "./links";
+import { lerLinksColados, normalizarLinkEstoque, ehLinkCurto, canalEstoqueValido, CANAL_PADRAO_ESTOQUE } from "./links";
+import { baixarPagina, resolverLinkCurto } from "./paginas";
 import { camposDaLeitura, type Monitorado } from "./regras";
 
 const MAX_LINKS_POR_VEZ = 200;
@@ -16,8 +17,15 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 function falha(contexto: string, error: { message: string } | null) { if (error) throw new Error(`${contexto}: ${error.message}`); }
 
 /** Lê UM anúncio pelo servidor. Lança ErroBloqueio quando o Mercado Livre barra o servidor. */
-export async function lerPeloServidor(item: { item_id: string; url: string }, ate?: number): Promise<LeituraEstoque> {
+export async function lerPeloServidor(item: { item_id: string; url: string; canal?: string }, ate?: number): Promise<LeituraEstoque> {
   const vazio = { aproximado: false, titulo: null, imagem: null, vendedor: null } as const;
+  if (item.canal && item.canal !== CANAL_PADRAO_ESTOQUE) {
+    try { return lerEstoqueHtml(await baixarPagina(item.url, ate), item.canal, item.item_id); }
+    catch (e) {
+      if (/HTTP (404|410)\b/.test(msg(e))) return { ...vazio, status: "esgotado", estoque: null, detalhe: "A página do anúncio não existe mais (anúncio removido ou finalizado)." };
+      throw e;
+    }
+  }
   let erroApi = "";
   if (await obterToken().catch(() => null)) {
     try {
@@ -60,10 +68,11 @@ export interface ResumoEstoque {
   bloqueado: boolean; manual?: boolean; acabaram: string[]; erros: { item_id: string; motivo: string }[]; ms: number;
 }
 
-async function ativos(db: SupabaseClient, ids?: string[]): Promise<Monitorado[]> {
+async function ativos(db: SupabaseClient, ids?: string[], canal?: string): Promise<Monitorado[]> {
   const out: Monitorado[] = [];
   for (let de = 0; ; de += 1000) {
-    let q = db.from("estoque_monitorados").select("*").eq("ativo", true).eq("canal", CANAL_PADRAO_ESTOQUE).order("criado_em", { ascending: true }).range(de, de + 999);
+    let q = db.from("estoque_monitorados").select("*").eq("ativo", true).order("criado_em", { ascending: true }).range(de, de + 999);
+    if (canal) q = q.eq("canal", canal);
     if (ids) q = q.in("id", ids);
     const { data, error } = await q;
     falha("listar anúncios monitorados", error);
@@ -77,19 +86,19 @@ async function ativos(db: SupabaseClient, ids?: string[]): Promise<Monitorado[]>
  * Leitura diária (cron) ou "Ler agora": lê no servidor os anúncios que ainda não foram lidos hoje (`forcar` = todos).
  * Roda dentro de um orçamento de tempo e pode ser repetida. Se o Mercado Livre barrar o servidor, para na hora e avisa (`bloqueado`).
  */
-export async function capturarEstoque(db: SupabaseClient, opc: { orcamentoMs?: number; forcar?: boolean; ids?: string[]; ler?: typeof lerPeloServidor } = {}): Promise<ResumoEstoque> {
+export async function capturarEstoque(db: SupabaseClient, opc: { orcamentoMs?: number; forcar?: boolean; ids?: string[]; canal?: string; ler?: typeof lerPeloServidor } = {}): Promise<ResumoEstoque> {
   const inicio = Date.now(), hoje = hojeSP(), limite = inicio + (opc.orcamentoMs ?? 45_000), ler = opc.ler ?? lerPeloServidor;
   const base: ResumoEstoque = { data: hoje, total: 0, processados: 0, ok: 0, falhas: 0, pendentes: 0, bloqueado: false, acabaram: [], erros: [], ms: 0 };
   if (modoManual()) return { ...base, manual: true };
-  const todos = await ativos(db, opc.ids);
+  const todos = await ativos(db, opc.ids, opc.canal);
   const fila = opc.forcar || opc.ids ? todos : todos.filter((m) => m.ultima_captura !== hoje);
   base.total = todos.length;
-  let parar = false;
+  const barrados = new Set<string>();   // canais cujo site barrou o servidor nesta rodada: não insiste neles
   await comLimite(fila, 4, async (m) => {
-    if (parar || Date.now() >= limite - 2000) return;
+    if (barrados.has(m.canal) || Date.now() >= limite - 2000) return;
     base.processados++;
     try {
-      const l = await ler({ item_id: m.item_id, url: m.url }, limite);
+      const l = await ler({ item_id: m.item_id, url: m.url, canal: m.canal }, limite);
       if (await registrarLeitura(db, m, l)) base.acabaram.push(m.titulo || m.item_id);
       base.ok++;
     } catch (e) {
@@ -98,7 +107,7 @@ export async function capturarEstoque(db: SupabaseClient, opc: { orcamentoMs?: n
       const motivo = msg(e);
       base.erros.push({ item_id: m.item_id, motivo });
       await db.from("estoque_monitorados").update({ erro: motivo.slice(0, 300) }).eq("id", m.id);
-      if (e instanceof ErroBloqueio) { base.bloqueado = true; parar = true; }
+      if (e instanceof ErroBloqueio) { base.bloqueado = true; barrados.add(m.canal); }
     }
   });
   base.pendentes = Math.max(0, fila.length - base.processados);
@@ -109,8 +118,18 @@ export async function capturarEstoque(db: SupabaseClient, opc: { orcamentoMs?: n
 // ---------- links ----------
 export async function adicionarLinks(db: SupabaseClient, entrada: { canal?: string; texto: string; por?: string | null }) {
   const canal = entrada.canal || CANAL_PADRAO_ESTOQUE;
-  if (canal !== CANAL_PADRAO_ESTOQUE) throw new ErroValidacao("Este canal ainda não está disponível no acompanhamento de estoque.");
+  if (!canalEstoqueValido(canal)) throw new ErroValidacao("Canal desconhecido.");
   const r = lerLinksColados(entrada.texto, canal);
+  // links curtos / de compartilhamento (ex.: vt.tiktok.com/…): abre para descobrir o endereço de verdade do produto
+  for (const c of r.curtos.slice(0, 20)) {
+    try {
+      const final = normalizarLinkEstoque(canal, await resolverLinkCurto(c.url));
+      if (ehLinkCurto(final)) throw new Error("o link curto não levou a uma página de produto");
+      if (r.validos.some((v) => v.item_id === final.item_id)) r.repetidos++; else r.validos.push(final);
+    } catch (e) {
+      r.invalidos.push({ texto: c.texto.length > 60 ? c.texto.slice(0, 57) + "…" : c.texto, motivo: `não consegui abrir o link curto daqui (${msg(e)}). Abra o link no navegador e cole o endereço completo que aparece na barra.` });
+    }
+  }
   if (r.validos.length === 0 && r.invalidos.length === 0) throw new ErroValidacao("Cole pelo menos um link de anúncio.");
   if (r.validos.length > MAX_LINKS_POR_VEZ) throw new ErroValidacao(`Cole no máximo ${MAX_LINKS_POR_VEZ} links por vez.`);
   let adicionados = 0, reativados = 0, jaMonitorados = r.repetidos;
@@ -155,14 +174,16 @@ export async function removerMonitorado(db: SupabaseClient, id: string) {
 }
 
 // ---------- importar o que o favorito leu ----------
+const ID_GERAL = /^[A-Za-z0-9._:-]{3,80}$/;
 const STATUS_OK: StatusEstoque[] = ["em_estoque", "esgotado", "desconhecido"];
 const texto = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
 
-export function sanitizarLeituraNavegador(payload: any): { lidos: { item_id: string; leitura: LeituraEstoque }[]; falhas: { item_id: string; motivo: string }[] } {
-  if (!payload || payload.v !== 1 || payload.tipo !== "estoque" || !Array.isArray(payload.lidos)) throw new ErroValidacao("Esse texto não é do favorito “Ler estoque”. Copie o resultado pelo botão do favorito e cole de novo.");
+export function sanitizarLeituraNavegador(payload: any): { canal: string; lidos: { item_id: string; leitura: LeituraEstoque }[]; falhas: { item_id: string; motivo: string }[] } {
+  if (!payload || payload.v !== 1 || payload.tipo !== "estoque" || !Array.isArray(payload.lidos) || !canalEstoqueValido(payload.canal)) throw new ErroValidacao("Esse texto não é do favorito “Ler estoque”. Copie o resultado pelo botão do favorito e cole de novo.");
   const lidos: { item_id: string; leitura: LeituraEstoque }[] = [], falhas: { item_id: string; motivo: string }[] = [];
+  const ID_OK = payload.canal === CANAL_PADRAO_ESTOQUE ? /^MLB\d{6,}$/ : ID_GERAL;
   for (const x of payload.lidos.slice(0, 1000)) {
-    const item_id = typeof x?.item_id === "string" && /^MLB\d{6,}$/.test(x.item_id) ? x.item_id : null;
+    const item_id = typeof x?.item_id === "string" && ID_OK.test(x.item_id) ? x.item_id : null;
     if (!item_id || !STATUS_OK.includes(x.status)) continue;
     const q = x.estoque === null || x.estoque === undefined ? null : Number(x.estoque);
     lidos.push({ item_id, leitura: {
@@ -172,16 +193,16 @@ export function sanitizarLeituraNavegador(payload: any): { lidos: { item_id: str
     } });
   }
   for (const f of Array.isArray(payload.falhas) ? payload.falhas.slice(0, 1000) : []) {
-    if (typeof f?.item_id === "string" && /^MLB\d{6,}$/.test(f.item_id)) falhas.push({ item_id: f.item_id, motivo: texto(f.motivo, 200) || "falha na leitura" });
+    if (typeof f?.item_id === "string" && ID_OK.test(f.item_id)) falhas.push({ item_id: f.item_id, motivo: texto(f.motivo, 200) || "falha na leitura" });
   }
-  return { lidos, falhas };
+  return { canal: payload.canal as string, lidos, falhas };
 }
 
 export async function importarLeituraNavegador(db: SupabaseClient, payload: unknown) {
-  const { lidos, falhas } = sanitizarLeituraNavegador(payload);
+  const { canal, lidos, falhas } = sanitizarLeituraNavegador(payload);
   const ids = Array.from(new Set([...lidos.map((l) => l.item_id), ...falhas.map((f) => f.item_id)]));
   if (!ids.length) throw new ErroValidacao("O texto não trouxe nenhum anúncio lido.");
-  const { data, error } = await db.from("estoque_monitorados").select("*").eq("canal", CANAL_PADRAO_ESTOQUE).in("item_id", ids);
+  const { data, error } = await db.from("estoque_monitorados").select("*").eq("canal", canal).in("item_id", ids);
   falha("buscar anúncios monitorados", error);
   const porItem = new Map(((data as Monitorado[]) || []).map((m) => [m.item_id, m]));
   let atualizados = 0, desconhecidos = 0;

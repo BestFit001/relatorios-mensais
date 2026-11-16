@@ -22,13 +22,13 @@ export default function EstoqueConfig({ visiveis, onSalvar }: { visiveis: string
       </div>
       <ul className="space-y-2">
         {CANAIS_ESTOQUE.map((c) => {
-          const ligado = c.disponivel && visiveis.includes(c.id);
+          const ligado = visiveis.includes(c.id);
           return (
             <li key={c.id}>
-              <label className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${c.disponivel ? "border-slate-700 bg-slate-950 cursor-pointer" : "border-slate-800 bg-slate-950/50 opacity-60"}`}>
-                <input type="checkbox" data-canal-estoque={c.id} checked={ligado} disabled={!c.disponivel} onChange={() => alternar(c.id)} className="w-4 h-4 accent-indigo-500" />
+              <label className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 cursor-pointer ${ligado ? "border-slate-700 bg-slate-950" : "border-slate-800 bg-slate-950/50"}`}>
+                <input type="checkbox" data-canal-estoque={c.id} checked={ligado} onChange={() => alternar(c.id)} className="w-4 h-4 accent-indigo-500" />
                 <span className="text-sm font-bold text-slate-100">{c.nome}</span>
-                {!c.disponivel && <span className="text-[11px] text-slate-500">em breve: o servidor e o favorito ainda não sabem ler o estoque deste site</span>}
+                {c.leitura === "generica" && <span className="text-[11px] text-slate-500">leitura genérica: confira o que o painel leu nas primeiras páginas</span>}
               </label>
             </li>
           );

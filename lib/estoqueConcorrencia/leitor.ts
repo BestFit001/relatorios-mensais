@@ -13,4 +13,5 @@ export interface LeituraEstoque {
   vendedor: string | null;
 }
 
-export const lerEstoqueHtml: (html: string) => LeituraEstoque = new Function(`${LER_ESTOQUE_JS}\nreturn lerEstoqueHtml;`)();
+/** `canal` ausente ou mercadolivre = leitura específica do Mercado Livre; qualquer outro = leitura genérica (dados embutidos, JSON-LD, texto). `itemId` ajuda a achar o produto certo nos dados da página. */
+export const lerEstoqueHtml: (html: string, canal?: string, itemId?: string) => LeituraEstoque = new Function(`${LER_ESTOQUE_JS}\nreturn lerEstoqueHtml;`)();

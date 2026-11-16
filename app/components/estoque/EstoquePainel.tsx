@@ -6,6 +6,7 @@ import { supabase } from "../../../lib/supabase";
 import { favoritoEstoqueHref, montarListaEstoque } from "../../../lib/estoqueConcorrencia/favorito";
 import { avisoPendente, type Monitorado } from "../../../lib/estoqueConcorrencia/regras";
 import { botao, campo, caixa } from "../concorrentes/comum";
+import { canalEstoque } from "../../../lib/estoqueConcorrencia/links";
 
 async function api<T = any>(rota: string, metodo: "POST" | "PATCH" | "DELETE", corpo: unknown): Promise<T> {
   const r = await fetch(`/api/estoque-concorrencia/${rota}`, { method: metodo, headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });
@@ -42,6 +43,7 @@ export default function EstoquePainel({ canal, nomeCanal, usuario }: { canal: st
   const [texto, setTexto] = useState("");
   const [importando, setImportando] = useState(false);
   const [aberto, setAberto] = useState(false);
+  const infoCanal = canalEstoque(canal);
   const [historico, setHistorico] = useState<{ m: Monitorado; linhas: { data_captura: string; status: string; estoque: number | null }[] } | null>(null);
   const favoritoRef = useRef<HTMLAnchorElement>(null);
   useEffect(() => { favoritoRef.current?.setAttribute("href", favoritoEstoqueHref()); }, []);
@@ -89,7 +91,7 @@ export default function EstoquePainel({ canal, nomeCanal, usuario }: { canal: st
       if (r.reativados) p.push(`${r.reativados} reativado(s)`);
       if (r.jaMonitorados) p.push(`${r.jaMonitorados} já estava(m) na lista`);
       if (r.invalidos?.length) p.push(`${r.invalidos.length} link(s) não aceito(s): ${r.invalidos.slice(0, 2).map((i: any) => `“${i.texto}” (${i.motivo})`).join("; ")}`);
-      if (r.leitura?.bloqueado) p.push("o Mercado Livre bloqueou a leitura pelo servidor: use o favorito abaixo para ler o estoque");
+      if (r.leitura?.bloqueado) p.push(`o ${nomeCanal} bloqueou a leitura pelo servidor: use o favorito abaixo para ler o estoque`);
       else if (r.leitura?.ok) p.push(`${r.leitura.ok} lido(s) agora`);
       setAviso({ tipo: r.invalidos?.length && !r.adicionados && !r.reativados ? "erro" : "ok", texto: p.join(" · ") + "." });
       if (!r.invalidos?.length) setLinks("");
@@ -101,9 +103,9 @@ export default function EstoquePainel({ canal, nomeCanal, usuario }: { canal: st
   const lerAgora = async () => {
     setLendo(true); setAviso(null);
     try {
-      const r = await api("capturar", "POST", {});
+      const r = await api("capturar", "POST", { canal });
       if (r.manual) setAviso({ tipo: "erro", texto: "O servidor está em modo manual (ML_ESTRATEGIA=manual): use o favorito para ler o estoque." });
-      else if (r.bloqueado) setAviso({ tipo: "erro", texto: "O Mercado Livre bloqueou a leitura pelo servidor. Use “Ler pelo navegador” (favorito) logo abaixo: o seu navegador não é bloqueado." });
+      else if (r.bloqueado) setAviso({ tipo: "erro", texto: `O ${nomeCanal} bloqueou a leitura pelo servidor. Use “Ler pelo navegador” (favorito) logo abaixo: o seu navegador não é bloqueado.` });
       else setAviso({ tipo: r.falhas ? "erro" : "ok", texto: `${r.ok} anúncio(s) lido(s)${r.acabaram.length ? `, ${r.acabaram.length} acabou(aram)` : ""}${r.falhas ? `, ${r.falhas} com erro (${r.erros[0]?.motivo})` : ""}${r.pendentes ? `. Faltam ${r.pendentes}: clique de novo.` : "."}` });
       await carregar();
     } catch (e: any) { setAviso({ tipo: "erro", texto: e.message }); }
@@ -111,7 +113,7 @@ export default function EstoquePainel({ canal, nomeCanal, usuario }: { canal: st
   };
 
   const copiarLista = async () => {
-    try { await navigator.clipboard.writeText(JSON.stringify(montarListaEstoque(ativos))); setAviso({ tipo: "ok", texto: `Lista de ${ativos.length} anúncio(s) copiada. Abra uma página do Mercado Livre e clique no favorito “Ler estoque”.` }); }
+    try { await navigator.clipboard.writeText(JSON.stringify(montarListaEstoque(ativos, canal))); setAviso({ tipo: "ok", texto: `Lista de ${ativos.length} anúncio(s) copiada. Abra uma página do ${nomeCanal} e clique no favorito “Ler estoque”.` }); }
     catch { setAviso({ tipo: "erro", texto: "Não consegui copiar a lista. Libere o acesso à área de transferência no navegador e tente de novo." }); }
   };
   const copiarFavorito = async () => {
@@ -176,19 +178,24 @@ export default function EstoquePainel({ canal, nomeCanal, usuario }: { canal: st
         </section>
       )}
 
+      {infoCanal?.leitura === "generica" && (
+        <div data-aviso-leitura-generica className="rounded-xl border border-amber-800/60 bg-amber-950/20 px-4 py-3 text-xs text-amber-100/90">
+          A leitura do {nomeCanal} ainda está sendo calibrada: o painel lê os dados da página e mostra o que encontrou (passe o mouse no selo de estoque). Se ficar “Ainda não lido”, o motivo aparece ali e a gente ajusta com o seu link real. Nada vira “Acabou” sem um sinal claro na página.
+        </div>
+      )}
       <section className={`${caixa} p-5 space-y-3`} data-adicionar-links>
         <h2 className="text-xs font-black uppercase tracking-wider text-slate-300">Adicionar anúncios para acompanhar</h2>
         <textarea data-campo="links" value={links} onChange={(e) => setLinks(e.target.value)} rows={3} placeholder={`Cole um ou mais links de anúncios do ${nomeCanal} (um por linha)`} className={`${campo} w-full font-mono text-xs`} />
         <div className="flex flex-wrap items-center gap-3">
           <button type="button" data-acao="adicionar" onClick={adicionar} disabled={adicionando || !links.trim()} className={`${botao} bg-indigo-600 text-white hover:bg-indigo-500`}>{adicionando ? "Adicionando…" : "Adicionar e ler estoque"}</button>
-          <span className="text-[11px] text-slate-500">Aceita o link copiado do site do jeito que vem (inclusive os de “catálogo” com …/up/MLBU…?pdp_filters=item_id:MLB…).</span>
+          <span className="text-[11px] text-slate-500">{infoCanal?.dica || "Aceita o link copiado do site do jeito que vem."}{canal === "mercadolivre" && " Inclusive os de “catálogo” com …/up/MLBU…?pdp_filters=item_id:MLB…."}</span>
         </div>
       </section>
 
       <section className={`${caixa} p-5 space-y-3`} data-leitura>
         <div className="flex flex-wrap items-center gap-3">
           <button type="button" data-acao="ler-agora" onClick={lerAgora} disabled={lendo || !ativos.length} className={`${botao} bg-slate-800 text-slate-100 hover:bg-slate-700`}>{lendo ? "Lendo…" : "🔄 Ler agora pelo servidor"}</button>
-          <p className="text-[11px] text-slate-500 flex-1 min-w-[240px]">Todo dia, por volta das 6h (Brasília), o servidor lê o estoque de todos os anúncios ativos. Se o Mercado Livre bloquear o servidor, leia pelo navegador (abaixo): ele não é bloqueado.</p>
+          <p className="text-[11px] text-slate-500 flex-1 min-w-[240px]">Todo dia, por volta das 6h (Brasília), o servidor lê o estoque de todos os anúncios ativos. Se o {nomeCanal} bloquear o servidor, leia pelo navegador (abaixo): ele não é bloqueado.</p>
         </div>
         <details open={aberto} onToggle={(e) => setAberto((e.currentTarget as HTMLDetailsElement).open)} data-ler-navegador>
           <summary className="cursor-pointer select-none text-xs font-black uppercase tracking-wider text-slate-300">🧭 Ler pelo navegador (favorito “Ler estoque”)</summary>
@@ -200,12 +207,12 @@ export default function EstoquePainel({ canal, nomeCanal, usuario }: { canal: st
                 <button type="button" onClick={copiarFavorito} className="text-[11px] underline text-slate-300 hover:text-white cursor-pointer">não consegui arrastar</button>
               </li>
               <li><button type="button" data-acao="copiar-lista" onClick={copiarLista} disabled={!ativos.length} className={`${botao} bg-slate-800 text-slate-200 hover:bg-slate-700 !py-1.5`}>📋 Copiar lista ({ativos.length} anúncio{ativos.length === 1 ? "" : "s"})</button></li>
-              <li>Abra uma página do Mercado Livre (de preferência no mesmo endereço dos links, ex.: www.mercadolivre.com.br) e clique em <b>Ler estoque</b>: ele abre cada anúncio, lê o estoque e copia o resultado.</li>
+              <li>Abra uma página do {nomeCanal} (no mesmo endereço dos links, ex.: {(() => { try { return new URL(ativos[0]?.url || "").hostname; } catch { return "o site do canal"; } })()}) e clique em <b>Ler estoque</b>: ele abre cada anúncio, lê o estoque e copia o resultado.</li>
               <li>Volte aqui, cole o resultado abaixo e clique em Importar.</li>
             </ol>
             <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
               <label className="grid gap-1 text-[11px] font-bold text-slate-400">Resultado da leitura
-                <textarea data-campo="estoque-texto" value={texto} onChange={(e) => setTexto(e.target.value)} rows={2} placeholder='{"v":1,"canal":"mercadolivre","tipo":"estoque",…}' className={`${campo} w-full font-mono text-[11px]`} />
+                <textarea data-campo="estoque-texto" value={texto} onChange={(e) => setTexto(e.target.value)} rows={2} placeholder={`{"v":1,"canal":"${canal}","tipo":"estoque",…}`} className={`${campo} w-full font-mono text-[11px]`} />
               </label>
               <button type="button" data-acao="importar-estoque" onClick={importar} disabled={importando || !texto.trim()} className={`${botao} bg-rose-700 text-white hover:bg-rose-600`}>{importando ? "Importando…" : "Importar leitura"}</button>
             </div>
@@ -243,6 +250,7 @@ export default function EstoquePainel({ canal, nomeCanal, usuario }: { canal: st
                       <td className="py-3 px-3 text-slate-400">
                         {m.status === "esgotado" && m.esgotou_em ? <>acabou em {dataHora(m.esgotou_em)}</> : m.voltou_em ? <>voltou em {dataHora(m.voltou_em)}</> : "—"}
                         {avisoPendente(m) && <span className="ml-1 text-rose-300 font-bold">· aviso aberto</span>}
+                        {m.status === "desconhecido" && m.detalhe && <span data-detalhe-leitura title={m.detalhe} className="block text-[10px] text-amber-300/90 max-w-[260px] line-clamp-3 mt-0.5">{m.detalhe}</span>}
                       </td>
                       <td className="py-3 px-3 text-slate-400">
                         {dataHora(m.lido_em)}
