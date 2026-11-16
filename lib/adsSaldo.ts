@@ -74,6 +74,19 @@ export function situacaoBudget(p: { budget: number; gasto: number; proj: Projeca
   };
 }
 
+/** Quantos dias o saldo aguenta: o Ads do canal gasta todo dia; as Lives só em dia útil. Simula dia a dia a partir de amanhã. */
+export function diasDeSaldoMisto(saldo: number, hoje: Date, ritmoTodoDia: number, ritmoSoUteis: number): number | null {
+  if (ritmoTodoDia + ritmoSoUteis <= 0) return null;
+  let resta = Math.max(0, saldo);
+  for (let i = 1; i <= 366; i++) {
+    const w = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() + i).getDay();
+    const gasto = ritmoTodoDia + (w !== 0 && w !== 6 ? ritmoSoUteis : 0);
+    if (gasto >= resta) return i - 1 + (gasto > 0 ? resta / gasto : 0);
+    resta -= gasto;
+  }
+  return 366;
+}
+
 /** Saldo único para vários gastos (TikTok Shop + Lives): recarga = o que ainda falta gastar nos dois − o saldo; dura quanto o saldo aguenta o ritmo somado. */
 export function projetarCompartilhado(partes: Projecao[], saldo: number | null): { falta: number; ritmoDia: number; recargaSugerida: number | null; saldoSuficienteAte: number | null } {
   const falta = partes.reduce((t, x) => t + x.faltaGastar, 0), ritmoDia = partes.reduce((t, x) => t + x.ritmoDia, 0);
@@ -93,25 +106,34 @@ export async function gastoTotalPorCanal(supabase: any): Promise<Record<string, 
 }
 
 export type Projecao = {
+  uteis: boolean;                          // true = conta só segunda a sexta (Lives); diasMes/diasDecorridos/diasRestantes e ritmoDia ficam "por dia útil"
   diasMes: number; diasDecorridos: number; diasRestantes: number; encerrado: boolean;
   ritmoDia: number; adsProjetadoMes: number; faltaGastar: number; fatProjetadoMes: number; tacos: number | null;
   saldoSuficienteAte: number | null;       // quantos dias o saldo aguenta no ritmo atual (null sem saldo ou sem gasto)
   recargaSugerida: number | null;          // null sem saldo informado
 };
 /** Mantém o ritmo: o que foi gasto/faturado por dia até agora segue até o fim do mês. */
-export function projetarMes(p: { gasto: number; faturamento: number; mes: string; hoje: Date; diasOverride?: number | null; saldo: number | null }): Projecao {
+/** Segundas a sextas de um mês até o dia indicado (inclusive). */
+export function diasUteisAte(ano: number, mes: number, ateDia: number): number {
+  let n = 0;
+  for (let d = 1; d <= ateDia; d++) { const w = new Date(ano, mes - 1, d).getDay(); if (w !== 0 && w !== 6) n++; }
+  return n;
+}
+/** Lives só rodam em dia útil: sábado e domingo ficam fora da média. `uteis` troca "dias corridos" por "dias úteis" (seg–sex). */
+export function projetarMes(p: { gasto: number; faturamento: number; mes: string; hoje: Date; diasOverride?: number | null; saldo: number | null; uteis?: boolean }): Projecao {
   const [m, a] = p.mes.split("/").map(Number);
-  const diasMes = new Date(a, m, 0).getDate();
+  const diasMesCal = new Date(a, m, 0).getDate();
+  const diasMes = p.uteis ? Math.max(1, diasUteisAte(a, m, diasMesCal)) : diasMesCal;
   const ehMesAtual = p.hoje.getMonth() + 1 === m && p.hoje.getFullYear() === a;
   const passado = a < p.hoje.getFullYear() || (a === p.hoje.getFullYear() && m < p.hoje.getMonth() + 1);
-  const base = p.diasOverride && p.diasOverride > 0 ? p.diasOverride : ehMesAtual ? p.hoje.getDate() : diasMes;
-  const diasDecorridos = Math.min(Math.max(1, Math.round(base)), diasMes);
+  const baseCal = Math.min(Math.max(1, Math.round(p.diasOverride && p.diasOverride > 0 ? p.diasOverride : ehMesAtual ? p.hoje.getDate() : diasMesCal)), diasMesCal);
+  const diasDecorridos = p.uteis ? Math.min(Math.max(1, diasUteisAte(a, m, baseCal)), diasMes) : baseCal;
   const encerrado = passado || diasDecorridos >= diasMes;
   const ritmoDia = p.gasto / diasDecorridos;
   const adsProjetadoMes = encerrado ? p.gasto : ritmoDia * diasMes;
   const faltaGastar = Math.max(0, adsProjetadoMes - p.gasto);
   return {
-    diasMes, diasDecorridos, diasRestantes: diasMes - diasDecorridos, encerrado, ritmoDia, adsProjetadoMes, faltaGastar,
+    uteis: !!p.uteis, diasMes, diasDecorridos, diasRestantes: diasMes - diasDecorridos, encerrado, ritmoDia, adsProjetadoMes, faltaGastar,
     fatProjetadoMes: encerrado ? p.faturamento : (p.faturamento / diasDecorridos) * diasMes,
     tacos: p.faturamento > 0 ? (p.gasto / p.faturamento) * 100 : null,
     saldoSuficienteAte: p.saldo !== null && ritmoDia > 0 ? Math.max(0, p.saldo) / ritmoDia : null,

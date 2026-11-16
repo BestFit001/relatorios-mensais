@@ -7,7 +7,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { numeroBR } from "../../lib/adsImport";
-import { carregarBudgetCanal, carregarSaldoAds, definirSaldoAds, fixarReferenciaLives, gastoTotalPorCanal, projetarCompartilhado, projetarMes, registrarRecargaAds, salvarBudgetCanal, saldoAtualAds, situacaoBudget, type Projecao, type SaldoAds, type SituacaoBudget } from "../../lib/adsSaldo";
+import { carregarBudgetCanal, carregarSaldoAds, definirSaldoAds, diasDeSaldoMisto, fixarReferenciaLives, gastoTotalPorCanal, projetarCompartilhado, projetarMes, registrarRecargaAds, salvarBudgetCanal, saldoAtualAds, situacaoBudget, type Projecao, type SaldoAds, type SituacaoBudget } from "../../lib/adsSaldo";
 import { ehMercadoLivre } from "../../lib/adsMlDb";
 
 export type CanalProjecao = { canal: string; invAtual: number; totFatAtual: number; budgetSugerido?: number };
@@ -19,8 +19,7 @@ const CHAVE_EXCLUIDOS = "ads_proj_canais_excluidos";
 type Linha = {
   tipo: "ads" | "ml" | "lives"; canal: string; invAtual: number; totFatAtual: number; proj: Projecao;
   saldo: number | null;                       // saldo do canal (no TikTok, já descontando as Lives)
-  recarga: number | null; dura: number | null; // recarga/duração (no TikTok: Shop + Lives juntos)
-  parteLives?: number | null;                 // só na linha das Lives: quanto da recarga é delas
+  recarga: number | null; dura: number | null; // recarga: a parte do próprio quadrante (a soma Shop + Lives só aparece no quadro do topo); dura: no TikTok, Shop + Lives juntos
   budget?: number | null; sit?: SituacaoBudget | null; budgetSugerido?: number;
   contaSaldo: boolean;                        // o saldo compartilhado entra uma vez só nos totais
 };
@@ -82,7 +81,7 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
   const todas: Linha[] = useMemo(() => {
     const lista: Linha[] = [];
     const saldoTT = saldoAtualAds(saldos[canalTT] || null, gastoTotal(canalTT), gastoLives);
-    const projLives = lives ? projetarMes({ gasto: gastoLives, faturamento: lives.faturamento, mes, hoje, diasOverride: diasNum, saldo: null }) : null;
+    const projLives = lives ? projetarMes({ gasto: gastoLives, faturamento: lives.faturamento, mes, hoje, diasOverride: diasNum, saldo: null, uteis: true }) : null;
     const cTT = canais.find((c) => c.canal === canalTT);
     const projShop = cTT ? projetarMes({ gasto: cTT.invAtual, faturamento: cTT.totFatAtual, mes, hoje, diasOverride: diasNum, saldo: saldoTT }) : null;
     const shopNaLista = !!cTT;
@@ -99,13 +98,17 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
       const proj = projetarMes({ gasto: c.invAtual, faturamento: c.totFatAtual, mes, hoje, diasOverride: diasNum, saldo });
       if (ehTT && projLives) {
         const comp = projetarCompartilhado([proj, projLives], saldo);
-        lista.push({ tipo: "ads", canal: c.canal, invAtual: c.invAtual, totFatAtual: c.totFatAtual, proj, saldo, recarga: comp.recargaSugerida, dura: comp.saldoSuficienteAte, contaSaldo: true });
+        const duraMista = saldo === null ? null : saldo <= 0 ? 0 : diasDeSaldoMisto(saldo, hoje, proj.ritmoDia, projLives.ritmoDia);
+        const parteLivesRec = comp.recargaSugerida === null ? null : comp.falta > 0 ? comp.recargaSugerida * (projLives.faltaGastar / comp.falta) : 0;
+        lista.push({ tipo: "ads", canal: c.canal, invAtual: c.invAtual, totFatAtual: c.totFatAtual, proj, saldo, recarga: comp.recargaSugerida === null ? null : comp.recargaSugerida - (parteLivesRec || 0), dura: duraMista, contaSaldo: true });
       } else lista.push({ tipo: "ads", canal: c.canal, invAtual: c.invAtual, totFatAtual: c.totFatAtual, proj, saldo, recarga: proj.recargaSugerida, dura: proj.saldoSuficienteAte, contaSaldo: true });
     }
     if (lives && projLives) {
       const comp = projetarCompartilhado(projShop ? [projShop, projLives] : [projLives], saldoTT);
+      const duraMista = saldoTT === null ? null : saldoTT <= 0 ? 0 : diasDeSaldoMisto(saldoTT, hoje, projShop?.ritmoDia || 0, projLives.ritmoDia);
+      // cada quadrante mostra a própria recarga: o total (Shop + Lives) fica só no quadro do topo
       const parte = comp.recargaSugerida !== null && comp.falta > 0 ? comp.recargaSugerida * (projLives.faltaGastar / comp.falta) : comp.recargaSugerida === null ? null : 0;
-      lista.push({ tipo: "lives", canal: NOME_LIVES, invAtual: gastoLives, totFatAtual: lives.faturamento, proj: projLives, saldo: saldoTT, recarga: comp.recargaSugerida, dura: comp.saldoSuficienteAte, parteLives: parte, contaSaldo: !shopSelecionado });
+      lista.push({ tipo: "lives", canal: NOME_LIVES, invAtual: gastoLives, totFatAtual: lives.faturamento, proj: projLives, saldo: saldoTT, recarga: parte, dura: duraMista, contaSaldo: !shopSelecionado });
     }
     return lista;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -115,7 +118,7 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
   const mls = linhas.filter((l) => l.tipo === "ml");
   const tot = linhas.reduce((t, l) => ({
     gasto: t.gasto + l.invAtual, previsto: t.previsto + l.proj.adsProjetadoMes,
-    recarga: t.recarga + (l.contaSaldo ? l.recarga || 0 : 0), saldo: t.saldo + (l.contaSaldo ? l.saldo || 0 : 0), semSaldo: t.semSaldo + (l.contaSaldo && l.tipo !== "ml" && l.saldo === null ? 1 : 0),
+    recarga: t.recarga + (l.recarga || 0), saldo: t.saldo + (l.contaSaldo ? l.saldo || 0 : 0), semSaldo: t.semSaldo + (l.contaSaldo && l.tipo !== "ml" && l.saldo === null ? 1 : 0),
   }), { gasto: 0, previsto: 0, recarga: 0, saldo: 0, semSaldo: 0 });
   const totML = mls.reduce((t, l) => ({ budget: t.budget + (l.budget || 0), ultrapassou: t.ultrapassou + (l.sit?.ultrapassou || 0), vaiPassar: t.vaiPassar + (l.sit?.previstoUltrapassa || 0), sem: t.sem + (l.budget === null ? 1 : 0) }), { budget: 0, ultrapassou: 0, vaiPassar: 0, sem: 0 });
 
@@ -169,7 +172,7 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
       {linha(l.tipo === "lives" ? "Faturamento das lives até agora" : "Faturamento até agora", R$(l.totFatAtual))}
       {linha(l.tipo === "lives" ? "Ads das lives gasto até agora" : "Ads gasto até agora", R$(l.invAtual), "data-proj-gasto")}
       {linha("TACOS (ads ÷ faturamento)", l.proj.tacos === null ? "—" : `${NUM1(l.proj.tacos)}%`)}
-      {linha(`Ritmo de gasto (${l.proj.diasDecorridos} dia(s))`, `${R$(l.proj.ritmoDia)}/dia`, "data-proj-ritmo")}
+      {linha(l.proj.uteis ? `Ritmo de gasto (${l.proj.diasDecorridos} dia(s) útil(eis))` : `Ritmo de gasto (${l.proj.diasDecorridos} dia(s))`, `${R$(l.proj.ritmoDia)}/${l.proj.uteis ? "dia útil" : "dia"}`, "data-proj-ritmo")}
       {linha("Faturamento previsto no mês", R$(l.proj.fatProjetadoMes), "data-proj-fat-prev")}
       {linha("Ads previsto no mês", R$(l.proj.adsProjetadoMes), "data-proj-previsto", "text-indigo-300")}
     </>
@@ -217,7 +220,7 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
             {card("Ads gasto até agora", R$(tot.gasto), "canais marcados, neste mês", "text-white", "data-proj-total-gasto")}
             {card("Saldo atual", R$(tot.saldo), tot.semSaldo > 0 ? `${tot.semSaldo} canal(is) sem saldo informado` : "soma dos canais com recarga", "text-emerald-300", "data-proj-total-saldo")}
             {card("Ads previsto no mês", R$(tot.previsto), "no ritmo de agora", "text-indigo-300", "data-proj-total-previsto")}
-            {card("Recarga sugerida", R$(tot.recarga), "para chegar ao fim do mês no mesmo ritmo", tot.recarga > 0 ? "text-amber-300" : "text-emerald-300", "data-proj-total-recarga")}
+            {card("Recarga sugerida", R$(tot.recarga), "soma dos canais marcados (TikTok Shop + Lives incluídos)", tot.recarga > 0 ? "text-amber-300" : "text-emerald-300", "data-proj-total-recarga")}
             {mls.length > 0 && card("Mercado Livre acima do budget", R$(totML.ultrapassou), totML.sem > 0 ? `${totML.sem} canal(is) sem budget informado` : totML.vaiPassar > 0 ? `+ ${R$(totML.vaiPassar)} previstos até o fim do mês` : "dentro do budget no ritmo atual", totML.ultrapassou > 0 ? "text-rose-300" : "text-emerald-300", "data-proj-total-ml-excesso")}
           </div>
 
@@ -270,11 +273,10 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
                 <div key={l.canal} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5" data-proj-canal={l.canal} data-proj-tipo={l.tipo}>
                   {cabecalhoCard(l, status)}
                   {blocoRitmo(l)}
-                  {linha(l.proj.encerrado ? "Falta gastar" : `Falta gastar (${l.proj.diasRestantes} dia(s))`, R$(l.proj.faltaGastar), "data-proj-falta")}
+                  {linha(l.proj.encerrado ? "Falta gastar" : `Falta gastar (${l.proj.diasRestantes} dia(s)${l.proj.uteis ? " útil(eis)" : ""})`, R$(l.proj.faltaGastar), "data-proj-falta")}
                   {linha(compartilhado ? `Saldo atual (${canalTT} + Lives)` : "Saldo atual", l.saldo === null ? "não informado" : R$(l.saldo), "data-proj-saldo", l.saldo === null ? "text-slate-500" : l.saldo <= 0 ? "text-rose-400" : "text-emerald-300")}
                   {linha(compartilhado ? "Saldo dura (os dois juntos)" : "Saldo dura", l.saldo === null ? "—" : l.dura === null ? "sem gasto no mês" : l.saldo <= 0 ? "acabou" : `${NUM1(l.dura)} dia(s)${acabaEm && !l.proj.encerrado && l.dura < l.proj.diasRestantes ? ` · até ${dataCurta(acabaEm)}` : ""}`, "data-proj-dura")}
-                  {linha(compartilhado ? "Recarga sugerida (TikTok Shop + Lives)" : "Recarga sugerida", l.recarga === null ? "informe o saldo" : R$(l.recarga), "data-proj-recarga", l.recarga ? "text-amber-300" : "text-slate-200")}
-                  {l.tipo === "lives" && linha("Parte das Lives nesta recarga", l.parteLives == null ? "—" : R$(l.parteLives), "data-proj-parte-lives", l.parteLives ? "text-amber-300" : "text-slate-200")}
+                  {linha(compartilhado ? `Recarga sugerida (${l.tipo === "lives" ? "TikTok Lives" : canalTT})` : "Recarga sugerida", l.recarga === null ? "informe o saldo" : R$(l.recarga), "data-proj-recarga", l.recarga ? "text-amber-300" : "text-slate-200")}
 
                   {l.tipo === "ads" ? (
                     <>
@@ -305,13 +307,13 @@ export default function ProjecaoAds({ mes, canais, lives = null, solo = false }:
                       )}
                     </>
                   ) : (
-                    <p className="text-[11px] text-slate-500 mt-3" data-proj-lives-nota>O saldo e as recargas das Lives são os do {canalTT}: informe o saldo e lance as recargas lá. O custo das lives vem da planilha de Adsense enviada na aba Lives.</p>
+                    <p className="text-[11px] text-slate-500 mt-3" data-proj-lives-nota>As Lives só rodam em dia útil: sábado e domingo ficam fora da média e da projeção (o Ads do canal gasta todo dia). O saldo e as recargas são os do {canalTT}: informe o saldo e lance as recargas lá. O custo das lives vem da planilha de Adsense enviada na aba Lives.</p>
                   )}
                 </div>
               );
             })}
           </div>
-          <p className="text-[10px] text-slate-500 mt-4" data-proj-legenda>Ads previsto = gasto até agora ÷ dias considerados × dias do mês. Recarga sugerida = o que ainda falta gastar no mês − saldo atual (zero se o saldo já cobre); no TikTok soma o que falta no Shop e nas Lives, que usam o mesmo saldo. Saldo atual = saldo informado + recargas − o que as planilhas novas gastaram depois dele. Mercado Livre: ultrapassou = gasto − budget do mês; previsto acima do budget = gasto projetado no ritmo atual − budget.</p>
+          <p className="text-[10px] text-slate-500 mt-4" data-proj-legenda>Ads previsto = gasto até agora ÷ dias considerados × dias do mês. Recarga sugerida = o que ainda falta gastar no mês − saldo atual (zero se o saldo já cobre); no TikTok o saldo é um só: a recarga total é o que falta no Shop e nas Lives menos o saldo, repartida entre os dois quadrantes pelo que cada um ainda vai gastar (a soma aparece no quadro do topo). Lives: a média e a projeção contam só segunda a sexta. Saldo atual = saldo informado + recargas − o que as planilhas novas gastaram depois dele. Mercado Livre: ultrapassou = gasto − budget do mês; previsto acima do budget = gasto projetado no ritmo atual − budget.</p>
         </>
       )}
     </div>
