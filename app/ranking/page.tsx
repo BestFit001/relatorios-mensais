@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import Avatar from "../components/Avatar";
-import CorridaRanking, { type Corredor } from "../components/ranking/CorridaRanking";
+import BancadaRanking, { type Atendente } from "../components/ranking/BancadaRanking";
 import { calcularResumoCanais, TABELAS_RESUMO, type ResumoCanal } from "../../lib/resumoCanais";
 import {
   LINHAS_ADS, METRICAS, METRICAS_CADASTRO, MENOR_E_MELHOR, SEM_HISTORICO, agruparPorAnalista, calcularFaltamPorCanal, chaveCanal, classificar, contarEventosPorCanal, contarNoPeriodo, datasDeCadastro,
@@ -186,16 +186,16 @@ export default function RankingPage() {
   const [sel, setSel] = useState<string[]>([]);                 // canais escolhidos para comparar: "<e-mail>|<canal>"
   const [metSel, setMetSel] = useState<MetricaId>("faturado");   // métrica do gráfico de evolução dos canais escolhidos
   const [erro, setErro] = useState("");
-  const [abaSel, setAba] = useState<"ranking" | "corrida">("ranking");
-  const [podeCorrida, setPodeCorrida] = useState(false);   // por enquanto a Corrida é só dos administradores (Admin Geral e Admin de Área)
-  const aba: "ranking" | "corrida" = abaSel === "corrida" && podeCorrida ? "corrida" : "ranking";
+  const [abaSel, setAba] = useState<"ranking" | "bancada">("ranking");
+  const [podeBancada, setPodeBancada] = useState(false);   // por enquanto a Bancada de Vendas é só dos administradores (Admin Geral e Admin de Área)
+  const aba: "ranking" | "bancada" = abaSel === "bancada" && podeBancada ? "bancada" : "ranking";
   const [livesBase, setLivesBase] = useState<any[]>([]);                              // vendas de live (pedido e canal), para tirar do TikTok quando for "sem lives"
   const [fora, setFora] = useState<Set<string>>(() => new Set(["shein"]));            // canais que não entram na comparação (chaveCanal); Shein começa de fora
   const [comLives, setComLives] = useState(true);
 
   useEffect(() => {
     if (!localStorage.getItem("usuario_logado")) { router.push("/login"); return; }
-    try { setPodeCorrida(acessoTotal(JSON.parse(localStorage.getItem("usuario_logado") || "{}").perfil)); } catch { setPodeCorrida(false); }
+    try { setPodeBancada(acessoTotal(JSON.parse(localStorage.getItem("usuario_logado") || "{}").perfil)); } catch { setPodeBancada(false); }
     setPronto(true);
     (async () => {
       try {
@@ -252,7 +252,7 @@ export default function RankingPage() {
   }, [carregando, db.config_regras_canais]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { try { const v = JSON.parse(localStorage.getItem("ranking_canais_sel") || "[]"); if (Array.isArray(v)) setSel(v.filter((x) => typeof x === "string").slice(0, 8)); } catch { /* sem preferência */ } }, []);
-  useEffect(() => { try { if (localStorage.getItem("ranking_aba") === "corrida") setAba("corrida"); } catch { /* sem preferência */ } }, []);
+  useEffect(() => { try { const salva = localStorage.getItem("ranking_aba"); if (salva === "bancada" || salva === "corrida") setAba("bancada"); } catch { /* sem preferência */ } }, []);
   useEffect(() => {
     try {
       const f = localStorage.getItem("ranking_canais_fora");
@@ -267,7 +267,7 @@ export default function RankingPage() {
   });
   const incluirTodos = () => { setFora(new Set()); try { localStorage.setItem("ranking_canais_fora", "[]"); } catch { /* ignora */ } };
   const escolherLives = (v: boolean) => { setComLives(v); try { localStorage.setItem("ranking_com_lives", v ? "1" : "0"); } catch { /* ignora */ } };
-  const trocarAba = (a: "ranking" | "corrida") => { setAba(a); try { localStorage.setItem("ranking_aba", a); } catch { /* ignora */ } };
+  const trocarAba = (a: "ranking" | "bancada") => { setAba(a); try { localStorage.setItem("ranking_aba", a); } catch { /* ignora */ } };
   const guardarSel = (l: string[]) => { setSel(l); try { localStorage.setItem("ranking_canais_sel", JSON.stringify(l)); } catch { /* ignora */ } };
 
   const cadastrosDe = (canal: string) => cadCanal.get(chaveCanal(canal)) || 0;
@@ -449,12 +449,12 @@ export default function RankingPage() {
   const canaisSemAds = ranking.flatMap((a) => a.canais.filter((c) => !(c.adsGasto > 0)).map((c) => c.canal));
   const colsAdsCanal: (typeof LINHAS_ADS)[number]["id"][] = ["ads", "participacao", "faturado", "roas", "tacos", "lucroAposAds", "roi"];
 
-  // ---- Corrida do Ranking: um corredor por analista, na ordem da classificação atual
+  // ---- Bancada de Vendas: um balcão por analista, na ordem da classificação atual
   const aguardaCadastros = !cadPronto && METRICAS_CADASTRO.includes(metrica);
-  const corredores: Corredor[] = ranking.map((a, k) => ({ id: a.email!, nome: a.nome, email: a.email!, valor: valorDa(a.total, metrica), cor: CORES[k % CORES.length], canais: a.canais.length }));
-  const corridaView = aguardaCadastros ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os cadastros do Mapa…</p>
-    : corredores.length === 0 ? <p className="text-xs text-amber-300">Nenhum analista tem canais vinculados ainda. Vincule os canais aos analistas na tela Início.</p>
-    : <CorridaRanking corredores={corredores} rotuloMetrica={metricaInfo.rotulo} rotuloPeriodo={pA.rotulo} dica={metricaInfo.dica} menorEMelhor={MENOR_E_MELHOR.includes(metrica)}
+  const atendentes: Atendente[] = ranking.map((a, k) => ({ id: a.email!, nome: a.nome, email: a.email!, valor: valorDa(a.total, metrica), cor: CORES[k % CORES.length], canais: a.canais.length }));
+  const bancadaView = aguardaCadastros ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os cadastros do Mapa…</p>
+    : atendentes.length === 0 ? <p className="text-xs text-amber-300">Nenhum analista tem canais vinculados ainda. Vincule os canais aos analistas na tela Início.</p>
+    : <BancadaRanking atendentes={atendentes} rotuloMetrica={metricaInfo.rotulo} rotuloPeriodo={pA.rotulo} dica={metricaInfo.dica} menorEMelhor={MENOR_E_MELHOR.includes(metrica)}
         referencia={metrica === "progressoMeta" ? 100 : undefined} formatarValor={(v) => (metrica === "crescimento" && v > 0 ? "+" : "") + formatar(v, metricaInfo.formato)} />;
 
   return (
@@ -469,8 +469,8 @@ export default function RankingPage() {
         </div>
 
         {/* sub-abas */}
-        {podeCorrida && <div className="flex gap-2 border-b border-slate-800" role="tablist" data-abas-ranking>
-          {([["ranking", "🏆 Ranking dos analistas"], ["corrida", "🏁 Corrida do Ranking"]] as const).map(([id, rotulo]) => (
+        {podeBancada && <div className="flex gap-2 border-b border-slate-800" role="tablist" data-abas-ranking>
+          {([["ranking", "🏆 Ranking dos analistas"], ["bancada", "🛍️ Bancada de Vendas"]] as const).map(([id, rotulo]) => (
             <button key={id} type="button" role="tab" aria-selected={aba === id} data-aba-ranking={id} onClick={() => trocarAba(id)}
               className={`px-5 py-2.5 -mb-px text-xs font-bold cursor-pointer border-b-2 transition ${aba === id ? "border-indigo-500 text-white" : "border-transparent text-slate-400 hover:text-white"}`}>{rotulo}</button>
           ))}
@@ -498,7 +498,7 @@ export default function RankingPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-[260px] flex-1">
                   <h2 className="text-xs font-black text-slate-200 uppercase tracking-wider">Canais na comparação</h2>
-                  <p className="text-[11px] text-slate-500">Marque os canais que entram no ranking, na corrida e nos totais. Canal desmarcado fica de fora de tudo nesta tela, inclusive dos números de cadastro. Dá para mudar a qualquer momento; a escolha fica guardada neste navegador.</p>
+                  <p className="text-[11px] text-slate-500">Marque os canais que entram no ranking, na bancada de vendas e nos totais. Canal desmarcado fica de fora de tudo nesta tela, inclusive dos números de cadastro. Dá para mudar a qualquer momento; a escolha fica guardada neste navegador.</p>
                 </div>
                 {fora.size > 0 && <button type="button" onClick={incluirTodos} data-incluir-todos className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-slate-700 text-slate-300 hover:text-white cursor-pointer">Incluir todos</button>}
               </div>
@@ -536,7 +536,7 @@ export default function RankingPage() {
           </p>
         )}
         {erro && <p className="text-xs text-rose-400">Erro ao carregar: {erro}</p>}
-        {carregando ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os números dos canais…</p> : aba === "corrida" ? corridaView : (
+        {carregando ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os números dos canais…</p> : aba === "bancada" ? bancadaView : (
           <>
             {/* visão da empresa */}
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-3" data-kpis>
