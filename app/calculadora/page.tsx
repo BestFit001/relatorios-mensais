@@ -6,6 +6,7 @@ import Navbar from "../components/Navbar";
 import * as XLSX from "xlsx";
 import { lerArquivoComoLinhas } from "../../lib/lerArquivo";
 import { carregarPaiManual } from "../../lib/skuPaiDb";
+import { acharPdvIdeal, type ParametrosFaixa } from "../../lib/pdvIdeal";
 import { paiDoSku, normalizarSkuPai, custoDoPai, type RegraCustoPai } from "../../lib/skuPai";
 
 const matrizFretes = [
@@ -393,16 +394,27 @@ export default function CalculadoraPage() {
     }
   };
 
-  const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
+  const regrasDoCanalNome = (canalNome: string) => {
     const cLower = canalNome.toLowerCase();
-    
-    const regrasDoCanal = regrasTarifacao.filter((r) => {
+    return regrasTarifacao.filter((r) => {
       const rCanal = String(r.canal || "").toLowerCase();
       if (rCanal === cLower) return true;
       if ((cLower.includes("magalu") || cLower.includes("magazine")) && (rCanal.includes("magalu") || rCanal.includes("magazine"))) return true;
       if (cLower.includes("tiktok") && rCanal.includes("tiktok")) return true;
       return rCanal.includes(cLower) || cLower.includes(rCanal);
     });
+  };
+
+  // início de cada faixa de preço da tabela de tarifação do canal (usado para achar o menor preço que fecha a margem)
+  const iniciosDeFaixa = (canalNome: string): number[] =>
+    regrasDoCanalNome(canalNome).map((r) => {
+      const nums = String(r.faixa_preco || "").toLowerCase().match(/[\d.,]+/g);
+      return nums ? parseNumero(nums[0]) : 0;
+    }).filter((n) => Number.isFinite(n) && n >= 0);
+
+  const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
+    const cLower = canalNome.toLowerCase();
+    const regrasDoCanal = regrasDoCanalNome(canalNome);
 
     if (regrasDoCanal.length === 0) {
       return { comissao: cLower.includes("premium") ? 19 : 14, tarifa_fixa: 0, frete: 0 };
@@ -453,39 +465,22 @@ export default function CalculadoraPage() {
     const largura = refAnuncio && Number(refAnuncio.largura) > 0 ? Number(refAnuncio.largura) : 10;
     const comprimento = refAnuncio && Number(refAnuncio.comprimento) > 0 ? Number(refAnuncio.comprimento) : 10;
 
-    const margemAlvoDec = margemPct / 100;
-    let pdvCalculado = custoProduto * 2;
-    let inviavel = false;
-
-    for (let iter = 0; iter < 5; iter++) {
-      let tarifaFixa = 0;
-      let freteVariavel = 0;
-      if (cLower.includes("mercado livre")) {
-        tarifaFixa = pdvCalculado < 79.00 ? 6.50 : 0.00;
-        freteVariavel = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
-      } else {
-        const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
-        comissaoPct = Number(regraTabela.comissao || 14) / 100;
-        tarifaFixa = Number(regraTabela.tarifa_fixa || 0);
-        freteVariavel = Number(regraTabela.frete || 0);
-      }
-      const denominador = 1 - (comissaoPct + impostoPercent + margemAlvoDec);
-      inviavel = !(denominador > 0);
-      // O rebate reduz o custo efetivo, facilitando o cálculo do PDV ideal
-      const custoEfetivo = Math.max(0, custoProduto - valRebate);
-      pdvCalculado = denominador > 0 ? (custoEfetivo + tarifaFixa + freteVariavel) / denominador : custoProduto * 2;
-    }
-
-    let tarifaFixaFinal = 0;
-    let freteFinal = 0;
-    if (cLower.includes("mercado livre")) {
-      tarifaFixaFinal = pdvCalculado < 79.00 ? 6.50 : 0.00;
-      freteFinal = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
-    } else {
-      const regraTabela = obterRegraCanalDaTabela(canalNome, pdvCalculado);
-      tarifaFixaFinal = Number(regraTabela.tarifa_fixa || 0);
-      freteFinal = Number(regraTabela.frete || 0);
-    }
+    // MENOR preço que fecha a margem alvo, olhando todas as faixas de tarifa/frete do canal (ver lib/pdvIdeal.ts)
+    const ehMl = cLower.includes("mercado livre");
+    const paramsEm = (preco: number): ParametrosFaixa => {
+      if (ehMl) return { comissaoPct, tarifaFixa: preco < 79.00 ? 6.50 : 0.00, frete: calcularFreteML(preco, pesoReal, altura, largura, comprimento) };
+      const regra = obterRegraCanalDaTabela(canalNome, preco);
+      return { comissaoPct: Number(regra.comissao || 14) / 100, tarifaFixa: Number(regra.tarifa_fixa || 0), frete: Number(regra.frete || 0) };
+    };
+    const achado = acharPdvIdeal({
+      pontos: ehMl ? [0, 79, 100, 120, 150, 200] : iniciosDeFaixa(canalNome),
+      paramsEm, custoProduto, rebate: valRebate, margemPct, imposto: impostoPercent,
+    });
+    const pdvCalculado = achado.pdv;
+    const inviavel = achado.inviavel;
+    comissaoPct = achado.params.comissaoPct;
+    const tarifaFixaFinal = achado.params.tarifaFixa;
+    const freteFinal = achado.params.frete;
 
     const valorComissao = pdvCalculado * comissaoPct;
     const valorImposto = pdvCalculado * impostoPercent;
