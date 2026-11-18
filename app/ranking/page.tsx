@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import Avatar from "../components/Avatar";
+import CorridaRanking, { type Corredor } from "../components/ranking/CorridaRanking";
 import { calcularResumoCanais, TABELAS_RESUMO, type ResumoCanal } from "../../lib/resumoCanais";
 import {
   LINHAS_ADS, METRICAS, METRICAS_CADASTRO, MENOR_E_MELHOR, SEM_HISTORICO, agruparPorAnalista, calcularFaltamPorCanal, chaveCanal, classificar, contarEventosPorCanal, contarNoPeriodo, datasDeCadastro,
@@ -183,6 +184,7 @@ export default function RankingPage() {
   const [sel, setSel] = useState<string[]>([]);                 // canais escolhidos para comparar: "<e-mail>|<canal>"
   const [metSel, setMetSel] = useState<MetricaId>("faturado");   // métrica do gráfico de evolução dos canais escolhidos
   const [erro, setErro] = useState("");
+  const [aba, setAba] = useState<"ranking" | "corrida">("ranking");
 
   useEffect(() => {
     if (!localStorage.getItem("usuario_logado")) { router.push("/login"); return; }
@@ -240,6 +242,8 @@ export default function RankingPage() {
   }, [carregando, db.config_regras_canais]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { try { const v = JSON.parse(localStorage.getItem("ranking_canais_sel") || "[]"); if (Array.isArray(v)) setSel(v.filter((x) => typeof x === "string").slice(0, 8)); } catch { /* sem preferência */ } }, []);
+  useEffect(() => { try { if (localStorage.getItem("ranking_aba") === "corrida") setAba("corrida"); } catch { /* sem preferência */ } }, []);
+  const trocarAba = (a: "ranking" | "corrida") => { setAba(a); try { localStorage.setItem("ranking_aba", a); } catch { /* ignora */ } };
   const guardarSel = (l: string[]) => { setSel(l); try { localStorage.setItem("ranking_canais_sel", JSON.stringify(l)); } catch { /* ignora */ } };
 
   const cadastrosDe = (canal: string) => cadCanal.get(chaveCanal(canal)) || 0;
@@ -396,6 +400,14 @@ export default function RankingPage() {
   const canaisSemAds = ranking.flatMap((a) => a.canais.filter((c) => !(c.adsGasto > 0)).map((c) => c.canal));
   const colsAdsCanal: (typeof LINHAS_ADS)[number]["id"][] = ["ads", "participacao", "faturado", "roas", "tacos", "lucroAposAds", "roi"];
 
+  // ---- Corrida do Ranking: um corredor por analista, na ordem da classificação atual
+  const aguardaCadastros = !cadPronto && METRICAS_CADASTRO.includes(metrica);
+  const corredores: Corredor[] = ranking.map((a, k) => ({ id: a.email!, nome: a.nome, email: a.email!, valor: valorDa(a.total, metrica), cor: CORES[k % CORES.length], canais: a.canais.length }));
+  const corridaView = aguardaCadastros ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os cadastros do Mapa…</p>
+    : corredores.length === 0 ? <p className="text-xs text-amber-300">Nenhum analista tem canais vinculados ainda. Vincule os canais aos analistas na tela Início.</p>
+    : <CorridaRanking corredores={corredores} rotuloMetrica={metricaInfo.rotulo} rotuloPeriodo={pA.rotulo} dica={metricaInfo.dica} menorEMelhor={MENOR_E_MELHOR.includes(metrica)}
+        referencia={metrica === "progressoMeta" ? 100 : undefined} formatarValor={(v) => formatar(v, metricaInfo.formato)} />;
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
       <div className="max-w-[98%] mx-auto space-y-6">
@@ -407,24 +419,32 @@ export default function RankingPage() {
           <Navbar />
         </div>
 
+        {/* sub-abas */}
+        <div className="flex gap-2 border-b border-slate-800" role="tablist" data-abas-ranking>
+          {([["ranking", "🏆 Ranking dos analistas"], ["corrida", "🏁 Corrida do Ranking"]] as const).map(([id, rotulo]) => (
+            <button key={id} type="button" role="tab" aria-selected={aba === id} data-aba-ranking={id} onClick={() => trocarAba(id)}
+              className={`px-5 py-2.5 -mb-px text-xs font-bold cursor-pointer border-b-2 transition ${aba === id ? "border-indigo-500 text-white" : "border-transparent text-slate-400 hover:text-white"}`}>{rotulo}</button>
+          ))}
+        </div>
+
         {/* controles */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-end gap-4" data-controles>
           <SeletorPeriodo rotulo="Período" valor={selA} onChange={setSelA} prefixo="a" opcoesMes={opcoesMes} resolvido={pA} />
-          <button type="button" onClick={() => setComparar((v) => !v)} data-comparar className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer border ${comparar ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:text-white"}`}>⚖️ {comparar ? "Comparando com…" : "Comparar com outro período"}</button>
-          {comparar && <SeletorPeriodo rotulo="Comparar com" valor={selB} onChange={setSelB} prefixo="b" opcoesMes={opcoesMes} comAnterior resolvido={pB} />}
+          {aba === "ranking" && <button type="button" onClick={() => setComparar((v) => !v)} data-comparar className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer border ${comparar ? "bg-indigo-600 border-indigo-500 text-white" : "bg-slate-950 border-slate-700 text-slate-300 hover:text-white"}`}>⚖️ {comparar ? "Comparando com…" : "Comparar com outro período"}</button>}
+          {aba === "ranking" && comparar && <SeletorPeriodo rotulo="Comparar com" valor={selB} onChange={setSelB} prefixo="b" opcoesMes={opcoesMes} comAnterior resolvido={pB} />}
           <label className="text-[10px] font-bold uppercase text-slate-500 space-y-1 block">Classificar por
             <select value={metrica} onChange={(e) => setMetrica(e.target.value as MetricaId)} data-metrica className={seletor + " block normal-case"}>{METRICAS.map((m) => <option key={m.id} value={m.id}>{m.rotulo}</option>)}</select>
           </label>
           <p className="text-[11px] text-slate-500 flex-1 min-w-[220px]">{metricaInfo.dica}.</p>
         </div>
 
-        {(pA.tipo !== "mes" || (comparar && pB.tipo !== "mes")) && (
+        {(pA.tipo !== "mes" || (aba === "ranking" && comparar && pB.tipo !== "mes")) && (
           <p className="text-[11px] text-slate-400 -mt-3 px-1" data-aviso-periodo>
             Em períodos que não são mês fechado: vendas, devoluções e frete Flex entram pela data de cada um; Ads e metas (lançados por mês) entram proporcionais aos dias do período; lojas físicas só entram quando o mês inteiro está dentro do período. Os números podem diferir um pouco do Dashboard, que fecha por mês.
           </p>
         )}
         {erro && <p className="text-xs text-rose-400">Erro ao carregar: {erro}</p>}
-        {carregando ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os números dos canais…</p> : (
+        {carregando ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os números dos canais…</p> : aba === "corrida" ? corridaView : (
           <>
             {/* visão da empresa */}
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-3" data-kpis>
