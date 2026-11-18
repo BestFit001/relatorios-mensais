@@ -594,42 +594,64 @@ export default function PlpPage() {
       sec.subs.get(sub)!.push(p.numero_pedido);
     }
     const ordenadas = Array.from(secoes.values()).sort((x, y) => (x.flex === y.flex ? x.titulo.localeCompare(y.titulo) : x.flex ? -1 : 1));   // FLEX primeiro
-    const CAP_PAG1 = 27, CAP_DEMAIS = 34, COLS = 4;
-    const colunas: Linha[][] = [[]];
-    const cap = () => (Math.floor((colunas.length - 1) / COLS) === 0 ? CAP_PAG1 : CAP_DEMAIS);
-    const novaColuna = () => colunas.push([]);
-    const garante = (precisa: number, cont?: { titulo: string; qtd: number }) => {   // abre coluna nova se não couber `precisa` linhas
-      if (colunas[colunas.length - 1].length + precisa > cap() && colunas[colunas.length - 1].length > 0) { novaColuna(); if (cont) colunas[colunas.length - 1].push({ t: "secao", texto: cont.titulo, qtd: cont.qtd, cont: true }); }
-    };
-    for (const sec of ordenadas) {
-      const total = Array.from(sec.subs.values()).reduce((n, l) => n + l.length, 0);
-      garante(4);
-      colunas[colunas.length - 1].push({ t: "secao", texto: sec.titulo, qtd: total });
-      const varias = sec.subs.size > 1;
-      let n = 0;
-      const subs = Array.from(sec.subs.entries()).sort((x, y) => x[0].localeCompare(y[0]));
-      for (const [nomeSub, nums] of subs) {
-        if (varias) { garante(3, { titulo: sec.titulo, qtd: total }); colunas[colunas.length - 1].push({ t: "sub", texto: nomeSub, qtd: nums.length }); }
-        for (const num of nums) {
-          garante(1, { titulo: sec.titulo, qtd: total });
-          n += 1;
-          colunas[colunas.length - 1].push({ t: "pedido", texto: "", idx: n, numero: num });
+
+    // MEDIDAS REAIS da folha (mm, A4 paisagem com margem de 6 mm = 198 mm úteis; 2 mm de folga de segurança).
+    const COLS = 4, ALT_UTIL = 196, ALT_LINHA = 5.4, CABEC_PAG1 = 28.1, CABEC_DEMAIS = 6.5, ALT_FECHO = 33.3, BORDA_COL = 1;
+    const linhasCabem = (pagina: number, escala: number, comFecho: boolean) =>
+      Math.floor((ALT_UTIL / escala - (pagina === 0 ? CABEC_PAG1 : CABEC_DEMAIS) - BORDA_COL - (comFecho ? ALT_FECHO : 0)) / ALT_LINHA);
+
+    // Faz as colunas fluírem; `capDaPagina(i)` diz quantas linhas cabem por coluna na página i.
+    const fluir = (capDaPagina: (pagina: number) => number) => {
+      const colunas: Linha[][] = [[]];
+      const cap = () => capDaPagina(Math.floor((colunas.length - 1) / COLS));
+      const novaColuna = () => colunas.push([]);
+      const garante = (precisa: number, cont?: { titulo: string; qtd: number }) => {   // abre coluna nova se não couber `precisa` linhas
+        if (colunas[colunas.length - 1].length + precisa > cap() && colunas[colunas.length - 1].length > 0) { novaColuna(); if (cont) colunas[colunas.length - 1].push({ t: "secao", texto: cont.titulo, qtd: cont.qtd, cont: true }); }
+      };
+      for (const sec of ordenadas) {
+        const total = Array.from(sec.subs.values()).reduce((n, l) => n + l.length, 0);
+        garante(4);
+        colunas[colunas.length - 1].push({ t: "secao", texto: sec.titulo, qtd: total });
+        const varias = sec.subs.size > 1;
+        let n = 0;
+        const subs = Array.from(sec.subs.entries()).sort((x, y) => x[0].localeCompare(y[0]));
+        for (const [nomeSub, nums] of subs) {
+          if (varias) { garante(3, { titulo: sec.titulo, qtd: total }); colunas[colunas.length - 1].push({ t: "sub", texto: nomeSub, qtd: nums.length }); }
+          for (const num of nums) {
+            garante(1, { titulo: sec.titulo, qtd: total });
+            n += 1;
+            colunas[colunas.length - 1].push({ t: "pedido", texto: "", idx: n, numero: num });
+          }
         }
       }
+      const paginas: Linha[][][] = [];
+      for (let i = 0; i < colunas.length; i += COLS) paginas.push(colunas.slice(i, i + COLS));
+      return paginas;
+    };
+
+    // A assinatura nunca fica sozinha numa página: 1) tenta do jeito normal; 2) se a última coluna encher a página, reserva o espaço
+    // da assinatura na última página (redistribui as colunas); 3) se isso exigir uma página a mais, reduz a escala de impressão
+    // (até 80%) e tenta de novo; 4) só se nem assim couber, abre a página extra, mas já com pedidos junto da assinatura.
+    const ESCALAS = [1, 0.93, 0.86, 0.8];
+    for (const escala of ESCALAS) {
+      const normal = fluir((i) => linhasCabem(i, escala, false));
+      if (normal.length === 0) return { paginas: normal, escala: 1 };
+      const ult = normal.length - 1;
+      const altura = normal[ult].reduce((m, c) => Math.max(m, c.length), 0);
+      if (altura <= linhasCabem(ult, escala, true)) return { paginas: normal, escala };
+      const reservado = fluir((i) => linhasCabem(i, escala, i >= ult));
+      if (reservado.length === normal.length) return { paginas: reservado, escala };
     }
-    const paginas: Linha[][][] = [];
-    for (let i = 0; i < colunas.length; i += COLS) paginas.push(colunas.slice(i, i + COLS));
-    const ultima = paginas[paginas.length - 1] || [];
-    const altura = ultima.reduce((m, c) => Math.max(m, c.length), 0);
-    const assinaturaEmPaginaPropria = paginas.length > 0 && altura + 7 > (paginas.length === 1 ? CAP_PAG1 : CAP_DEMAIS);
-    return { paginas, assinaturaEmPaginaPropria };
+    const normal1 = fluir((i) => linhasCabem(i, 1, false));
+    const ult1 = Math.max(0, normal1.length - 1);
+    return { paginas: fluir((i) => linhasCabem(i, 1, i >= ult1)), escala: 1 };
   };
 
   const pedidosFiltradosPesquisa = termoPesquisaPedido.trim()
     ? pedidos.filter((p) => String(p.numero_pedido).toLowerCase().includes(termoPesquisaPedido.trim().toLowerCase()))
     : pedidos;
 
-  const { paginas: paginasFolha, assinaturaEmPaginaPropria } = montarPaginas(pedidosFiltradosPesquisa);
+  const { paginas: paginasFolha, escala: escalaFolha } = montarPaginas(pedidosFiltradosPesquisa);
   const dataBR = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
 
   const kpis = {
@@ -696,8 +718,9 @@ export default function PlpPage() {
           @page { size: A4 landscape; margin: 6mm 8mm; }
           html, body { background: #ffffff !important; color: #000000 !important; margin: 0 !important; padding: 0 !important; }
           nav, header, button, .print-hide { display: none !important; }
+          .plp-folha { margin: 0 !important; }   /* o space-y-6 do container jogava 6 mm de folga na 1ª página */
           .plp-folha, .plp-secao, .plp-sub, .plp-par, .plp-resumo div.total, .plp-total, .plp-achado { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .plp-pagina { border: 0; border-radius: 0; padding: 0; margin: 0; break-after: page; page-break-after: always; }
+          .plp-pagina { border: 0; border-radius: 0; padding: 0; margin: 0; break-after: page; page-break-after: always; zoom: var(--plp-zoom, 1); }
           .plp-pagina:last-child { break-after: auto; page-break-after: auto; }
         }
       `}</style>
@@ -1060,9 +1083,9 @@ export default function PlpPage() {
             {/* ======================================================== */}
             {/* DOCUMENTO DE IMPRESSÃO (A4 PAISAGEM): páginas com 4 colunas */}
             {/* ======================================================== */}
-            <div className="folha-print-manifesto plp-folha" data-plp-folha>
+            <div className="folha-print-manifesto plp-folha" data-plp-folha data-plp-escala={escalaFolha} style={{ "--plp-zoom": escalaFolha } as React.CSSProperties}>
               {(() => {
-                const totalPag = paginasFolha.length + (assinaturaEmPaginaPropria ? 1 : 0);
+                const totalPag = paginasFolha.length;
                 const termo = termoPesquisaPedido.trim().toLowerCase();
                 const fecho = (
                   <div className="plp-fecho" data-plp-fecho>
@@ -1121,10 +1144,9 @@ export default function PlpPage() {
                             </div>
                           ))}
                         </div>
-                        {pIdx === paginasFolha.length - 1 && !assinaturaEmPaginaPropria && fecho}
+                        {pIdx === paginasFolha.length - 1 && fecho}
                       </div>
                     ))}
-                    {assinaturaEmPaginaPropria && <div className="plp-pagina" data-plp-pagina={totalPag}>{faixa(totalPag)}{fecho}</div>}
                   </>
                 );
               })()}
