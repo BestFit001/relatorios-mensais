@@ -11,12 +11,13 @@ import { calcularResumoCanais, TABELAS_RESUMO, type ResumoCanal } from "../../li
 import {
   LINHAS_ADS, METRICAS, METRICAS_CADASTRO, MENOR_E_MELHOR, SEM_HISTORICO, agruparPorAnalista, calcularFaltamPorCanal, chaveCanal, classificar, contarEventosPorCanal, contarNoPeriodo, datasDeCadastro,
   eventosDeCadastro, formatar, mesesTerminandoEm, metricasAds, normalizarSkuMapa, totalizar, valorDa, variacao,
-  type AnalistaRanking, type EventoCadastro, type ExtraCadastro, type Formato, type MetricaId,
+  type AnalistaRanking, type EventoCadastro, type ExtraCadastro, type Formato, type MetricaId, type Totais,
 } from "../../lib/ranking";
 import { carregarParaExclusao } from "../../lib/skusExclusao";
+import { canalDasLivesDoBanco, crescimentoPct, diasDecorridos, pedidosDeLive, removerVendasDeLive } from "../../lib/rankingFiltros";
 import { normalizarNomeCanal } from "../../lib/vendasCanaisLogica";
 import {
-  OPCOES_PERIODO, descreverPeriodo, hojeSP, janelasDeEvolucao, resolverComparacao, resolverPeriodo, unidadeEvolucao,
+  OPCOES_PERIODO, descreverPeriodo, hojeSP, janelasDeEvolucao, periodoAnterior, resolverComparacao, resolverPeriodo, unidadeEvolucao,
   type PeriodoResolvido, type PeriodoSel, type TipoPeriodo,
 } from "../../lib/periodoRanking";
 
@@ -185,16 +186,21 @@ export default function RankingPage() {
   const [metSel, setMetSel] = useState<MetricaId>("faturado");   // métrica do gráfico de evolução dos canais escolhidos
   const [erro, setErro] = useState("");
   const [aba, setAba] = useState<"ranking" | "corrida">("ranking");
+  const [livesBase, setLivesBase] = useState<any[]>([]);                              // vendas de live (pedido e canal), para tirar do TikTok quando for "sem lives"
+  const [fora, setFora] = useState<Set<string>>(() => new Set(["shein"]));            // canais que não entram na comparação (chaveCanal); Shein começa de fora
+  const [comLives, setComLives] = useState(true);
 
   useEffect(() => {
     if (!localStorage.getItem("usuario_logado")) { router.push("/login"); return; }
     setPronto(true);
     (async () => {
       try {
-        const [tabelas, map] = await Promise.all([
+        const [tabelas, map, lives] = await Promise.all([
           Promise.all(TABELAS_RESUMO.map(async (t) => [t, await buscarTudo(t)] as const)),
           supabase.from("home_responsaveis_canais").select("*"),
+          buscarTudo("vendas_lives_separadas", "id_pedido, canal").catch(() => [] as any[]),
         ]);
+        setLivesBase(lives);
         const r: Record<string, any[]> = {}; tabelas.forEach(([t, l]) => { r[t] = l; });
         setDb(r);
         setMapeamentos(((map.data as any[]) || []).map((m) => ({ email: String(m.email || "").trim().toLowerCase(), canal: String(m.canal || "") })));
@@ -243,11 +249,31 @@ export default function RankingPage() {
 
   useEffect(() => { try { const v = JSON.parse(localStorage.getItem("ranking_canais_sel") || "[]"); if (Array.isArray(v)) setSel(v.filter((x) => typeof x === "string").slice(0, 8)); } catch { /* sem preferência */ } }, []);
   useEffect(() => { try { if (localStorage.getItem("ranking_aba") === "corrida") setAba("corrida"); } catch { /* sem preferência */ } }, []);
+  useEffect(() => {
+    try {
+      const f = localStorage.getItem("ranking_canais_fora");
+      if (f !== null) { const v = JSON.parse(f); if (Array.isArray(v)) setFora(new Set(v.filter((x) => typeof x === "string"))); }
+      if (localStorage.getItem("ranking_com_lives") === "0") setComLives(false);
+    } catch { /* sem preferência: Shein fora e TikTok com lives */ }
+  }, []);
+  const alternarCanalFora = (chave: string) => setFora((atual) => {
+    const n = new Set(atual); if (n.has(chave)) n.delete(chave); else n.add(chave);
+    try { localStorage.setItem("ranking_canais_fora", JSON.stringify(Array.from(n))); } catch { /* ignora */ }
+    return n;
+  });
+  const incluirTodos = () => { setFora(new Set()); try { localStorage.setItem("ranking_canais_fora", "[]"); } catch { /* ignora */ } };
+  const escolherLives = (v: boolean) => { setComLives(v); try { localStorage.setItem("ranking_com_lives", v ? "1" : "0"); } catch { /* ignora */ } };
   const trocarAba = (a: "ranking" | "corrida") => { setAba(a); try { localStorage.setItem("ranking_aba", a); } catch { /* ignora */ } };
   const guardarSel = (l: string[]) => { setSel(l); try { localStorage.setItem("ranking_canais_sel", JSON.stringify(l)); } catch { /* ignora */ } };
 
   const cadastrosDe = (canal: string) => cadCanal.get(chaveCanal(canal)) || 0;
-  const calcular = (p: PeriodoResolvido): ResumoCanal[] => { try { return db.vendas_canais ? calcularResumoCanais(db, p.mesIso, new Date(), p.datas) : []; } catch (e) { console.error(e); return []; } };
+  // banco sem as vendas de live quando a escolha é "sem lives"; os canais de fora saem depois, de cada resumo
+  const canalLive = useMemo(() => canalDasLivesDoBanco(db), [db]);
+  const pedidosLive = useMemo(() => pedidosDeLive(livesBase, canalLive), [livesBase, canalLive]);
+  const dbF = useMemo(() => (comLives ? db : removerVendasDeLive(db, pedidosLive, canalLive)), [db, comLives, pedidosLive, canalLive]);
+  const chaveFiltro = `${Array.from(fora).sort().join(",")}|${comLives ? "cl" : "sl"}`;
+  const calcularTodos = (p: PeriodoResolvido): ResumoCanal[] => { try { return dbF.vendas_canais ? calcularResumoCanais(dbF, p.mesIso, new Date(), p.datas) : []; } catch (e) { console.error(e); return []; } };
+  const calcular = (p: PeriodoResolvido): ResumoCanal[] => calcularTodos(p).filter((c) => !fora.has(chaveCanal(c.canal)));
 
   const cadPronto = cadExtra !== null;
   /** Faltam (posição de hoje) + feitos e excluídos entre as datas do período. */
@@ -261,18 +287,27 @@ export default function RankingPage() {
   const hoje = hojeSP();
   const pA = useMemo(() => resolverPeriodo(selA, hoje), [selA, hoje]);
   const pB = useMemo(() => resolverComparacao(selB, pA, hoje), [selB, pA, hoje]);
-  const resumoA = useMemo(() => calcular(pA), [db, pA.chave]);                                  // eslint-disable-line react-hooks/exhaustive-deps
-  const resumoB = useMemo(() => (comparar ? calcular(pB) : []), [db, pB.chave, comparar]);       // eslint-disable-line react-hooks/exhaustive-deps
+  const pCresc = useMemo(() => (comparar ? pB : periodoAnterior(pA)), [comparar, pB, pA]);   // base do crescimento: o período escolhido na comparação ou o anterior equivalente
+  const diasA = diasDecorridos(pA, hoje), diasCresc = diasDecorridos(pCresc, hoje);
+  const resumoATodos = useMemo(() => calcularTodos(pA), [dbF, pA.chave]);                                            // eslint-disable-line react-hooks/exhaustive-deps
+  const resumoA = useMemo(() => resumoATodos.filter((c) => !fora.has(chaveCanal(c.canal))), [resumoATodos, chaveFiltro]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const resumoB = useMemo(() => calcular(pCresc), [dbF, pCresc.chave, chaveFiltro]);                                  // eslint-disable-line react-hooks/exhaustive-deps
   const extraA = useMemo(() => extraPara(pA), [cadExtra, pA.chave]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const extraB = useMemo(() => extraPara(pB), [cadExtra, pB.chave]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const listaA = useMemo(() => agruparPorAnalista(resumoA, mapeamentos, cadastrosDe, extraA), [resumoA, mapeamentos, cadCanal, extraA]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const extraB = useMemo(() => extraPara(pCresc), [cadExtra, pCresc.chave]);   // eslint-disable-line react-hooks/exhaustive-deps
+  /** Põe o crescimento (média diária de faturamento contra o período de comparação) nos totais. */
+  const comCresc = (t: Totais, base?: Totais | null): Totais => ({ ...t, crescimento: crescimentoPct(t.faturado, diasA, base?.faturado ?? 0, diasCresc) });
   const listaB = useMemo(() => agruparPorAnalista(resumoB, mapeamentos, cadastrosDe, extraB), [resumoB, mapeamentos, cadCanal, extraB]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const listaA = useMemo(() => agruparPorAnalista(resumoA, mapeamentos, cadastrosDe, extraA).map((a) => ({ ...a, total: comCresc(a.total, listaB.find((x) => x.email === a.email)?.total) })), [resumoA, mapeamentos, cadCanal, extraA, listaB, diasA, diasCresc]);  // eslint-disable-line react-hooks/exhaustive-deps
   const ranking = useMemo(() => classificar(listaA, metrica), [listaA, metrica]);
   const semAnalista = listaA.find((a) => !a.email) || null;
-  const totalEmpresa = useMemo(() => totalizar(resumoA, cadastrosDe, extraA), [resumoA, cadCanal, extraA]);          // eslint-disable-line react-hooks/exhaustive-deps
-  const totalEmpresaB = useMemo(() => (comparar ? totalizar(resumoB, cadastrosDe, extraB) : null), [resumoB, comparar, cadCanal, extraB]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const totalEmpresaCresc = useMemo(() => totalizar(resumoB, cadastrosDe, extraB), [resumoB, cadCanal, extraB]);          // eslint-disable-line react-hooks/exhaustive-deps
+  const totalEmpresa = useMemo(() => comCresc(totalizar(resumoA, cadastrosDe, extraA), totalEmpresaCresc), [resumoA, cadCanal, extraA, totalEmpresaCresc, diasA, diasCresc]);          // eslint-disable-line react-hooks/exhaustive-deps
+  const totalEmpresaB = comparar ? totalEmpresaCresc : null;
   const deB = (email: string | null) => (comparar ? listaB.find((a) => a.email === email)?.total ?? null : null);
-  const canalB = (canal: string) => (comparar ? resumoB.find((c) => chaveCanal(c.canal) === chaveCanal(canal)) || null : null);
+  const canalCresc = (canal: string) => resumoB.find((c) => chaveCanal(c.canal) === chaveCanal(canal)) || null;   // o canal no período de comparação (base do crescimento)
+  const canalB = (canal: string) => (comparar ? canalCresc(canal) : null);
+  /** Totais de um canal já com o crescimento. */
+  const totalCanal = (c: ResumoCanal, extra: ExtraCadastro | undefined) => { const cb = canalCresc(c.canal); return comCresc(totalizar([c], cadastrosDe, extra), cb ? totalizar([cb]) : null); };
 
   // evolução: 6 meses (ou 6 períodos do mesmo tamanho) terminando no período escolhido, calculada depois da tela principal para não travar
   useEffect(() => {
@@ -283,7 +318,7 @@ export default function RankingPage() {
     }, 60);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, pA.chave]);
+  }, [dbF, pA.chave, chaveFiltro]);
 
   const opcoesMes = useMemo(() => mesesTerminandoEm(mesAtual(), 18).reverse(), []);
   const metricaInfo = METRICAS.find((m) => m.id === metrica)!;
@@ -291,8 +326,11 @@ export default function RankingPage() {
   const alternar = (k: string) => setAbertos((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   if (!pronto) return null;
-  const fmt = (v: number, id: MetricaId) => (!cadPronto && METRICAS_CADASTRO.includes(id) ? "…" : formatar(v, METRICAS.find((m) => m.id === id)!.formato));
-  const colunas: MetricaId[] = ["faturado", "lucro", "margemBruta", "liquidez", "ticket", "pedidos", "ads", "roas", "progressoMeta", "cadastros", "cadFaltam", "cadFeitos", "cadExcluidos"];
+  const fmt = (v: number, id: MetricaId) => (!cadPronto && METRICAS_CADASTRO.includes(id) ? "…" : (id === "crescimento" && v > 0 ? "+" : "") + formatar(v, METRICAS.find((m) => m.id === id)!.formato));
+  const corCresc = (id: MetricaId, v: number) => (id === "crescimento" ? (v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-slate-100") : "text-slate-100");
+  /** Métricas que não mostram a variação contra o período de comparação (as de posição de hoje e o próprio crescimento, que já é essa variação). */
+  const SEM_DELTA: MetricaId[] = [...SEM_HISTORICO, "crescimento"];
+  const colunas: MetricaId[] = ["faturado", "crescimento", "lucro", "margemBruta", "liquidez", "ticket", "pedidos", "ads", "roas", "progressoMeta", "cadastros", "cadFaltam", "cadFeitos", "cadExcluidos"];
   const seletor = "bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500 cursor-pointer";
 
   // ---- evolução dos analistas e dos canais (6 meses)
@@ -301,9 +339,16 @@ export default function RankingPage() {
   type Janela = { inicio: string; fim: string; canais: ResumoCanal[] };
   const totaisDoMes = (p: Janela, email: string) => agruparPorAnalista(p.canais, mapeamentos, cadastrosDe, extraPara(p)).find((a) => a.email === email)?.total;
   const valorCanalNoMes = (p: Janela, canal: string, m: MetricaId) => { const c = p.canais.find((x) => chaveCanal(x.canal) === chaveCanal(canal)); return c ? valorDa(totalizar([c], cadastrosDe, extraPara(p)), m) : 0; };
+  /** Valores de um ponto por janela. O crescimento de cada ponto é sobre a janela anterior (o primeiro ponto não tem base e fica em 0). */
+  const serieDe = (m: MetricaId, valorEm: (p: Janela, m: MetricaId) => number): number[] => {
+    if (!serie) return [];
+    if (m !== "crescimento") return serie.map((p) => valorEm(p, m));
+    const fat = serie.map((p) => valorEm(p, "faturado"));
+    return fat.map((v, i) => (i === 0 ? 0 : crescimentoPct(v, diasDecorridos(serie[i], hoje), fat[i - 1], diasDecorridos(serie[i - 1], hoje))));
+  };
   const grafico = () => {
     if (!serie) return <p className="text-xs text-slate-500 py-10 text-center">Calculando a evolução…</p>;
-    const linhas: LinhaGrafico[] = ranking.map((a, k) => ({ id: a.email!, rotulo: a.nome, email: a.email, cor: CORES[k % CORES.length], valores: serie.map((p) => { const t = totaisDoMes(p, a.email!); return t ? valorDa(t, metrica) : 0; }) }));
+    const linhas: LinhaGrafico[] = ranking.map((a, k) => ({ id: a.email!, rotulo: a.nome, email: a.email, cor: CORES[k % CORES.length], valores: serieDe(metrica, (p, m) => { const t = totaisDoMes(p, a.email!); return t ? valorDa(t, m) : 0; }) }));
     return <GraficoLinhas pontos={pontosSerie} linhas={linhas} formato={metricaInfo.formato} destaque={pA.chave} titulo={`Evolução de ${metricaInfo.rotulo} por analista`} />;
   };
 
@@ -312,8 +357,8 @@ export default function RankingPage() {
   const opcoesCanais = [...ranking, ...(semAnalista ? [semAnalista] : [])].flatMap((a) => a.canais.map((c) => ({ chave: chaveSel(a.email, c.canal), email: a.email, nome: a.nome, canal: c.canal, resumo: c })));
   const escolhidos = sel.map((k, i) => { const o = opcoesCanais.find((x) => x.chave === k); return o ? { ...o, cor: CORES[i % CORES.length] } : null; }).filter(Boolean) as (typeof opcoesCanais[number] & { cor: string })[];
   const alternarCanal = (chave: string) => guardarSel(sel.includes(chave) ? sel.filter((k) => k !== chave) : sel.length >= 8 ? sel : [...sel, chave]);
-  const colsComparacao: MetricaId[] = ["faturado", "margemBruta", "liquidez", "lucro", "ticket", "pedidos", "ads", "roas", "progressoMeta", "cadFaltam", "cadFeitos", "cadExcluidos"];
-  const linhasComp = escolhidos.map((o) => ({ o, t: totalizar([o.resumo], cadastrosDe, extraA), tb: canalB(o.canal) ? totalizar([canalB(o.canal)!], cadastrosDe, extraB) : null }));
+  const colsComparacao: MetricaId[] = ["faturado", "crescimento", "margemBruta", "liquidez", "lucro", "ticket", "pedidos", "ads", "roas", "progressoMeta", "cadFaltam", "cadFeitos", "cadExcluidos"];
+  const linhasComp = escolhidos.map((o) => ({ o, t: totalCanal(o.resumo, extraA), tb: canalB(o.canal) ? totalizar([canalB(o.canal)!], cadastrosDe, extraB) : null }));
   const melhorDaColuna = (m: MetricaId) => {
     if (linhasComp.length < 2) return null;
     const vs = linhasComp.map((l) => valorDa(l.t, m));
@@ -322,7 +367,7 @@ export default function RankingPage() {
   const graficoCanais = () => {
     if (!serie) return <p className="text-xs text-slate-500 py-10 text-center">Calculando a evolução…</p>;
     const mi = METRICAS.find((m) => m.id === metSel)!;
-    const linhas: LinhaGrafico[] = escolhidos.map((o) => ({ id: o.chave, rotulo: `${o.canal} · ${o.nome.split(" ")[0]}`, email: o.email, cor: o.cor, valores: serie.map((p) => valorCanalNoMes(p, o.canal, metSel)) }));
+    const linhas: LinhaGrafico[] = escolhidos.map((o) => ({ id: o.chave, rotulo: `${o.canal} · ${o.nome.split(" ")[0]}`, email: o.email, cor: o.cor, valores: serieDe(metSel, (p, m) => valorCanalNoMes(p, o.canal, m)) }));
     return <GraficoLinhas pontos={pontosSerie} linhas={linhas} formato={mi.formato} destaque={pA.chave} titulo={`Evolução de ${mi.rotulo} dos canais escolhidos`} />;
   };
 
@@ -330,7 +375,7 @@ export default function RankingPage() {
     <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-4" data-canais-de={chave}>
       {a.canais.map((c) => {
         const cb = canalB(c.canal);
-        const t = totalizar([c], cadastrosDe, extraA);
+        const t = totalCanal(c, extraA);
         const tb = cb ? totalizar([cb], cadastrosDe, extraB) : null;
         return (
           <div key={c.canal} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4" data-canal-card={c.canal}>
@@ -339,18 +384,18 @@ export default function RankingPage() {
               <h4 className="text-sm font-black text-white">{c.canal}</h4>
             </div>
             <div className="grid grid-cols-3 gap-x-3 gap-y-2.5">
-              {(["faturado", "lucro", "margemBruta", "liquidez", "ticket", "pedidos", "ads", "roas", "progressoMeta", "cadastros", "cadFaltam", "cadFeitos", "cadExcluidos"] as MetricaId[]).map((m) => (
+              {(["faturado", "crescimento", "lucro", "margemBruta", "liquidez", "ticket", "pedidos", "ads", "roas", "progressoMeta", "cadastros", "cadFaltam", "cadFeitos", "cadExcluidos"] as MetricaId[]).map((m) => (
                 <div key={m} title={METRICAS.find((x) => x.id === m)!.dica}>
                   <p className="text-[9px] font-bold uppercase text-slate-500">{METRICAS.find((x) => x.id === m)!.rotulo}</p>
-                  <p className="text-xs font-black text-slate-100">{fmt(valorDa(t, m), m)}</p>
-                  {!SEM_HISTORICO.includes(m) && tb && <Delta atual={valorDa(t, m)} anterior={valorDa(tb, m)} metrica={m} />}
+                  <p className={`text-xs font-black ${corCresc(m, valorDa(t, m))}`} data-celula-card={m}>{fmt(valorDa(t, m), m)}</p>
+                  {!SEM_DELTA.includes(m) && tb && <Delta atual={valorDa(t, m)} anterior={valorDa(tb, m)} metrica={m} />}
                 </div>
               ))}
             </div>
             {!SEM_HISTORICO.includes(metrica) && (
               <div className="mt-3" data-evolucao-canal={c.canal}>
                 <p className="text-[10px] font-bold uppercase text-slate-500">📈 Evolução · {metricaInfo.rotulo} · {unidade}</p>
-                {serie ? <Sparkline pontos={pontosSerie} valores={serie.map((p) => valorCanalNoMes(p, c.canal, metrica))} formato={metricaInfo.formato} cor="#818cf8" /> : <p className="text-[11px] text-slate-600 py-3">Calculando…</p>}
+                {serie ? <Sparkline pontos={pontosSerie} valores={serieDe(metrica, (p, m) => valorCanalNoMes(p, c.canal, m))} formato={metricaInfo.formato} cor="#818cf8" /> : <p className="text-[11px] text-slate-600 py-3">Calculando…</p>}
               </div>
             )}
             <div className={`mt-4 grid gap-4 ${cb ? "grid-cols-2" : "grid-cols-1"}`}>
@@ -380,8 +425,8 @@ export default function RankingPage() {
   const kpi = (id: MetricaId) => (
     <div key={id} className="rounded-xl border border-slate-800 bg-slate-900/80 p-4" title={METRICAS.find((m) => m.id === id)!.dica}>
       <p className="text-[10px] font-bold uppercase text-slate-500">{METRICAS.find((m) => m.id === id)!.rotulo}</p>
-      <p className="text-lg font-black text-white" data-kpi={id}>{fmt(valorDa(totalEmpresa, id), id)}</p>
-      {totalEmpresaB && !SEM_HISTORICO.includes(id) && (cadPronto || !METRICAS_CADASTRO.includes(id)) && <Delta atual={valorDa(totalEmpresa, id)} anterior={valorDa(totalEmpresaB, id)} metrica={id} />}
+      <p className={`text-lg font-black ${id === "crescimento" ? corCresc(id, valorDa(totalEmpresa, id)).replace("text-slate-100", "text-white") : "text-white"}`} data-kpi={id}>{fmt(valorDa(totalEmpresa, id), id)}</p>
+      {totalEmpresaB && !SEM_DELTA.includes(id) && (cadPronto || !METRICAS_CADASTRO.includes(id)) && <Delta atual={valorDa(totalEmpresa, id)} anterior={valorDa(totalEmpresaB, id)} metrica={id} />}
     </div>
   );
 
@@ -406,7 +451,7 @@ export default function RankingPage() {
   const corridaView = aguardaCadastros ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os cadastros do Mapa…</p>
     : corredores.length === 0 ? <p className="text-xs text-amber-300">Nenhum analista tem canais vinculados ainda. Vincule os canais aos analistas na tela Início.</p>
     : <CorridaRanking corredores={corredores} rotuloMetrica={metricaInfo.rotulo} rotuloPeriodo={pA.rotulo} dica={metricaInfo.dica} menorEMelhor={MENOR_E_MELHOR.includes(metrica)}
-        referencia={metrica === "progressoMeta" ? 100 : undefined} formatarValor={(v) => formatar(v, metricaInfo.formato)} />;
+        referencia={metrica === "progressoMeta" ? 100 : undefined} formatarValor={(v) => (metrica === "crescimento" && v > 0 ? "+" : "") + formatar(v, metricaInfo.formato)} />;
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -435,8 +480,51 @@ export default function RankingPage() {
           <label className="text-[10px] font-bold uppercase text-slate-500 space-y-1 block">Classificar por
             <select value={metrica} onChange={(e) => setMetrica(e.target.value as MetricaId)} data-metrica className={seletor + " block normal-case"}>{METRICAS.map((m) => <option key={m.id} value={m.id}>{m.rotulo}</option>)}</select>
           </label>
-          <p className="text-[11px] text-slate-500 flex-1 min-w-[220px]">{metricaInfo.dica}.</p>
+          <p className="text-[11px] text-slate-500 flex-1 min-w-[220px] max-w-xl">{metricaInfo.dica}.{metrica === "crescimento" ? ` Comparado com ${pCresc.rotulo}${comparar ? "" : " (período anterior equivalente)"}; a média por dia é que é comparada.` : ""}</p>
         </div>
+
+        {/* canais que entram na comparação */}
+        {!carregando && resumoATodos.length > 0 && (() => {
+          const liveKey = chaveCanal(canalLive);
+          const temLive = resumoATodos.some((c) => chaveCanal(c.canal) === liveKey);
+          const foraNomes = resumoATodos.filter((c) => fora.has(chaveCanal(c.canal))).map((c) => c.canal);
+          const filtrado = foraNomes.length > 0 || (!comLives && temLive && !fora.has(liveKey));
+          return (
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3" data-filtro-canais>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-[260px] flex-1">
+                  <h2 className="text-xs font-black text-slate-200 uppercase tracking-wider">Canais na comparação</h2>
+                  <p className="text-[11px] text-slate-500">Marque os canais que entram no ranking, na corrida e nos totais. Canal desmarcado fica de fora de tudo nesta tela, inclusive dos números de cadastro. Dá para mudar a qualquer momento; a escolha fica guardada neste navegador.</p>
+                </div>
+                {fora.size > 0 && <button type="button" onClick={incluirTodos} data-incluir-todos className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-slate-700 text-slate-300 hover:text-white cursor-pointer">Incluir todos</button>}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {resumoATodos.map((c) => {
+                  const k = chaveCanal(c.canal); const incluido = !fora.has(k);
+                  return <button key={k} type="button" data-canal-filtro={k} aria-pressed={incluido} onClick={() => alternarCanalFora(k)} title={incluido ? "Clique para tirar da comparação" : "Clique para voltar à comparação"}
+                    className={`px-3 py-1.5 rounded-full text-[11px] font-bold border cursor-pointer transition ${incluido ? "bg-indigo-600/90 border-indigo-500 text-white" : "bg-slate-950 border-slate-700 text-slate-500 line-through hover:text-slate-300"}`}>{incluido ? "✓ " : "✕ "}{c.canal}</button>;
+                })}
+              </div>
+              {temLive && !fora.has(liveKey) && (
+                <div className="flex flex-wrap items-center gap-3 pt-1" data-filtro-lives>
+                  <span className="text-[11px] font-bold text-slate-300">{canalLive} · vendas de live:</span>
+                  <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    {([[true, "Com lives"], [false, "Sem lives"]] as const).map(([v, rotulo]) => (
+                      <button key={rotulo} type="button" data-lives={v ? "com" : "sem"} aria-pressed={comLives === v} onClick={() => escolherLives(v)}
+                        className={`px-4 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition ${comLives === v ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}>{rotulo}</button>
+                    ))}
+                  </div>
+                  <span className="text-[11px] text-slate-500" data-lives-nota>
+                    {comLives ? "As vendas das lives contam junto com as demais." : pedidosLive.size > 0
+                      ? `As vendas das lives (${pedidosLive.size.toLocaleString("pt-BR")} pedidos identificados na base) saem do ${canalLive}, com cancelamentos, devoluções e frete desses pedidos.`
+                      : "Nenhum pedido de live encontrado na base: suba as vendas do canal de novo na aba Uploads para as lives serem identificadas."}
+                  </span>
+                </div>
+              )}
+              {filtrado && <p className="text-[11px] text-amber-300" data-filtro-ativo>Filtros ativos: {[foraNomes.length ? `fora da comparação: ${foraNomes.join(", ")}` : "", !comLives && temLive && !fora.has(liveKey) ? `${canalLive} sem lives` : ""].filter(Boolean).join(" · ")}. Os números podem ficar diferentes dos do Dashboard e do Início.</p>}
+            </div>
+          );
+        })()}
 
         {(pA.tipo !== "mes" || (aba === "ranking" && comparar && pB.tipo !== "mes")) && (
           <p className="text-[11px] text-slate-400 -mt-3 px-1" data-aviso-periodo>
@@ -448,7 +536,7 @@ export default function RankingPage() {
           <>
             {/* visão da empresa */}
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-3" data-kpis>
-              {(["faturado", "lucro", "liquidez", "ticket", "pedidos", "ads", "cadFaltam", "cadFeitos", "cadExcluidos"] as MetricaId[]).map(kpi)}
+              {(["faturado", "crescimento", "lucro", "liquidez", "ticket", "pedidos", "ads", "cadFaltam", "cadFeitos", "cadExcluidos"] as MetricaId[]).map(kpi)}
               <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4" title="Produtos novos cadastrados na aba Novos Cadastros, pela data do cadastro">
                 <p className="text-[10px] font-bold uppercase text-slate-500">Novos produtos cadastrados</p>
                 <p className="text-lg font-black text-white" data-novos-cadastros>{contarNoPeriodo(datasNovos, pA.inicio, pA.fim).toLocaleString("pt-BR")}</p>
@@ -502,8 +590,8 @@ export default function RankingPage() {
                           </td>
                           {colunas.map((m) => (
                             <td key={m} className={`py-3 px-2 text-right ${metrica === m ? "bg-amber-950/10" : ""}`}>
-                              <span className="font-bold text-slate-100" data-celula={m}>{fmt(valorDa(a.total, m), m)}</span>
-                              {!SEM_HISTORICO.includes(m) && b && <Delta atual={valorDa(a.total, m)} anterior={valorDa(b, m)} metrica={m} />}
+                              <span className={`font-bold ${corCresc(m, valorDa(a.total, m))}`} data-celula={m}>{fmt(valorDa(a.total, m), m)}</span>
+                              {!SEM_DELTA.includes(m) && b && <Delta atual={valorDa(a.total, m)} anterior={valorDa(b, m)} metrica={m} />}
                             </td>
                           ))}
                         </tr>
@@ -632,7 +720,7 @@ export default function RankingPage() {
                               const melhor = melhorDaColuna(m); const v = valorDa(t, m);
                               return <td key={m} className={`py-3 px-2 text-right ${melhor !== null && Math.abs(v - melhor) < 1e-9 ? "bg-emerald-950/30" : ""}`}>
                                 <span className={`font-bold ${melhor !== null && Math.abs(v - melhor) < 1e-9 ? "text-emerald-300" : "text-slate-100"}`} data-celula-canal={m}>{fmt(v, m)}</span>
-                                {tb && <Delta atual={v} anterior={valorDa(tb, m)} metrica={m} />}
+                                {tb && m !== "crescimento" && <Delta atual={v} anterior={valorDa(tb, m)} metrica={m} />}
                               </td>;
                             })}
                           </tr>

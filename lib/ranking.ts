@@ -19,6 +19,8 @@ export interface Totais {
   cadFeitos: number;
   /** exclusões de SKU marcadas por canal no período (Mapa de Cadastros > Exclusão) */
   cadExcluidos: number;
+  /** crescimento do faturamento em % (média por dia) sobre o período de comparação; preenchido pela tela (veja lib/rankingFiltros) */
+  crescimento: number;
 }
 
 /** Números de cadastro de um canal, vindos das tabelas do Mapa (ver calcularFaltamPorCanal e contarEventosPorCanal). */
@@ -39,6 +41,7 @@ export function totalizar(canais: ResumoCanal[], cadastros: (canal: string) => n
     cadFaltam: extra ? canais.reduce((a, c) => a + extra(c.canal).faltam, 0) : 0,
     cadFeitos: extra ? canais.reduce((a, c) => a + extra(c.canal).feitos, 0) : 0,
     cadExcluidos: extra ? canais.reduce((a, c) => a + extra(c.canal).excluidos, 0) : 0,
+    crescimento: 0,
   };
 }
 
@@ -70,10 +73,11 @@ export function agruparPorAnalista(resumo: ResumoCanal[], mapeamentos: { email: 
   return lista;
 }
 
-export type MetricaId = "faturado" | "lucro" | "margemBruta" | "liquidez" | "ticket" | "pedidos" | "unidades" | "ads" | "roas" | "progressoMeta" | "cadastros" | "cadFaltam" | "cadFeitos" | "cadExcluidos";
+export type MetricaId = "faturado" | "lucro" | "margemBruta" | "liquidez" | "ticket" | "pedidos" | "unidades" | "ads" | "roas" | "progressoMeta" | "cadastros" | "cadFaltam" | "cadFeitos" | "cadExcluidos" | "crescimento";
 export type Formato = "moeda" | "pct" | "num" | "x";
 export const METRICAS: { id: MetricaId; rotulo: string; formato: Formato; dica: string }[] = [
   { id: "faturado", rotulo: "Faturamento", formato: "moeda", dica: "Vendas faturadas no período, já abatidas devoluções e cancelamentos" },
+  { id: "crescimento", rotulo: "Crescimento", formato: "pct", dica: "Quanto o faturamento por dia cresceu (ou caiu) em % sobre o período de comparação; sem faturamento nele, 0%" },
   { id: "lucro", rotulo: "Lucro líquido", formato: "moeda", dica: "Repasse − custo dos produtos − imposto (regra atual do Dashboard; ads e frete aparecem à parte)" },
   { id: "margemBruta", rotulo: "Margem bruta", formato: "pct", dica: "Repasse líquido do canal ÷ faturamento bruto (antes de custo dos produtos e imposto)" },
   { id: "liquidez", rotulo: "Margem líquida", formato: "pct", dica: "Liquidez: lucro líquido ÷ faturamento bruto (o % líquido dos cartões do Início)" },
