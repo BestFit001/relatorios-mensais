@@ -2,6 +2,7 @@
 // Ranking de analistas: progressão, cadastros, liquidez, ticket médio, mais vendidos por canal e ads, por mês fechado, últimos 7/15/30 dias ou período personalizado, com comparação.
 import React, { useEffect, useMemo, useState } from "react";
 import { useNomes } from "../../lib/nomes";
+import { acessoTotal } from "../../lib/perfis";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
@@ -185,13 +186,16 @@ export default function RankingPage() {
   const [sel, setSel] = useState<string[]>([]);                 // canais escolhidos para comparar: "<e-mail>|<canal>"
   const [metSel, setMetSel] = useState<MetricaId>("faturado");   // métrica do gráfico de evolução dos canais escolhidos
   const [erro, setErro] = useState("");
-  const [aba, setAba] = useState<"ranking" | "corrida">("ranking");
+  const [abaSel, setAba] = useState<"ranking" | "corrida">("ranking");
+  const [podeCorrida, setPodeCorrida] = useState(false);   // por enquanto a Corrida é só dos administradores (Admin Geral e Admin de Área)
+  const aba: "ranking" | "corrida" = abaSel === "corrida" && podeCorrida ? "corrida" : "ranking";
   const [livesBase, setLivesBase] = useState<any[]>([]);                              // vendas de live (pedido e canal), para tirar do TikTok quando for "sem lives"
   const [fora, setFora] = useState<Set<string>>(() => new Set(["shein"]));            // canais que não entram na comparação (chaveCanal); Shein começa de fora
   const [comLives, setComLives] = useState(true);
 
   useEffect(() => {
     if (!localStorage.getItem("usuario_logado")) { router.push("/login"); return; }
+    try { setPodeCorrida(acessoTotal(JSON.parse(localStorage.getItem("usuario_logado") || "{}").perfil)); } catch { setPodeCorrida(false); }
     setPronto(true);
     (async () => {
       try {
@@ -465,12 +469,12 @@ export default function RankingPage() {
         </div>
 
         {/* sub-abas */}
-        <div className="flex gap-2 border-b border-slate-800" role="tablist" data-abas-ranking>
+        {podeCorrida && <div className="flex gap-2 border-b border-slate-800" role="tablist" data-abas-ranking>
           {([["ranking", "🏆 Ranking dos analistas"], ["corrida", "🏁 Corrida do Ranking"]] as const).map(([id, rotulo]) => (
             <button key={id} type="button" role="tab" aria-selected={aba === id} data-aba-ranking={id} onClick={() => trocarAba(id)}
               className={`px-5 py-2.5 -mb-px text-xs font-bold cursor-pointer border-b-2 transition ${aba === id ? "border-indigo-500 text-white" : "border-transparent text-slate-400 hover:text-white"}`}>{rotulo}</button>
           ))}
-        </div>
+        </div>}
 
         {/* controles */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-end gap-4" data-controles>
