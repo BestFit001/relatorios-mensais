@@ -14,6 +14,7 @@ import { achar, chaveDoPedido, interpretarTermo, textoDoPedido } from "../../lib
 import { extrairIdPedidoDaObservacao, paraNumeroBR } from "../../lib/idPedidoFaturados";
 import { lerArquivoComoLinhas } from "../../lib/lerArquivo";
 import Navbar from "../components/Navbar";
+import Conferencia from "../components/checagem/Conferencia";
 
 const CHAVE_FORM = "bestfit_checagem_cancelados_form";   // só lembra as últimas colunas/termo de cada canal (conveniência)
 const CANAIS_PADRAO = ["Mercado Livre 1", "Mercado Livre 2", "Mercado Livre 3", "Shopee", "Amazon", "Magalu", "Netshoes", "Centauro", "Shein", "TikTok", "Site"];
@@ -35,7 +36,7 @@ const lerPlanilha = async (arquivo: File): Promise<any[][]> => {
 
 export default function ChecagemCanceladosPage() {
   const router = useRouter();
-  const [subAba, setSubAba] = useState<"checagem" | "impacto" | "config">("checagem");
+  const [subAba, setSubAba] = useState<"checagem" | "impacto" | "conferencia" | "config">("checagem");
   const [canais, setCanais] = useState<string[]>([]);
   const [rotulo, setRotulo] = useState("cancelado");
   const [rotuloEdit, setRotuloEdit] = useState("cancelado");
@@ -314,6 +315,7 @@ export default function ChecagemCanceladosPage() {
           <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1" data-subabas-checagem>
             <button data-subaba="checagem" onClick={() => setSubAba("checagem")} className={abaCls(subAba === "checagem")}>🔎 Checagem</button>
             <button data-subaba="impacto" onClick={() => setSubAba("impacto")} className={abaCls(subAba === "impacto")}>💸 Impacto</button>
+            <button data-subaba="conferencia" onClick={() => setSubAba("conferencia")} className={abaCls(subAba === "conferencia")}>🗂️ Conferência</button>
             <button data-subaba="config" onClick={() => setSubAba("config")} className={abaCls(subAba === "config")}>⚙️ Configurações</button>
           </div>
         </div>
@@ -519,6 +521,8 @@ export default function ChecagemCanceladosPage() {
             </div>
           </>
         )}
+
+        {subAba === "conferencia" && <Conferencia canais={canais} />}
 
         {subAba === "config" && (
           <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 max-w-2xl" data-config>
