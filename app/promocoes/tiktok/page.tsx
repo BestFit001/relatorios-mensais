@@ -4,6 +4,7 @@ import { supabase } from "../../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
+import { escolherRegraPorPreco } from "../../../lib/faixaTarifa";
 import ConfigPromoTiny from "../../components/ConfigPromoTiny";
 import { carregarConfigPromoTiny, lerEstoqueTiny, PADRAO_PROMO_TINY, type ConfigPromoTiny as CfgPromoTiny } from "../../../lib/promoTiny";
 
@@ -110,21 +111,8 @@ export default function PromocoesTiktokPage() {
       return { comissao: 14, tarifa_fixa: 0, frete: 0 };
     }
 
-    for (const regra of regrasDoCanal) {
-      const faixaStr = String(regra.faixa_preco || "").toLowerCase();
-      const matchNums = faixaStr.match(/[\d.,]+/g);
-
-      if (faixaStr.includes("em diante") || faixaStr.includes("99999") || (matchNums && matchNums.length === 1)) {
-        const limiteInf = matchNums ? parseNumeroBruto(matchNums[0]) : 0;
-        if (precoReferencia >= limiteInf) return regra;
-      } else if (matchNums && matchNums.length >= 2) {
-        const min = parseNumeroBruto(matchNums[0]);
-        const max = parseNumeroBruto(matchNums[1]);
-        if (precoReferencia >= min && precoReferencia <= max) return regra;
-      }
-    }
-
-    return regrasDoCanal[0];
+    // vale a faixa que começa mais perto do preço sem passar dele (lib/faixaTarifa.ts)
+    return escolherRegraPorPreco(regrasDoCanal, precoReferencia) || regrasDoCanal[0];
   };
 
   const lerArquivoGenerico = (file: File): Promise<any[][]> => {

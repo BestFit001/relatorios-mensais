@@ -3,6 +3,7 @@ import React, { useState, useEffect } from "react";
 import ProjecaoAds, { type LivesProjecao } from "./ProjecaoAds";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
+import { escolherRegraPorPreco } from "../../lib/faixaTarifa";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import { listarCampanhasSalvas, mesIso, slugCanal } from "../../lib/adsImportDb";
@@ -487,26 +488,8 @@ export default function AdsPainel({ modo, canalSlug }: { modo: "global" | "canal
     } else {
       const regrasDoCanal = regrasTarifacao.filter(r => r.canal.toLowerCase() === canal.toLowerCase());
       if (regrasDoCanal.length > 0) {
-        let regraAplicavel = regrasDoCanal[0];
-        for (const r of regrasDoCanal) {
-          const numeros: RegExpMatchArray | null = r.faixa_preco ? r.faixa_preco.match(/\d+[\.,]?\d*/g) : null;
-          if (numeros && numeros.length >= 2) {
-            const min = parseFloat(numeros[0].replace(',', '.'));
-            const max = parseFloat(numeros[1].replace(',', '.'));
-            if (precoUnit >= min && precoUnit <= max) {
-              regraAplicavel = r;
-              break;
-            }
-          } else if (numeros && numeros.length === 1) {
-            const val = parseFloat(numeros[0].replace(',', '.'));
-            if (r.faixa_preco.toLowerCase().includes("acima") || r.faixa_preco.toLowerCase().includes("maior")) {
-              if (precoUnit >= val) {
-                regraAplicavel = r;
-                break;
-              }
-            }
-          }
-        }
+        // vale a faixa que começa mais perto do preço sem passar dele (lib/faixaTarifa.ts)
+        const regraAplicavel = escolherRegraPorPreco(regrasDoCanal, precoUnit) || regrasDoCanal[0];
         comissaoPct = Number(regraAplicavel.comissao || 0);
         tarifaFixa = Number(regraAplicavel.tarifa_fixa || 0);
         freteUnitario = Number(regraAplicavel.frete || 0);
