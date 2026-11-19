@@ -63,7 +63,8 @@ export function lerTolerancia(valor: unknown): number | null {
   return n === null || n < 0 || n >= 100 ? null : n;
 }
 
-export interface ColunasPdv { colSku: number; colPdv: number; colTol: number }
+/** colTol < 0: não há coluna de % na planilha e vale `toleranciaPadrao` (digitada pelo usuário) para todos os SKUs. */
+export interface ColunasPdv { colSku: number; colPdv: number; colTol: number; toleranciaPadrao?: number }
 export interface PdvLido extends RegraPdv { skuOriginal: string }
 
 /** Linhas da planilha -> uma regra por SKU (se o SKU repete, vale a última linha). */
@@ -80,7 +81,7 @@ export function lerTabelaPdv(linhas: any[][], p: ColunasPdv & { linhaInicial: nu
     if (!sku) { semSku++; continue; }
     const pdv = paraNumeroBR(row[p.colPdv]);
     if (pdv === null || !(pdv > 0)) { pdvInvalido++; continue; }
-    let tol = p.colTol >= 0 ? lerTolerancia(row[p.colTol]) : 0;
+    let tol = p.colTol >= 0 ? lerTolerancia(row[p.colTol]) : (p.toleranciaPadrao ?? 0);
     if (tol === null) { tolInvalida++; tol = 0; }            // valor ilegível: vale o mais rígido (não pode ficar abaixo)
     else { menorTol = Math.min(menorTol, tol); maiorTol = Math.max(maiorTol, tol); }
     if (regras.has(sku)) repetidos++;

@@ -9,7 +9,7 @@ import { carregarPaiManual } from "../../lib/skuPaiDb";
 import { acharPdvIdeal, type ParametrosFaixa } from "../../lib/pdvIdeal";
 import { paiDoSku, normalizarSkuPai, custoDoPai, type RegraCustoPai } from "../../lib/skuPai";
 import { escolherRegraPorPreco, inicioDaFaixa } from "../../lib/faixaTarifa";
-import { avaliarPdv, lerTabelaPdv, normalizarSku, pisoDoPdv, regraMaisRigida, textoDoAviso, type RegraPdv } from "../../lib/pdvMarcas";
+import { avaliarPdv, lerTabelaPdv, lerTolerancia, normalizarSku, pisoDoPdv, regraMaisRigida, textoDoAviso, type RegraPdv } from "../../lib/pdvMarcas";
 import { indiceDaLetra } from "../../lib/cobertura";
 
 const matrizFretes = [
@@ -97,7 +97,7 @@ export default function CalculadoraPage() {
   const [subAba, setSubAba] = useState<"calculadora" | "lote" | "pdv">("calculadora");
   // PDV das marcas (compliance de preço): por SKU, o PDV permitido e quantos % pode ficar abaixo
   const [pdvMarcas, setPdvMarcas] = useState<Map<string, RegraPdv & { skuOriginal?: string; arquivo?: string }>>(new Map());
-  const [formPdv, setFormPdv] = useState({ linha: "2", colSku: "A", colPdv: "B", colTol: "C", marca: "" });
+  const [formPdv, setFormPdv] = useState({ linha: "2", colSku: "A", colPdv: "B", tol: "", marca: "" });
   const [processandoPdv, setProcessandoPdv] = useState(false);
   const [avisoPdvUp, setAvisoPdvUp] = useState<{ tipo: "ok" | "erro" | "info"; linhas: string[] } | null>(null);
   const [buscaPdv, setBuscaPdv] = useState("");
@@ -550,16 +550,17 @@ export default function CalculadoraPage() {
   // ---- PDV das marcas: upload (SKU, PDV permitido, % que pode ficar abaixo) ----
   const subirPdvMarcas = async (file: File) => {
     const f = formPdv;
-    const iSku = indiceDaLetra(f.colSku), iPdv = indiceDaLetra(f.colPdv), iTol = f.colTol.trim() ? indiceDaLetra(f.colTol) : -1;
+    const iSku = indiceDaLetra(f.colSku), iPdv = indiceDaLetra(f.colPdv);
+    const tol = lerTolerancia(f.tol);   // o % abaixo é digitado aqui e vale para todos os SKUs da planilha
     const linhaInicial = parseInt(f.linha, 10);
     if (iSku < 0 || iPdv < 0) return setAvisoPdvUp({ tipo: "erro", linhas: ["Informe as letras das colunas do SKU e do PDV permitido (ex.: A, B)."] });
-    if (f.colTol.trim() && iTol < 0) return setAvisoPdvUp({ tipo: "erro", linhas: ["A letra da coluna do % abaixo está inválida. Use só letras (ex.: C) ou deixe vazio."] });
+    if (!f.tol.trim() || tol === null) return setAvisoPdvUp({ tipo: "erro", linhas: ["Digite quantos % o preço pode ficar abaixo do PDV (ex.: 5). Se não pode ficar abaixo, digite 0."] });
     if (!(linhaInicial >= 1)) return setAvisoPdvUp({ tipo: "erro", linhas: ["A linha inicial deve ser 1 ou mais (use 2 se a primeira linha for o cabeçalho)."] });
     setProcessandoPdv(true); setAvisoPdvUp(null);
     try { localStorage.setItem("bestfit_calc_pdv_form", JSON.stringify(f)); } catch { /* sem localStorage: só não lembra */ }
     try {
       const linhas = await lerArquivoComoLinhas(file);
-      const r = lerTabelaPdv(linhas, { linhaInicial, colSku: iSku, colPdv: iPdv, colTol: iTol });
+      const r = lerTabelaPdv(linhas, { linhaInicial, colSku: iSku, colPdv: iPdv, colTol: -1, toleranciaPadrao: tol });
       if (r.regras.length === 0) {
         const ex = linhas.slice(Math.max(0, linhaInicial - 1), linhaInicial + 2).map((l) => `SKU “${String(l[iSku] ?? "").trim()}”, PDV “${String(l[iPdv] ?? "").trim()}”`);
         setAvisoPdvUp({ tipo: "info", linhas: ["Nenhum SKU com PDV válido encontrado.", `Primeiras linhas lidas: ${ex.join(" | ") || "(vazio)"}. Confira as colunas e a linha inicial.`] });
@@ -575,13 +576,11 @@ export default function CalculadoraPage() {
       await carregarPdvMarcas();
       setResultadoLote(null); setResultadoRev(null);   // dependem das regras de PDV
       const det: string[] = [];
-      if (r.menorTol !== null) det.push(`% abaixo lido: de ${r.menorTol.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% a ${r.maiorTol!.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%.`);
-      if (iTol < 0) det.push("Sem coluna de % abaixo: o PDV vale como mínimo (0% abaixo).");
+      det.push(`Preço mínimo = PDV menos ${tol.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% para todos os SKUs desta planilha.`);
       if (r.semSku) det.push(`${r.semSku} linha(s) sem SKU (ignoradas).`);
       if (r.pdvInvalido) det.push(`${r.pdvInvalido} linha(s) com PDV inválido (ignoradas).`);
-      if (r.tolInvalida) det.push(`${r.tolInvalida} linha(s) com % abaixo ilegível: usei 0% (o PDV vira o mínimo). Confira.`);
       if (r.repetidos) det.push(`${r.repetidos} SKU(s) repetido(s) na planilha: valeu a última linha.`);
-      setAvisoPdvUp({ tipo: r.tolInvalida || r.pdvInvalido ? "info" : "ok", linhas: [`${r.regras.length} SKU(s) com PDV guardados (${novos} novo(s), ${r.regras.length - novos} atualizado(s)).`, ...det] });
+      setAvisoPdvUp({ tipo: r.pdvInvalido ? "info" : "ok", linhas: [`${r.regras.length} SKU(s) com PDV guardados (${novos} novo(s), ${r.regras.length - novos} atualizado(s)).`, ...det] });
     } catch (e: any) {
       setAvisoPdvUp({ tipo: "erro", linhas: ["Não consegui processar a planilha: " + (e?.message || e)] });
     } finally {
@@ -1493,20 +1492,20 @@ export default function CalculadoraPage() {
               <div>
                 <h2 className="text-sm font-black text-white">🏷️ PDV das marcas (compliance de preço)</h2>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Suba uma planilha com o <strong>SKU</strong>, o <strong>PDV permitido</strong> e <strong>quantos % o preço pode ficar abaixo</strong> desse PDV. O preço mínimo é o PDV menos esse percentual.
+                  Suba uma planilha com o <strong>SKU</strong> e o <strong>PDV permitido</strong> e digite <strong>quantos % o preço pode ficar abaixo</strong> desse PDV. O preço mínimo é o PDV menos esse percentual.
+                  O percentual digitado vale para todos os SKUs da planilha: para marcas com percentuais diferentes, suba uma planilha por percentual (pode filtrar as linhas no Excel).
                   A calculadora, a precificação em lote e a margem reversa avisam (na tela e nas planilhas) todo produto cujo preço fica abaixo do mínimo. Subir de novo o mesmo SKU atualiza a regra.
-                  Percentual formatado como % no Excel (5%) ou escrito como 5 é lido como 5%.
                 </p>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
+              <div className="grid grid-cols-2 md:grid-cols-7 gap-3 items-end">
                 <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha inicial</label>
                   <input type="number" min={1} value={formPdv.linha} onChange={(e) => setFormPdv({ ...formPdv, linha: e.target.value })} data-pdv-linha className={campoCls + " font-mono"} /></div>
                 <div><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Col. SKU</label>
                   <input type="text" maxLength={3} value={formPdv.colSku} onChange={(e) => setFormPdv({ ...formPdv, colSku: e.target.value.toUpperCase() })} data-pdv-col-sku className={campoCls + " font-mono text-center font-bold"} /></div>
                 <div><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Col. PDV permitido</label>
                   <input type="text" maxLength={3} value={formPdv.colPdv} onChange={(e) => setFormPdv({ ...formPdv, colPdv: e.target.value.toUpperCase() })} data-pdv-col-pdv className={campoCls + " font-mono text-center font-bold"} /></div>
-                <div><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Col. % abaixo</label>
-                  <input type="text" maxLength={3} value={formPdv.colTol} onChange={(e) => setFormPdv({ ...formPdv, colTol: e.target.value.toUpperCase() })} data-pdv-col-tol className={campoCls + " font-mono text-center font-bold"} /></div>
+                <div className="col-span-2"><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">% que pode ficar abaixo do PDV</label>
+                  <input type="text" inputMode="decimal" value={formPdv.tol} onChange={(e) => setFormPdv({ ...formPdv, tol: e.target.value })} data-pdv-tol placeholder="ex.: 5" className={campoCls + " font-mono text-center font-bold"} /></div>
                 <div className="col-span-2"><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca (opcional)</label>
                   <input type="text" value={formPdv.marca} onChange={(e) => setFormPdv({ ...formPdv, marca: e.target.value })} data-pdv-marca maxLength={60} className={campoCls} /></div>
               </div>
