@@ -8,6 +8,9 @@ import { lerArquivoComoLinhas } from "../../lib/lerArquivo";
 import { carregarPaiManual } from "../../lib/skuPaiDb";
 import { acharPdvIdeal, type ParametrosFaixa } from "../../lib/pdvIdeal";
 import { paiDoSku, normalizarSkuPai, custoDoPai, type RegraCustoPai } from "../../lib/skuPai";
+import { escolherRegraPorPreco, inicioDaFaixa } from "../../lib/faixaTarifa";
+import { avaliarPdv, lerTabelaPdv, normalizarSku, pisoDoPdv, regraMaisRigida, textoDoAviso, type RegraPdv } from "../../lib/pdvMarcas";
+import { indiceDaLetra } from "../../lib/cobertura";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -39,17 +42,6 @@ function calcularFreteML(pdv: number, pesoReal: number, altura: number, largura:
   return valorFrete || 0;
 }
 
-function normalizarSku(valor: any): string {
-  if (valor === null || valor === undefined) return "";
-  let s = String(valor).trim();
-  if (s.endsWith(".0")) s = s.substring(0, s.length - 2);
-  s = s.replace(/^["']|["']$/g, "").trim();
-  if (/e\+/i.test(s)) {
-    try { s = BigInt(Math.trunc(Number(s))).toString(); } catch {}
-  }
-  return s.toLowerCase();
-}
-
 function skuValido(sku: string): boolean {
   const limpo = normalizarSku(sku);
   return limpo.length >= 10;
@@ -70,10 +62,11 @@ const formatarMoeda = (valor: number) =>
 interface LinhaReversa {
   sku: string; anuncio: string; pdv: number | null; custo: number | null; comissaoPct: number | null; valorComissao: number | null;
   tarifaFixa: number | null; frete: number | null; imposto: number | null; rebate: number; lucro: number | null; margem: number | null; obs: string;
+  pdvTabela: number | null; pdvMinimo: number | null; abaixoPdv: boolean;
 }
 interface ResultadoReversa {
   nomeArquivo: string; canal: string; linhas: LinhaReversa[]; total: number; calculados: number; semCusto: number; semPreco: number; prejuizo: number;
-  margemMedia: number;
+  margemMedia: number; comRegra: number; abaixoPdv: number;
 }
 
 export default function CalculadoraPage() {
@@ -101,14 +94,20 @@ export default function CalculadoraPage() {
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
   const [canaisSelecionados, setCanaisSelecionados] = useState<string[]>([]);
 
-  const [subAba, setSubAba] = useState<"calculadora" | "lote">("calculadora");
+  const [subAba, setSubAba] = useState<"calculadora" | "lote" | "pdv">("calculadora");
+  // PDV das marcas (compliance de preço): por SKU, o PDV permitido e quantos % pode ficar abaixo
+  const [pdvMarcas, setPdvMarcas] = useState<Map<string, RegraPdv & { skuOriginal?: string; arquivo?: string }>>(new Map());
+  const [formPdv, setFormPdv] = useState({ linha: "2", colSku: "A", colPdv: "B", colTol: "C", marca: "" });
+  const [processandoPdv, setProcessandoPdv] = useState(false);
+  const [avisoPdvUp, setAvisoPdvUp] = useState<{ tipo: "ok" | "erro" | "info"; linhas: string[] } | null>(null);
+  const [buscaPdv, setBuscaPdv] = useState("");
   // SKU pai (informação central do app: 5 primeiros dígitos + ajustes manuais do Mapa de Cadastros)
   const [paiManual, setPaiManual] = useState<Map<string, string>>(new Map());
   const [regraCustoPai, setRegraCustoPai] = useState<RegraCustoPai>("maior");
   const [mapaMlb, setMapaMlb] = useState<Map<string, any>>(new Map());   // anúncio (MLB) -> comissão e medidas
   // Margem reversa em lote (planilha de anúncios com o preço de venda)
   const [canalReversa, setCanalReversa] = useState("Mercado Livre 1 Clássico");
-  const [filtroRev, setFiltroRev] = useState<"todos" | "prejuizo" | "pendentes">("todos");
+  const [filtroRev, setFiltroRev] = useState<"todos" | "prejuizo" | "pendentes" | "abaixo_pdv">("todos");
   const [processandoRev, setProcessandoRev] = useState(false);
   const [erroRev, setErroRev] = useState("");
   const [resultadoRev, setResultadoRev] = useState<ResultadoReversa | null>(null);
@@ -123,7 +122,7 @@ export default function CalculadoraPage() {
   const [canalLote, setCanalLote] = useState("Mercado Livre 1 Clássico");
   const [margemLote, setMargemLote] = useState("30");
   const [processandoLote, setProcessandoLote] = useState(false);
-  const [resultadoLote, setResultadoLote] = useState<{ nomeArquivo: string; canal: string; margem: number; linhas: any[][]; total: number; calculados: number; semCusto: number; inviaveis: number } | null>(null);
+  const [resultadoLote, setResultadoLote] = useState<{ nomeArquivo: string; canal: string; margem: number; linhas: any[][]; total: number; calculados: number; semCusto: number; inviaveis: number; comRegra: number; alertas: { sku: string; pdv: number; minimo: number; falta: number }[] } | null>(null);
   const [erroLote, setErroLote] = useState("");
 
   // SKU pai -> SKUs filhos (base de custos + anúncios). O pai segue a mesma regra do Mapa de Cadastros (5 dígitos + ajustes manuais).
@@ -168,6 +167,13 @@ export default function CalculadoraPage() {
     return { tipo: "sku", chave: k, custo: info ? Number(info.custo_unitario || 0) : 0, filhos: [], custosFilhos: [], naBase: Boolean(info) };
   };
 
+  // Regra de PDV da marca para um SKU (ou, no SKU pai, a mais rígida entre os filhos que têm regra)
+  const regraPdvDe = (chave: string): RegraPdv | null => {
+    if (!chave || pdvMarcas.size === 0) return null;
+    if (chave.startsWith("pai:")) return regraMaisRigida((filhosPorPai.get(chave.slice(4)) || []).map((f) => pdvMarcas.get(f)));
+    return pdvMarcas.get(chave) || null;
+  };
+
   // trocou a regra do custo do pai: atualiza o produto que está na tela
   useEffect(() => {
     setProdutoEncontrado((p: any) => (p?.isPai ? { ...p, custo_unitario: custoDoPai(p.custosFilhos || [], regraCustoPai) } : p));
@@ -205,6 +211,7 @@ export default function CalculadoraPage() {
       setCanaisSelecionados(listaNomesCanais);
     }
 
+    try { const f = JSON.parse(localStorage.getItem("bestfit_calc_pdv_form") || "null"); if (f && typeof f === "object") setFormPdv((a) => ({ ...a, ...f })); } catch { /* sem form lembrado */ }
     carregarBasesEmTempoReal();
   }, []);
 
@@ -214,6 +221,17 @@ export default function CalculadoraPage() {
     if (usuarioLogado) {
       localStorage.setItem(`canais_selecionados_${usuarioLogado}`, JSON.stringify(novosCanais));
     }
+  };
+
+  const carregarPdvMarcas = async () => {
+    const todas: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data } = await supabase.from("pdv_marcas").select("*").range(from, from + 999);
+      if (!data || data.length === 0) break;
+      todas.push(...data);
+      if (data.length < 1000) break;
+    }
+    setPdvMarcas(new Map(todas.map((r: any) => [String(r.sku), { sku: String(r.sku), pdv: Number(r.pdv), tolerancia: Number(r.tolerancia_pct) || 0, marca: r.marca, skuOriginal: r.sku_original, arquivo: r.arquivo }])));
   };
 
   const carregarBasesEmTempoReal = async () => {
@@ -300,6 +318,7 @@ export default function CalculadoraPage() {
     setMapeamentoMl2(mapaMl2);
 
     setPaiManual(await carregarPaiManual());
+    await carregarPdvMarcas();
 
     const { data: tarifacaoData } = await supabase.from("config_regras_tarifacao").select("*");
     if (tarifacaoData) {
@@ -407,34 +426,14 @@ export default function CalculadoraPage() {
 
   // início de cada faixa de preço da tabela de tarifação do canal (usado para achar o menor preço que fecha a margem)
   const iniciosDeFaixa = (canalNome: string): number[] =>
-    regrasDoCanalNome(canalNome).map((r) => {
-      const nums = String(r.faixa_preco || "").toLowerCase().match(/[\d.,]+/g);
-      return nums ? parseNumero(nums[0]) : 0;
-    }).filter((n) => Number.isFinite(n) && n >= 0);
+    regrasDoCanalNome(canalNome).map((r) => inicioDaFaixa(r.faixa_preco)).filter((n) => Number.isFinite(n) && n >= 0);
 
+  // Regra que vale para o preço: a da faixa que começa mais perto sem passar dele (ver lib/tarifacao.ts)
   const obterRegraCanalDaTabela = (canalNome: string, precoReferencia: number) => {
     const cLower = canalNome.toLowerCase();
     const regrasDoCanal = regrasDoCanalNome(canalNome);
-
-    if (regrasDoCanal.length === 0) {
-      return { comissao: cLower.includes("premium") ? 19 : 14, tarifa_fixa: 0, frete: 0 };
-    }
-
-    for (const regra of regrasDoCanal) {
-      const faixaStr = String(regra.faixa_preco || "").toLowerCase();
-      const matchNums = faixaStr.match(/[\d.,]+/g);
-
-      if (faixaStr.includes("em diante") || faixaStr.includes("99999") || (matchNums && matchNums.length === 1)) {
-        const limiteInf = matchNums ? parseNumero(matchNums[0]) : 0;
-        if (precoReferencia >= limiteInf) return regra;
-      } else if (matchNums && matchNums.length >= 2) {
-        const min = parseNumero(matchNums[0]);
-        const max = parseNumero(matchNums[1]);
-        if (precoReferencia >= min && precoReferencia <= max) return regra;
-      }
-    }
-
-    return regrasDoCanal[0];
+    if (regrasDoCanal.length === 0) return { comissao: cLower.includes("premium") ? 19 : 14, tarifa_fixa: 0, frete: 0 };
+    return escolherRegraPorPreco(regrasDoCanal, precoReferencia) || regrasDoCanal[0];
   };
 
   // Cálculo do PDV ideal de UM canal para UM SKU (mesma regra usada nos cards e na planilha em lote)
@@ -506,8 +505,9 @@ export default function CalculadoraPage() {
     try {
       const linhasArquivo = await lerArquivoComoLinhas(file);
       const valRebate = parseNumero(rebatesCanais[canalLote] || "0");
-      const saida: any[][] = [["SKU", "PDV"]];
-      let total = 0, calculados = 0, semCusto = 0, inviaveis = 0;
+      const saida: any[][] = [["SKU", "PDV", "PDV de tabela da marca", "PDV mínimo permitido", "Alerta PDV"]];
+      let total = 0, calculados = 0, semCusto = 0, inviaveis = 0, comRegra = 0;
+      const alertas: { sku: string; pdv: number; minimo: number; falta: number }[] = [];
 
       linhasArquivo.forEach((linha, idx) => {
         const bruto = linha[0];
@@ -529,17 +529,94 @@ export default function CalculadoraPage() {
           return;
         }
         calculados++;
-        saida.push([texto, Math.round(r.pdv * 100) / 100]);
+        const pdvFinal = Math.round(r.pdv * 100) / 100;
+        const av = avaliarPdv(pdvFinal, regraPdvDe(cod.chave));
+        if (av) { comRegra++; if (av.abaixo) alertas.push({ sku: texto, pdv: pdvFinal, minimo: av.minimo, falta: av.falta }); }
+        saida.push([texto, pdvFinal, av ? av.pdvTabela : "", av ? av.minimo : "", textoDoAviso(av)]);
       });
 
       if (total === 0) { setErroLote("Não encontrei SKUs na coluna A da planilha."); return; }
       const base = file.name.replace(/\.[^.]+$/, "");
-      setResultadoLote({ nomeArquivo: base, canal: canalLote, margem, linhas: saida, total, calculados, semCusto, inviaveis });
+      // sem nenhum SKU com regra de PDV a planilha continua só SKU + PDV (mesmo formato de sempre)
+      const linhasFinais = comRegra > 0 ? saida : saida.map((l) => l.slice(0, 2));
+      setResultadoLote({ nomeArquivo: base, canal: canalLote, margem, linhas: linhasFinais, total, calculados, semCusto, inviaveis, comRegra, alertas });
     } catch (e: any) {
       setErroLote("Não consegui ler a planilha: " + (e?.message || e));
     } finally {
       setProcessandoLote(false);
     }
+  };
+
+  // ---- PDV das marcas: upload (SKU, PDV permitido, % que pode ficar abaixo) ----
+  const subirPdvMarcas = async (file: File) => {
+    const f = formPdv;
+    const iSku = indiceDaLetra(f.colSku), iPdv = indiceDaLetra(f.colPdv), iTol = f.colTol.trim() ? indiceDaLetra(f.colTol) : -1;
+    const linhaInicial = parseInt(f.linha, 10);
+    if (iSku < 0 || iPdv < 0) return setAvisoPdvUp({ tipo: "erro", linhas: ["Informe as letras das colunas do SKU e do PDV permitido (ex.: A, B)."] });
+    if (f.colTol.trim() && iTol < 0) return setAvisoPdvUp({ tipo: "erro", linhas: ["A letra da coluna do % abaixo está inválida. Use só letras (ex.: C) ou deixe vazio."] });
+    if (!(linhaInicial >= 1)) return setAvisoPdvUp({ tipo: "erro", linhas: ["A linha inicial deve ser 1 ou mais (use 2 se a primeira linha for o cabeçalho)."] });
+    setProcessandoPdv(true); setAvisoPdvUp(null);
+    try { localStorage.setItem("bestfit_calc_pdv_form", JSON.stringify(f)); } catch { /* sem localStorage: só não lembra */ }
+    try {
+      const linhas = await lerArquivoComoLinhas(file);
+      const r = lerTabelaPdv(linhas, { linhaInicial, colSku: iSku, colPdv: iPdv, colTol: iTol });
+      if (r.regras.length === 0) {
+        const ex = linhas.slice(Math.max(0, linhaInicial - 1), linhaInicial + 2).map((l) => `SKU “${String(l[iSku] ?? "").trim()}”, PDV “${String(l[iPdv] ?? "").trim()}”`);
+        setAvisoPdvUp({ tipo: "info", linhas: ["Nenhum SKU com PDV válido encontrado.", `Primeiras linhas lidas: ${ex.join(" | ") || "(vazio)"}. Confira as colunas e a linha inicial.`] });
+        return;
+      }
+      const marca = f.marca.trim() || null;
+      const novos = r.regras.filter((x) => !pdvMarcas.has(x.sku)).length;
+      const lote = r.regras.map((x) => ({ sku: x.sku, sku_original: x.skuOriginal, marca, pdv: x.pdv, tolerancia_pct: x.tolerancia, arquivo: file.name, atualizado_em: new Date().toISOString() }));
+      for (let i = 0; i < lote.length; i += 500) {
+        const { error } = await supabase.from("pdv_marcas").upsert(lote.slice(i, i + 500), { onConflict: "sku" });
+        if (error) throw new Error(error.message);
+      }
+      await carregarPdvMarcas();
+      setResultadoLote(null); setResultadoRev(null);   // dependem das regras de PDV
+      const det: string[] = [];
+      if (r.menorTol !== null) det.push(`% abaixo lido: de ${r.menorTol.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% a ${r.maiorTol!.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%.`);
+      if (iTol < 0) det.push("Sem coluna de % abaixo: o PDV vale como mínimo (0% abaixo).");
+      if (r.semSku) det.push(`${r.semSku} linha(s) sem SKU (ignoradas).`);
+      if (r.pdvInvalido) det.push(`${r.pdvInvalido} linha(s) com PDV inválido (ignoradas).`);
+      if (r.tolInvalida) det.push(`${r.tolInvalida} linha(s) com % abaixo ilegível: usei 0% (o PDV vira o mínimo). Confira.`);
+      if (r.repetidos) det.push(`${r.repetidos} SKU(s) repetido(s) na planilha: valeu a última linha.`);
+      setAvisoPdvUp({ tipo: r.tolInvalida || r.pdvInvalido ? "info" : "ok", linhas: [`${r.regras.length} SKU(s) com PDV guardados (${novos} novo(s), ${r.regras.length - novos} atualizado(s)).`, ...det] });
+    } catch (e: any) {
+      setAvisoPdvUp({ tipo: "erro", linhas: ["Não consegui processar a planilha: " + (e?.message || e)] });
+    } finally {
+      setProcessandoPdv(false);
+    }
+  };
+
+  const removerPdv = async (sku: string) => {
+    const { error } = await supabase.from("pdv_marcas").delete().eq("sku", sku);
+    if (error) return setAvisoPdvUp({ tipo: "erro", linhas: ["Não consegui remover: " + error.message] });
+    await carregarPdvMarcas(); setResultadoLote(null); setResultadoRev(null);
+  };
+
+  const apagarTodosPdv = async () => {
+    if (pdvMarcas.size === 0) return;
+    if (!confirm(`Apagar os ${pdvMarcas.size} PDVs de marcas cadastrados? A calculadora deixa de avisar sobre eles.`)) return;
+    const { error } = await supabase.from("pdv_marcas").delete().neq("id", 0);
+    if (error) return setAvisoPdvUp({ tipo: "erro", linhas: ["Não consegui apagar: " + error.message] });
+    await carregarPdvMarcas(); setResultadoLote(null); setResultadoRev(null);
+    setAvisoPdvUp({ tipo: "ok", linhas: ["🗑️ PDVs das marcas apagados."] });
+  };
+
+  const baixarPdvMarcas = () => {
+    const linhas = Array.from(pdvMarcas.values());
+    if (linhas.length === 0) return;
+    const ws = XLSX.utils.aoa_to_sheet([["SKU", "Marca", "PDV permitido", "% pode ficar abaixo", "PDV mínimo permitido"],
+      ...linhas.map((r) => [r.skuOriginal || r.sku, r.marca || "", r.pdv, r.tolerancia / 100, pisoDoPdv(r.pdv, r.tolerancia)])]);
+    for (let i = 1; i <= linhas.length; i++) {
+      const a = ws[XLSX.utils.encode_cell({ r: i, c: 0 })]; if (a) { a.t = "s"; a.v = String(a.v); }
+      for (const c of [2, 4]) { const b = ws[XLSX.utils.encode_cell({ r: i, c })]; if (b && b.t === "n") b.z = "0.00"; }
+      const t = ws[XLSX.utils.encode_cell({ r: i, c: 3 })]; if (t && t.t === "n") t.z = "0.0%";
+    }
+    ws["!cols"] = [{ wch: 20 }, { wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "PDV das marcas");
+    XLSX.writeFile(wb, `pdv_das_marcas_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   const baixarResultadoLote = () => {
@@ -549,10 +626,9 @@ export default function CalculadoraPage() {
     for (let r = 1; r < resultadoLote.linhas.length; r++) {
       const a = ws[XLSX.utils.encode_cell({ r, c: 0 })];
       if (a) { a.t = "s"; a.v = String(a.v); }
-      const b = ws[XLSX.utils.encode_cell({ r, c: 1 })];
-      if (b && b.t === "n") b.z = "0.00";
+      for (const c of [1, 2, 3]) { const b = ws[XLSX.utils.encode_cell({ r, c })]; if (b && b.t === "n") b.z = "0.00"; }
     }
-    ws["!cols"] = [{ wch: 20 }, { wch: 28 }];
+    ws["!cols"] = [{ wch: 20 }, { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 38 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "PDV");
     const canalArq = resultadoLote.canal.replace(/[^a-zA-Z0-9]+/g, "_");
@@ -619,7 +695,7 @@ export default function CalculadoraPage() {
       const valRebate = parseNumero(rebatesCanais[canalReversa] || "0");
       const txt = (v: any) => String(v ?? "").trim();
       const linhas: LinhaReversa[] = [];
-      let total = 0, calculados = 0, semCusto = 0, semPreco = 0, prejuizo = 0, somaMargem = 0;
+      let total = 0, calculados = 0, semCusto = 0, semPreco = 0, prejuizo = 0, somaMargem = 0, comRegra = 0, abaixoPdv = 0;
 
       for (let i = inicio; i < arq.length; i++) {
         const l = arq[i] || [];
@@ -634,7 +710,11 @@ export default function CalculadoraPage() {
         if (!skuTxt && info?.sku) skuTxt = info.sku;
         const cod = skuTxt ? resolverCodigo(skuTxt) : null;
         const custo = cod && cod.custo > 0 ? cod.custo : 0;
-        const base: LinhaReversa = { sku: skuTxt, anuncio: mlb, pdv: pdv > 0 ? pdv : null, custo: custo > 0 ? custo : null, comissaoPct: null, valorComissao: null, tarifaFixa: null, frete: null, imposto: null, rebate: valRebate, lucro: null, margem: null, obs: "" };
+        // compliance de PDV: vale mesmo sem custo, pois só depende do preço da planilha
+        const av = pdv > 0 && cod ? avaliarPdv(pdv, regraPdvDe(cod.chave)) : null;
+        if (av) { comRegra++; if (av.abaixo) abaixoPdv++; }
+        const base: LinhaReversa = { sku: skuTxt, anuncio: mlb, pdv: pdv > 0 ? pdv : null, custo: custo > 0 ? custo : null, comissaoPct: null, valorComissao: null, tarifaFixa: null, frete: null, imposto: null, rebate: valRebate, lucro: null, margem: null, obs: "",
+          pdvTabela: av ? av.pdvTabela : null, pdvMinimo: av ? av.minimo : null, abaixoPdv: !!av?.abaixo };
         if (!(pdv > 0)) { semPreco++; linhas.push({ ...base, obs: "sem preço" }); continue; }
         if (!(custo > 0)) { semCusto++; linhas.push({ ...base, obs: skuTxt ? (cod?.tipo === "pai" ? "pai sem custo nos filhos" : "sem custo na base") : "anúncio sem SKU na base" }); continue; }
         const r = calcularMargemReversa(canalReversa, cod!.chave, custo, pdv, valRebate, info || null);
@@ -643,7 +723,7 @@ export default function CalculadoraPage() {
         linhas.push({ ...base, comissaoPct: r.comissaoPct, valorComissao: r.valorComissao, tarifaFixa: r.tarifaFixa, frete: r.frete, imposto: r.valorImposto, lucro: r.lucro, margem: r.margem, obs });
       }
       if (total === 0) { setErroRev("Não encontrei anúncios/SKUs na planilha."); return; }
-      setResultadoRev({ nomeArquivo: file.name.replace(/\.[^.]+$/, ""), canal: canalReversa, linhas, total, calculados, semCusto, semPreco, prejuizo, margemMedia: calculados > 0 ? somaMargem / calculados : 0 });
+      setResultadoRev({ nomeArquivo: file.name.replace(/\.[^.]+$/, ""), canal: canalReversa, linhas, total, calculados, semCusto, semPreco, prejuizo, margemMedia: calculados > 0 ? somaMargem / calculados : 0, comRegra, abaixoPdv });
     } catch (e: any) {
       setErroRev("Não consegui ler a planilha: " + (e?.message || e));
     } finally {
@@ -653,15 +733,34 @@ export default function CalculadoraPage() {
 
   const baixarResultadoReversa = () => {
     if (!resultadoRev) return;
-    const cab = ["Anúncio (MLB)", "SKU", "Preço de venda", "Custo", "Comissão %", "Comissão R$", "Tarifa fixa", "Frete", "Imposto 9%", "Rebate", "Lucro R$", "Margem %", "Observação"];
-    const dados = resultadoRev.linhas.map((l) => [l.anuncio, l.sku, l.pdv, l.custo, l.comissaoPct === null ? null : l.comissaoPct / 100, l.valorComissao, l.tarifaFixa, l.frete, l.imposto, l.rebate || null, l.lucro, l.margem === null ? null : l.margem / 100, l.obs]);
-    const ws = XLSX.utils.aoa_to_sheet([cab, ...dados]);
+    const comPdv = resultadoRev.comRegra > 0;   // colunas de compliance só quando algum SKU da planilha tem PDV de marca
+    type Col = { t: string; v: (l: LinhaReversa) => any; f?: "txt" | "money" | "pct"; w: number };
+    const colunas: Col[] = [
+      { t: "Anúncio (MLB)", v: (l) => l.anuncio, f: "txt", w: 16 }, { t: "SKU", v: (l) => l.sku, f: "txt", w: 18 },
+      { t: "Preço de venda", v: (l) => l.pdv, f: "money", w: 14 }, { t: "Margem de lucro %", v: (l) => (l.margem === null ? null : l.margem / 100), f: "pct", w: 16 },
+      { t: "Lucro R$", v: (l) => l.lucro, f: "money", w: 11 }, { t: "Custo", v: (l) => l.custo, f: "money", w: 10 },
+      { t: "Comissão %", v: (l) => (l.comissaoPct === null ? null : l.comissaoPct / 100), f: "pct", w: 11 }, { t: "Comissão R$", v: (l) => l.valorComissao, f: "money", w: 12 },
+      { t: "Tarifa fixa", v: (l) => l.tarifaFixa, f: "money", w: 11 }, { t: "Frete", v: (l) => l.frete, f: "money", w: 9 },
+      { t: "Imposto 9%", v: (l) => l.imposto, f: "money", w: 11 }, { t: "Rebate", v: (l) => l.rebate || null, f: "money", w: 9 },
+      ...(comPdv ? [
+        { t: "PDV de tabela da marca", v: (l: LinhaReversa) => l.pdvTabela, f: "money" as const, w: 22 },
+        { t: "PDV mínimo permitido", v: (l: LinhaReversa) => l.pdvMinimo, f: "money" as const, w: 20 },
+        { t: "Alerta PDV", v: (l: LinhaReversa) => (l.pdvMinimo === null ? "" : l.abaixoPdv ? `ABAIXO do PDV mínimo (faltam R$ ${((l.pdvMinimo - (l.pdv || 0))).toFixed(2).replace(".", ",")})` : "OK"), w: 38 },
+      ] : []),
+      { t: "Observação", v: (l) => l.obs, w: 32 },
+    ];
+    const dados = resultadoRev.linhas.map((l) => colunas.map((c) => c.v(l)));
+    const ws = XLSX.utils.aoa_to_sheet([colunas.map((c) => c.t), ...dados]);
     for (let r = 1; r <= dados.length; r++) {
-      for (const c of [0, 1]) { const cel = ws[XLSX.utils.encode_cell({ r, c })]; if (cel) { cel.t = "s"; cel.v = String(cel.v); } }
-      for (const c of [2, 3, 5, 6, 7, 8, 9, 10]) { const cel = ws[XLSX.utils.encode_cell({ r, c })]; if (cel && cel.t === "n") cel.z = "0.00"; }
-      for (const c of [4, 11]) { const cel = ws[XLSX.utils.encode_cell({ r, c })]; if (cel && cel.t === "n") cel.z = "0.0%"; }
+      colunas.forEach((c, ci) => {
+        const cel = ws[XLSX.utils.encode_cell({ r, c: ci })];
+        if (!cel) return;
+        if (c.f === "txt") { cel.t = "s"; cel.v = String(cel.v); }
+        else if (c.f === "money" && cel.t === "n") cel.z = "0.00";
+        else if (c.f === "pct" && cel.t === "n") cel.z = "0.0%";
+      });
     }
-    ws["!cols"] = [{ wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 9 }, { wch: 11 }, { wch: 9 }, { wch: 11 }, { wch: 10 }, { wch: 32 }];
+    ws["!cols"] = colunas.map((c) => ({ wch: c.w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Margem");
     XLSX.writeFile(wb, `${resultadoRev.nomeArquivo}_margem_${resultadoRev.canal.replace(/[^a-zA-Z0-9]+/g, "_")}.xlsx`);
@@ -838,7 +937,16 @@ export default function CalculadoraPage() {
     return isNaN(num) ? 0 : num;
   }
 
-  const resultadosCanais = calcularResultadosCanais();
+  // regra de PDV da marca do produto buscado + aviso por canal (preço abaixo do mínimo)
+  const regraPdvProduto = produtoEncontrado ? regraPdvDe(produtoEncontrado.chave || normalizarSku(produtoEncontrado.sku)) : null;
+  const resultadosCanais = calcularResultadosCanais().map((res) => {
+    const avisoPdv = avaliarPdv(res.pdv, regraPdvProduto);
+    // no PDV ideal / preço fixo: quanto sobra de margem se o preço praticado for o mínimo permitido
+    const margemNoMinimo = avisoPdv?.abaixo && modoCalculo !== "custo_ideal"
+      ? calcularMargemReversa(res.canal, produtoEncontrado.chave || normalizarSku(produtoEncontrado.sku), res.custoProduto, avisoPdv.minimo, res.rebate, null).margem : null;
+    return { ...res, avisoPdv, margemNoMinimo };
+  });
+  const canaisAbaixoPdv = resultadosCanais.filter((r) => r.avisoPdv?.abaixo).map((r) => r.canal);
 
   const seletorRegraPai = (
     <label className="flex items-center gap-2 text-[11px] text-slate-400">
@@ -853,7 +961,7 @@ export default function CalculadoraPage() {
   );
 
   const linhasRevVisiveis = (resultadoRev?.linhas || []).filter((l) =>
-    filtroRev === "todos" ? true : filtroRev === "prejuizo" ? (l.margem !== null && l.margem < 0) : l.margem === null);
+    filtroRev === "todos" ? true : filtroRev === "prejuizo" ? (l.margem !== null && l.margem < 0) : filtroRev === "abaixo_pdv" ? l.abaixoPdv : l.margem === null);
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-8 text-slate-100 font-sans">
@@ -875,6 +983,10 @@ export default function CalculadoraPage() {
           <button data-subaba="lote" onClick={() => setSubAba("lote")}
             className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${subAba === "lote" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"}`}>
             📑 Precificação em lote
+          </button>
+          <button data-subaba="pdv" onClick={() => setSubAba("pdv")}
+            className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all ${subAba === "pdv" ? "bg-indigo-600 text-white shadow-lg" : "text-slate-400 hover:text-white"}`}>
+            🏷️ PDV das marcas{pdvMarcas.size > 0 ? ` (${pdvMarcas.size})` : ""}
           </button>
         </div>
 
@@ -1065,6 +1177,8 @@ export default function CalculadoraPage() {
                     {resultadoRev.prejuizo > 0 && <p className="text-rose-400"><strong>{resultadoRev.prejuizo}</strong> com margem negativa (prejuízo)</p>}
                     {resultadoRev.semCusto > 0 && <p className="text-amber-400"><strong>{resultadoRev.semCusto}</strong> sem custo na base</p>}
                     {resultadoRev.semPreco > 0 && <p className="text-amber-400"><strong>{resultadoRev.semPreco}</strong> sem preço de venda</p>}
+                    {resultadoRev.abaixoPdv > 0 && <p className="text-rose-300 font-bold" data-reversa-abaixo-pdv>⚠️ <strong>{resultadoRev.abaixoPdv}</strong> anúncio(s) abaixo do PDV mínimo da marca (de {resultadoRev.comRegra} com PDV cadastrado)</p>}
+                    {resultadoRev.abaixoPdv === 0 && resultadoRev.comRegra > 0 && <p className="text-emerald-400">✓ {resultadoRev.comRegra} anúncio(s) com PDV de marca, todos respeitando o mínimo</p>}
                   </div>
                   <button type="button" onClick={baixarResultadoReversa} data-reversa-baixar
                     className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow">
@@ -1072,7 +1186,7 @@ export default function CalculadoraPage() {
                   </button>
                 </div>
                 <div className="flex gap-2 text-[11px]">
-                  {([["todos", "Todos"], ["prejuizo", "Só prejuízo"], ["pendentes", "Pendentes (sem custo/preço)"]] as const).map(([k, t]) => (
+                  {([["todos", "Todos"], ["prejuizo", "Só prejuízo"], ["abaixo_pdv", "Abaixo do PDV mínimo"], ["pendentes", "Pendentes (sem custo/preço)"]] as const).map(([k, t]) => (
                     <button key={k} type="button" onClick={() => setFiltroRev(k)} data-filtro-rev={k}
                       className={`px-3 py-1 rounded-lg font-bold border cursor-pointer ${filtroRev === k ? "bg-purple-600/30 text-purple-200 border-purple-500/60" : "bg-slate-950 text-slate-400 border-slate-800"}`}>{t}</button>
                   ))}
@@ -1081,21 +1195,26 @@ export default function CalculadoraPage() {
                 <div className="overflow-x-auto border border-slate-800 rounded-xl max-h-[420px] overflow-y-auto">
                   <table className="w-full text-[11px] font-mono">
                     <thead className="bg-slate-950 text-slate-400 uppercase text-[9px] sticky top-0">
-                      <tr>{["Anúncio", "SKU", "Preço", "Custo", "Comissão", "Tarifa", "Frete", "Imposto", "Lucro", "Margem", "Obs."].map((h) => <th key={h} className="px-2 py-2 text-left">{h}</th>)}</tr>
+                      <tr>{["Anúncio", "SKU", "Preço", "Margem", "Lucro", "Custo", "Comissão", "Tarifa", "Frete", "Imposto", "PDV mínimo", "Obs."].map((h) => <th key={h} className="px-2 py-2 text-left">{h}</th>)}</tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/70">
                       {linhasRevVisiveis.slice(0, 200).map((l, i) => (
-                        <tr key={i} data-linha-rev className="text-slate-300">
+                        <tr key={i} data-linha-rev data-abaixo-pdv={l.abaixoPdv ? "1" : undefined} className={l.abaixoPdv ? "text-slate-300 bg-rose-950/40" : "text-slate-300"}>
                           <td className="px-2 py-1.5 text-sky-300">{l.anuncio || "—"}</td>
                           <td className="px-2 py-1.5">{l.sku || "—"}</td>
                           <td className="px-2 py-1.5">{l.pdv === null ? "—" : formatarMoeda(l.pdv)}</td>
+                          <td className={`px-2 py-1.5 font-black ${l.margem !== null && l.margem < 0 ? "text-rose-400" : "text-emerald-400"}`} data-margem-rev>{l.margem === null ? "—" : `${l.margem.toFixed(2)}%`}</td>
+                          <td className={`px-2 py-1.5 font-bold ${l.lucro !== null && l.lucro < 0 ? "text-rose-400" : "text-emerald-400"}`}>{l.lucro === null ? "—" : formatarMoeda(l.lucro)}</td>
                           <td className="px-2 py-1.5 text-rose-300">{l.custo === null ? "—" : formatarMoeda(l.custo)}</td>
                           <td className="px-2 py-1.5">{l.comissaoPct === null ? "—" : `${l.comissaoPct.toFixed(1)}%`}</td>
                           <td className="px-2 py-1.5">{l.tarifaFixa === null ? "—" : formatarMoeda(l.tarifaFixa)}</td>
                           <td className="px-2 py-1.5">{l.frete === null ? "—" : formatarMoeda(l.frete)}</td>
                           <td className="px-2 py-1.5">{l.imposto === null ? "—" : formatarMoeda(l.imposto)}</td>
-                          <td className={`px-2 py-1.5 font-bold ${l.lucro !== null && l.lucro < 0 ? "text-rose-400" : "text-emerald-400"}`}>{l.lucro === null ? "—" : formatarMoeda(l.lucro)}</td>
-                          <td className={`px-2 py-1.5 font-bold ${l.margem !== null && l.margem < 0 ? "text-rose-400" : "text-emerald-400"}`} data-margem-rev>{l.margem === null ? "—" : `${l.margem.toFixed(2)}%`}</td>
+                          <td className="px-2 py-1.5" data-pdv-minimo-rev>
+                            {l.pdvMinimo === null ? "—" : l.abaixoPdv
+                              ? <span className="text-rose-300 font-bold" title={`PDV da marca ${formatarMoeda(l.pdvTabela || 0)}`}>⚠️ {formatarMoeda(l.pdvMinimo)}</span>
+                              : <span className="text-slate-400" title={`PDV da marca ${formatarMoeda(l.pdvTabela || 0)}`}>{formatarMoeda(l.pdvMinimo)} ✓</span>}
+                          </td>
                           <td className="px-2 py-1.5 text-amber-300">{l.obs}</td>
                         </tr>
                       ))}
@@ -1150,6 +1269,13 @@ export default function CalculadoraPage() {
               <span className="block text-[9px] font-bold text-emerald-400 uppercase">Status do Item</span>
               <span className="text-xs font-bold text-emerald-300">LINHA NORMAL (Ativo)</span>
             </div>
+            {regraPdvProduto && (
+              <div className={`basis-full rounded-xl border px-3 py-2 text-[11px] ${canaisAbaixoPdv.length > 0 ? "border-rose-600/60 bg-rose-950/40 text-rose-200" : "border-sky-900/50 bg-sky-950/20 text-sky-200"}`} data-pdv-marca-produto>
+                <strong>PDV da marca:</strong> {formatarMoeda(regraPdvProduto.pdv)} · pode ficar até {regraPdvProduto.tolerancia.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% abaixo · <strong>mínimo {formatarMoeda(pisoDoPdv(regraPdvProduto.pdv, regraPdvProduto.tolerancia))}</strong>
+                {canaisAbaixoPdv.length > 0 && <> · <strong className="text-rose-300">⚠️ abaixo do mínimo em: {canaisAbaixoPdv.join(", ")}</strong></>}
+                {produtoEncontrado.isPai && <> (SKU pai: vale a regra mais rígida entre os filhos)</>}
+              </div>
+            )}
             {produtoEncontrado.isPai && (
               <div className="basis-full flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3" data-produto-pai>
                 <p className="text-[11px] text-slate-400">
@@ -1198,6 +1324,16 @@ export default function CalculadoraPage() {
                     </span>
                   </div>
                 </div>
+
+                {res.avisoPdv && (res.avisoPdv.abaixo ? (
+                  <div className="rounded-xl border border-rose-600/60 bg-rose-950/40 p-2.5 text-[11px] text-rose-200 space-y-0.5" data-alerta-pdv>
+                    <p className="font-black text-rose-300">⚠️ Abaixo do PDV mínimo da marca</p>
+                    <p>Mínimo permitido <strong>{formatarMoeda(res.avisoPdv.minimo)}</strong> (PDV {formatarMoeda(res.avisoPdv.pdvTabela)}, até {res.avisoPdv.tolerancia.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% abaixo). Faltam <strong>{formatarMoeda(res.avisoPdv.falta)}</strong>.</p>
+                    {res.margemNoMinimo !== null && <p>Praticando o mínimo, a margem fica em <strong className={res.margemNoMinimo < 0 ? "text-rose-300" : "text-emerald-300"}>{res.margemNoMinimo.toFixed(2)}%</strong>.</p>}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-emerald-900/50 bg-emerald-950/20 px-2.5 py-1.5 text-[11px] text-emerald-300" data-pdv-ok>✓ Respeita o PDV da marca (mínimo {formatarMoeda(res.avisoPdv.minimo)})</div>
+                ))}
 
                 {/* CAMPO DE REBATE MANUAL POR CANAL */}
                 <div className="bg-purple-950/20 border border-purple-900/40 p-2.5 rounded-xl flex items-center justify-between gap-2">
@@ -1319,6 +1455,8 @@ export default function CalculadoraPage() {
                 <p><strong className="text-white">{resultadoLote.total}</strong> SKU(s) lidos · <strong className="text-emerald-400">{resultadoLote.calculados}</strong> com PDV calculado ({resultadoLote.canal}, margem {resultadoLote.margem}%)</p>
                 {resultadoLote.semCusto > 0 && <p className="text-amber-400"><strong>{resultadoLote.semCusto}</strong> sem custo na base</p>}
                 {resultadoLote.inviaveis > 0 && <p className="text-rose-400"><strong>{resultadoLote.inviaveis}</strong> com margem inviável para o canal (comissão + imposto + margem ≥ 100%)</p>}
+                {resultadoLote.alertas.length > 0 && <p className="text-rose-300 font-bold" data-lote-abaixo-pdv>⚠️ <strong>{resultadoLote.alertas.length}</strong> SKU(s) com PDV calculado abaixo do mínimo da marca (de {resultadoLote.comRegra} com PDV cadastrado). Estão marcados na coluna &quot;Alerta PDV&quot; da planilha.</p>}
+                {resultadoLote.alertas.length === 0 && resultadoLote.comRegra > 0 && <p className="text-emerald-400">✓ {resultadoLote.comRegra} SKU(s) com PDV de marca, todos respeitando o mínimo</p>}
               </div>
               <button
                 type="button"
@@ -1326,13 +1464,102 @@ export default function CalculadoraPage() {
                 data-lote-baixar
                 className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow"
               >
-                ⬇️ Baixar planilha (SKU + PDV)
+                ⬇️ Baixar planilha ({resultadoLote.comRegra > 0 ? "SKU + PDV + alerta de PDV" : "SKU + PDV"})
               </button>
+              {resultadoLote.alertas.length > 0 && (
+                <div className="basis-full overflow-x-auto border border-rose-900/50 rounded-xl max-h-[240px] overflow-y-auto" data-lote-alertas>
+                  <table className="w-full text-[11px] font-mono">
+                    <thead className="bg-slate-950 text-slate-400 uppercase text-[9px] sticky top-0"><tr><th className="px-2 py-2 text-left">SKU</th><th className="px-2 py-2 text-left">PDV calculado</th><th className="px-2 py-2 text-left">PDV mínimo da marca</th><th className="px-2 py-2 text-left">Faltam</th></tr></thead>
+                    <tbody className="divide-y divide-slate-800/70">
+                      {resultadoLote.alertas.slice(0, 100).map((a, i) => (
+                        <tr key={i} className="text-slate-300 bg-rose-950/30"><td className="px-2 py-1.5">{a.sku}</td><td className="px-2 py-1.5">{formatarMoeda(a.pdv)}</td><td className="px-2 py-1.5 text-rose-300 font-bold">{formatarMoeda(a.minimo)}</td><td className="px-2 py-1.5">{formatarMoeda(a.falta)}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </div>
 
         )}
+
+        {subAba === "pdv" && (() => {
+          const lista = Array.from(pdvMarcas.values()).filter((r) => { const t = buscaPdv.trim().toLowerCase(); return !t || r.sku.includes(t) || String(r.marca || "").toLowerCase().includes(t); });
+          const campoCls = "w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none focus:border-indigo-500";
+          return (
+          <div className="space-y-6" data-pdv-marcas>
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-indigo-500/30 shadow-xl space-y-4">
+              <div>
+                <h2 className="text-sm font-black text-white">🏷️ PDV das marcas (compliance de preço)</h2>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Suba uma planilha com o <strong>SKU</strong>, o <strong>PDV permitido</strong> e <strong>quantos % o preço pode ficar abaixo</strong> desse PDV. O preço mínimo é o PDV menos esse percentual.
+                  A calculadora, a precificação em lote e a margem reversa avisam (na tela e nas planilhas) todo produto cujo preço fica abaixo do mínimo. Subir de novo o mesmo SKU atualiza a regra.
+                  Percentual formatado como % no Excel (5%) ou escrito como 5 é lido como 5%.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
+                <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha inicial</label>
+                  <input type="number" min={1} value={formPdv.linha} onChange={(e) => setFormPdv({ ...formPdv, linha: e.target.value })} data-pdv-linha className={campoCls + " font-mono"} /></div>
+                <div><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Col. SKU</label>
+                  <input type="text" maxLength={3} value={formPdv.colSku} onChange={(e) => setFormPdv({ ...formPdv, colSku: e.target.value.toUpperCase() })} data-pdv-col-sku className={campoCls + " font-mono text-center font-bold"} /></div>
+                <div><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Col. PDV permitido</label>
+                  <input type="text" maxLength={3} value={formPdv.colPdv} onChange={(e) => setFormPdv({ ...formPdv, colPdv: e.target.value.toUpperCase() })} data-pdv-col-pdv className={campoCls + " font-mono text-center font-bold"} /></div>
+                <div><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Col. % abaixo</label>
+                  <input type="text" maxLength={3} value={formPdv.colTol} onChange={(e) => setFormPdv({ ...formPdv, colTol: e.target.value.toUpperCase() })} data-pdv-col-tol className={campoCls + " font-mono text-center font-bold"} /></div>
+                <div className="col-span-2"><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Marca (opcional)</label>
+                  <input type="text" value={formPdv.marca} onChange={(e) => setFormPdv({ ...formPdv, marca: e.target.value })} data-pdv-marca maxLength={60} className={campoCls} /></div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha de PDV (xlsx, xls, csv)</label>
+                <input type="file" accept=".xlsx,.xls,.csv" disabled={processandoPdv || loading} data-pdv-arquivo
+                  onChange={(e) => { const a = e.target.files?.[0]; e.target.value = ""; if (a) subirPdvMarcas(a); }}
+                  className="block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-indigo-600 file:text-white file:font-bold file:cursor-pointer cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700" />
+                {processandoPdv && <p className="text-xs text-slate-400 mt-2">Lendo a planilha e guardando os PDVs…</p>}
+              </div>
+              {avisoPdvUp && (
+                <div data-pdv-aviso className={`p-3 rounded-xl border text-xs font-semibold flex items-start justify-between gap-3 ${avisoPdvUp.tipo === "erro" ? "border-rose-900/60 bg-rose-950/40 text-rose-300" : avisoPdvUp.tipo === "ok" ? "border-emerald-900/60 bg-emerald-950/40 text-emerald-300" : "border-amber-900/60 bg-amber-950/40 text-amber-300"}`}>
+                  <div className="space-y-1">{avisoPdvUp.linhas.map((l, i) => <p key={i} className={i === 0 ? "" : "font-medium opacity-90"}>{l}</p>)}</div>
+                  <button type="button" onClick={() => setAvisoPdvUp(null)} className="opacity-70 hover:opacity-100 cursor-pointer">✕</button>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-sm font-black text-white">SKUs com PDV cadastrado <span className="text-slate-400 font-mono" data-pdv-total>({pdvMarcas.size})</span></h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input type="text" value={buscaPdv} onChange={(e) => setBuscaPdv(e.target.value)} placeholder="🔍 SKU ou marca" data-pdv-busca className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none w-52" />
+                  <button type="button" onClick={baixarPdvMarcas} disabled={pdvMarcas.size === 0} data-pdv-baixar className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-xl text-xs uppercase cursor-pointer">⬇️ Baixar lista</button>
+                  <button type="button" onClick={apagarTodosPdv} disabled={pdvMarcas.size === 0} data-pdv-apagar className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[11px] font-bold py-2 px-3 rounded-xl cursor-pointer disabled:opacity-40">🗑️ Apagar todos</button>
+                </div>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[420px] overflow-y-auto">
+                <table className="w-full text-left text-xs whitespace-nowrap" data-pdv-tabela>
+                  <thead className="bg-slate-950 sticky top-0 text-slate-400 font-bold uppercase text-[10px]">
+                    <tr><th className="p-3">SKU</th><th className="p-3">Marca</th><th className="p-3 text-right">PDV permitido</th><th className="p-3 text-right">% abaixo</th><th className="p-3 text-right">PDV mínimo</th><th className="p-3">Arquivo</th><th className="p-3"></th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {lista.slice(0, 200).map((r) => (
+                      <tr key={r.sku} className="hover:bg-slate-800/40" data-pdv-linha-sku={r.sku}>
+                        <td className="p-3 font-mono text-indigo-300">{r.skuOriginal || r.sku}</td>
+                        <td className="p-3 text-slate-300">{r.marca}</td>
+                        <td className="p-3 text-right font-mono">{formatarMoeda(r.pdv)}</td>
+                        <td className="p-3 text-right font-mono">{r.tolerancia.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%</td>
+                        <td className="p-3 text-right font-mono font-bold text-emerald-300">{formatarMoeda(pisoDoPdv(r.pdv, r.tolerancia))}</td>
+                        <td className="p-3 text-slate-500">{r.arquivo}</td>
+                        <td className="p-3"><button type="button" onClick={() => removerPdv(r.sku)} title="Remover este SKU" className="text-rose-400 hover:text-rose-300 cursor-pointer" data-pdv-remover>✕</button></td>
+                      </tr>
+                    ))}
+                    {lista.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500">{pdvMarcas.size === 0 ? "Nenhum PDV cadastrado ainda. Suba a planilha acima." : "Nada encontrado."}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              {lista.length > 200 && <p className="text-[11px] text-slate-500">Mostrando os 200 primeiros de {lista.length}. Use a busca ou baixe a lista completa.</p>}
+            </div>
+          </div>
+          );
+        })()}
 
       </div>
     </div>

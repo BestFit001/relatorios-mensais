@@ -9,6 +9,7 @@
  * Fonte das regras: tabela `config_regras_tarifacao`
  *   (canal, faixa_preco, comissao, tarifa_fixa, frete)
  */
+import { escolherRegraPorPreco } from "./faixaTarifa";
 
 export interface RegraTarifacao {
   canal: string;
@@ -37,7 +38,7 @@ export function ehMercadoLivre(canal: string): boolean {
  * Resolve a regra de tarifação aplicável ao canal para um preço de venda (PDV).
  * Idêntica à `obterRegraCanalDaTabela` da calculadora:
  *  - casamento tolerante do nome do canal (Magalu/Magazine, TikTok/TikTok Shop...)
- *  - faixas "de X a Y", "X em diante", "99999" ou valor único (limite inferior)
+ *  - faixas "de X a Y", "X em diante", "99999" ou valor único: cada faixa vale do seu início até o início da próxima
  *  - sem regra cadastrada => comissão padrão (14%, ou 19% se "premium")
  */
 export function obterRegraCanal(
@@ -67,20 +68,8 @@ export function obterRegraCanal(
     origem: "tabela" as const,
   });
 
-  for (const regra of regrasDoCanal) {
-    const faixaStr = String(regra.faixa_preco || "").toLowerCase();
-    const nums = faixaStr.match(/[\d.,]+/g);
-
-    if (faixaStr.includes("em diante") || faixaStr.includes("99999") || (nums && nums.length === 1)) {
-      const limiteInf = nums ? parseNumeroBR(nums[0]) : 0;
-      if (precoReferencia >= limiteInf) return fmt(regra);
-    } else if (nums && nums.length >= 2) {
-      const min = parseNumeroBR(nums[0]);
-      const max = parseNumeroBR(nums[1]);
-      if (precoReferencia >= min && precoReferencia <= max) return fmt(regra);
-    }
-  }
-  return fmt(regrasDoCanal[0]);
+  // vale a faixa que começa mais perto do preço sem passar dele (ver lib/faixaTarifa.ts: "20.000" não vira 20 e faixas que se tocam não confundem)
+  return fmt(escolherRegraPorPreco(regrasDoCanal, precoReferencia) || regrasDoCanal[0]);
 }
 
 export interface ResultadoTarifacao {
