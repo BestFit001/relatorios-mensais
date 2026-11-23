@@ -498,7 +498,7 @@ export default function DashboardPage() {
       // ESTORNO INTEGRAL DOS CANCELADOS: além da receita (já abatida acima), saem junto o repasse
       // (taxas/comissões/frete), o CMV e o frete Flex da venda cancelada. Casa pelo id_pedido;
       // sem id_pedido, usa sku x quantidade da planilha de cancelamentos para estornar o custo.
-      let estRepasseCanc = 0, estCmvCanc = 0;
+      let estRepasseCanc = 0, estCmvCanc = 0, estCupomCanc = 0;
       const pedidosCancelados = new Set<string>();
       const pedidosEstornados = new Set<string>();
       activeCancelados.forEach((c: any) => {
@@ -512,6 +512,7 @@ export default function DashboardPage() {
           vendasDoPedido.forEach((s: any) => {
             estRepasseCanc += s.repasse_liquido || 0;
             estCmvCanc += s.custoCMV || 0;
+            estCupomCanc += parseCurrency(s.cupom);
           });
         } else if (c.sku) {
           const custoP = produtosCustoMap.get(normalizarSku(c.sku)) || { custo_unitario: 0, custo_embalagem: 0 };
@@ -584,7 +585,11 @@ export default function DashboardPage() {
       const metaBase = parseCurrency(goalObj.meta_valor);
       const progressoMetaPct = metaBase > 0 ? (faturadoComRedutor / metaBase) * 100 : 0;
       
-      const margemBrutaPct = faturadoBrutoPuro > 0 ? (repasseLiquidoTotal / faturadoBrutoPuro) * 100 : 0;
+      // Margem bruta (como na planilha Dash antiga): (venda − devolução − custo dos produtos + cupom da plataforma) ÷ (venda − devolução).
+      // Sem comissão, frete e imposto. O cupom (TikTok/Shopee) soma no lucro mas não na base. Lojas físicas: o repasse informado é o lucro.
+      const cupomCanal = Math.max(0, chSales.reduce((sum: number, s: any) => sum + parseCurrency(s.cupom), 0) - estCupomCanc);
+      const lucroBrutoCanal = isChannelFisico(channelName) ? repasseLiquidoTotal : faturadoComRedutor - cmvCanalTotal + cupomCanal;
+      const margemBrutaPct = faturadoComRedutor > 0 ? (lucroBrutoCanal / faturadoComRedutor) * 100 : 0;
       const margemLiquidaPct = faturadoBrutoPuro > 0 ? (lucroLiquidoFinal / faturadoBrutoPuro) * 100 : 0;
 
       const projecaoFaturamento = isCurrentMonth 

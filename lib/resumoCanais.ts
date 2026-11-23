@@ -16,6 +16,8 @@ export interface ResumoCanal {
   lucroLiquidoReal: number;
   progressoMetaPct: number;
   margemBrutaPct: number;
+  /** lucro bruto do canal: faturamento líquido − CMV + cupom (lojas físicas: repasse); base da margem bruta */
+  lucroBruto: number;
   margemLiquidaPct: number;
   projecaoFaturamento: number;
   repasseLiquidoTotal: number;
@@ -360,7 +362,7 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       .filter((c: any) => canonizarCanal(c.canal, canaisOficiais) === channelName)
       .reduce((sum: number, c: any) => sum + parseCurrency(c.valor), 0);
 
-    let estRepasseCanc = 0, estCmvCanc = 0;
+    let estRepasseCanc = 0, estCmvCanc = 0, estCupomCanc = 0;
     const pedidosCancelados = new Set<string>();
     const pedidosEstornados = new Set<string>();
     activeCancelados.forEach((c: any) => {
@@ -371,7 +373,7 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       if (vendasDoPedido.length > 0) {
         if (pedidosEstornados.has(ped)) return;
         pedidosEstornados.add(ped);
-        vendasDoPedido.forEach((s: any) => { estRepasseCanc += s.repasse_liquido || 0; estCmvCanc += s.custoCMV || 0; });
+        vendasDoPedido.forEach((s: any) => { estRepasseCanc += s.repasse_liquido || 0; estCmvCanc += s.custoCMV || 0; estCupomCanc += parseCurrency(s.cupom); });
       } else if (c.sku) {
         const custoP = produtosCustoMap.get(normalizarSku(c.sku)) || { custo_unitario: 0, custo_embalagem: 0 };
         estCmvCanc += (custoP.custo_unitario + custoP.custo_embalagem) * (parseCurrency(c.quantidade) || 1);
@@ -409,6 +411,10 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
     const flexCanal = flexRows
       .filter((f) => (periodo ? dentro(f.data) : f.mes === mesRefFormatos.iso) && f.canal === channelName && !pedidosCancelados.has(f.ped))
       .reduce((sum, f) => sum + f.valor, 0);
+    // Margem bruta como na planilha Dash antiga: (venda − devolução − CMV + cupom da plataforma) ÷ (venda − devolução).
+    // Lojas físicas: o repasse informado é o lucro. Mesma conta do Dashboard e do Painel Executivo.
+    const cupomCanal = Math.max(0, chSales.reduce((sum: number, s: any) => sum + parseCurrency(s.cupom), 0) - estCupomCanc);
+    const lucroBruto = isChannelFisico(channelName) ? repasseLiquidoTotal : faturadoComRedutor - cmvCanalTotal + cupomCanal;
     const impostoCanal = (faturadoComRedutor * aliquotaImpostoGlobal) / 100;
     const lucroLiquidoFinal = repasseLiquidoTotal - cmvCanalTotal - impostoCanal - (DESCONTAR_FRETE_ADS_NO_LUCRO ? flexCanal + canalAds + devFreteLiquido : 0);
 
@@ -440,7 +446,8 @@ export function calcularResumoCanais(db: BancoDash, mesIso: string, agora: Date 
       faturadoComRedutor,
       lucroLiquidoReal: lucroLiquidoFinal,
       progressoMetaPct: metaBase > 0 ? (faturadoComRedutor / metaBase) * 100 : 0,
-      margemBrutaPct: faturadoBrutoPuro > 0 ? (repasseLiquidoTotal / faturadoBrutoPuro) * 100 : 0,
+      margemBrutaPct: faturadoComRedutor > 0 ? (lucroBruto / faturadoComRedutor) * 100 : 0,
+      lucroBruto,
       margemLiquidaPct: faturadoBrutoPuro > 0 ? (lucroLiquidoFinal / faturadoBrutoPuro) * 100 : 0,
       projecaoFaturamento: isCurrentMonth ? (faturadoComRedutor / diasPassados) * totalDiasMes : faturadoComRedutor,
       repasseLiquidoTotal,

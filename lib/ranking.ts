@@ -28,12 +28,13 @@ export type ExtraCadastro = (canal: string) => { faltam: number; feitos: number;
 
 export function totalizar(canais: ResumoCanal[], cadastros: (canal: string) => number = () => 0, extra?: ExtraCadastro): Totais {
   const soma = (f: (c: ResumoCanal) => number) => canais.reduce((a, c) => a + (f(c) || 0), 0);
+  const lucroBruto = soma((c) => c.lucroBruto);
   const faturado = soma((c) => c.faturadoComRedutor), bruto = soma((c) => c.faturadoBruto), lucro = soma((c) => c.lucroLiquidoReal), repasse = soma((c) => c.repasseLiquidoTotal);
   const pedidos = soma((c) => c.pedidos), ads = soma((c) => c.adsGasto), meta = soma((c) => c.metaValor);
   return {
     faturado, bruto, lucro, repasse, pedidos, ads, meta, unidades: soma((c) => c.unidades), devolucoes: soma((c) => c.devolucoesValor), cancelados: soma((c) => c.canceladosValor),
     ticket: pedidos > 0 ? bruto / pedidos : 0,
-    margemBruta: bruto > 0 ? (repasse / bruto) * 100 : 0,
+    margemBruta: faturado > 0 ? (lucroBruto / faturado) * 100 : 0,
     liquidez: bruto > 0 ? (lucro / bruto) * 100 : 0,
     progressoMeta: meta > 0 ? (faturado / meta) * 100 : 0,
     roas: ads > 0 ? faturado / ads : 0,
@@ -79,7 +80,7 @@ export const METRICAS: { id: MetricaId; rotulo: string; formato: Formato; dica: 
   { id: "faturado", rotulo: "Faturamento", formato: "moeda", dica: "Vendas faturadas no período, já abatidas devoluções e cancelamentos" },
   { id: "crescimento", rotulo: "Crescimento", formato: "pct", dica: "Quanto o faturamento por dia cresceu (ou caiu) em % sobre o período de comparação; sem faturamento nele, 0%" },
   { id: "lucro", rotulo: "Lucro líquido", formato: "moeda", dica: "Repasse − custo dos produtos − imposto (regra atual do Dashboard; ads e frete aparecem à parte)" },
-  { id: "margemBruta", rotulo: "Margem bruta", formato: "pct", dica: "Repasse líquido do canal ÷ faturamento bruto (antes de custo dos produtos e imposto)" },
+  { id: "margemBruta", rotulo: "Margem bruta", formato: "pct", dica: "(Faturamento líquido − custo dos produtos + cupom da plataforma) ÷ faturamento líquido, antes de comissão, frete e imposto" },
   { id: "liquidez", rotulo: "Margem líquida", formato: "pct", dica: "Liquidez: lucro líquido ÷ faturamento bruto (o % líquido dos cartões do Início)" },
   { id: "ticket", rotulo: "Ticket médio", formato: "moeda", dica: "Faturamento bruto ÷ número de pedidos" },
   { id: "pedidos", rotulo: "Pedidos", formato: "num", dica: "Pedidos faturados no período" },
