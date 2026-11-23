@@ -577,9 +577,12 @@ export default function PainelExecutivoPage() {
       // Projeção do mês (não o faturado até agora) contra o mês anterior fechado
       const projVsMesAnterior = faturadoMesAnterior > 0 ? ((projecaoFaturamento / faturadoMesAnterior) - 1) * 100 : 0;
 
-      // Repasse e lucro já descontam cancelamentos e devoluções, então a base da divisão
-      // tem que ser o faturamento também líquido deles (faturadoComRedutor), não o bruto.
-      const margemBrutaAtingida = faturadoComRedutor > 0 ? (repasseTotal / faturadoComRedutor) * 100 : 0;
+      // Margem bruta, como na planilha Dash antiga: (venda − devolução − custo dos produtos vendidos) ÷ (venda − devolução).
+      // Não considera comissão, tarifa, frete nem imposto (isso é a margem líquida). Cancelamentos e devoluções já saem
+      // do faturamento (faturadoComRedutor) e do CMV (cmvCanal).
+      // Lojas físicas: a planilha antiga usava o lucro informado pela loja ÷ venda; aqui o equivalente é o repasse informado.
+      const lucroBruto = fisico ? repasseTotal : faturadoComRedutor - cmvCanal;
+      const margemBrutaAtingida = faturadoComRedutor > 0 ? (lucroBruto / faturadoComRedutor) * 100 : 0;
       const margemLiqAtingida = faturadoComRedutor > 0 ? (lucroLiquidoFinal / faturadoComRedutor) * 100 : 0;
 
       const metaMargemBruta = parseCurrency(goalObj.meta_margem_bruta || defaultMetaBruta);
@@ -607,6 +610,7 @@ export default function PainelExecutivoPage() {
         isFisico: fisico,
         faturadoBrutoPuro,
         repasseTotal,
+        lucroBruto,
         lucroLiquidoFinal
       };
     });
@@ -624,17 +628,18 @@ export default function PainelExecutivoPage() {
       faturadoMesAnterior: acc.faturadoMesAnterior + curr.faturadoMesAnterior,
       faturadoBrutoPuro: acc.faturadoBrutoPuro + curr.faturadoBrutoPuro,
       repasseTotal: acc.repasseTotal + curr.repasseTotal,
+      lucroBruto: acc.lucroBruto + curr.lucroBruto,
       lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoFinal,
       metaBrutaPonderada: acc.metaBrutaPonderada + (curr.metaMargemBruta * curr.faturadoComRedutor),
       metaLiqPonderada: acc.metaLiqPonderada + (curr.metaMargemLiq * curr.faturadoComRedutor),
     }), { 
       vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, faturadoMesAnterior: 0, 
-      faturadoBrutoPuro: 0, repasseTotal: 0, lucroLiquidoFinal: 0, metaBrutaPonderada: 0, metaLiqPonderada: 0 
+      faturadoBrutoPuro: 0, repasseTotal: 0, lucroBruto: 0, lucroLiquidoFinal: 0, metaBrutaPonderada: 0, metaLiqPonderada: 0 
     });
   };
 
   const enrichTotals = (totals: any) => {
-    const margemBrutaAtingida = totals.faturadoComRedutor > 0 ? (totals.repasseTotal / totals.faturadoComRedutor) * 100 : 0;
+    const margemBrutaAtingida = totals.faturadoComRedutor > 0 ? (totals.lucroBruto / totals.faturadoComRedutor) * 100 : 0;
     const margemLiqAtingida = totals.faturadoComRedutor > 0 ? (totals.lucroLiquidoFinal / totals.faturadoComRedutor) * 100 : 0;
     // Meta de margem do total = média das metas dos canais, ponderada pelo que cada canal realmente faturou
     // (mesma composição usada na margem atingida, para a comparação ser justa)
@@ -667,6 +672,7 @@ export default function PainelExecutivoPage() {
     faturadoMesAnterior: totalEcomRaw.faturadoMesAnterior + totalFisicoRaw.faturadoMesAnterior,
     faturadoBrutoPuro: totalEcomRaw.faturadoBrutoPuro + totalFisicoRaw.faturadoBrutoPuro,
     repasseTotal: totalEcomRaw.repasseTotal + totalFisicoRaw.repasseTotal,
+    lucroBruto: totalEcomRaw.lucroBruto + totalFisicoRaw.lucroBruto,
     lucroLiquidoFinal: totalEcomRaw.lucroLiquidoFinal + totalFisicoRaw.lucroLiquidoFinal,
     metaBrutaPonderada: totalEcomRaw.metaBrutaPonderada + totalFisicoRaw.metaBrutaPonderada,
     metaLiqPonderada: totalEcomRaw.metaLiqPonderada + totalFisicoRaw.metaLiqPonderada,
@@ -844,7 +850,7 @@ export default function PainelExecutivoPage() {
                 <th className="py-2.5 px-3 text-center border-r border-slate-800 whitespace-nowrap">Proj x Ant.</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Meta Margem Bruta</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Margem Bruta Ating</th>
-                <th className="py-2.5 px-3 text-center border-r border-slate-800 whitespace-nowrap">Margem Bruta Ating x Meta</th>
+                <th className="py-2.5 px-3 text-center border-r border-slate-800 whitespace-nowrap" title="Margem bruta atingida menos a meta, em pontos percentuais. Margem bruta = (venda − devolução − custo dos produtos) ÷ (venda − devolução), sem comissão, frete e imposto.">Margem Bruta Ating x Meta</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Meta Margem Liq</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Margem Liq Ating</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Margem Liq Ating x Meta</th>
