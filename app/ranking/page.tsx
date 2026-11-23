@@ -1,6 +1,6 @@
 "use client";
 // Ranking de analistas: progressão, cadastros, liquidez, ticket médio, mais vendidos por canal e ads, por mês fechado, últimos 7/15/30 dias ou período personalizado, com comparação.
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNomes } from "../../lib/nomes";
 import { acessoTotal } from "../../lib/perfis";
 import { useRouter } from "next/navigation";
@@ -326,6 +326,41 @@ export default function RankingPage() {
 
   const opcoesMes = useMemo(() => mesesTerminandoEm(mesAtual(), 18).reverse(), []);
   const metricaInfo = METRICAS.find((m) => m.id === metrica)!;
+
+  // ---- Enviar o painel principal por e-mail (mesmo jeito do Painel Executivo: copia o print e abre o e-mail)
+  const painelRef = useRef<HTMLDivElement>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [avisoEmail, setAvisoEmail] = useState("");
+  const [capturando, setCapturando] = useState(false);   // mostra o título do painel só enquanto tira o print
+  const enviarPainelPorEmail = async () => {
+    if (!painelRef.current) return;
+    setEnviando(true); setAvisoEmail("");
+    try {
+      setCapturando(true);
+      await new Promise((r) => setTimeout(r, 80));   // deixa o título aparecer antes do print
+      const el = painelRef.current;
+      // @ts-ignore
+      const htmlToImage = await import("html-to-image");
+      const largura = el.scrollWidth, altura = el.scrollHeight;
+      const blob = await htmlToImage.toBlob(el, { backgroundColor: "#020617", width: largura, height: altura, style: { width: `${largura}px`, maxWidth: "none" }, pixelRatio: 2 });
+      setCapturando(false);
+      if (!blob) throw new Error("Falha ao gerar a imagem.");
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+
+      const { data: usuarios } = await supabase.from("usuarios_permissoes").select("email");
+      const destinatarios = ((usuarios as any[]) || []).map((u) => String(u.email || "").trim()).filter(Boolean).join(";") || "gisele@usebestfit.com.br";
+      const dataHoje = new Date().toLocaleDateString("pt-BR");
+      const assunto = encodeURIComponent(`RANKING DE ANALISTAS ${dataHoje} (${pA.rotulo})`);
+      let corpo = `Olá, tudo bem? Segue o ranking dos analistas em ${dataHoje}, período ${pA.rotulo}${comparar ? `, comparado com ${pB.rotulo}` : ""}. Classificação por: ${metricaInfo.rotulo}.\n\n`;
+      ranking.forEach((a, k) => { corpo += `${k + 1}º ${a.nome}: ${(metrica === "crescimento" && valorDa(a.total, metrica) > 0 ? "+" : "") + formatar(valorDa(a.total, metrica), metricaInfo.formato)}\n`; });
+      corpo += `\nImagem do Ranking:\n\n\nAcesse o sistema para conferir a visão completa: https://dashboard-e-commerce-nine.vercel.app/ranking`;
+      window.location.href = `mailto:${destinatarios}?subject=${assunto}&body=${encodeURIComponent(corpo)}`;
+      setAvisoEmail("✅ Imagem copiada! Cole com Ctrl + V no corpo do e-mail.");
+    } catch (e: any) {
+      setCapturando(false);
+      setAvisoEmail(`Erro ao gerar o print: ${e?.message || e}`);
+    } finally { setEnviando(false); }
+  };
   const melhorValor = ranking.length ? Math.max(...ranking.map((a) => Math.abs(valorDa(a.total, metrica)))) || 1 : 1;
   const alternar = (k: string) => setAbertos((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
@@ -485,6 +520,14 @@ export default function RankingPage() {
             <select value={metrica} onChange={(e) => setMetrica(e.target.value as MetricaId)} data-metrica className={seletor + " block normal-case"}>{METRICAS.map((m) => <option key={m.id} value={m.id}>{m.rotulo}</option>)}</select>
           </label>
           <p className="text-[11px] text-slate-500 flex-1 min-w-[220px] max-w-xl">{metricaInfo.dica}.{metrica === "crescimento" ? ` Comparado com ${pCresc.rotulo}${comparar ? "" : " (período anterior equivalente)"}; a média por dia é que é comparada.` : ""}</p>
+          {aba === "ranking" && !carregando && (
+            <div className="flex flex-col items-end gap-1">
+              <button type="button" onClick={enviarPainelPorEmail} disabled={enviando} data-enviar-email className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow transition flex items-center gap-2 cursor-pointer disabled:opacity-50">
+                <span>📸</span> {enviando ? "Gerando imagem…" : "Copiar print & abrir e-mail"}
+              </button>
+              {avisoEmail && <p className={`text-[11px] max-w-[260px] text-right ${avisoEmail.startsWith("Erro") ? "text-rose-400" : "text-emerald-400"}`} data-aviso-email>{avisoEmail}</p>}
+            </div>
+          )}
         </div>
 
         {/* canais que entram na comparação */}
@@ -537,7 +580,8 @@ export default function RankingPage() {
         )}
         {erro && <p className="text-xs text-rose-400">Erro ao carregar: {erro}</p>}
         {carregando ? <p className="text-sm text-slate-400 p-10 text-center">Carregando os números dos canais…</p> : aba === "bancada" ? bancadaView : (
-          <>
+          <div ref={painelRef} className="space-y-6 bg-slate-950" data-painel-ranking>
+            {capturando && <div className="pt-1"><h2 className="text-xl font-black text-white">🏆 Ranking de analistas</h2><p className="text-sm text-slate-400">{pA.rotulo}{comparar ? ` comparado com ${pB.rotulo}` : ""} · classificado por {metricaInfo.rotulo}</p></div>}
             {/* visão da empresa */}
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-3" data-kpis>
               {(["faturado", "crescimento", "lucro", "liquidez", "ticket", "pedidos", "ads", "cadFaltam", "cadFeitos", "cadExcluidos"] as MetricaId[]).map(kpi)}
@@ -771,7 +815,7 @@ export default function RankingPage() {
                 );
               })}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
