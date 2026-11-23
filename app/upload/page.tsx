@@ -937,6 +937,7 @@ export default function UpdatesPage() {
         const colSkuDef = regraData?.col_sku || regraData?.coluna_sku || (isML ? 'E' : (isAmazon ? 'L' : 'B'));
         const colPdvDef = regraData?.col_pdv || regraData?.col_preco_venda || (isML ? 'I' : (isAmazon ? 'Q' : 'P'));
         const colQtdDef = regraData?.col_quantidade || regraData?.coluna_quantidade || (isML ? 'H' : (isAmazon ? 'O' : 'O'));
+        const colCupomDef = String(regraData?.col_cupom || '').trim();   // cupom / benefício da plataforma (opcional)
         const colRepasseDef = regraData?.col_repasse || regraData?.col_estado || (isML ? 'T' : '');
         const formulaExcel = regraData?.formula_excel || '';
 
@@ -1173,6 +1174,7 @@ export default function UpdatesPage() {
             quantidade: quantidade,
             preco_venda: precoVenda,
             repasse_liquido: repasseLiquido,
+            ...(colCupomDef ? { cupom: Math.max(0, avaliarExpressaoOuColuna(colCupomDef, row, { PDV: precoVenda, QTD: quantidade }) || 0) } : {}),
             __cancelado: cancelado
           });
           if (!cancelado) afil.add(row, idFormatado, precoVenda, quantidade, skuFinal, existeNaBase ? String(mapaProdutos.get(skuNorm) || "") : "");

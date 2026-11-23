@@ -63,7 +63,8 @@ export default function RegrasPage() {
     sku: 'B',
     precoVenda: 'P',
     quantidade: 'O',
-    repasseDireto: ''
+    repasseDireto: '',
+    cupom: ''
   });
 
   // Estados mantidos (Tiny, Custos e ML)
@@ -160,7 +161,8 @@ export default function RegrasPage() {
         sku: regraDb.col_sku || 'B',
         precoVenda: regraDb.col_pdv || regraDb.col_preco_venda || 'P',
         quantidade: regraDb.col_quantidade || 'O',
-        repasseDireto: regraDb.col_repasse || regraDb.col_estado || ''
+        repasseDireto: regraDb.col_repasse || regraDb.col_estado || '',
+        cupom: regraDb.col_cupom || ''
       });
     } else {
       setFormulaApuracao('PDV - (PDV * 12%)');
@@ -168,7 +170,7 @@ export default function RegrasPage() {
       setLogoUrl('');
       setDiasAlertaArm('90');
       setDiasCobrancaArm('120');
-      setColunasFoco({ idPedido: 'A', sku: 'B', precoVenda: 'P', quantidade: 'O', repasseDireto: '' });
+      setColunasFoco({ idPedido: 'A', sku: 'B', precoVenda: 'P', quantidade: 'O', repasseDireto: '', cupom: '' });
     }
 
     const { data: metaDb } = await supabase
@@ -214,6 +216,7 @@ export default function RegrasPage() {
         col_estado: repasseCol,
         col_pdv: colunasFoco.precoVenda.toUpperCase(),
         col_quantidade: colunasFoco.quantidade.toUpperCase(),
+        col_cupom: (colunasFoco.cupom || '').toUpperCase().trim() || null,
         dias_alerta_armazenagem: alertaArm,
         dias_cobranca_armazenagem: cobrancaArm,
         rec_vendas_min: Math.max(0, parseInt(recVendasMin, 10) || 0),
@@ -228,6 +231,11 @@ export default function RegrasPage() {
 
       // Migration dos prazos de armazenagem ainda não executada: salva o restante e avisa
       let faltouMigration = false;
+      if (erroRegra && /col_cupom/i.test(erroRegra.message)) {
+        const { col_cupom, ...semCupom } = registroRegra;
+        ({ error: erroRegra } = await supabase.from('config_regras_canais').upsert([semCupom], { onConflict: 'canal' }));
+        faltouMigration = true;
+      }
       if (erroRegra && /dias_alerta_armazenagem|dias_cobranca_armazenagem|rec_/i.test(erroRegra.message)) {
         faltouMigration = true;
         const { dias_alerta_armazenagem, dias_cobranca_armazenagem, rec_vendas_min, rec_lucro_min, rec_margem_min, rec_dev_max, rec_dias_cobertura, rec_exigir_estoque, rec_margem_rever, ...semPrazos } = registroRegra;
@@ -546,7 +554,7 @@ export default function RegrasPage() {
               {/* MAPEAMENTO DAS 4 COLUNAS FOCO + REPASSE DIRETO */}
               <div className="space-y-3 pt-2">
                 <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Mapeamento das Colunas da Planilha:</label>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
                   <div>
                     <span className="block text-[10px] font-bold text-slate-400 mb-1">ID Pedido</span>
                     <input type="text" value={colunasFoco.idPedido} onChange={e => setColunasFoco({...colunasFoco, idPedido: e.target.value.toUpperCase()})} placeholder="Ex: A" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-indigo-400 font-mono font-bold text-center uppercase outline-none" />
@@ -566,6 +574,10 @@ export default function RegrasPage() {
                   <div>
                     <span className="block text-[10px] font-bold text-slate-400 mb-1">Repasse Direto (Opc.)</span>
                     <input type="text" value={colunasFoco.repasseDireto} onChange={e => setColunasFoco({...colunasFoco, repasseDireto: e.target.value.toUpperCase()})} placeholder="Ex: T (ML)" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-300 font-mono font-bold text-center uppercase outline-none" />
+                  </div>
+                  <div title="Valor que a plataforma paga por cima do preço (cupom do TikTok, benefício da Shopee). Entra na margem bruta do Painel Executivo.">
+                    <span className="block text-[10px] font-bold text-emerald-400 mb-1">Cupom / Benefício (Opc.)</span>
+                    <input type="text" value={colunasFoco.cupom} onChange={e => setColunasFoco({...colunasFoco, cupom: e.target.value.toUpperCase()})} placeholder="Ex: P (TikTok)" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-emerald-400 font-mono font-bold text-center uppercase outline-none" />
                   </div>
                 </div>
               </div>

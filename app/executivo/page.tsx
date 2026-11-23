@@ -498,7 +498,7 @@ export default function PainelExecutivoPage() {
       // ESTORNO INTEGRAL DOS CANCELADOS: além da receita (já abatida acima), saem junto o repasse
       // (taxas/comissões/frete), o CMV e o frete Flex da venda cancelada. Casa pelo id_pedido;
       // sem id_pedido, usa sku x quantidade da planilha de cancelamentos para estornar o custo.
-      let estRepasseCanc = 0, estCmvCanc = 0;
+      let estRepasseCanc = 0, estCmvCanc = 0, estCupomCanc = 0;
       const pedidosCancelados = new Set<string>();
       const pedidosEstornados = new Set<string>();
       activeCancelados.forEach((c: any) => {
@@ -512,6 +512,7 @@ export default function PainelExecutivoPage() {
           vendasDoPedido.forEach((s: any) => {
             estRepasseCanc += s.repasse_liquido || 0;
             estCmvCanc += s.custoCMV || 0;
+            estCupomCanc += parseCurrency(s.cupom);
           });
         } else if (c.sku) {
           const custoP = produtosCustoMap.get(normalizarSku(c.sku)) || { custo_unitario: 0, custo_embalagem: 0 };
@@ -581,7 +582,10 @@ export default function PainelExecutivoPage() {
       // Não considera comissão, tarifa, frete nem imposto (isso é a margem líquida). Cancelamentos e devoluções já saem
       // do faturamento (faturadoComRedutor) e do CMV (cmvCanal).
       // Lojas físicas: a planilha antiga usava o lucro informado pela loja ÷ venda; aqui o equivalente é o repasse informado.
-      const lucroBruto = fisico ? repasseTotal : faturadoComRedutor - cmvCanal;
+      // Cupom / benefício da plataforma (TikTok, Shopee) soma no lucro bruto, como o "benefício plat." da planilha: entra no
+      // lucro, mas não na base da divisão. Vem da coluna de cupom configurada em Regras e gravada no upload das vendas.
+      const cupomCanal = Math.max(0, chSales.reduce((sum: number, s: any) => sum + parseCurrency(s.cupom), 0) - estCupomCanc);
+      const lucroBruto = fisico ? repasseTotal : faturadoComRedutor - cmvCanal + cupomCanal;
       const margemBrutaAtingida = faturadoComRedutor > 0 ? (lucroBruto / faturadoComRedutor) * 100 : 0;
       const margemLiqAtingida = faturadoComRedutor > 0 ? (lucroLiquidoFinal / faturadoComRedutor) * 100 : 0;
 
