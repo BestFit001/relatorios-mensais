@@ -574,10 +574,13 @@ export default function PainelExecutivoPage() {
       const projecaoVsMeta = metaBase > 0 ? ((projecaoFaturamento / metaBase) - 1) * 100 : 0;
 
       const faturadoMesAnterior = prevChSales.reduce((sum: number, s: any) => sum + parseCurrency(s.preco_venda), 0);
-      const projVsMesAnterior = faturadoMesAnterior > 0 ? ((faturadoComRedutor / faturadoMesAnterior) - 1) * 100 : 0;
+      // Projeção do mês (não o faturado até agora) contra o mês anterior fechado
+      const projVsMesAnterior = faturadoMesAnterior > 0 ? ((projecaoFaturamento / faturadoMesAnterior) - 1) * 100 : 0;
 
-      const margemBrutaAtingida = faturadoBrutoPuro > 0 ? (repasseTotal / faturadoBrutoPuro) * 100 : 0;
-      const margemLiqAtingida = faturadoBrutoPuro > 0 ? (lucroLiquidoFinal / faturadoBrutoPuro) * 100 : 0;
+      // Repasse e lucro já descontam cancelamentos e devoluções, então a base da divisão
+      // tem que ser o faturamento também líquido deles (faturadoComRedutor), não o bruto.
+      const margemBrutaAtingida = faturadoComRedutor > 0 ? (repasseTotal / faturadoComRedutor) * 100 : 0;
+      const margemLiqAtingida = faturadoComRedutor > 0 ? (lucroLiquidoFinal / faturadoComRedutor) * 100 : 0;
 
       const metaMargemBruta = parseCurrency(goalObj.meta_margem_bruta || defaultMetaBruta);
       const metaMargemLiq = parseCurrency(goalObj.meta_margem_liq || 15);
@@ -622,8 +625,8 @@ export default function PainelExecutivoPage() {
       faturadoBrutoPuro: acc.faturadoBrutoPuro + curr.faturadoBrutoPuro,
       repasseTotal: acc.repasseTotal + curr.repasseTotal,
       lucroLiquidoFinal: acc.lucroLiquidoFinal + curr.lucroLiquidoFinal,
-      metaBrutaPonderada: acc.metaBrutaPonderada + (curr.metaMargemBruta * curr.metaValor),
-      metaLiqPonderada: acc.metaLiqPonderada + (curr.metaMargemLiq * curr.metaValor),
+      metaBrutaPonderada: acc.metaBrutaPonderada + (curr.metaMargemBruta * curr.faturadoComRedutor),
+      metaLiqPonderada: acc.metaLiqPonderada + (curr.metaMargemLiq * curr.faturadoComRedutor),
     }), { 
       vendasDoDia: 0, faturadoComRedutor: 0, metaValor: 0, projecaoFaturamento: 0, faturadoMesAnterior: 0, 
       faturadoBrutoPuro: 0, repasseTotal: 0, lucroLiquidoFinal: 0, metaBrutaPonderada: 0, metaLiqPonderada: 0 
@@ -631,10 +634,13 @@ export default function PainelExecutivoPage() {
   };
 
   const enrichTotals = (totals: any) => {
-    const margemBrutaAtingida = totals.faturadoBrutoPuro > 0 ? (totals.repasseTotal / totals.faturadoBrutoPuro) * 100 : 0;
-    const margemLiqAtingida = totals.faturadoBrutoPuro > 0 ? (totals.lucroLiquidoFinal / totals.faturadoBrutoPuro) * 100 : 0;
-    const metaMargemBruta = totals.metaValor > 0 ? totals.metaBrutaPonderada / totals.metaValor : 0;
-    const metaMargemLiq = totals.metaValor > 0 ? totals.metaLiqPonderada / totals.metaValor : 0;
+    const margemBrutaAtingida = totals.faturadoComRedutor > 0 ? (totals.repasseTotal / totals.faturadoComRedutor) * 100 : 0;
+    const margemLiqAtingida = totals.faturadoComRedutor > 0 ? (totals.lucroLiquidoFinal / totals.faturadoComRedutor) * 100 : 0;
+    // Meta de margem do total = média das metas dos canais, ponderada pelo que cada canal realmente faturou
+    // (mesma composição usada na margem atingida, para a comparação ser justa)
+    const pesoMeta = totals.faturadoComRedutor;
+    const metaMargemBruta = pesoMeta > 0 ? totals.metaBrutaPonderada / pesoMeta : 0;
+    const metaMargemLiq = pesoMeta > 0 ? totals.metaLiqPonderada / pesoMeta : 0;
 
     return {
       ...totals,
@@ -677,17 +683,17 @@ export default function PainelExecutivoPage() {
 
   const renderSetaDiferencaMargem = (diff: number) => {
     if (diff >= 0) {
-      return <span className="text-emerald-400 font-bold inline-flex items-center gap-0.5">▲ +{diff.toFixed(1)}%</span>;
+      return <span className="text-emerald-400 font-bold inline-flex items-center gap-0.5">▲ +{diff.toFixed(1)} p.p.</span>;
     } else {
-      return <span className="text-rose-400 font-bold inline-flex items-center gap-0.5">▼ {diff.toFixed(1)}%</span>;
+      return <span className="text-rose-400 font-bold inline-flex items-center gap-0.5">▼ {diff.toFixed(1)} p.p.</span>;
     }
   };
 
-  const renderSetaTotal = (val: number) => {
+  const renderSetaTotal = (val: number, unidade: string = '%') => {
     if (val >= 0) {
-      return <span className="text-green-300 font-black inline-flex items-center gap-0.5">▲ +{val.toFixed(1)}%</span>;
+      return <span className="text-green-300 font-black inline-flex items-center gap-0.5">▲ +{val.toFixed(1)}{unidade === '%' ? '%' : ` ${unidade}`}</span>;
     } else {
-      return <span className="text-red-300 font-black inline-flex items-center gap-0.5">▼ {val.toFixed(1)}%</span>;
+      return <span className="text-red-300 font-black inline-flex items-center gap-0.5">▼ {val.toFixed(1)}{unidade === '%' ? '%' : ` ${unidade}`}</span>;
     }
   };
 
@@ -838,10 +844,10 @@ export default function PainelExecutivoPage() {
                 <th className="py-2.5 px-3 text-center border-r border-slate-800 whitespace-nowrap">Proj x Ant.</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Meta Margem Bruta</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Margem Bruta Ating</th>
-                <th className="py-2.5 px-3 text-center border-r border-slate-800 whitespace-nowrap">Margem Bruta x Ating</th>
+                <th className="py-2.5 px-3 text-center border-r border-slate-800 whitespace-nowrap">Margem Bruta Ating x Meta</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Meta Margem Liq</th>
                 <th className="py-2.5 px-3 text-center whitespace-nowrap">Margem Liq Ating</th>
-                <th className="py-2.5 px-3 text-center whitespace-nowrap">Margem Liq x Ating</th>
+                <th className="py-2.5 px-3 text-center whitespace-nowrap">Margem Liq Ating x Meta</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/40 font-medium">
@@ -861,7 +867,7 @@ export default function PainelExecutivoPage() {
                   <td className="py-2 px-3 text-right font-bold text-indigo-300 whitespace-nowrap">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="py-2 px-3 text-center border-r border-slate-800/50 whitespace-nowrap">{renderSetaVariacao(item.projecaoVsMeta)}</td>
                   <td className="py-2 px-3 text-right font-mono text-slate-400 whitespace-nowrap">R$ {item.faturadoMesAnterior.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="py-2 px-3 text-center border-r border-slate-800/50 whitespace-nowrap">{renderSetaVariacao(item.projVsMesAnterior)}</td>
+                  <td className="py-2 px-3 text-center border-r border-slate-800/50 whitespace-nowrap">{item.faturadoMesAnterior > 0 ? renderSetaVariacao(item.projVsMesAnterior) : <span className="text-slate-500">-</span>}</td>
                   <td className="py-2 px-3 text-center font-mono text-slate-300 whitespace-nowrap">{item.metaMargemBruta.toFixed(1)}%</td>
                   <td className="py-2 px-3 text-center font-mono text-slate-200 whitespace-nowrap">{item.margemBrutaAtingida.toFixed(1)}%</td>
                   <td className="py-2 px-3 text-center border-r border-slate-800/50 whitespace-nowrap">{renderSetaDiferencaMargem(item.diffMargemBruta)}</td>
@@ -880,13 +886,13 @@ export default function PainelExecutivoPage() {
                 <td className="py-2 px-3 text-right text-indigo-100 whitespace-nowrap">R$ {totalEcom.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td className="py-2 px-3 text-center border-r border-indigo-500/50 whitespace-nowrap">{renderSetaTotal(totalEcom.metaValor > 0 ? ((totalEcom.projecaoFaturamento / totalEcom.metaValor) - 1) * 100 : 0)}</td>
                 <td className="py-2 px-3 text-right font-mono text-indigo-100 whitespace-nowrap">R$ {totalEcom.faturadoMesAnterior.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td className="py-2 px-3 text-center border-r border-indigo-500/50 whitespace-nowrap">{renderSetaTotal(totalEcom.faturadoMesAnterior > 0 ? ((totalEcom.faturadoComRedutor / totalEcom.faturadoMesAnterior) - 1) * 100 : 0)}</td>
+                <td className="py-2 px-3 text-center border-r border-indigo-500/50 whitespace-nowrap">{renderSetaTotal(totalEcom.faturadoMesAnterior > 0 ? ((totalEcom.projecaoFaturamento / totalEcom.faturadoMesAnterior) - 1) * 100 : 0)}</td>
                 <td className="py-2 px-3 text-center font-mono text-indigo-100 whitespace-nowrap">{totalEcom.metaMargemBruta.toFixed(1)}%</td>
                 <td className="py-2 px-3 text-center font-mono text-indigo-100 whitespace-nowrap">{totalEcom.margemBrutaAtingida.toFixed(1)}%</td>
-                <td className="py-2 px-3 text-center border-r border-indigo-500/50 whitespace-nowrap">{renderSetaTotal(totalEcom.diffMargemBruta)}</td>
+                <td className="py-2 px-3 text-center border-r border-indigo-500/50 whitespace-nowrap">{renderSetaTotal(totalEcom.diffMargemBruta, 'p.p.')}</td>
                 <td className="py-2 px-3 text-center font-mono text-indigo-100 whitespace-nowrap">{totalEcom.metaMargemLiq.toFixed(1)}%</td>
                 <td className="py-2 px-3 text-center font-mono text-indigo-100 whitespace-nowrap">{totalEcom.margemLiqAtingida.toFixed(1)}%</td>
-                <td className="py-2 px-3 text-center whitespace-nowrap">{renderSetaTotal(totalEcom.diffMargemLiq)}</td>
+                <td className="py-2 px-3 text-center whitespace-nowrap">{renderSetaTotal(totalEcom.diffMargemLiq, 'p.p.')}</td>
               </tr>
 
               {/* BLOCO LOJAS FÍSICAS */}
@@ -904,7 +910,7 @@ export default function PainelExecutivoPage() {
                   <td className="py-2 px-3 text-right font-bold text-emerald-300 whitespace-nowrap">R$ {item.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="py-2 px-3 text-center border-r border-slate-800/50 whitespace-nowrap">{renderSetaVariacao(item.projecaoVsMeta)}</td>
                   <td className="py-2 px-3 text-right font-mono text-slate-400 whitespace-nowrap">R$ {item.faturadoMesAnterior.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="py-2 px-3 text-center border-r border-slate-800/50 whitespace-nowrap">{renderSetaVariacao(item.projVsMesAnterior)}</td>
+                  <td className="py-2 px-3 text-center border-r border-slate-800/50 whitespace-nowrap">{item.faturadoMesAnterior > 0 ? renderSetaVariacao(item.projVsMesAnterior) : <span className="text-slate-500">-</span>}</td>
                   <td className="py-2 px-3 text-center font-mono text-slate-300 whitespace-nowrap">{item.metaMargemBruta.toFixed(1)}%</td>
                   <td className="py-2 px-3 text-center font-mono text-slate-200 whitespace-nowrap">{item.margemBrutaAtingida.toFixed(1)}%</td>
                   <td className="py-2 px-3 text-center border-r border-slate-800/50 whitespace-nowrap">{renderSetaDiferencaMargem(item.diffMargemBruta)}</td>
@@ -923,10 +929,10 @@ export default function PainelExecutivoPage() {
                 <td className="py-2 px-3 text-right text-emerald-100 whitespace-nowrap">R$ {totalFisico.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td className="py-2 px-3 text-center border-r border-emerald-500/50 whitespace-nowrap">{renderSetaTotal(totalFisico.metaValor > 0 ? ((totalFisico.projecaoFaturamento / totalFisico.metaValor) - 1) * 100 : 0)}</td>
                 <td className="py-2 px-3 text-right font-mono text-emerald-100 whitespace-nowrap">R$ {totalFisico.faturadoMesAnterior.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td className="py-2 px-3 text-center border-r border-emerald-500/50 whitespace-nowrap">{renderSetaTotal(totalFisico.faturadoMesAnterior > 0 ? ((totalFisico.faturadoComRedutor / totalFisico.faturadoMesAnterior) - 1) * 100 : 0)}</td>
+                <td className="py-2 px-3 text-center border-r border-emerald-500/50 whitespace-nowrap">{renderSetaTotal(totalFisico.faturadoMesAnterior > 0 ? ((totalFisico.projecaoFaturamento / totalFisico.faturadoMesAnterior) - 1) * 100 : 0)}</td>
                 <td className="py-2 px-3 text-center font-mono text-emerald-100 whitespace-nowrap">{totalFisico.metaMargemBruta.toFixed(1)}%</td>
                 <td className="py-2 px-3 text-center font-mono text-emerald-100 whitespace-nowrap">{totalFisico.margemBrutaAtingida.toFixed(1)}%</td>
-                <td className="py-2 px-3 text-center border-r border-emerald-500/50 whitespace-nowrap">{renderSetaTotal(totalFisico.diffMargemBruta)}</td>
+                <td className="py-2 px-3 text-center border-r border-emerald-500/50 whitespace-nowrap">{renderSetaTotal(totalFisico.diffMargemBruta, 'p.p.')}</td>
                 <td className="py-2 px-3 text-center text-emerald-200/50 whitespace-nowrap">-</td>
                 <td className="py-2 px-3 text-center text-emerald-200/50 whitespace-nowrap">-</td>
                 <td className="py-2 px-3 text-center text-emerald-200/50 whitespace-nowrap">-</td>
@@ -944,13 +950,13 @@ export default function PainelExecutivoPage() {
                 <td className="py-3 px-3 text-right text-emerald-400 whitespace-nowrap">R$ {totalGeral.projecaoFaturamento.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td className="py-3 px-3 text-center border-r border-slate-700 whitespace-nowrap">{renderSetaTotal(totalGeral.metaValor > 0 ? ((totalGeral.projecaoFaturamento / totalGeral.metaValor) - 1) * 100 : 0)}</td>
                 <td className="py-3 px-3 text-right font-mono text-slate-300 whitespace-nowrap">R$ {totalGeral.faturadoMesAnterior.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td className="py-3 px-3 text-center border-r border-slate-700 whitespace-nowrap">{renderSetaTotal(totalGeral.faturadoMesAnterior > 0 ? ((totalGeral.faturadoComRedutor / totalGeral.faturadoMesAnterior) - 1) * 100 : 0)}</td>
+                <td className="py-3 px-3 text-center border-r border-slate-700 whitespace-nowrap">{renderSetaTotal(totalGeral.faturadoMesAnterior > 0 ? ((totalGeral.projecaoFaturamento / totalGeral.faturadoMesAnterior) - 1) * 100 : 0)}</td>
                 <td className="py-3 px-3 text-center font-mono text-slate-200 whitespace-nowrap">{totalGeral.metaMargemBruta.toFixed(1)}%</td>
                 <td className="py-3 px-3 text-center font-mono text-slate-200 whitespace-nowrap">{totalGeral.margemBrutaAtingida.toFixed(1)}%</td>
-                <td className="py-3 px-3 text-center border-r border-slate-700 whitespace-nowrap">{renderSetaTotal(totalGeral.diffMargemBruta)}</td>
+                <td className="py-3 px-3 text-center border-r border-slate-700 whitespace-nowrap">{renderSetaTotal(totalGeral.diffMargemBruta, 'p.p.')}</td>
                 <td className="py-3 px-3 text-center font-mono text-slate-200 whitespace-nowrap">{totalGeral.metaMargemLiq.toFixed(1)}%</td>
                 <td className="py-3 px-3 text-center font-mono text-slate-200 whitespace-nowrap">{totalGeral.margemLiqAtingida.toFixed(1)}%</td>
-                <td className="py-3 px-3 text-center whitespace-nowrap">{renderSetaTotal(totalGeral.diffMargemLiq)}</td>
+                <td className="py-3 px-3 text-center whitespace-nowrap">{renderSetaTotal(totalGeral.diffMargemLiq, 'p.p.')}</td>
               </tr>
             </tfoot>
           </table>
