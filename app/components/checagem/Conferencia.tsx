@@ -269,6 +269,22 @@ export default function Conferencia({ canais }: { canais: string[] }) {
     XLSX.writeFile(wb, `conferencia_cancelados${filtroCanal ? "_" + filtroCanal.replace(/[^a-zA-Z0-9]+/g, "-") : ""}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
+  // Segunda planilha (arquivo separado): quantas unidades de cada SKU saíram e em quantos pedidos, respeitando os filtros da tela
+  const baixarSaidasPorSku = () => {
+    if (baixa.length === 0) return;
+    const dados = baixa.map((x) => ({ "SKU": x.sku, "Produto": x.produto, "Quantidade total (unidades)": x.quantidade, "Vezes que saiu (pedidos)": x.pedidos }));
+    const ws = XLSX.utils.json_to_sheet(dados);
+    dados.forEach((d, i) => { const c = ws["A" + (i + 2)]; if (c) { c.t = "s"; c.v = String(d["SKU"]); } });   // SKU como texto: não perde zeros à esquerda
+    const n = dados.length + 2;
+    ws["A" + n] = { t: "s", v: "TOTAL" };
+    ws["C" + n] = { t: "n", v: totalPecas };
+    ws["D" + n] = { t: "n", v: dados.reduce((a, d) => a + d["Vezes que saiu (pedidos)"], 0) };
+    ws["!ref"] = `A1:D${n}`;
+    ws["!cols"] = [{ wch: 20 }, { wch: 44 }, { wch: 26 }, { wch: 24 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Saídas por SKU");
+    XLSX.writeFile(wb, `saidas_por_sku${filtroCanal ? "_" + filtroCanal.replace(/[^a-zA-Z0-9]+/g, "-") : ""}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
   const limpar = async (o: "cancelados" | "notas" | "itens") => {
     const qtd = o === "cancelados" ? cancelados.length : o === "notas" ? totalNotas : totalItens;
     if (qtd === 0) return;
@@ -398,6 +414,7 @@ export default function Conferencia({ canais }: { canais: string[] }) {
             </select>
             <input type="text" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="🔍 Pedido, NF-e, comprador ou SKU" data-conf-busca className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none w-60" />
             <button type="button" onClick={baixar} disabled={base.length === 0} data-conf-baixar className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-xl text-xs uppercase cursor-pointer shadow">⬇️ Baixar Excel ({base.length})</button>
+            <button type="button" onClick={baixarSaidasPorSku} disabled={baixa.length === 0} data-conf-baixar-skus title="Planilha separada: cada SKU com a quantidade total e em quantos pedidos saiu (segue os filtros da tela)" className="bg-sky-700 hover:bg-sky-600 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-xl text-xs uppercase cursor-pointer shadow">⬇️ Saídas por SKU ({baixa.length})</button>
             <button type="button" onClick={() => limpar("cancelados")} disabled={cancelados.length === 0} data-conf-limpar-cancelados className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[11px] font-bold py-2 px-3 rounded-xl cursor-pointer disabled:opacity-40">🗑️ Apagar cancelados</button>
             <button type="button" onClick={() => limpar("notas")} disabled={totalNotas === 0} data-conf-limpar-notas className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[11px] font-bold py-2 px-3 rounded-xl cursor-pointer disabled:opacity-40">🗑️ Apagar notas</button>
             <button type="button" onClick={() => limpar("itens")} disabled={totalItens === 0} data-conf-limpar-itens className="bg-rose-950/60 text-rose-400 border border-rose-900/50 text-[11px] font-bold py-2 px-3 rounded-xl cursor-pointer disabled:opacity-40">🗑️ Apagar SKUs</button>
