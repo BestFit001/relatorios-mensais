@@ -8,6 +8,7 @@ import { buscarTudo } from "../../../lib/buscarTudo";
 import { indiceDaLetra } from "../../../lib/cobertura";
 import { lerArquivoComoLinhas } from "../../../lib/lerArquivo";
 import { achar, chaveDoPedido, interpretarTermo } from "../../../lib/checagemCanceladosLogica";
+import { acharCabecalho, CABECALHOS_NOTAS, CABECALHOS_VENDAS } from "../../../lib/conferenciaColunas";
 import { baixaPorSku, cruzar, juntarItens, lerItens, lerNotas, textoDosItens, type ItemGuardado, type NotaGuardada } from "../../../lib/conferenciaCanceladosLogica";
 
 const CHAVE_CANC = "bestfit_conferencia_cancelados_form";
@@ -18,10 +19,14 @@ const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", curren
 const campo = "w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white outline-none focus:border-indigo-500";
 const arquivoCls = "block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-indigo-600 file:text-white file:font-bold file:cursor-pointer cursor-pointer bg-slate-950 p-3 rounded-xl border border-slate-700";
 
-interface FormCanc { linha: string; colPedido: string; colStatus: string; termo: string }
-const FORM_CANC: FormCanc = { linha: "2", colPedido: "A", colStatus: "B", termo: "cancelado" };
-interface FormNotas { linha: string; colPedido: string; colNf: string; colComprador: string; colValor: string; periodo: string }
-const FORM_NOTAS: FormNotas = { linha: "2", colPedido: "AI", colNf: "", colComprador: "", colValor: "", periodo: "" };
+// auto = acha as colunas pelo texto do cabeçalho da planilha; as letras digitadas só valem quando o cabeçalho não é reconhecido (ou com auto desligado)
+interface FormCanc { auto: boolean; linha: string; colPedido: string; colStatus: string; colSku: string; colQtd: string; colProduto: string; termo: string }
+const FORM_CANC: FormCanc = { auto: true, linha: "2", colPedido: "A", colStatus: "B", colSku: "", colQtd: "", colProduto: "", termo: "cancel" };
+interface FormNotas { auto: boolean; linha: string; colPedido: string; colNf: string; colComprador: string; colValor: string; periodo: string }
+const FORM_NOTAS: FormNotas = { auto: true, linha: "2", colPedido: "AI", colNf: "", colComprador: "", colValor: "", periodo: "" };
+// "cancel" pega cancelado, cancelada, cancelou... (o antigo "cancelado" deixava de fora "Cancelada pelo comprador" do Mercado Livre)
+const formCancDoCanal = (f?: Partial<FormCanc>): FormCanc => { const m = { ...FORM_CANC, ...(f || {}) }; if (m.termo.trim().toLowerCase() === "cancelado") m.termo = "cancel"; return m; };
+const letraDoIndice = (i: number) => { let t = "", n = i + 1; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
 interface FormItens { linha: string; colPedido: string; colSku: string; colQtd: string; colProduto: string }
 const FORM_ITENS: FormItens = { linha: "2", colPedido: "A", colSku: "", colQtd: "", colProduto: "" };
 type Aviso = { tipo: "ok" | "erro" | "info"; linhas: string[] } | null;
@@ -92,25 +97,41 @@ export default function Conferencia({ canais }: { canais: string[] }) {
     carregar().catch((e) => { setCarregando(false); setAviso({ tipo: "erro", linhas: ["Não consegui carregar a conferência: " + (e?.message || e)] }); });
   }, [carregar]);
   useEffect(() => { if (!canal && canais.length) setCanal(canais[0]); }, [canais, canal]);
-  useEffect(() => { if (canal) setFormCanc(formsCanc[canal] || FORM_CANC); }, [canal, formsCanc]);
+  useEffect(() => { if (canal) setFormCanc(formCancDoCanal(formsCanc[canal])); }, [canal, formsCanc]);
 
-  // ---- 1) cancelados ----
+  // ---- 1) planilha de vendas: cancelados + SKU + quantidade de uma vez ----
   const subirCancelados = async (arquivos: File[]) => {
     if (arquivos.length === 0) return;
-    const iPed = indiceDaLetra(formCanc.colPedido), iSta = indiceDaLetra(formCanc.colStatus);
-    const linhaInicial = parseInt(formCanc.linha, 10);
-    const termo = formCanc.termo.trim();
+    const f = formCanc;
+    const termo = f.termo.trim();
     if (!canal) return setAviso({ tipo: "erro", linhas: ["Escolha o canal."] });
-    if (iPed < 0 || iSta < 0) return setAviso({ tipo: "erro", linhas: ["Informe as letras das colunas do pedido e do status (ex.: A, B, AD)."] });
-    if (!(linhaInicial >= 1)) return setAviso({ tipo: "erro", linhas: ["A linha inicial deve ser 1 ou mais (use 2 se a primeira linha for o cabeçalho)."] });
-    if (interpretarTermo(termo).length === 0) return setAviso({ tipo: "erro", linhas: ["Escreva as palavras que devem constar no status (ex.: cancelado)."] });
+    if (interpretarTermo(termo).length === 0) return setAviso({ tipo: "erro", linhas: ["Escreva as palavras que devem constar no status (ex.: cancel)."] });
+    const opc = (v: string) => (v.trim() ? indiceDaLetra(v) : -1);
+    const manual = { iPed: indiceDaLetra(f.colPedido), iSta: indiceDaLetra(f.colStatus), iSku: opc(f.colSku), iQtd: opc(f.colQtd), iProd: opc(f.colProduto), linhaInicial: parseInt(f.linha, 10) };
+    if ((f.colSku.trim() && manual.iSku < 0) || (f.colQtd.trim() && manual.iQtd < 0) || (f.colProduto.trim() && manual.iProd < 0)) return setAviso({ tipo: "erro", linhas: ["Alguma letra de coluna está inválida. Use só letras (ex.: A, B, AD)."] });
+    if (!f.auto && (manual.iPed < 0 || manual.iSta < 0)) return setAviso({ tipo: "erro", linhas: ["Informe as letras das colunas do pedido e do status (ex.: A, D)."] });
+    if (!f.auto && !(manual.linhaInicial >= 1)) return setAviso({ tipo: "erro", linhas: ["A linha inicial deve ser 1 ou mais (use 2 se a primeira linha for o cabeçalho)."] });
     setProcessando("cancelados"); setAviso(null);
-    const novas = { ...formsCanc, [canal]: formCanc }; setFormsCanc(novas); guardar(CHAVE_CANC, novas);
+    const novas = { ...formsCanc, [canal]: f }; setFormsCanc(novas); guardar(CHAVE_CANC, novas);
     try {
       const ja = new Set(cancelados.filter((c) => c.canal === canal).map((c) => String(c.chave)));
-      const saida: string[] = []; let achados = 0, novos = 0;
+      const saida: string[] = []; let achados = 0, novos = 0, itensGuardados = 0; const pedidosComSku = new Set<string>();
+      let detectado: Partial<FormCanc> | null = null;
       for (const arquivo of arquivos) {
         const linhas = await lerArquivoComoLinhas(arquivo);
+        let { iPed, iSta, iSku, iQtd, iProd, linhaInicial } = manual; let origem = "letras digitadas";
+        if (f.auto) {
+          // cada canal tem seu cabeçalho: o que o cabeçalho trouxer vale; o que faltar completa com as letras salvas deste canal
+          const h = acharCabecalho(linhas, CABECALHOS_VENDAS);
+          if (h.linhaCabecalho >= 0) {
+            iPed = h.colunas.pedido; iSta = h.colunas.status ?? manual.iSta; iSku = h.colunas.sku ?? manual.iSku; iQtd = h.colunas.quantidade ?? manual.iQtd; iProd = h.colunas.produto ?? manual.iProd;
+            linhaInicial = h.linhaCabecalho + 2; origem = `cabeçalho da linha ${h.linhaCabecalho + 1}`;
+            const faltou = [h.colunas.status === undefined && "status", h.colunas.sku === undefined && "SKU", h.colunas.quantidade === undefined && "quantidade"].filter(Boolean) as string[];
+            if (faltou.length) saida.push(`${arquivo.name}: no cabeçalho não achei ${faltou.join(", ")}; usei as letras salvas deste canal (se estiverem vazias, esse dado não é guardado). Digite-as em “Ajustar colunas manualmente”: ficam lembradas para o canal ${canal}.`);
+            detectado = { linha: String(linhaInicial), colPedido: letraDoIndice(iPed), colStatus: iSta >= 0 ? letraDoIndice(iSta) : f.colStatus, colSku: iSku >= 0 ? letraDoIndice(iSku) : "", colQtd: iQtd >= 0 ? letraDoIndice(iQtd) : "", colProduto: iProd >= 0 ? letraDoIndice(iProd) : "" };
+          } else saida.push(`${arquivo.name}: não reconheci o cabeçalho deste canal; usei as letras de “Ajustar colunas manualmente” (ficam lembradas para o canal ${canal}).`);
+        }
+        if (iPed < 0 || iSta < 0 || !(linhaInicial >= 1)) throw new Error(`${arquivo.name}: não achei as colunas do pedido e do status. Abra “Ajustar colunas” e digite as letras.`);
         const r = achar(linhas, { linhaInicial, colPedido: iPed, colStatus: iSta, termo });
         const lote = r.achados.map((a) => ({ canal, id_pedido: a.idPedido, chave: chaveDoPedido(a.idPedido), status_planilha: a.status, termo, arquivo: arquivo.name })).filter((l) => l.chave);
         for (let i = 0; i < lote.length; i += 500) {
@@ -120,13 +141,31 @@ export default function Conferencia({ canais }: { canais: string[] }) {
         const n = lote.filter((l) => !ja.has(l.chave)).length;
         lote.forEach((l) => ja.add(l.chave));
         achados += lote.length; novos += n;
-        saida.push(`${arquivo.name}: ${r.lidas} linha(s) lida(s), ${lote.length} pedido(s) com “${termo}” no status (${n} novo(s)).`);
+        const cols = [`pedido ${letraDoIndice(iPed)}`, `status ${letraDoIndice(iSta)}`, ...(iSku >= 0 ? [`SKU ${letraDoIndice(iSku)}`] : []), ...(iQtd >= 0 ? [`quantidade ${letraDoIndice(iQtd)}`] : [])].join(", ");
+        saida.push(`${arquivo.name}: ${r.lidas} linha(s) lida(s), ${lote.length} pedido(s) com “${termo}” no status (${n} novo(s)). Colunas (${origem}): ${cols}.`);
         if (lote.length === 0) {
           const ex = Array.from(new Set(linhas.slice(Math.max(0, linhaInicial - 1), linhaInicial + 199).map((l) => String(l[iSta] ?? "").trim()).filter(Boolean))).slice(0, 5);
-          saida.push(ex.length ? `Nada encontrado. Status lidos na coluna ${formCanc.colStatus.toUpperCase()}: ${ex.map((e) => `“${e}”`).join(", ")}. Confira a coluna e as palavras.` : `Nada encontrado e a coluna ${formCanc.colStatus.toUpperCase()} está vazia a partir da linha ${linhaInicial}.`);
+          saida.push(ex.length ? `Nada encontrado. Status lidos na coluna ${letraDoIndice(iSta)}: ${ex.map((e) => `“${e}”`).join(", ")}. Confira a coluna e as palavras.` : `Nada encontrado e a coluna ${letraDoIndice(iSta)} está vazia. Confira a coluna e a linha inicial.`);
         }
+        // SKU e quantidade da mesma planilha, só dos pedidos cancelados
+        if (lote.length > 0 && iSku >= 0) {
+          const ri = lerItens(linhas, { linhaInicial, colPedido: iPed, colSku: iSku, colQtd: iQtd, colProduto: iProd }, new Set(lote.map((l) => l.chave)));
+          const loteI = ri.itens.map((i) => ({ chave: i.chave, id_pedido: i.id_pedido, sku: i.sku, quantidade: i.quantidade, produto: i.produto || null, arquivo: arquivo.name }));
+          for (let i = 0; i < loteI.length; i += 500) {
+            const { error } = await supabase.from("conferencia_itens").upsert(loteI.slice(i, i + 500), { onConflict: "chave,sku" });
+            if (error) throw new Error(error.message);
+          }
+          loteI.forEach((i) => pedidosComSku.add(i.chave)); itensGuardados += loteI.length;
+          let l = `SKU e quantidade: ${loteI.length} item(ns) de ${ri.pedidos} pedido(s) cancelado(s).`;
+          if (ri.semSku) l += ` ${ri.semSku} linha(s) do cancelado sem SKU.`;
+          if (ri.qtdInvalida) l += ` ${ri.qtdInvalida} linha(s) com quantidade inválida (não guardadas).`;
+          saida.push(l);
+        } else if (lote.length > 0) saida.push("Não achei a coluna de SKU desta planilha: guardei só os cancelados. Digite a letra do SKU (e da quantidade) em “Ajustar colunas manualmente” e suba de novo; o SKU também pode vir das vendas guardadas ou de “Outra planilha de SKU”.");
       }
-      setAviso({ tipo: achados ? "ok" : "info", linhas: [`${canal}: ${achados} cancelado(s) guardado(s) na conferência (${novos} novo(s)).`, ...saida] });
+      if (detectado) {   // lembra as colunas achadas para este canal (aparecem em “Ajustar colunas manualmente”)
+        const salvo = { ...f, ...detectado } as FormCanc; const nf = { ...novas, [canal]: salvo }; setFormsCanc(nf); setFormCanc(salvo); guardar(CHAVE_CANC, nf);
+      }
+      setAviso({ tipo: achados ? "ok" : "info", linhas: [`${canal}: ${achados} cancelado(s) guardado(s) na conferência (${novos} novo(s))${itensGuardados ? `, com SKU e quantidade de ${pedidosComSku.size} pedido(s)` : ""}.`, ...saida] });
       await carregar();
     } catch (e: any) { setAviso({ tipo: "erro", linhas: ["Erro ao processar a planilha: " + (e?.message || e)] }); }
     setProcessando("");
@@ -136,18 +175,28 @@ export default function Conferencia({ canais }: { canais: string[] }) {
   const subirNotas = async (arquivos: File[]) => {
     if (arquivos.length === 0) return;
     const f = formNotas;
-    const iPed = indiceDaLetra(f.colPedido);
-    const iNf = f.colNf.trim() ? indiceDaLetra(f.colNf) : -1, iNome = f.colComprador.trim() ? indiceDaLetra(f.colComprador) : -1, iValor = f.colValor.trim() ? indiceDaLetra(f.colValor) : -1;
-    const linhaInicial = parseInt(f.linha, 10);
-    if (iPed < 0) return setAviso({ tipo: "erro", linhas: ["Informe a letra da coluna de onde sai o número do pedido (ex.: AI)."] });
-    if ((f.colNf.trim() && iNf < 0) || (f.colComprador.trim() && iNome < 0) || (f.colValor.trim() && iValor < 0)) return setAviso({ tipo: "erro", linhas: ["Alguma letra de coluna está inválida. Use só letras (ex.: A, B, AD)."] });
-    if (iNf < 0 && iNome < 0 && iValor < 0) return setAviso({ tipo: "erro", linhas: ["Informe pelo menos uma coluna para guardar (NF-e, nome do comprador ou valor do pedido)."] });
-    if (!(linhaInicial >= 1)) return setAviso({ tipo: "erro", linhas: ["A linha inicial deve ser 1 ou mais (use 2 se a primeira linha for o cabeçalho)."] });
+    const opc = (v: string) => (v.trim() ? indiceDaLetra(v) : -1);
+    const manual = { iPed: indiceDaLetra(f.colPedido), iNf: opc(f.colNf), iNome: opc(f.colComprador), iValor: opc(f.colValor), linhaInicial: parseInt(f.linha, 10) };
+    if ((f.colNf.trim() && manual.iNf < 0) || (f.colComprador.trim() && manual.iNome < 0) || (f.colValor.trim() && manual.iValor < 0)) return setAviso({ tipo: "erro", linhas: ["Alguma letra de coluna está inválida. Use só letras (ex.: A, B, AD)."] });
+    if (!f.auto) {
+      if (manual.iPed < 0) return setAviso({ tipo: "erro", linhas: ["Informe a letra da coluna de onde sai o número do pedido (ex.: AI)."] });
+      if (manual.iNf < 0 && manual.iNome < 0 && manual.iValor < 0) return setAviso({ tipo: "erro", linhas: ["Informe pelo menos uma coluna para guardar (NF-e, nome do comprador ou valor do pedido)."] });
+      if (!(manual.linhaInicial >= 1)) return setAviso({ tipo: "erro", linhas: ["A linha inicial deve ser 1 ou mais (use 2 se a primeira linha for o cabeçalho)."] });
+    }
     setProcessando("notas"); setAviso(null); guardar(CHAVE_NOTAS, f);
     try {
       const saida: string[] = []; let guardadas = 0;
       for (const arquivo of arquivos) {
         const linhas = await lerArquivoComoLinhas(arquivo);
+        let { iPed, iNf, iNome, iValor, linhaInicial } = manual; let origem = "letras digitadas";
+        if (f.auto) {
+          const h = acharCabecalho(linhas, CABECALHOS_NOTAS);
+          if (h.linhaCabecalho >= 0) {
+            iPed = h.colunas.pedido; iNf = h.colunas.nf ?? manual.iNf; iNome = h.colunas.comprador ?? manual.iNome; iValor = h.colunas.valor ?? manual.iValor;
+            linhaInicial = h.linhaCabecalho + 2; origem = `cabeçalho da linha ${h.linhaCabecalho + 1}`;
+          } else saida.push(`${arquivo.name}: não reconheci o cabeçalho (procuro “Observações”, “Número Nota”, “Contato”, “Valor Nota”); usei as letras de “Ajustar colunas”.`);
+        }
+        if (iPed < 0 || !(linhaInicial >= 1) || (iNf < 0 && iNome < 0 && iValor < 0)) throw new Error(`${arquivo.name}: não achei as colunas das notas. Abra “Ajustar colunas” e digite as letras.`);
         const r = lerNotas(linhas, { linhaInicial, colPedido: iPed, colNf: iNf, colComprador: iNome, colValor: iValor });
         const periodo = f.periodo.trim() || arquivo.name.replace(/\.[^.]+$/, "");
         const lote = Array.from(r.notas.values()).map((n) => ({
@@ -159,7 +208,8 @@ export default function Conferencia({ canais }: { canais: string[] }) {
           if (error) throw new Error(error.message);
         }
         guardadas += lote.length;
-        let l = `${arquivo.name}: ${r.lidas} linha(s) lida(s), ${lote.length} nota(s) guardada(s) (período “${periodo}”).`;
+        const cols = [`pedido ${letraDoIndice(iPed)}`, ...(iNf >= 0 ? [`NF-e ${letraDoIndice(iNf)}`] : []), ...(iNome >= 0 ? [`comprador ${letraDoIndice(iNome)}`] : []), ...(iValor >= 0 ? [`valor ${letraDoIndice(iValor)}`] : [])].join(", ");
+        let l = `${arquivo.name}: ${r.lidas} linha(s) lida(s), ${lote.length} nota(s) guardada(s) (período “${periodo}”). Colunas (${origem}): ${cols}.`;
         if (r.semPedido) l += ` ${r.semPedido} linha(s) sem número de pedido reconhecido.`;
         if (r.repetidos) l += ` ${r.repetidos} pedido(s) em mais de uma linha: guardei a primeira.`;
         saida.push(l);
@@ -298,7 +348,7 @@ export default function Conferencia({ canais }: { canais: string[] }) {
   return (
     <div className="space-y-6" data-conferencia>
       <div className="p-4 rounded-xl border border-indigo-900/50 bg-indigo-950/30 text-xs text-indigo-200" data-conferencia-info>
-        <strong className="text-white">Conferência de meses antigos.</strong> Suba aqui os cancelados, as notas (NF-e) e o SKU/quantidade dos pedidos de meses que não estão na base de Faturados. Tudo fica guardado numa base separada, <strong className="text-white">não entra em Faturados</strong> e não altera dashboards, rankings nem totais. Pode voltar depois: o que foi subido continua aqui até você apagar.
+        <strong className="text-white">Conferência de meses antigos.</strong> Suba aqui a planilha de vendas (traz os cancelados, o SKU e a quantidade) e a planilha de notas (NF-e) de meses que não estão na base de Faturados. Tudo fica guardado numa base separada, <strong className="text-white">não entra em Faturados</strong> e não altera dashboards, rankings nem totais. Pode voltar depois: o que foi subido continua aqui até você apagar.
       </div>
 
       {aviso && (
@@ -308,65 +358,54 @@ export default function Conferencia({ canais }: { canais: string[] }) {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-3">
+      <div className="grid gap-6 xl:grid-cols-2">
         <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-conf-cancelados>
           <div>
-            <h2 className="text-sm font-black text-white uppercase tracking-wider">1. Pedidos cancelados <span className="text-slate-400 font-mono" data-conf-qtd-canc>({cancelados.length} guardados)</span></h2>
-            <p className="text-[11px] text-slate-400 mt-1">Planilha do canal: indique as colunas do pedido e do status e as palavras que precisam constar (ex.: “cancelado”; use “;” para várias).</p>
+            <h2 className="text-sm font-black text-white uppercase tracking-wider">1. Planilha de vendas <span className="text-slate-400 font-mono" data-conf-qtd-canc>({cancelados.length} cancelados guardados)</span></h2>
+            <p className="text-[11px] text-slate-400 mt-1">Planilha do canal, do jeito que baixou. Uma só planilha traz os cancelados, o SKU e a quantidade de cada pedido.</p>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
-            <div className="col-span-2 md:col-span-2">
+          <div className="grid grid-cols-2 gap-3 items-end">
+            <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Canal</label>
               <select value={canal} onChange={(e) => setCanal(e.target.value)} data-conf-canal className={campo + " cursor-pointer font-bold"}>{canais.map((c) => <option key={c} value={c}>{c}</option>)}</select>
             </div>
-            <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha inicial</label>
-              <input type="number" min={1} value={formCanc.linha} onChange={(e) => setFormCanc({ ...formCanc, linha: e.target.value })} data-conf-linha className={campo + " font-mono"} /></div>
-            <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. pedido</label>
-              <input type="text" maxLength={3} value={formCanc.colPedido} onChange={(e) => setFormCanc({ ...formCanc, colPedido: e.target.value.toUpperCase() })} data-conf-col-pedido className={campo + " font-mono text-center font-bold"} /></div>
-            <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. status</label>
-              <input type="text" maxLength={3} value={formCanc.colStatus} onChange={(e) => setFormCanc({ ...formCanc, colStatus: e.target.value.toUpperCase() })} data-conf-col-status className={campo + " font-mono text-center font-bold"} /></div>
-            <div className="col-span-2 md:col-span-5"><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Palavras no status</label>
-              <input type="text" value={formCanc.termo} onChange={(e) => setFormCanc({ ...formCanc, termo: e.target.value })} data-conf-termo className={campo + " font-bold"} /></div>
+            <div><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Palavras no status</label>
+              <input type="text" value={formCanc.termo} onChange={(e) => setFormCanc({ ...formCanc, termo: e.target.value })} data-conf-termo title="“cancel” pega cancelado, cancelada, cancelou… Use “;” para várias palavras." className={campo + " font-bold"} /></div>
           </div>
+          <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            <input type="checkbox" checked={formCanc.auto} onChange={(e) => setFormCanc({ ...formCanc, auto: e.target.checked })} data-conf-auto className="accent-indigo-500" />
+            Achar as colunas sozinho pelo cabeçalho (pedido, status, SKU e unidades)
+          </label>
+          <details className="rounded-xl border border-slate-800 bg-slate-950/40" data-conf-colunas>
+            <summary className="cursor-pointer text-[11px] font-bold text-slate-400 p-3">Ajustar colunas manualmente</summary>
+            <div className="grid grid-cols-3 gap-3 items-end p-3 pt-0">
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha inicial</label>
+                <input type="number" min={1} value={formCanc.linha} onChange={(e) => setFormCanc({ ...formCanc, linha: e.target.value })} data-conf-linha className={campo + " font-mono"} /></div>
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. pedido</label>
+                <input type="text" maxLength={3} value={formCanc.colPedido} onChange={(e) => setFormCanc({ ...formCanc, colPedido: e.target.value.toUpperCase() })} data-conf-col-pedido className={campo + " font-mono text-center font-bold"} /></div>
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. status</label>
+                <input type="text" maxLength={3} value={formCanc.colStatus} onChange={(e) => setFormCanc({ ...formCanc, colStatus: e.target.value.toUpperCase() })} data-conf-col-status className={campo + " font-mono text-center font-bold"} /></div>
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. SKU</label>
+                <input type="text" maxLength={3} value={formCanc.colSku} onChange={(e) => setFormCanc({ ...formCanc, colSku: e.target.value.toUpperCase() })} data-conf-col-sku className={campo + " font-mono text-center font-bold"} /></div>
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. quantidade</label>
+                <input type="text" maxLength={3} value={formCanc.colQtd} onChange={(e) => setFormCanc({ ...formCanc, colQtd: e.target.value.toUpperCase() })} data-conf-col-qtd placeholder="vazio = 1" className={campo + " font-mono text-center font-bold"} /></div>
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. produto</label>
+                <input type="text" maxLength={3} value={formCanc.colProduto} onChange={(e) => setFormCanc({ ...formCanc, colProduto: e.target.value.toUpperCase() })} data-conf-col-produto className={campo + " font-mono text-center font-bold"} /></div>
+              <p className="col-span-3 text-[10px] text-slate-500">Estas letras só valem com a opção acima desligada ou quando o cabeçalho da planilha não é reconhecido.</p>
+            </div>
+          </details>
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha(s) do canal (xlsx, xls, csv) — pode escolher várias</label>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha(s) de vendas (xlsx, xls, csv) — pode escolher várias</label>
             <input type="file" multiple accept=".xlsx,.xls,.csv" disabled={!!processando || carregando || !canal} data-conf-upload-cancelados
               onChange={(e) => { const a = Array.from(e.target.files || []); e.target.value = ""; subirCancelados(a); }} className={arquivoCls} />
-            {processando === "cancelados" && <p className="text-xs text-slate-400 mt-2">Lendo a planilha e guardando os cancelados…</p>}
+            {processando === "cancelados" && <p className="text-xs text-slate-400 mt-2">Lendo a planilha e guardando cancelados, SKU e quantidade…</p>}
           </div>
-        </div>
-
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-conf-notas>
+          <details className="rounded-xl border border-slate-800 bg-slate-950/40 p-3" data-conf-itens-det>
+            <summary className="cursor-pointer text-[11px] font-bold text-slate-400">Outra planilha de SKU (opcional)</summary>
+        <div className="space-y-4 pt-4 border-t border-slate-800" data-conf-itens>
           <div>
-            <h2 className="text-sm font-black text-white uppercase tracking-wider">2. Notas (NF-e de saída) <span className="text-slate-400 font-mono" data-conf-qtd-notas>({totalNotas} guardadas)</span></h2>
-            <p className="text-[11px] text-slate-400 mt-1">Mesma planilha usada em Faturados. O número do pedido é lido da coluna indicada (dentro do texto da observação). Deixe em branco o que não quiser guardar.</p>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
-            <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha inicial</label>
-              <input type="number" min={1} value={formNotas.linha} onChange={(e) => setFormNotas({ ...formNotas, linha: e.target.value })} data-conf-n-linha className={campo + " font-mono"} /></div>
-            <div><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Col. nº pedido</label>
-              <input type="text" maxLength={3} value={formNotas.colPedido} onChange={(e) => setFormNotas({ ...formNotas, colPedido: e.target.value.toUpperCase() })} data-conf-n-col-pedido className={campo + " font-mono text-center font-bold"} /></div>
-            <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. NF-e</label>
-              <input type="text" maxLength={3} value={formNotas.colNf} onChange={(e) => setFormNotas({ ...formNotas, colNf: e.target.value.toUpperCase() })} data-conf-n-col-nf className={campo + " font-mono text-center font-bold"} /></div>
-            <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. comprador</label>
-              <input type="text" maxLength={3} value={formNotas.colComprador} onChange={(e) => setFormNotas({ ...formNotas, colComprador: e.target.value.toUpperCase() })} data-conf-n-col-comprador className={campo + " font-mono text-center font-bold"} /></div>
-            <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. valor</label>
-              <input type="text" maxLength={3} value={formNotas.colValor} onChange={(e) => setFormNotas({ ...formNotas, colValor: e.target.value.toUpperCase() })} data-conf-n-col-valor className={campo + " font-mono text-center font-bold"} /></div>
-            <div className="col-span-2 md:col-span-5"><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Período desta(s) planilha(s) (opcional, ex.: Ago/2026; se vazio usa o nome do arquivo)</label>
-              <input type="text" value={formNotas.periodo} onChange={(e) => setFormNotas({ ...formNotas, periodo: e.target.value })} data-conf-n-periodo maxLength={40} className={campo} /></div>
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha(s) de notas (xlsx, xls, csv) — pode escolher várias</label>
-            <input type="file" multiple accept=".xlsx,.xls,.csv,.txt" disabled={!!processando || carregando} data-conf-upload-notas
-              onChange={(e) => { const a = Array.from(e.target.files || []); e.target.value = ""; subirNotas(a); }} className={arquivoCls} />
-            {processando === "notas" && <p className="text-xs text-slate-400 mt-2">Lendo a planilha e guardando as notas…</p>}
-          </div>
-        </div>
-
-        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-conf-itens>
-          <div>
-            <h2 className="text-sm font-black text-white uppercase tracking-wider">3. SKU e quantidade <span className="text-slate-400 font-mono" data-conf-qtd-itens>({totalItens} guardados)</span></h2>
-            <p className="text-[11px] text-slate-400 mt-1">Planilha de vendas do mês (ou a dos cancelados, se ela trouxer o SKU). Só os pedidos cancelados são guardados. Pedido com vários SKUs vira uma linha por SKU. Se o pedido já estiver nas vendas guardadas, o SKU vem de lá sozinho.</p>
+            <h3 className="text-xs font-black text-white uppercase tracking-wider">SKU e quantidade de outra planilha <span className="text-slate-400 font-mono" data-conf-qtd-itens>({totalItens} guardados)</span></h3>
+            <p className="text-[11px] text-slate-400 mt-1">Use só se a planilha de vendas do passo 1 não trouxe o SKU. Só os pedidos cancelados são guardados. Pedido com vários SKUs vira uma linha por SKU. Se o pedido já estiver nas vendas guardadas, o SKU vem de lá sozinho.</p>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
             <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha inicial</label>
@@ -385,6 +424,44 @@ export default function Conferencia({ canais }: { canais: string[] }) {
             <input type="file" multiple accept=".xlsx,.xls,.csv" disabled={!!processando || carregando} data-conf-upload-itens
               onChange={(e) => { const a = Array.from(e.target.files || []); e.target.value = ""; subirItens(a); }} className={arquivoCls} />
             {processando === "itens" && <p className="text-xs text-slate-400 mt-2">Lendo a planilha e guardando SKU e quantidade…</p>}
+          </div>
+        </div>
+
+          </details>
+        </div>
+
+        <div className="bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4" data-conf-notas>
+          <div>
+            <h2 className="text-sm font-black text-white uppercase tracking-wider">2. Notas (NF-e de saída) <span className="text-slate-400 font-mono" data-conf-qtd-notas>({totalNotas} guardadas)</span></h2>
+            <p className="text-[11px] text-slate-400 mt-1">Mesma planilha de notas usada em Faturados. O número do pedido é lido da observação da nota.</p>
+          </div>
+          <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Período desta(s) planilha(s) (opcional, ex.: Ago/2026; se vazio usa o nome do arquivo)</label>
+            <input type="text" value={formNotas.periodo} onChange={(e) => setFormNotas({ ...formNotas, periodo: e.target.value })} data-conf-n-periodo maxLength={40} className={campo} /></div>
+          <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            <input type="checkbox" checked={formNotas.auto} onChange={(e) => setFormNotas({ ...formNotas, auto: e.target.checked })} data-conf-n-auto className="accent-indigo-500" />
+            Achar as colunas sozinho pelo cabeçalho (observações, número da nota, contato e valor)
+          </label>
+          <details className="rounded-xl border border-slate-800 bg-slate-950/40" data-conf-n-colunas>
+            <summary className="cursor-pointer text-[11px] font-bold text-slate-400 p-3">Ajustar colunas manualmente</summary>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end p-3 pt-0">
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Linha inicial</label>
+                <input type="number" min={1} value={formNotas.linha} onChange={(e) => setFormNotas({ ...formNotas, linha: e.target.value })} data-conf-n-linha className={campo + " font-mono"} /></div>
+              <div><label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Col. nº pedido</label>
+                <input type="text" maxLength={3} value={formNotas.colPedido} onChange={(e) => setFormNotas({ ...formNotas, colPedido: e.target.value.toUpperCase() })} data-conf-n-col-pedido className={campo + " font-mono text-center font-bold"} /></div>
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. NF-e</label>
+                <input type="text" maxLength={3} value={formNotas.colNf} onChange={(e) => setFormNotas({ ...formNotas, colNf: e.target.value.toUpperCase() })} data-conf-n-col-nf className={campo + " font-mono text-center font-bold"} /></div>
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. comprador</label>
+                <input type="text" maxLength={3} value={formNotas.colComprador} onChange={(e) => setFormNotas({ ...formNotas, colComprador: e.target.value.toUpperCase() })} data-conf-n-col-comprador className={campo + " font-mono text-center font-bold"} /></div>
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Col. valor</label>
+                <input type="text" maxLength={3} value={formNotas.colValor} onChange={(e) => setFormNotas({ ...formNotas, colValor: e.target.value.toUpperCase() })} data-conf-n-col-valor className={campo + " font-mono text-center font-bold"} /></div>
+              <p className="col-span-2 md:col-span-5 text-[10px] text-slate-500">Estas letras só valem com a opção acima desligada ou quando o cabeçalho da planilha não é reconhecido. Deixe em branco o que não quiser guardar.</p>
+            </div>
+          </details>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Planilha(s) de notas (xlsx, xls, csv) — pode escolher várias</label>
+            <input type="file" multiple accept=".xlsx,.xls,.csv,.txt" disabled={!!processando || carregando} data-conf-upload-notas
+              onChange={(e) => { const a = Array.from(e.target.files || []); e.target.value = ""; subirNotas(a); }} className={arquivoCls} />
+            {processando === "notas" && <p className="text-xs text-slate-400 mt-2">Lendo a planilha e guardando as notas…</p>}
           </div>
         </div>
       </div>
