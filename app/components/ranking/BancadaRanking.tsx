@@ -11,7 +11,6 @@ const DURACAO_MS = 14000;
 const ALTURA = 190;                // px da cena
 const CHAO = ALTURA - 22;          // linha do chão
 const ALT_BALCAO = 54;
-const MEDALHAS = ["🥇", "🥈", "🥉"];
 const PELES = ["#f5d0b0", "#e0ac80", "#c68a5c", "#8d5a3a", "#f0c8a0"];
 const CAMISAS = ["#38bdf8", "#f472b6", "#a3e635", "#fb923c", "#c084fc", "#facc15", "#2dd4bf", "#f87171"];
 const CABELOS = ["#2b1b12", "#5a3a22", "#16120f", "#a16207", "#7c2d12", "#374151"];
@@ -203,8 +202,7 @@ export default function BancadaRanking({ atendentes, rotuloMetrica, rotuloPeriod
       {/* resultado */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3" data-resultado-bancada style={{ opacity: terminou ? 1 : 0.35, transition: "opacity .5s" }}>
         {atendentes.map((a, i) => (
-          <div key={a.id} className={`rounded-xl border p-4 flex items-center gap-3 ${i === 0 && terminou ? "border-amber-500/50 bg-gradient-to-br from-amber-950/40 to-slate-900" : "border-slate-800 bg-slate-900/80"}`} data-lugar={i + 1}>
-            <span className="text-3xl">{MEDALHAS[i] || `${i + 1}º`}</span>
+          <div key={a.id} className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 flex items-center gap-3" data-atendente-resultado>
             <Avatar email={a.email} tamanho={40} />
             <div className="min-w-0"><p className="text-sm font-black text-white truncate">{a.nome}</p><p className="text-[10px] uppercase font-bold text-slate-500">{rotuloMetrica}</p><p className="text-base font-black text-amber-300">{formatarValor(a.valor)}</p></div>
           </div>

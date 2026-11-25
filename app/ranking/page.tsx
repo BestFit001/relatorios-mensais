@@ -36,7 +36,6 @@ async function buscarTudo(tabela: string, colunas = "*", filtro?: (q: any) => an
 
 const mesAtual = () => hojeSP().slice(0, 7);
 const CORES = ["#6366f1", "#10b981", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444", "#14b8a6"];
-const MEDALHAS = ["🥇", "🥈", "🥉"];
 
 /** Variação entre dois valores. `sentido`: "max" = subir é bom, "min" = descer é bom, "neutro" = só mostra a diferença. */
 function DeltaF({ atual, anterior, formato, sentido = "max", marca = "data-delta" }: { atual: number; anterior: number | null | undefined; formato: Formato; sentido?: "max" | "min" | "neutro"; marca?: string }) {
@@ -352,7 +351,7 @@ export default function RankingPage() {
       const dataHoje = new Date().toLocaleDateString("pt-BR");
       const assunto = encodeURIComponent(`RANKING DE ANALISTAS ${dataHoje} (${pA.rotulo})`);
       let corpo = `Olá, tudo bem? Segue o ranking dos analistas em ${dataHoje}, período ${pA.rotulo}${comparar ? `, comparado com ${pB.rotulo}` : ""}. Classificação por: ${metricaInfo.rotulo}.\n\n`;
-      ranking.forEach((a, k) => { corpo += `${k + 1}º ${a.nome}: ${(metrica === "crescimento" && valorDa(a.total, metrica) > 0 ? "+" : "") + formatar(valorDa(a.total, metrica), metricaInfo.formato)}\n`; });
+      ranking.forEach((a) => { corpo += `${a.nome}: ${(metrica === "crescimento" && valorDa(a.total, metrica) > 0 ? "+" : "") + formatar(valorDa(a.total, metrica), metricaInfo.formato)}\n`; });
       corpo += `\nImagem do Ranking:\n\n\nAcesse o sistema para conferir a visão completa: https://dashboard-e-commerce-nine.vercel.app/ranking`;
       window.location.href = `mailto:${destinatarios}?subject=${assunto}&body=${encodeURIComponent(corpo)}`;
       setAvisoEmail("✅ Imagem copiada! Cole com Ctrl + V no corpo do e-mail.");
@@ -592,24 +591,6 @@ export default function RankingPage() {
               </div>
             </div>
 
-            {/* pódio */}
-            {ranking.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4" data-podio>
-                {ranking.slice(0, 3).map((a, i) => (
-                  <div key={a.email} className={`rounded-2xl border p-5 flex items-center gap-4 ${i === 0 ? "border-amber-500/50 bg-gradient-to-br from-amber-950/40 to-slate-900" : "border-slate-800 bg-slate-900/80"}`}>
-                    <span className="text-4xl">{MEDALHAS[i]}</span>
-                    <Avatar email={a.email!} tamanho={52} />
-                    <div className="min-w-0">
-                      <p className="text-sm font-black text-white truncate">{a.nome}</p>
-                      <p className="text-[10px] uppercase font-bold text-slate-500">{metricaInfo.rotulo}</p>
-                      <p className="text-lg font-black text-amber-300">{fmt(valorDa(a.total, metrica), metrica)}</p>
-                      <Delta atual={valorDa(a.total, metrica)} anterior={deB(a.email) ? valorDa(deB(a.email)!, metrica) : null} metrica={metrica} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
             {/* tabela de classificação */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 overflow-x-auto" data-tabela-ranking>
               <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider mb-1">Classificação · {pA.rotulo}{comparar ? ` × ${pB.rotulo}` : ""}</h2>
@@ -620,7 +601,7 @@ export default function RankingPage() {
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-left text-[10px] uppercase text-slate-500 border-b border-slate-800">
-                      <th className="py-2 pr-2 w-10">#</th><th className="py-2 pr-4">Analista</th>
+                      <th className="py-2 pr-4">Analista</th>
                       {colunas.map((m) => <th key={m} className="py-2 px-2 text-right"><button type="button" data-ordenar={m} onClick={() => setMetrica(m)} title={METRICAS.find((x) => x.id === m)!.dica} className={`uppercase font-bold cursor-pointer hover:text-white ${metrica === m ? "text-amber-300" : ""}`}>{METRICAS.find((x) => x.id === m)!.rotulo}{metrica === m ? " ↓" : ""}</button></th>)}
                     </tr>
                   </thead>
@@ -629,7 +610,6 @@ export default function RankingPage() {
                       const b = deB(a.email);
                       return (
                         <tr key={a.email} data-linha-analista={a.email} className="border-b border-slate-800/60">
-                          <td className="py-3 pr-2 font-black text-slate-300">{MEDALHAS[i] || i + 1}</td>
                           <td className="py-3 pr-4">
                             <div className="flex items-center gap-2.5"><Avatar email={a.email!} tamanho={32} />
                               <div className="min-w-[110px]"><p className="font-black text-white">{a.nome}</p><p className="text-[10px] text-slate-500">{a.canais.length} canal(is)</p>

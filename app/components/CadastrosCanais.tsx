@@ -3,8 +3,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { normalizarNomeCanal } from "../../lib/vendasCanaisLogica";
 import { agruparPorPai, statusDoGrupo, paginar, emLotes, type Presenca } from "../../lib/cadastroCanais";
+import Link from "next/link";
 import Paginacao from "./Paginacao";
-import { registrarCadastrosFeitos, removerCadastrosFeitos } from "../../lib/cadastrosFeitos";
 
 type Avisar = (tipo: "ok" | "erro", texto: string) => void;
 
@@ -22,15 +22,6 @@ interface Props {
   setOcupado: (b: boolean) => void;
 }
 
-
-/** Devolve o `canais_enviados` com o canal marcado/desmarcado (sem deixar duplicatas de maiúscula/acento). */
-function comCanal(ce: Record<string, boolean> | null | undefined, canal: string, valor: boolean) {
-  const k = normalizarNomeCanal(canal);
-  const novo: Record<string, boolean> = {};
-  for (const [c, v] of Object.entries(ce || {})) if (normalizarNomeCanal(c) !== k) novo[c] = v;
-  novo[canal] = valor;
-  return novo;
-}
 
 type Pill = "faltam" | "completos" | "todos";
 
@@ -90,33 +81,6 @@ export default function CadastrosCanais({ cadastros, setCadastros, canais, prese
     setSel((p) => (marcar ? Array.from(new Set([...p, ...skus])) : p.filter((s) => !skus.includes(s))));
   };
   const toggleTodos = (marcar: boolean) => setSel((p) => (marcar ? Array.from(new Set([...p, ...skusVisiveis])) : p.filter((s) => !skusVisiveis.includes(s))));
-
-  // marca / desmarca canais para TODAS as variações do pai
-  const marcar = async (pai: string, lista: string[], valor: boolean) => {
-    const itens = grupos.get(pai) || [];
-    if (!itens.length || !lista.length) return;
-    const originais = new Map(itens.map((i: any) => [i.sku as string, i.canais_enviados]));
-    const novos = new Map<string, Record<string, boolean>>();
-    for (const it of itens) {
-      let ce: Record<string, boolean> = it.canais_enviados || {};
-      for (const c of lista) ce = comCanal(ce, c, valor);
-      novos.set(it.sku, ce);
-    }
-    setCadastros((l) => l.map((i) => (novos.has(i.sku) ? { ...i, canais_enviados: novos.get(i.sku) } : i)));
-    const completou = valor && statusDoGrupo(itens.map((i: any) => ({ ...i, canais_enviados: novos.get(i.sku) })), canais, presenca).completo;
-    if (completou) setRecem((p) => new Set(p).add(pai));
-    try {
-      const res = await Promise.all(itens.map((it: any) => supabase.from("produtos_novos_cadastrados").update({ canais_enviados: novos.get(it.sku) }).eq("sku", it.sku)));
-      const erro = res.find((r) => r.error)?.error;
-      if (erro) throw new Error(erro.message);
-      for (const c of lista) { if (valor) registrarCadastrosFeitos(itens.map((i: any) => i.sku as string), c, "novos"); else removerCadastrosFeitos(itens.map((i: any) => i.sku as string), c); }   // data para o Ranking
-      if (completou) avisar("ok", `Pai ${pai}: cadastrado em todos os canais ✓`);
-    } catch (e: any) {
-      setCadastros((l) => l.map((i) => (originais.has(i.sku) ? { ...i, canais_enviados: originais.get(i.sku) } : i)));
-      setRecem((p) => { const n = new Set(p); n.delete(pai); return n; });
-      avisar("erro", "Não consegui salvar a marcação: " + e.message);
-    }
-  };
 
   const excluirGrupo = async (pai: string, itens: any[]) => {
     if (!confirm(`Excluir o grupo ${pai} e todas as suas ${itens.length} variação(ões) da aba de Canais?`)) return;
@@ -200,6 +164,9 @@ export default function CadastrosCanais({ cadastros, setCadastros, canais, prese
 
   return (
     <div className="space-y-3" ref={topo} data-aba-canais>
+      <p className="text-[11px] text-slate-400 px-1" data-aviso-mapa>
+        Aqui você só acompanha em quais canais cada produto já está. Para marcar um canal como cadastrado (ou ver o que ainda não foi feito), use a sub-aba <b className="text-slate-200">SKUs por canal</b> do <Link href="/mapeamento" className="text-purple-300 hover:text-white underline">Mapa de Cadastros</Link>: os produtos novos aparecem lá com o selo NOVO.
+      </p>
       {/* uma barra só: situação, canal e ações em lote */}
       <div className="bg-slate-900/80 rounded-xl border border-slate-800 px-3 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 gap-0.5" role="tablist" aria-label="Situação do cadastro">
@@ -355,26 +322,17 @@ export default function CadastrosCanais({ cadastros, setCadastros, canais, prese
                     <>
                       <span className="text-[11px] text-slate-500 mr-1">Falta:</span>
                       {st.faltam.map((c) => (
-                        <button
+                        <span
                           key={c.canal}
                           data-chip-falta={c.canal}
-                          onClick={() => marcar(pai, [c.canal], true)}
-                          title={`Clique quando cadastrar em ${c.canal}`}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-slate-600 text-slate-300 text-[11px] font-semibold hover:border-purple-400 hover:text-white hover:bg-purple-950/30 transition cursor-pointer"
+                          title={`Falta cadastrar em ${c.canal}. A marcação é feita no Mapa de Cadastros.`}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-slate-600 text-slate-300 text-[11px] font-semibold"
                         >
                           <span className="w-3 h-3 rounded-[3px] border border-slate-500 inline-block" aria-hidden />
                           {c.canal}
-                        </button>
+                        </span>
                       ))}
-                      {st.faltam.length > 1 && (
-                        <button
-                          data-marcar-todos-canais={pai}
-                          onClick={() => { if (confirm(`Marcar ${st.faltam.length} canal(is) como cadastrados para o pai ${pai}?`)) marcar(pai, st.faltam.map((c) => c.canal), true); }}
-                          className="px-2 py-0.5 rounded-full text-[11px] font-semibold text-slate-500 hover:text-white underline-offset-2 hover:underline cursor-pointer"
-                        >
-                          marcar todos
-                        </button>
-                      )}
+                      <Link href="/mapeamento" data-ir-mapa className="ml-1 text-[11px] font-semibold text-purple-300 hover:text-white underline-offset-2 hover:underline">marcar no Mapa de Cadastros</Link>
                     </>
                   )}
                 </div>
@@ -420,16 +378,15 @@ export default function CadastrosCanais({ cadastros, setCadastros, canais, prese
                                 ✓ {c.canal} <em className="not-italic text-[9px] uppercase tracking-wide bg-emerald-900/60 px-1.5 rounded">auto</em>
                               </span>
                             ) : (
-                              <button
+                              <span
                                 key={c.canal}
                                 data-chip-feito={c.canal}
                                 data-origem="manual"
-                                onClick={() => marcar(pai, [c.canal], false)}
-                                title="Clique para desfazer (voltar para 'falta')"
-                                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-emerald-700/50 bg-emerald-950/30 text-emerald-300 text-[11px] font-semibold hover:border-rose-500 hover:text-rose-300 transition cursor-pointer"
+                                title="Marcado à mão antes (aba Canais). Daqui para frente a marcação é feita no Mapa de Cadastros."
+                                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-emerald-700/50 bg-emerald-950/30 text-emerald-300 text-[11px] font-semibold"
                               >
-                                ✓ {c.canal} <span aria-hidden className="text-[10px] opacity-60">✕</span>
-                              </button>
+                                ✓ {c.canal}
+                              </span>
                             )
                           )}
                         </div>

@@ -7,7 +7,8 @@ import Paginacao from "./Paginacao";
 import { paginar } from "../../lib/cadastroCanais";
 import { agruparPorPai, paiDoSku, paiProvavelDe4, validarPai, normalizarSkuPai } from "../../lib/skuPai";
 
-export interface SkuDoMapa { sku: string; skuNorm: string; estoque: number; status: string; pres: boolean[]; nome?: string; marca?: string }
+/** novo = produto de Novos Cadastros que ainda não está na base do Tiny (estoque desconhecido: não é cortado pelos filtros de estoque) */
+export interface SkuDoMapa { sku: string; skuNorm: string; estoque: number; status: string; pres: boolean[]; nome?: string; marca?: string; novo?: boolean }
 interface Props {
   itens: SkuDoMapa[]; visiveis: { canal: string; i: number }[]; loading: boolean;
   /** Grava o SKU como cadastrado no canal (devolve a mensagem de erro, ou null se deu certo). */
@@ -78,8 +79,8 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
     const porMarca = new Map<string, { total: number; pres: number[] }>();   // marca -> SKUs e SKUs cadastrados por canal (com todos os filtros, menos o de marca)
     for (const it of itens) {
       if (status !== "TODOS" && it.status !== status) continue;
-      if (estoque === "COM" && !(it.estoque > 0)) continue;
-      if (estoque === "SEM" && it.estoque > 0) continue;
+      if (estoque === "COM" && !it.novo && !(it.estoque > 0)) continue;
+      if (estoque === "SEM" && !it.novo && it.estoque > 0) continue;
       if (paraExclusao.has(normalizarSkuPai(it.sku))) continue;   // SKUs "Para exclusão" têm aba própria
       if (termos.length > 0 && !termos.some((t) => it.skuNorm.includes(t) || paiDoSku(it.sku, paiManual).includes(t) || (textoBusca.get(it.skuNorm) || "").includes(t))) continue;
       let ok = true;
@@ -179,7 +180,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
   const linhaSku = (it: SkuDoMapa & { cad: number }, recuo: boolean) => (
     <tr key={it.sku} className="hover:bg-slate-800/40 transition-colors">
       <td className={`p-3.5 ${recuo ? "pl-10" : ""}`}>
-        <span className="block font-mono font-bold text-slate-200">{it.sku}</span>
+        <span className="block font-mono font-bold text-slate-200">{it.sku}{it.novo && <span data-selo-novo className="ml-2 align-middle text-[9px] font-bold text-purple-300 bg-purple-950/50 border border-purple-900/60 rounded px-1.5 py-0.5 font-sans" title="Cadastrado em Novos Cadastros; ainda não está na base do Tiny">NOVO</span>}</span>
         {it.nome && <span data-nome-produto className="block text-[11px] font-medium text-slate-300 max-w-[360px] truncate" title={it.nome}>{it.nome}</span>}
         {it.marca && <span data-marca-produto className="block text-[10px] font-bold text-indigo-300">{it.marca}</span>}
       </td>
@@ -187,7 +188,7 @@ export default function SkusPorCanal({ itens, visiveis, loading, onCadastrar, on
       <td className="p-3.5 text-center">
         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${it.status === "Obsoleto" ? "bg-rose-950/60 text-rose-400 border border-rose-900/50" : "bg-emerald-950/60 text-emerald-400 border border-emerald-900/50"}`}>{it.status}</span>
       </td>
-      <td className={`p-3.5 text-right font-bold ${it.estoque > 0 ? "text-indigo-400" : "text-slate-500"}`}>{it.estoque}</td>
+      <td className={`p-3.5 text-right font-bold ${it.estoque > 0 ? "text-indigo-400" : "text-slate-500"}`}>{it.novo ? "—" : it.estoque}</td>
       <td className={`p-3.5 text-center font-mono font-bold ${it.cad === 0 ? "text-rose-400" : it.cad === totalCanais ? "text-emerald-400" : "text-slate-300"}`}>{it.cad}/{totalCanais}</td>
       {visiveis.map(({ canal, i }) => (
         <td key={canal} className="p-3.5 text-center text-sm">{it.pres[i] ? <span className="text-emerald-400 font-bold">✅</span> : botaoX(it.sku, canal)}</td>

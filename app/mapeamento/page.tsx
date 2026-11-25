@@ -45,6 +45,7 @@ interface ItemCadastro {
   pres: boolean[]; // presença por canal (mesma ordem de `canais`)
   nome: string;    // nome do produto (compras_produtos; na falta, a base de custos)
   marca: string;   // marca (compras_produtos); vazio = sem marca informada
+  novo?: boolean;  // produto de Novos Cadastros que ainda não está na base do Tiny
 }
 
 const fmtInt = (n: number) => n.toLocaleString("pt-BR");
@@ -110,6 +111,7 @@ export default function MapeamentoPage() {
   const [canais, setCanais] = useState<string[]>([]);
   const [ocultos, setOcultos] = useState<Set<string>>(new Set());   // canais ocultos no painel (nome normalizado)
   const [itens, setItens] = useState<ItemCadastro[]>([]);
+  const [novos, setNovos] = useState<ItemCadastro[]>([]);   // Novos Cadastros que ainda não estão na base do Tiny: só entram na sub-aba "SKUs por canal" (não mexem nos gráficos nem no progresso)
   const [paiManual, setPaiManual] = useState<Map<string, string>>(new Map());   // ajustes do SKU pai (sku normalizado -> pai)
   const [paraExclusao, setParaExclusao] = useState<Set<string>>(new Set());     // SKUs marcados "Para exclusão" (normalizados)
 
@@ -126,7 +128,7 @@ export default function MapeamentoPage() {
     setErro("");
     try {
       // tudo em paralelo; só as colunas necessárias; só o que está presente (presente = true)
-      const [regras, tiny, status, mapas, cfgOcultos, prodCompras, prodCustos] = await Promise.all([
+      const [regras, tiny, status, mapas, cfgOcultos, prodCompras, prodCustos, novosCad] = await Promise.all([
         supabase.from("config_regras_canais").select("canal").order("id"),
         buscarTudo("cadastros_base_tiny", "sku, estoque"),
         buscarTudo("status_skus_catalogo", "sku, status"),
@@ -135,6 +137,7 @@ export default function MapeamentoPage() {
         // nome e marca são complemento: se alguma tabela não responder, o mapa continua funcionando sem eles
         buscarTudo("compras_produtos", "grade, produto, marca").catch(() => [] as any[]),
         buscarTudo("tabela_custos_skus", "sku, produto").catch(() => [] as any[]),
+        buscarTudo("produtos_novos_cadastrados", "sku, produto, marca, canais_enviados").catch(() => [] as any[]),
       ]);
       if (regras.error) throw new Error(regras.error.message);
       setOcultos(new Set(String(cfgOcultos.data?.coluna ?? "").split(",").map((x) => x.trim()).filter(Boolean)));
@@ -179,8 +182,23 @@ export default function MapeamentoPage() {
         return { sku: t.sku, skuNorm, estoque, status: st, grupo, pres: presencaPorSku.get(skuNorm) || vazio, nome: nomePorSku.get(skuNorm) || "", marca: marcaPorSku.get(skuNorm) || "" };
       });
 
+      // Produtos de Novos Cadastros: o cadastro nos canais é marcado AQUI (✅/❌ em "SKUs por canal"). Os que ainda não estão na base do Tiny entram na lista.
+      // Marcas feitas à mão na sub-aba Canais de Novos Cadastros (antigas) continuam valendo.
+      const naBase = new Set(resultado.map((r) => r.skuNorm));
+      const novosLista: ItemCadastro[] = [];
+      for (const n of novosCad) {
+        const skuNorm = normalizarSku(n.sku);
+        if (!skuNorm || naBase.has(skuNorm)) continue;
+        naBase.add(skuNorm);
+        const pres = (presencaPorSku.get(skuNorm) || vazio).slice();
+        const ce = (n.canais_enviados || {}) as Record<string, boolean>;
+        for (const c of Object.keys(ce)) { if (ce[c] === true) { const i = idxCanal.get(normalizarNomeCanal(c)); if (i !== undefined) pres[i] = true; } }
+        novosLista.push({ sku: String(n.sku), skuNorm, estoque: 0, status: "Normal", grupo: G_SEM_ESTOQUE, pres, nome: String(n.produto || "").trim() || nomePorSku.get(skuNorm) || "", marca: String(n.marca || "").trim() || marcaPorSku.get(skuNorm) || "", novo: true });
+      }
+
       setCanais(listaCanais);
       setItens(resultado);
+      setNovos(novosLista);
       setPaiManual(await carregarPaiManual());
       setParaExclusao(await carregarParaExclusao());
     } catch (e: any) {
@@ -281,11 +299,12 @@ export default function MapeamentoPage() {
     const idx = canais.findIndex((c) => c === canal);
     if (idx >= 0) {
       const set = new Set(skus);
-      setItens((prev) => prev.map((it) => {
+      const marcar = (prev: ItemCadastro[]) => prev.map((it) => {
         if (!set.has(it.sku)) return it;
         const pres = it.pres.slice(); pres[idx] = true;   // cópia: o vetor "vazio" é compartilhado entre SKUs sem cadastro
         return { ...it, pres };
-      }));
+      });
+      setItens(marcar); setNovos(marcar);
     }
     return null;
   }, [canais]);
@@ -303,6 +322,8 @@ export default function MapeamentoPage() {
     });
     return null;
   }, []);
+
+  const itensDaListaDeSkus = useMemo(() => (novos.length ? [...itens, ...novos] : itens), [itens, novos]);
 
   const { filtrados, progresso } = useMemo(() => {
     const lista: ItemCadastro[] = [];
@@ -434,7 +455,7 @@ export default function MapeamentoPage() {
         )}
 
         {/* ═════════════ SUB-ABA: SKUs POR CANAL ═════════════ */}
-        {subAba === "skus" && <SkusPorCanal itens={itens} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} onCadastrarVarios={registrarCadastros} paraExclusao={paraExclusao} paiManual={paiManual} onEditarPai={editarPai} />}
+        {subAba === "skus" && <SkusPorCanal itens={itensDaListaDeSkus} visiveis={visiveis} loading={loading} onCadastrar={registrarCadastro} onCadastrarVarios={registrarCadastros} paraExclusao={paraExclusao} paiManual={paiManual} onEditarPai={editarPai} />}
 
         {/* ═════════════ SUB-ABA: SKUs PARA EXCLUSÃO ═════════════ */}
         {subAba === "exclusao" && <SkusParaExclusao itens={itens} visiveis={visiveis} paraExclusao={paraExclusao} loading={loading} paiManual={paiManual} />}
