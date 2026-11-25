@@ -4,11 +4,11 @@ import { supabase } from "../../lib/supabase";
 import { buscarTudo } from "../../lib/buscarTudo";
 import { canaisSemRepeticao, normalizarNomeCanal } from "../../lib/vendasCanaisLogica";
 import {
-  agruparPorPai, paiDoItem, statusDoGrupo, canaisDoSku, montarPresenca, paginar, variantesDeSku, emLotes, type Presenca,
+  agruparPorPai, paiDoItem, canaisDoSku, montarPresenca, paginar, variantesDeSku, emLotes, type Presenca,
 } from "../../lib/cadastroCanais";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
-import CadastrosCanais from "../components/CadastrosCanais";
+import CadastrosTiny from "../components/CadastrosTiny";
 import Paginacao from "../components/Paginacao";
 import * as XLSX from "xlsx";
 
@@ -43,7 +43,7 @@ function Kpi({ icone, titulo, valor, detalhe, cor, barra, onClick, dataKpi }: {
 
 export default function ProdutosPage() {
   const router = useRouter();
-  const [subAba, setSubAba] = useState<"pendentes" | "canais" | "periodo" | "config" | "descricoes">("pendentes");
+  const [subAba, setSubAba] = useState<"pendentes" | "tiny" | "periodo" | "config" | "descricoes">("pendentes");
   const [loading, setLoading] = useState(false);
 
   const [dadosPendentes, setDadosPendentes] = useState<any[]>([]);
@@ -715,12 +715,7 @@ export default function ProdutosPage() {
 
   // ---------- Indicadores do topo ----------
   const canaisAtivos = canaisLista.filter((c) => !canaisOcultos.has(normalizarNomeCanal(c)));
-  const canaisOcultosEmUso = canaisLista.length - canaisAtivos.length;
   const gruposCadastrados = agruparPorPai(cadastrosRealizados);
-  let nGruposOk = 0;
-  gruposCadastrados.forEach((itens) => { if (statusDoGrupo(itens, canaisAtivos, presenca).completo) nGruposOk++; });
-  const nGruposFaltam = gruposCadastrados.size - nGruposOk;
-  const pctGruposOk = gruposCadastrados.size ? Math.round((nGruposOk / gruposCadastrados.size) * 100) : 0;
   const nPaisPendentes = new Set(dadosPendentes.map((i) => paiDoItem(i))).size;
   const recarregarListas = async () => { await carregarPendentesDoBanco(); await carregarRealizadosDoBanco(); };
 
@@ -765,24 +760,22 @@ export default function ProdutosPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Novos Cadastros</h1>
-            <p className="text-sm font-medium text-slate-400">Do produto pendente ao cadastro em cada canal, num só lugar</p>
+            <p className="text-sm font-medium text-slate-400">Do produto pendente ao cadastro no Tiny, num só lugar</p>
           </div>
           <Navbar />
         </div>
 
         {/* indicadores */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-xl grid grid-cols-2 xl:grid-cols-4 divide-slate-800 xl:divide-x overflow-hidden" data-kpis>
+        <div className="bg-slate-900/80 border border-slate-800 rounded-xl grid grid-cols-2 divide-slate-800 divide-x overflow-hidden" data-kpis>
           <Kpi dataKpi="pendentes" icone="📝" cor="amber" titulo="Pendentes de cadastro" valor={dadosPendentes.length} detalhe={`${nPaisPendentes} produto(s) pai aguardando`} onClick={() => setSubAba("pendentes")} />
-          <Kpi dataKpi="cadastrados" icone="📦" cor="indigo" titulo="Cadastrados" valor={cadastrosRealizados.length} detalhe={`${gruposCadastrados.size} produto(s) pai · ${canaisAtivos.length} canais`} onClick={() => setSubAba("canais")} />
-          <Kpi dataKpi="faltam" icone="🛒" cor="purple" titulo="Faltam canais" valor={nGruposFaltam} detalhe="produtos com cadastro incompleto nos canais" onClick={() => setSubAba("canais")} />
-          <Kpi dataKpi="concluidos" icone="✅" cor="emerald" titulo="100% nos canais" valor={nGruposOk} detalhe={`${pctGruposOk}% dos produtos cadastrados`} barra={pctGruposOk} onClick={() => setSubAba("canais")} />
+          <Kpi dataKpi="cadastrados" icone="📦" cor="indigo" titulo="Cadastrados no Tiny" valor={cadastrosRealizados.length} detalhe={`${gruposCadastrados.size} produto(s) pai`} onClick={() => setSubAba("tiny")} />
         </div>
 
         <div className="flex flex-wrap justify-between items-center gap-3 bg-slate-900/80 p-2 rounded-xl border border-slate-800">
           <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 flex-wrap gap-1" role="tablist">
             {([
               ["pendentes", `📝 Pendentes (${dadosPendentes.length})`],
-              ["canais", `🛒 Canais (${cadastrosRealizados.length})`],
+              ["tiny", `📦 Tiny (${cadastrosRealizados.length})`],
               ["periodo", "📊 Período & Gráficos"],
               ["descricoes", "✨ Descrições IA"],
               ["config", "⚙️ Configurações"],
@@ -971,14 +964,10 @@ export default function ProdutosPage() {
           </div>
         )}
 
-        {subAba === "canais" && (
-          <CadastrosCanais
+        {subAba === "tiny" && (
+          <CadastrosTiny
             cadastros={cadastrosRealizados}
-            setCadastros={setCadastrosRealizados}
-            canais={canaisAtivos}
-            presenca={presenca}
             pesquisa={pesquisaGlobal}
-            canaisOcultos={canaisOcultosEmUso}
             recarregar={recarregarListas}
             avisar={avisar}
             ocupado={loading}
@@ -1161,7 +1150,7 @@ export default function ProdutosPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
                 <span className="text-xs font-bold text-slate-400 uppercase">SKUs cadastrados</span>
                 <p className="text-3xl font-black text-emerald-400 mt-2" data-total-cadastrados>{totalSkusRealizados}</p>
@@ -1171,11 +1160,6 @@ export default function ProdutosPage() {
                 <span className="text-xs font-bold text-slate-400 uppercase">Produtos pendentes</span>
                 <p className="text-3xl font-black text-amber-400 mt-2">{dadosPendentes.length}</p>
                 <span className="text-[10px] text-slate-500 mt-1 block">Faltam cadastrar</span>
-              </div>
-              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 shadow">
-                <span className="text-xs font-bold text-slate-400 uppercase">Concluídos nos canais</span>
-                <p className="text-3xl font-black text-purple-400 mt-2">{pctGruposOk}%</p>
-                <span className="text-[10px] text-slate-500 mt-1 block">{nGruposOk} de {gruposCadastrados.size} produtos</span>
               </div>
             </div>
 
