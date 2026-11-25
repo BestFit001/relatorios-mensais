@@ -111,7 +111,7 @@ export function modelosDaPlanilha(linhas: Linha[]): { modelos: ModeloPadrao[]; i
 const IGNORAR = new Set(["de", "do", "da", "dos", "das", "e", "em", "com", "para", "a", "o", "original", "estampa", "estampado", "estampada", "best", "fit"]);
 
 export function tokens(texto: string, marca = ""): string[] {
-  const base = norm(texto).replace(/(\d)\s+(ml|l|g|kg|cm|mm)\b/g, "$1$2").replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
+  const base = norm(texto).replace(/(\d)\s*litros?\b/g, "$1l").replace(/(\d)\s+(ml|l|g|kg|cm|mm)\b/g, "$1$2").replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
   const marcas = new Set(norm(marca).replace(/[^a-z0-9]+/g, " ").split(" ").filter(Boolean));
   return Array.from(new Set(base.filter((t) => t.length >= 2 && !IGNORAR.has(t) && !marcas.has(t))));
 }

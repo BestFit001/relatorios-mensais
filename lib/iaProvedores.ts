@@ -1,29 +1,31 @@
-// Camada de IA com reserva (somente servidor): tenta um provedor e, se ele falhar, demorar ou responder fora do formato,
-// tenta o próximo. Hoje: Claude (ANTHROPIC_API_KEY), Gemini (GEMINI_API_KEY) e Groq (GROQ_API_KEY).
-// Basta ter UMA das chaves configuradas. Ordem padrão: Claude, Gemini, Groq (só entram os que têm chave).
+// Camada de IA (somente servidor): hoje só o Claude (API de mensagens da Anthropic).
+//
+// A chave NUNCA fica no código nem no repositório: ela é lida de process.env.ANTHROPIC_API_KEY, que é configurada
+// no painel do Vercel (Project > Settings > Environment Variables) e só existe no servidor. Nada daqui vai para o navegador.
 //
 // Variáveis de ambiente (Vercel):
-//   ANTHROPIC_API_KEY                chave da API do Claude (console.anthropic.com)
-//   GEMINI_API_KEY / GOOGLE_API_KEY  chave do Gemini
-//   GROQ_API_KEY                     chave do Groq
-//   IA_PRIMARIA                      "claude", "gemini" ou "groq": quem é tentado primeiro (padrão: claude, se tiver chave)
-//   ANTHROPIC_MODEL, GEMINI_MODEL, GROQ_MODEL   trocam o modelo sem mexer no código (padrões abaixo)
-//   ANTHROPIC_BASE_URL, GROQ_BASE_URL           só para testes
+//   ANTHROPIC_API_KEY    chave da API do Claude (console.anthropic.com)
+//   ANTHROPIC_MODEL      opcional: troca o modelo sem mexer no código (padrão: claude-haiku-5-5, o mais barato)
+//   ANTHROPIC_BASE_URL   só para testes (aponta para um servidor falso)
 
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { analisarErroIA, motivoRespostaInvalida } from "./adaptarModelo";
+
+/** Modelo padrão: o mais simples e barato. Para mais capricho, ANTHROPIC_MODEL=claude-sonnet-5-5 no Vercel. */
+export const MODELO_PADRAO = "claude-haiku-5-5";
+/** Teto de tokens da resposta quando quem chama não pede outro (a descrição de um produto cabe em ~900). */
+const MAX_TOKENS_PADRAO = 1200;
 
 export interface OpcoesGerar {
   json: boolean;
   /** tempo máximo desta chamada, em ms */
   limiteMs: number;
-  /** teto de tokens da resposta (só o Groq usa: ele conta esse valor contra o limite por minuto) */
+  /** teto de tokens da resposta */
   maxTokens?: number;
   imagem?: { base64: string; mimeType: string };
 }
 
 export interface ProvedorIA {
-  id: "claude" | "gemini" | "groq";
+  id: "claude";
   nome: string;
   variavel: string;
   aceitaImagem: boolean;
@@ -39,22 +41,13 @@ export interface ResultadoIA {
   falhas: FalhaIA[];
 }
 
-function comTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`IA sem resposta em ${Math.round(ms / 1000)}s`)), ms);
-    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
-  });
-}
-
 /**
- * Claude (API de mensagens da Anthropic, via fetch: sem SDK). Lê imagem e segue instrução de formato; para JSON pede
- * "somente JSON" no system prompt (os leitores de resposta do app já toleram cerca ```json e texto em volta).
- * Modelo padrão: claude-sonnet-5-5 (equilíbrio entre qualidade e velocidade). Para respostas mais baratas/rápidas,
- * ANTHROPIC_MODEL=claude-haiku-5-5; para mais capricho, claude-opus-5-5.
+ * Claude via fetch (sem SDK). Lê imagem e segue instrução de formato; para JSON pede "somente JSON" no system prompt
+ * (os leitores de resposta do app já toleram cerca ```json e texto em volta).
  */
 function criarClaude(apiKey: string): ProvedorIA {
   const base = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/+$/, "");
-  const modelo = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+  const modelo = process.env.ANTHROPIC_MODEL || MODELO_PADRAO;
   return {
     id: "claude", nome: "Claude", variavel: "ANTHROPIC_API_KEY", aceitaImagem: true,
     async gerar(prompt, o) {
@@ -63,7 +56,7 @@ function criarClaude(apiKey: string): ProvedorIA {
       const conteudo: any[] = [];
       if (o.imagem) conteudo.push({ type: "image", source: { type: "base64", media_type: o.imagem.mimeType || "image/jpeg", data: o.imagem.base64 } });
       conteudo.push({ type: "text", text: prompt });
-      const corpo: any = { model: modelo, max_tokens: o.maxTokens ?? 4096, messages: [{ role: "user", content: conteudo }] };
+      const corpo: any = { model: modelo, max_tokens: o.maxTokens ?? MAX_TOKENS_PADRAO, messages: [{ role: "user", content: conteudo }] };
       if (o.json) corpo.system = "Responda SOMENTE com um objeto JSON válido, sem texto antes ou depois e sem cercas de código.";
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), restante);
@@ -78,7 +71,8 @@ function criarClaude(apiKey: string): ProvedorIA {
         if (!res.ok) throw Object.assign(new Error(bruto || `HTTP ${res.status}`), { status: res.status });
         let j: any;
         try { j = JSON.parse(bruto); } catch { throw new Error("resposta que não é JSON: " + bruto.slice(0, 100)); }
-        console.log(`IA Claude (${modelo}): resposta em ${Date.now() - inicio} ms`);
+        const uso = j?.usage ? ` (${j.usage.input_tokens ?? "?"} tokens de entrada, ${j.usage.output_tokens ?? "?"} de saída)` : "";
+        console.log(`IA Claude (${modelo}): resposta em ${Date.now() - inicio} ms${uso}`);
         return (Array.isArray(j?.content) ? j.content : []).filter((b: any) => b?.type === "text").map((b: any) => String(b.text ?? "")).join("");
       } catch (e: any) {
         if (e?.name === "AbortError") throw new Error(`IA sem resposta em ${Math.round(restante / 1000)}s`);
@@ -90,143 +84,17 @@ function criarClaude(apiKey: string): ProvedorIA {
   };
 }
 
-function criarGemini(apiKey: string): ProvedorIA {
-  const ai = new GoogleGenAI({ apiKey });
-  const modelo = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-  return {
-    id: "gemini", nome: "Gemini", variavel: "GEMINI_API_KEY", aceitaImagem: true,
-    async gerar(prompt, o) {
-      const inicio = Date.now();
-      let raciocinioBaixo = true;
-      for (;;) {
-        const restante = o.limiteMs - (Date.now() - inicio);
-        const config: any = {};
-        if (o.json) config.responseMimeType = "application/json";
-        if (raciocinioBaixo) config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
-        const contents: any[] = [];
-        if (o.imagem) contents.push({ inlineData: { data: o.imagem.base64, mimeType: o.imagem.mimeType || "image/jpeg" } });
-        contents.push(prompt);
-        try {
-          const r: any = await comTimeout(ai.models.generateContent({ model: modelo, contents, config }), Math.max(restante, 1000));
-          console.log(`IA Gemini: resposta em ${Date.now() - inicio} ms (raciocínio ${raciocinioBaixo ? "baixo" : "padrão"})`);
-          return String(r?.text ?? "");
-        } catch (e) {
-          // se o Gemini recusar o parâmetro de raciocínio (400), refaz sem ele
-          if (raciocinioBaixo && analisarErroIA(e).status === 400) { raciocinioBaixo = false; continue; }
-          throw e;
-        }
-      }
-    },
-  };
-}
-
-/** Espera (ms) que o Groq pede num erro 429 (cabeçalho retry-after, em segundos); 0 se não informou. */
-function esperaPedida(res: Response): number {
-  const v = Number(res.headers.get("retry-after"));
-  return Number.isFinite(v) && v > 0 ? Math.ceil(v * 1000) : 0;
-}
-
-/**
- * Groq (API compatível com a da OpenAI). O plano grátis limita tokens por MINUTO por modelo; quando estoura, o Groq responde
- * 429 com "retry-after". Se a espera cabe no tempo desta chamada, espera e tenta de novo uma vez aqui dentro.
- */
-// O Groq troca de modelos com frequência (o llama-3.3-70b-versatile saiu do ar em 16/08/2026). Se o modelo não existir mais,
-// o app tenta o próximo da lista sozinho. GROQ_MODEL (Vercel) entra na frente da lista.
-const MODELOS_GROQ_PADRAO = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"];
-let groqModeloVivo = 0;   // índice do último modelo que funcionou nesta instância do servidor
-
-const modeloSumiu = (status: number, bruto: string) =>
-  status === 404 || (status === 400 && /model_decommissioned|model_not_found|does not exist|decommissioned/i.test(bruto));
-
-function criarGroq(apiKey: string): ProvedorIA {
-  const base = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
-  const modelos = Array.from(new Set([process.env.GROQ_MODEL, ...MODELOS_GROQ_PADRAO].filter(Boolean) as string[]));
-  return {
-    id: "groq", nome: "Groq", variavel: "GROQ_API_KEY", aceitaImagem: false,
-    async gerar(prompt, o) {
-      const inicio = Date.now();
-      let jaEsperou = false;
-      let semExtras = false;   // true depois que o Groq recusou response_format/reasoning_effort (400)
-      let idx = Math.min(groqModeloVivo, modelos.length - 1);
-      for (;;) {
-        const modelo = modelos[idx];
-        const raciocina = /^openai\/gpt-oss/.test(modelo);   // modelos "que pensam": raciocínio baixo para responder rápido
-        const restante = Math.max(o.limiteMs - (Date.now() - inicio), 1000);
-        // max_tokens baixo de propósito: o Groq conta o máximo pedido contra o limite por minuto
-        const corpo: any = { model: modelo, messages: [{ role: "user", content: prompt }], stream: false, max_tokens: o.maxTokens ?? (raciocina ? 2800 : 2200), temperature: 0.3 };
-        if (o.json && !semExtras) corpo.response_format = { type: "json_object" };
-        if (raciocina && !semExtras) corpo.reasoning_effort = "low";
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), restante);
-        try {
-          const res = await fetch(`${base}/chat/completions`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify(corpo),
-            signal: ctrl.signal,
-          });
-          const bruto = await res.text();
-          if (res.status === 429 && !jaEsperou) {
-            const espera = esperaPedida(res);
-            const sobra = o.limiteMs - (Date.now() - inicio);
-            if (espera > 0 && espera <= 25000 && espera + 4000 < sobra) {
-              jaEsperou = true;
-              console.log(`IA Groq: limite por minuto, esperando ${espera} ms e tentando de novo`);
-              clearTimeout(timer);
-              await new Promise((r) => setTimeout(r, espera));
-              continue;
-            }
-          }
-          // modelo descontinuado/inexistente: passa para o próximo da lista
-          if (!res.ok && modeloSumiu(res.status, bruto) && idx < modelos.length - 1) {
-            console.error(`IA Groq: modelo ${modelo} indisponível (${res.status}); tentando ${modelos[idx + 1]}`);
-            idx++; groqModeloVivo = idx;
-            clearTimeout(timer);
-            continue;
-          }
-          // o Groq recusou algum parâmetro opcional (response_format / reasoning_effort): refaz sem eles
-          if (res.status === 400 && !semExtras && (o.json || raciocina)) {
-            semExtras = true;
-            clearTimeout(timer);
-            continue;
-          }
-          // limite por minuto com espera longa: repetir logo em seguida não adianta
-          if (!res.ok) throw Object.assign(new Error(bruto || `HTTP ${res.status}`), { status: res.status, naoRepetir: res.status === 429 && esperaPedida(res) > 25000 });
-          let j: any;
-          try { j = JSON.parse(bruto); } catch { throw new Error("resposta que não é JSON: " + bruto.slice(0, 100)); }
-          groqModeloVivo = idx;
-          console.log(`IA Groq (${modelo}): resposta em ${Date.now() - inicio} ms`);
-          return String(j?.choices?.[0]?.message?.content ?? "");
-        } catch (e: any) {
-          if (e?.name === "AbortError") throw new Error(`IA sem resposta em ${Math.round(restante / 1000)}s`);
-          throw e;
-        } finally {
-          clearTimeout(timer);
-        }
-      }
-    },
-  };
-}
-
-/** Provedores com chave configurada, na ordem em que serão tentados (IA_PRIMARIA decide quem vai primeiro). */
+/** Provedores com chave configurada (lista vazia = sem IA: o app usa os textos padrão). */
 export function provedoresConfigurados(): ProvedorIA[] {
-  const lista: ProvedorIA[] = [];
-  const claude = process.env.ANTHROPIC_API_KEY;
-  const gemini = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  const groq = process.env.GROQ_API_KEY;
-  if (claude) lista.push(criarClaude(claude));
-  if (gemini) lista.push(criarGemini(gemini));
-  if (groq) lista.push(criarGroq(groq));
-  const primaria = (process.env.IA_PRIMARIA || "").toLowerCase();
-  if (primaria === "claude" || primaria === "gemini" || primaria === "groq") lista.sort((a, b) => (a.id === primaria ? -1 : b.id === primaria ? 1 : 0));
-  return lista;
+  const chave = (process.env.ANTHROPIC_API_KEY || "").trim();
+  return chave ? [criarClaude(chave)] : [];
 }
 
 /**
- * Pede o texto à IA. Tenta os provedores em ordem dentro de um prazo único (`prazoFinal`, epoch em ms): cada tentativa
- * recebe uma fatia do tempo que sobra. Uma resposta só vale se `aceitar` disser que sim (ex.: JSON no formato esperado);
- * senão conta como falha e o próximo provedor é tentado. Erros definitivos (chave errada, sem saldo, modelo inexistente)
- * não são repetidos no mesmo provedor.
+ * Pede o texto à IA dentro de um prazo único (`prazoFinal`, epoch em ms): até 2 tentativas, a segunda só se a primeira
+ * der erro passageiro (tempo esgotado, limite por minuto, instabilidade) ou vier fora do formato. Uma resposta só vale se
+ * `aceitar` disser que sim (ex.: JSON no formato esperado). Erros definitivos (chave errada, sem saldo, modelo
+ * inexistente) não são repetidos.
  */
 export async function gerarTexto(
   provedores: ProvedorIA[],
@@ -240,38 +108,31 @@ export async function gerarTexto(
   }
 ): Promise<ResultadoIA> {
   const falhas: FalhaIA[] = [];
-  const aptos = provedores.filter((p) => !o.imagem || p.aceitaImagem);
-  if (aptos.length === 0) return { texto: null, provedor: null, falhas };
+  const p = provedores.find((x) => !o.imagem || x.aceitaImagem);
+  if (!p) return { texto: null, provedor: null, falhas };
 
-  // 1 provedor: duas tentativas (3:2). 2 provedores: uma cada + 1 repetição do último (2:2:1).
-  let fila: { p: ProvedorIA; peso: number }[] = aptos.length === 1
-    ? [{ p: aptos[0], peso: 3 }, { p: aptos[0], peso: 2 }]
-    : [{ p: aptos[0], peso: 2 }, { p: aptos[1], peso: 2 }, { p: aptos[1], peso: 1 }];
-
-  while (fila.length) {
-    const { p, peso } = fila[0];
+  let pesos = [3, 2];
+  while (pesos.length) {
     const restante = o.prazoFinal - Date.now();
     if (restante < 4000) { falhas.push({ provedor: p.nome, motivo: "acabou o tempo da exportação antes de tentar" }); break; }
-    const limiteMs = Math.floor((restante * peso) / fila.reduce((s, x) => s + x.peso, 0));
-    fila = fila.slice(1);
+    const limiteMs = Math.floor((restante * pesos[0]) / pesos.reduce((s, x) => s + x, 0));
+    pesos = pesos.slice(1);
     try {
       const texto = await p.gerar(prompt, { json: !!o.json, limiteMs, imagem: o.imagem, maxTokens: o.maxTokens });
       if (o.aceitar ? o.aceitar(texto) : texto.trim() !== "") return { texto, provedor: p.nome, falhas };
       falhas.push({ provedor: p.nome, motivo: motivoRespostaInvalida(texto, p.nome) });
       console.error(`IA ${p.nome}: resposta fora do formato:`, String(texto).slice(0, 300));
-      // havendo outro provedor na fila, passa para ele (formato errado costuma se repetir); sozinho, tenta de novo
-      if (fila.some((x) => x.p !== p)) fila = fila.filter((x) => x.p !== p);
     } catch (e) {
       const a = analisarErroIA(e, p.nome, p.variavel);
       falhas.push({ provedor: p.nome, motivo: a.motivo });
-      console.error(`Erro na IA ${p.nome}:`, e);
-      if (!a.transitorio || (e as any)?.naoRepetir) fila = fila.filter((x) => x.p !== p);
+      console.error(`Erro na IA ${p.nome}:`, (e as any)?.status ?? "", a.motivo);   // não registra o erro bruto: nada de chave em log
+      if (!a.transitorio) break;
     }
   }
   return { texto: null, provedor: null, falhas };
 }
 
-/** Junta as falhas numa frase só: "o Gemini demorou demais (…) → o Groq recusou a chave (…)". Repetições são colapsadas. */
+/** Junta as falhas numa frase só. Repetições são colapsadas. */
 export function resumirFalhas(falhas: FalhaIA[]): string {
   const vistos: string[] = [];
   for (const f of falhas) if (!vistos.includes(f.motivo)) vistos.push(f.motivo);

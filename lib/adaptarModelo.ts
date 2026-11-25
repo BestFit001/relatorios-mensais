@@ -1,8 +1,5 @@
-// Exportação para o Tiny: a IA lê o modelo da aba Padronização, entende o que é igual ao produto novo (tipo, linha,
-// capacidade, materiais, medidas, cuidados) e o que muda (estampa/cor) e devolve título, descrição complementar,
-// descrição SEO e palavras-chave já adaptados. Este arquivo só monta o pedido e confere a resposta (sem rede).
-
-import { limparDescricao, REGRAS_FORMATO_DESCRICAO } from "./textoDescricao";
+// Utilitários da exportação para o Tiny: limite e ajuste de título, slug e tradução dos erros da IA (Claude) em frases claras.
+// (A comparação entre produto novo e modelo da Padronização fica em lib/comparacaoModelos.ts.) Sem rede aqui.
 
 export const LIMITE_TITULO = 60;
 
@@ -41,90 +38,12 @@ export function slugDoTitulo(titulo: string, slugModelo = ""): string {
   return semAcento(base).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-export interface ModeloParaIA {
-  titulo: string; marca?: string | null; categoria?: string | null; slug?: string | null;
-  altura?: any; largura?: any; comprimento?: any; peso?: any;
-  descricao_seo?: string | null; palavras_chave_seo?: string | null; descricao_complementar?: string | null;
-}
-
-const linha = (rotulo: string, v: any) => (v === null || v === undefined || String(v).trim() === "" ? "" : `${rotulo}: ${String(v).trim()}\n`);
-
-export function montarPedidoAdaptacao(
-  produto: { nome: string; marca: string; cores: string[] },
-  modelos: ModeloParaIA[]
-): string {
-  const blocos = modelos.map((m, i) =>
-    `=== MODELO ${i + 1} ===\n` +
-    linha("Título do modelo", m.titulo) + linha("Marca", m.marca) + linha("Categoria", m.categoria) +
-    linha("Medidas (alt x larg x comp, cm) e peso (kg)", [m.altura, m.largura, m.comprimento].some((x) => x) ? `${m.altura || 0} x ${m.largura || 0} x ${m.comprimento || 0}; ${m.peso || "?"}` : "") +
-    linha("Slug do modelo", m.slug) + linha("Descrição SEO do modelo", m.descricao_seo) + linha("Palavras-chave do modelo", m.palavras_chave_seo) +
-    `Descrição complementar do modelo:\n${limparDescricao(m.descricao_complementar)}\n`
-  ).join("\n");
-
-  return `Você é analista sênior de e-commerce da Best Fit e vai preparar o cadastro de um PRODUTO NOVO a partir dos MODELOS OFICIAIS já homologados na aba Padronização.
-
-PRODUTO NOVO
-- Nome: ${produto.nome}
-- Marca: ${produto.marca}
-${produto.cores.length ? `- Cor(es) das variações: ${produto.cores.join(", ")}\n` : ""}
-${blocos}
-
-COMO TRABALHAR
-1. Decida qual modelo é do MESMO tipo de produto e da mesma linha do produto novo (ex.: o mesmo "Mini Cooler Farofa", mudando só o nome da estampa ou a cor). Responda o número dele em "modelo". Se NENHUM for o mesmo tipo de produto, responda 0 e escreva tudo do zero, sem copiar nada de modelo.
-2. Compare o título do modelo com o nome do produto novo e separe o que é IGUAL (tipo de produto, linha, marca, capacidade, material, forro, alças, fechamento, medidas, composição, cuidados) do que MUDA (nome da estampa, cor, detalhes visuais).
-3. Escreva o conteúdo do produto novo REAPROVEITANDO o que é igual no modelo (especificações técnicas, composição, cuidados, medidas, capacidade — mantenha exatamente como está no modelo) e SUBSTITUINDO ou REMOVENDO tudo que é específico do modelo: o nome da estampa, cores, descrições visuais (desenhos, fundo, tom) e qualquer benefício que dependa da estampa ou da cor do modelo. Troque o nome da estampa antiga pelo nome da estampa do produto novo.
-4. NÃO invente cor, desenho nem característica visual do produto novo: use só o nome da estampa que aparece no nome dele (e, se ajudar, as cores informadas). NÃO invente medidas, capacidade, material nem outros dados técnicos além dos do modelo. Quando uma frase só fizer sentido com a estampa do modelo, reescreva de forma neutra ou apague.
-5. Mantenha o tom, a estrutura e o nível de detalhe do modelo.
-
-CAMPOS DA RESPOSTA
-- "titulo": o mesmo padrão do título do modelo, trocando só a estampa/cor (ex.: "Mini Cooler Farm Farofa Lenço Magia Original 8 Litros" para o produto "Mini Cooler Farm Farofa Praia Bahia Thal" vira "Mini Cooler Farm Farofa Praia Bahia Thal Original 8 Litros"). No máximo ${LIMITE_TITULO} caracteres contando os espaços. NUNCA corte uma palavra ao meio nem termine com informação pela metade: se passar do limite, tire palavras inteiras menos importantes (como "Original").
-- "descricao_complementar": ${"a descrição completa do produto novo, em texto puro. Dentro do JSON use \\n para quebra de linha."}
-- "descricao_seo": no mesmo estilo e tamanho da descrição SEO do modelo, trocando a estampa; até 160 caracteres, sem cortar palavras.
-- "palavras_chave": no mesmo estilo das palavras-chave do modelo, trocando a estampa; separadas por vírgula, sem repetir.
-
-${REGRAS_FORMATO_DESCRICAO}
-
-Responda SOMENTE com um objeto JSON válido, sem texto antes ou depois e sem crases:
-{"modelo": 1, "titulo": "...", "descricao_complementar": "...", "descricao_seo": "...", "palavras_chave": "..."}`;
-}
-
-export interface RespostaAdaptacao {
-  modelo: number;            // 0 = nenhum modelo serviu; 1..n = índice (1-based) do modelo escolhido
-  titulo: string;
-  descricao_complementar: string;
-  descricao_seo: string;
-  palavras_chave: string;
-}
-
-/** Lê o JSON da IA (aceita cercas ```json e texto em volta). Devolve null se não der para aproveitar. */
-export function lerRespostaAdaptacao(texto: any, totalModelos: number): RespostaAdaptacao | null {
-  let s = String(texto ?? "").trim();
-  if (!s) return null;
-  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
-  const ini = s.indexOf("{"), fim = s.lastIndexOf("}");
-  if (ini < 0 || fim <= ini) return null;
-  let o: any;
-  try { o = JSON.parse(s.slice(ini, fim + 1)); } catch { return null; }
-  const str = (v: any) => (typeof v === "string" ? v.trim() : "");
-  const descricao = limparDescricao(str(o.descricao_complementar));
-  if (descricao.length < 80) return null;     // resposta vazia ou cortada
-  let modelo = Number(o.modelo);
-  if (!Number.isInteger(modelo) || modelo < 0 || modelo > totalModelos) modelo = 0;
-  return {
-    modelo,
-    titulo: str(o.titulo).replace(/\s+/g, " "),
-    descricao_complementar: descricao,
-    descricao_seo: str(o.descricao_seo).replace(/\s+/g, " "),
-    palavras_chave: str(o.palavras_chave).replace(/\s*,\s*/g, ",").replace(/^,+|,+$/g, ""),
-  };
-}
-
-/** Traduz um erro da chamada à IA (Claude, Gemini ou Groq) em uma frase que o usuário entende e diz se vale tentar de novo. Nunca inclui a chave. */
-export function analisarErroIA(e: any, nome = "Gemini", variavel = "GEMINI_API_KEY"): { motivo: string; transitorio: boolean; status: number } {
+/** Traduz um erro da chamada à IA (Claude) em uma frase que o usuário entende e diz se vale tentar de novo. Nunca inclui a chave. */
+export function analisarErroIA(e: any, nome = "Claude", variavel = "ANTHROPIC_API_KEY"): { motivo: string; transitorio: boolean; status: number } {
   const bruto = String(e?.message ?? e ?? "");
   let msg = bruto;
   try { const j = JSON.parse(bruto); msg = String(j?.error?.message ?? j?.message ?? bruto); } catch { /* texto simples */ }
-  msg = msg.replace(/AIza[0-9A-Za-z_\-]{20,}/g, "***").replace(/(?:sk|gsk)[-_][0-9A-Za-z_\-]{16,}/g, "***").replace(/\s+/g, " ").trim().slice(0, 160);
+  msg = msg.replace(/sk-[0-9A-Za-z_\-]{10,}/g, "***").replace(/\s+/g, " ").trim().slice(0, 160);
   const status = Number(e?.status ?? e?.code ?? (bruto.match(/\b(4\d\d|5\d\d)\b/)?.[1] ?? 0)) || 0;
   if (/sem resposta em/i.test(bruto)) return { motivo: `o ${nome} demorou demais (${msg})`, transitorio: true, status: 0 };
   if (status === 402 || /insufficient balance/i.test(bruto)) return { motivo: `o ${nome} está sem saldo (erro 402): ${msg}. Verifique o saldo/plano da conta`, transitorio: false, status: 402 };
@@ -136,9 +55,9 @@ export function analisarErroIA(e: any, nome = "Gemini", variavel = "GEMINI_API_K
   return { motivo: `falha ao falar com o ${nome}: ${msg || "erro desconhecido"}`, transitorio: true, status };
 }
 
-export const MOTIVO_SEM_CHAVE = "nenhuma IA está configurada no Vercel (falta ANTHROPIC_API_KEY, GEMINI_API_KEY ou GROQ_API_KEY)";
+export const MOTIVO_SEM_CHAVE = "a IA não está configurada: falta a variável ANTHROPIC_API_KEY no Vercel";
 
-export function motivoRespostaInvalida(texto: any, nome = "Gemini"): string {
+export function motivoRespostaInvalida(texto: any, nome = "Claude"): string {
   const t = String(texto ?? "").replace(/\s+/g, " ").trim();
   return t ? `o ${nome} respondeu fora do formato esperado: "${t.slice(0, 140)}${t.length > 140 ? "…" : ""}"` : `o ${nome} devolveu uma resposta vazia`;
 }

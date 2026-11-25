@@ -9,6 +9,7 @@ import {
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import CadastrosTiny from "../components/CadastrosTiny";
+import ComparacaoModelos, { type EscolhaTela, type ModeloResumo, type PaiParaComparar } from "../components/ComparacaoModelos";
 import Paginacao from "../components/Paginacao";
 import * as XLSX from "xlsx";
 
@@ -242,12 +243,42 @@ export default function ProdutosPage() {
     setLoading(false);
   };
 
+  // 1º passo: tela comparativa (produto novo x modelo da Padronização). Só depois de confirmar é que a planilha é gerada.
+  const [comparacao, setComparacao] = useState<{ pais: PaiParaComparar[]; modelos: ModeloResumo[]; iaConfigurada: boolean } | null>(null);
+
   const baixarPlanilhaTinySelecionados = async () => {
     if (skusSelecionados.length === 0) {
       alert("Selecione ao menos um produto na tabela para baixar a planilha do Tiny.");
       return;
     }
+    setLoading(true);
+    try {
+      const grupos = new Map<string, any[]>();
+      skusSelecionados.forEach((sku) => {
+        const it = dadosPendentes.find((p: any) => p.sku === sku);
+        if (!it) return;
+        const pai = it.sku_pai || (sku.length > 5 ? sku.substring(0, 5) : sku);
+        grupos.set(pai, [...(grupos.get(pai) || []), it]);
+      });
+      const minusculas = ["de", "do", "da", "dos", "das", "e", "em", "por", "com", "para", "a", "o"];
+      const formatar = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim().split(" ")
+        .map((w, i) => (i > 0 && minusculas.includes(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(" ");
+      const pais: PaiParaComparar[] = Array.from(grupos.entries()).map(([chave, itens]) => ({
+        chave, nome: formatar(String(itens[0].produto || "").split("-")[0]), marca: itens[0].marca || "Best Fit", variacoes: itens.length,
+      }));
+      const { data: modelos, error } = await supabase.from("padroes_anuncios").select("id, titulo, marca, sku, categoria, altura, largura, comprimento, peso").order("titulo");
+      if (error) throw error;
+      let iaConfigurada = false;
+      try { iaConfigurada = !!(await (await fetch("/api/ia-status")).json()).configurada; } catch { /* sem resposta: trata como sem IA */ }
+      setComparacao({ pais, modelos: (modelos || []).map((m: any) => ({ ...m, id: String(m.id) })), iaConfigurada });
+    } catch (err: any) {
+      alert("Erro ao preparar a comparação: " + (err?.message || err));
+    }
+    setLoading(false);
+  };
 
+  const gerarPlanilhaTiny = async (escolhas: Record<string, EscolhaTela>) => {
+    setComparacao(null);
     try {
       setLoading(true);
       // agrupa por produto pai e manda em lotes pequenos (3 pais por vez): a IA gera uma descrição por pai e um lote grande pode estourar o tempo do servidor
@@ -280,7 +311,7 @@ export default function ProdutosPage() {
         const res = await fetch("/api/exportar-tiny", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ skus: lotes[i] })
+          body: JSON.stringify({ skus: lotes[i], escolhas })
         });
         const texto = await res.text();
         let data: any = {};
@@ -314,18 +345,17 @@ export default function ProdutosPage() {
 
       const d = resumo.descricoes;
       const linhasDescricao = [
-        d.modeloIA ? `- ${d.modeloIA} produto(s) pai: a IA leu o modelo da Padronização e adaptou título, descrição, SEO e palavras-chave` : "",
-        d.modeloIgual ? `- ${d.modeloIgual} produto(s) pai: mesmo nome do modelo, texto copiado do modelo` : "",
+        d.modeloIA ? `- ${d.modeloIA} produto(s) pai: modelo da Padronização com a estampa trocada e a descrição reescrita pela IA` : "",
+        d.modeloIgual ? `- ${d.modeloIgual} produto(s) pai: modelo da Padronização com a estampa trocada automaticamente (sem IA)` : "",
         d.historico ? `- ${d.historico} produto(s) pai: texto já salvo no histórico do SKU` : "",
-        d.iaSemModelo ? `- ${d.iaSemModelo} produto(s) pai: sem modelo parecido, a IA escreveu do zero` : "",
+        d.iaSemModelo ? `- ${d.iaSemModelo} produto(s) pai: sem modelo, descrição genérica escrita pela IA` : "",
         d.textoPadrao ? `- ${d.textoPadrao} produto(s) pai: texto padrão genérico` : "",
       ].filter(Boolean).join("\n");
       const iaTexto = Object.entries(resumo.iaUsada).map(([nome, n]) => `${nome}: ${n}`).join(" · ");
       alert(
         `✅ Planilha gerada com ${resumo.produtos} produto(s).\n\nDescrições:\n${linhasDescricao}` +
-        (iaTexto ? `\n\n🤖 IA que respondeu (produtos pai) — ${iaTexto}` : "") +
-        (resumo.avisosIA.length ? `\n↪ A IA principal falhou e a reserva assumiu: ${resumo.avisosIA.join(" | ")}` : "") +
-        (resumo.paisSemIA.length ? `\n\n⚠️ A IA não foi aproveitada e a descrição saiu genérica: ${resumo.paisSemIA.join(", ")}` : "") +
+        (iaTexto ? `\n\n🤖 IA usada nas descrições (produtos pai) — ${iaTexto}` : "\n\n🤖 Nenhuma IA foi usada (zero tokens gastos).") +
+                (resumo.paisSemIA.length ? `\n\n⚠️ A IA foi pedida mas não respondeu; a descrição saiu pelas regras automáticas: ${resumo.paisSemIA.join(", ")}` : "") +
         (resumo.motivosIA.length ? `\n\nMotivo: ${resumo.motivosIA.join(" | ")}` : "") +
         `\n\nMedidas da embalagem:\n` +
         `- ${resumo.medidasReais} com as medidas e o peso reais da aba Dimensões e Peso\n` +
@@ -763,6 +793,10 @@ export default function ProdutosPage() {
             <p className="text-sm font-medium text-slate-400">Do produto pendente ao cadastro no Tiny, num só lugar</p>
           </div>
           <Navbar />
+          {comparacao && (
+            <ComparacaoModelos pais={comparacao.pais} modelos={comparacao.modelos} iaConfigurada={comparacao.iaConfigurada}
+              onCancelar={() => setComparacao(null)} onConfirmar={gerarPlanilhaTiny} />
+          )}
         </div>
 
         {/* indicadores */}

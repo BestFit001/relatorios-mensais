@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { medidasDoProduto, modeloParecido, nomesEquivalentes, rankearModelos } from "../../../lib/padroesAnuncios";
-import { ajustarTitulo, lerRespostaAdaptacao, montarPedidoAdaptacao, MOTIVO_SEM_CHAVE, slugDoTitulo, type RespostaAdaptacao } from "../../../lib/adaptarModelo";
+import { medidasDoProduto, modeloParecido } from "../../../lib/padroesAnuncios";
+import { MOTIVO_SEM_CHAVE, slugDoTitulo } from "../../../lib/adaptarModelo";
 import { gerarTexto, provedoresConfigurados, resumirFalhas, type ProvedorIA } from "../../../lib/iaProvedores";
 import { normSkuPai } from "../../../lib/dimensoesPeso";
-import { INSTRUCAO_FORMATO_DESCRICAO, limparDescricao } from "../../../lib/textoDescricao";
+import { limparDescricao } from "../../../lib/textoDescricao";
+import { conteudoPeloModelo, pedidoDescricaoDoModelo, pedidoDescricaoGenerica } from "../../../lib/comparacaoModelos";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;   // a IA pode demorar: sem isso a Vercel corta a resposta e o navegador recebe corpo vazio
-const PRAZO_IA_MS = 50000;        // tempo total da IA (todas as tentativas, nos 2 provedores) antes de usar o texto padrão; a função tem 60 s
+const PRAZO_IA_MS = 50000;        // tempo total da IA (todas as tentativas) antes de usar o texto padrão; a função tem 60 s
+const MAX_TOKENS_DESCRICAO = 1100; // uma descrição de produto cabe em ~900 tokens: teto baixo para gastar o mínimo
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -61,38 +63,29 @@ type FonteConteudo = "historico" | "modelo-ia" | "modelo-igual" | "ia" | "texto-
 interface ConteudoPai {
   descricao: string;
   fonte: FonteConteudo;
-  /** modelo da Padronização que serve ao produto (medidas, peso e categoria vêm dele); null = nenhum */
+  /** modelo da Padronização escolhido na tela de comparação (medidas, peso e categoria vêm dele); null = nenhum */
   padrao: any | null;
-  /** só quando a IA adaptou o modelo: título, descrição SEO e palavras-chave já ajustados */
+  /** quando há modelo: título, descrição SEO e palavras-chave já adaptados (sem IA) */
   titulo?: string;
   descSeo?: string;
   palavrasChave?: string;
-  /** havia modelo do mesmo tipo, mas a IA não respondeu: a descrição saiu genérica */
+  /** pediu IA, havia onde usar, mas ela não respondeu: o texto saiu sem IA */
   modeloSemIA?: boolean;
   /** por que a IA não foi aproveitada (mostrado no aviso final) */
   motivoIA?: string;
-  /** qual IA respondeu ("Claude", "Gemini" ou "Groq"); vazio quando nenhuma foi usada */
+  /** qual IA respondeu ("Claude"); vazio quando nenhuma foi usada */
   provedorIA?: string;
-  /** a IA principal falhou, mas a reserva respondeu: o que aconteceu com a principal */
   avisoIA?: string;
 }
 
-/**
- * Pede à IA a adaptação do modelo. Tenta o Gemini (raciocínio baixo, para responder rápido) e, se ele falhar, demorar ou
- * responder fora do formato, o Groq. Qualquer um que tenha chave configurada serve; basta um.
- */
-async function pedirAdaptacao(
-  provedores: ProvedorIA[], pedido: string, totalModelos: number, prazoFinal: number
-): Promise<{ r: RespostaAdaptacao | null; provedor: string | null; motivo: string; aviso: string }> {
-  let lida: RespostaAdaptacao | null = null;
-  const res = await gerarTexto(provedores, pedido, {
-    json: true,
-    prazoFinal,
-    aceitar: (t) => { lida = lerRespostaAdaptacao(t, totalModelos); return !!lida; },
-  });
-  const falhas = resumirFalhas(res.falhas);
-  if (res.provedor && lida) return { r: lida, provedor: res.provedor, motivo: "", aviso: falhas };
-  return { r: null, provedor: null, motivo: falhas || "a IA não respondeu", aviso: "" };
+/** O que o usuário decidiu na tela de comparação para um produto pai. */
+interface Escolha {
+  /** id do modelo da Padronização ("é esse modelo"); null/ausente = "não é esse modelo" */
+  modeloId?: string | null;
+  /** título final (o usuário pode ter ajustado na tela); vazio = o calculado pelo app */
+  titulo?: string;
+  /** deixar a IA escrever/ajustar a descrição (gasta tokens). false = só as trocas automáticas / texto padrão */
+  usarIA?: boolean;
 }
 
 function textoPadraoSemIA(nomePaiFormatado: string, marcaPai: string): string {
@@ -147,107 +140,50 @@ function textoPadraoSemIA(nomePaiFormatado: string, marcaPai: string): string {
 }
 
 /**
- * Conteúdo do produto pai (descrição complementar, e quando há modelo: título, descrição SEO e palavras-chave).
- * Ordem: 1) texto já salvo no histórico do SKU; 2) IA lê o modelo da Padronização do mesmo tipo de produto e ADAPTA
- * (mantém o que é igual, troca/remove o que é da estampa do modelo); 3) cópia do modelo só se o nome for idêntico;
- * 4) IA sem modelo; 5) texto padrão.
+ * Conteúdo do produto pai a partir da escolha feita na tela de comparação:
+ *  1) descrição já aprovada no histórico do SKU (sempre vale);
+ *  2) "é esse modelo": título, SEO, palavras-chave e descrição vêm do modelo com a estampa/capacidade trocadas, SEM IA;
+ *     se o usuário marcou "usar IA", só a descrição é reescrita (pedido curto, modelo barato);
+ *  3) "não é esse modelo": descrição genérica pela IA (se marcada e configurada) ou texto padrão.
  */
 async function conteudoDoPai(
-  nomePaiRaw: string,
   nomePaiFormatado: string,
   marcaPai: string,
-  cores: string[],
   histSku: { resposta_ia?: string | null } | null,
-  padroes: any[],
+  modelo: any | null,
+  escolha: Escolha,
   provedores: ProvedorIA[],
   prazoFinal: number
 ): Promise<ConteudoPai> {
-  const candidatos = rankearModelos(nomePaiRaw, marcaPai, padroes).slice(0, 3);
-  const parecido = modeloParecido(nomePaiRaw, marcaPai, padroes);
-
-  // 1. descrição já aprovada para este SKU (histórico do chat)
   if (histSku?.resposta_ia) {
-    return { descricao: limparDescricao(histSku.resposta_ia), fonte: "historico", padrao: parecido };
+    return { descricao: limparDescricao(histSku.resposta_ia), fonte: "historico", padrao: modelo };
   }
 
-  // 2. a IA analisa o modelo e adapta para o produto novo
-  let motivoIA = "";
+  const quer = !!escolha.usarIA;
   const temIA = provedores.length > 0;
-  if (candidatos.length > 0 && !temIA) motivoIA = MOTIVO_SEM_CHAVE;
-  if (candidatos.length > 0 && temIA) {
-    // só os 2 melhores modelos vão para a IA: pedido menor responde mais rápido e cabe no limite por minuto do Groq
-    const modelos = candidatos.slice(0, 2).map((c) => c.padrao);
-    let pedido = "";
-    try {
-      pedido = montarPedidoAdaptacao({ nome: nomePaiFormatado, marca: marcaPai, cores }, modelos);
-    } catch (e) {
-      motivoIA = "erro ao montar o pedido para a IA: " + String((e as any)?.message ?? e).slice(0, 120);
-      console.error(motivoIA, e);
-    }
-    if (pedido) {
-      const { r, provedor, motivo, aviso } = await pedirAdaptacao(provedores, pedido, modelos.length, prazoFinal);
-      if (r) {
-        const escolhido = r.modelo > 0 ? modelos[r.modelo - 1] : null;
-        return {
-          descricao: r.descricao_complementar,
-          fonte: "modelo-ia",
-          padrao: escolhido,
-          titulo: r.titulo ? toTitleCase(ajustarTitulo(r.titulo)) : undefined,
-          descSeo: r.descricao_seo || undefined,
-          palavrasChave: r.palavras_chave || undefined,
-          provedorIA: provedor || undefined,
-          avisoIA: aviso || undefined,
-        };
-      }
-      motivoIA = motivo;
-    }
-  }
+  const motivoSemChave = quer && !temIA ? MOTIVO_SEM_CHAVE : "";
 
-  // 3. mesmo nome do modelo (mesma estampa): aí sim vale copiar o texto do modelo
-  const igual = candidatos.find((c) => c.padrao.descricao_complementar && nomesEquivalentes(String(c.padrao.titulo), nomePaiRaw, marcaPai));
-  if (igual) {
-    return {
-      descricao: limparDescricao(igual.padrao.descricao_complementar),
-      fonte: "modelo-igual",
-      padrao: igual.padrao,
-      descSeo: igual.padrao.descricao_seo || undefined,
-      palavrasChave: igual.padrao.palavras_chave_seo || undefined,
+  if (modelo) {
+    const c = conteudoPeloModelo(nomePaiFormatado, marcaPai, modelo);
+    const titulo = escolha.titulo?.trim() ? toTitleCase(escolha.titulo) : toTitleCase(c.titulo);
+    const base: ConteudoPai = {
+      descricao: limparDescricao(c.descricao), fonte: "modelo-igual", padrao: modelo,
+      titulo, descSeo: c.descSeo || undefined, palavrasChave: c.palavrasChave || undefined,
     };
+    if (quer && temIA && String(modelo.descricao_complementar || "").trim()) {
+      const res = await gerarTexto(provedores, pedidoDescricaoDoModelo(limparDescricao(modelo.descricao_complementar), c.comparacao.trocas, marcaPai), { prazoFinal, maxTokens: MAX_TOKENS_DESCRICAO });
+      if (res.texto) return { ...base, descricao: limparDescricao(res.texto), fonte: "modelo-ia", provedorIA: res.provedor || undefined };
+      return { ...base, modeloSemIA: true, motivoIA: resumirFalhas(res.falhas) || "a IA devolveu uma resposta vazia" };
+    }
+    return { ...base, modeloSemIA: quer && !!motivoSemChave, motivoIA: motivoSemChave || undefined };
   }
 
-  // 4. sem modelo parecido: IA escreve do zero lendo o nome do produto
-  if (candidatos.length === 0 && temIA) {
-    const prompt = `Você é um analista sênior de e-commerce da Best Fit. Elabore uma descrição comercial impecável e 100% fiel ao produto abaixo.
-
-DIRETRIZES CRÍTICAS:
-1. LEITURA REAL DO ITEM: Identifique o que o produto é pelo título ("${nomePaiFormatado}").
- - Se for um biquíni/conjunto infantil, mencione proteção UV50+, conforto térmico, tecido próprio para praia/piscina, composição de elastano/poliéster e cuidados de lavagem.
- - Se for uma lancheira, bolsa ou acessório, mencione espaço interno, material resistente, praticidade para o dia a dia e facilidade de limpeza.
- - NUNCA misture categorias! Uma lancheira jamais é um biquíni.
-2. Respeite rigorosamente a marca original (${marcaPai}).
-3. NUNCA inclua tamanho ou cor na seção de especificações.
-4. Estruture o texto com parágrafo introdutório, Especificações, Benefícios, Composição e Cuidados e Conservação.
-
-${INSTRUCAO_FORMATO_DESCRICAO}
-
-DADOS DO PRODUTO:
-- Nome/Título: ${nomePaiFormatado}
-- Marca: ${marcaPai}`;
-    const res = await gerarTexto(provedores, prompt, { prazoFinal });
-    if (res.texto) return { descricao: limparDescricao(res.texto), fonte: "ia", padrao: null, provedorIA: res.provedor || undefined, avisoIA: resumirFalhas(res.falhas) || undefined };
-    motivoIA = resumirFalhas(res.falhas) || "a IA devolveu uma resposta vazia";
-  } else if (candidatos.length === 0 && !temIA) {
-    motivoIA = MOTIVO_SEM_CHAVE;
+  if (quer && temIA) {
+    const res = await gerarTexto(provedores, pedidoDescricaoGenerica(nomePaiFormatado, marcaPai), { prazoFinal, maxTokens: MAX_TOKENS_DESCRICAO });
+    if (res.texto) return { descricao: limparDescricao(res.texto), fonte: "ia", padrao: null, provedorIA: res.provedor || undefined };
+    return { descricao: limparDescricao(textoPadraoSemIA(nomePaiFormatado, marcaPai)), fonte: "texto-padrao", padrao: null, motivoIA: resumirFalhas(res.falhas) || "a IA devolveu uma resposta vazia" };
   }
-
-  // 5. texto padrão (a IA não respondeu ou não está configurada)
-  return {
-    descricao: limparDescricao(textoPadraoSemIA(nomePaiFormatado, marcaPai)),
-    fonte: "texto-padrao",
-    padrao: parecido,
-    modeloSemIA: candidatos.length > 0 && !!motivoIA,
-    motivoIA: motivoIA || undefined,
-  };
+  return { descricao: limparDescricao(textoPadraoSemIA(nomePaiFormatado, marcaPai)), fonte: "texto-padrao", padrao: null, motivoIA: motivoSemChave || undefined };
 }
 
 const COLUNAS_BASE = (o: {
@@ -327,6 +263,8 @@ export async function POST(req: Request) {
   try {
     const corpo = await req.json().catch(() => ({}));
     const skus: string[] = Array.isArray(corpo?.skus) ? corpo.skus : [];
+    // decisões da tela de comparação, por produto pai (sem decisão: usa o modelo mais parecido, se houver, e não usa IA)
+    const escolhas: Record<string, Escolha> = corpo?.escolhas && typeof corpo.escolhas === "object" ? corpo.escolhas : {};
 
     if (skus.length === 0) {
       return NextResponse.json({ error: "Nenhum SKU selecionado para exportação." }, { status: 400 });
@@ -340,7 +278,7 @@ export async function POST(req: Request) {
 
     const { data: padroesOficiais } = await supabase.from("padroes_anuncios").select("*");
 
-    // IAs configuradas no Vercel (ANTHROPIC_API_KEY, GEMINI_API_KEY e/ou GROQ_API_KEY): se uma falhar, a outra assume
+    // IA configurada no Vercel (variável ANTHROPIC_API_KEY, só no servidor); sem ela tudo sai pelas regras automáticas
     const provedores = provedoresConfigurados();
 
     // grupos por pai (mantém a ordem)
@@ -360,15 +298,19 @@ export async function POST(req: Request) {
     const histPorSku = new Map<string, { resposta_ia?: string | null }>();
     (historicos || []).forEach((h: any) => { if (!histPorSku.has(h.sku)) histPorSku.set(h.sku, h); });
 
-    // conteúdo de todos os pais EM PARALELO (cada IA com limite de tempo): a IA lê o modelo da Padronização e adapta
+    // conteúdo de todos os pais EM PARALELO (a IA, quando marcada, só escreve a descrição)
     const entradas = Array.from(grupos.entries());
     const prazoIA = Date.now() + PRAZO_IA_MS;
     const conteudos = await Promise.all(
-      entradas.map(([, itens]) => {
+      entradas.map(([paiKey, itens]) => {
         const base = itens[0];
         const nomeRaw = limparTextoEstrito(String(base.produto || "").split("-")[0]);
-        const cores = Array.from(new Set(itens.map((i: any) => (i.cor ? toTitleCase(limparTextoEstrito(i.cor)) : "")).filter(Boolean))) as string[];
-        return conteudoDoPai(nomeRaw, toTitleCase(nomeRaw), base.marca || "Best Fit", cores, histPorSku.get(base.sku) || null, padroesOficiais || [], provedores, prazoIA);
+        const marca = base.marca || "Best Fit";
+        const esc = escolhas[paiKey];
+        const modelo = esc
+          ? (esc.modeloId ? (padroesOficiais || []).find((m: any) => String(m.id) === String(esc.modeloId)) || null : null)
+          : modeloParecido(nomeRaw, marca, padroesOficiais || []);
+        return conteudoDoPai(toTitleCase(nomeRaw), marca, histPorSku.get(base.sku) || null, modelo, esc || {}, provedores, prazoIA);
       })
     );
 
@@ -414,7 +356,7 @@ export async function POST(req: Request) {
 
       // título final do pai (a IA adapta o do modelo; máx. 60 caracteres, sem cortar palavras) e demais dados do anúncio
       const tituloPai = cont.titulo || nomePaiFormatado;
-      const slugDe = (t: string) => (cont.titulo ? slugDoTitulo(t, cont.padrao?.slug || "") : gerarSlug(t));
+      const slugDe = (t: string) => (cont.titulo && cont.padrao ? slugDoTitulo(t, cont.padrao?.slug || "") : gerarSlug(t));
       const kwDe = (t: string) => cont.palavrasChave || gerarPalavrasChave(t);
 
       // outras informações do produto: modelo escolhido na Padronização (medidas, peso, categoria)

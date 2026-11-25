@@ -27,6 +27,7 @@ export default function PadronizacaoPage() {
   const [marca, setMarca] = useState("");
   const [slug, setSlug] = useState("");
   const [palavrasChave, setPalavrasChave] = useState("");
+  const [skuModelo, setSkuModelo] = useState("");
   const [categoria, setCategoria] = useState("");
   const [altura, setAltura] = useState("");
   const [largura, setLargura] = useState("");
@@ -59,7 +60,7 @@ export default function PadronizacaoPage() {
   }
 
   function limparFormulario() {
-    setTitulo(""); setMarca(""); setSlug(""); setPalavrasChave(""); setCategoria("");
+    setTitulo(""); setMarca(""); setSkuModelo(""); setSlug(""); setPalavrasChave(""); setCategoria("");
     setAltura(""); setLargura(""); setComprimento(""); setPeso("");
     setDescricaoSeo(""); setDescricaoComplementar("");
     setEditandoId(null);
@@ -67,7 +68,7 @@ export default function PadronizacaoPage() {
 
   function editarPadrao(p: any) {
     setEditandoId(p.id);
-    setTitulo(txt(p.titulo)); setMarca(txt(p.marca)); setSlug(txt(p.slug)); setPalavrasChave(txt(p.palavras_chave_seo));
+    setTitulo(txt(p.titulo)); setMarca(txt(p.marca)); setSkuModelo(txt(p.sku)); setSlug(txt(p.slug)); setPalavrasChave(txt(p.palavras_chave_seo));
     setCategoria(txt(p.categoria));
     setAltura(txt(p.altura)); setLargura(txt(p.largura)); setComprimento(txt(p.comprimento)); setPeso(txt(p.peso));
     setDescricaoSeo(txt(p.descricao_seo)); setDescricaoComplementar(limparDescricao(p.descricao_complementar));   // modelos antigos com **, ### etc. já abrem limpos
@@ -89,6 +90,7 @@ export default function PadronizacaoPage() {
     const dados = {
       titulo: titulo.trim(),
       marca: marca.trim(),
+      sku: skuModelo.trim() || null,   // SKU do produto no Tiny: a tela de comparação dos Novos Cadastros procura o modelo por ele
       slug,
       palavras_chave_seo: palavrasChave,
       categoria,
@@ -163,6 +165,7 @@ export default function PadronizacaoPage() {
       const dados = {
         titulo: m.titulo,
         marca: marcaFinal,
+        sku: m.sku || null,
         slug: m.slug,
         palavras_chave_seo: m.palavras_chave_seo,
         categoria: m.categoria,
@@ -318,6 +321,11 @@ export default function PadronizacaoPage() {
             </div>
 
             <div>
+              <label className="block text-xs text-gray-400 mb-1">SKU do modelo (Tiny)</label>
+              <input type="text" data-f-sku value={skuModelo} onChange={e => setSkuModelo(e.target.value)} className={campo} placeholder="Ex: 12345" />
+            </div>
+
+            <div>
               <label className="block text-xs text-gray-400 mb-1">Slug Ideal</label>
               <input type="text" value={slug} onChange={e => setSlug(e.target.value)} className={campo} placeholder="Ex: lancheira-farm-ziriguidum" />
             </div>
@@ -403,7 +411,7 @@ export default function PadronizacaoPage() {
                 ) : (
                   padroes.map((p) => (
                     <tr key={p.id} data-padrao={p.id} className={`hover:bg-[#1b1f38]/50 transition ${editandoId === p.id ? "bg-amber-950/20" : ""}`}>
-                      <td className="p-4 font-medium text-white">{p.titulo}</td>
+                      <td className="p-4 font-medium text-white">{p.titulo}{p.sku ? <span className="block text-[11px] font-mono text-gray-500">SKU {p.sku}</span> : null}</td>
                       <td className="p-4 text-gray-300">{p.marca}</td>
                       <td className="p-4 text-gray-300 text-xs">
                         {p.categoria && <div className="font-semibold text-purple-300">{p.categoria}</div>}
