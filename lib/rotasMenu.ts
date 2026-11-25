@@ -44,6 +44,7 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/promocoes/magalu", nome: "Magazine Luiza", rotulo: "Magalu", prefixo: "🔵" },
     { id: "/promocoes/shopee", nome: "Shopee", prefixo: "🟠" },
     { id: "/promocoes/tiktok", nome: "TikTok Shop", prefixo: "⚫" },
+    { id: "/promocoes/amazon", nome: "Amazon", prefixo: "🟤" },
   ] },
   { titulo: "Ferramentas", icone: "🛠️", submenu: true, rotas: [
     { id: "/calculadora", nome: "Calculadora" },

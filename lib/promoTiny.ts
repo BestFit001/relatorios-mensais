@@ -1,5 +1,5 @@
-// Planilha de estoque (inventário) do Tiny usada nas abas de Promoções (ML, Magalu, Shopee, TikTok):
-// em que coluna está o SKU e em qual está o saldo. Fica salva no banco e vale para as quatro abas.
+// Planilha de estoque (inventário) do Tiny usada nas abas de Promoções (ML, Magalu, Shopee, TikTok, Amazon):
+// em que coluna está o SKU e em qual está o saldo. Fica salva no banco e vale para todas as abas.
 import { supabase } from "./supabase";
 
 export interface ConfigPromoTiny { sku: string; estoque: string }

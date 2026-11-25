@@ -8,7 +8,7 @@ import {
 
 /**
  * Sub-aba "Configurações" das Promoções: em que coluna da planilha de estoque do Tiny estão o SKU e o saldo.
- * A mesma configuração vale para Mercado Livre, Magalu, Shopee e TikTok. `onSalvo` avisa a página para reler.
+ * A mesma configuração vale para Mercado Livre, Magalu, Shopee, TikTok e Amazon. `onSalvo` avisa a página para reler.
  */
 export default function ConfigPromoTiny({ onSalvo, conta }: { onSalvo?: (cfg: ConfigPromoTiny) => void; conta?: { chave: string; rotulo: string } }) {
   const [sku, setSku] = useState(PADRAO_PROMO_TINY.sku);
@@ -65,7 +65,7 @@ export default function ConfigPromoTiny({ onSalvo, conta }: { onSalvo?: (cfg: Co
             Diga em que coluna da planilha de inventário do Tiny ficam o <b>SKU</b> e o <b>saldo em estoque</b>.{" "}
             {conta
               ? <>É a mesma planilha de estoque para todas as contas, então esta configuração vale para <b>{conta.rotulo}</b>. Só o que tem saldo maior que zero é precificado.</>
-              : <>A mesma configuração vale para Mercado Livre, Magalu, Shopee e TikTok: só o que tem saldo maior que zero é precificado.</>}
+              : <>A mesma configuração vale para Mercado Livre, Magalu, Shopee, TikTok e Amazon: só o que tem saldo maior que zero é precificado.</>}
           </p>
         </div>
 

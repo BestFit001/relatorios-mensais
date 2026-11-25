@@ -6,6 +6,8 @@ import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
 import { abaPrincipal } from "../../../lib/lerArquivo";
 import ConfigPromoTiny from "../../components/ConfigPromoTiny";
+import PrecificacaoPorMarca, { useCfgMarcas } from "../../components/PrecificacaoPorMarca";
+import { aplicarMarca, listarMarcas, type MarcaInfo } from "../../../lib/precificacaoMarcas";
 import { carregarConfigPromoTiny, lerEstoqueTiny, PADRAO_PROMO_TINY, type ConfigPromoTiny as CfgPromoTiny } from "../../../lib/promoTiny";
 
 function normalizarSku(valor: any): string {
@@ -60,6 +62,9 @@ export default function PromocoesMagaluPage() {
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [skusMagaluBaseSet, setSkusMagaluBaseSet] = useState<Set<string>>(new Set());
   const [regrasMagaluList, setRegrasMagaluList] = useState<any[]>([]);
+  const [marcaMap, setMarcaMap] = useState<Map<string, string>>(new Map());   // SKU -> marca (base de custos)
+  const [marcasLista, setMarcasLista] = useState<MarcaInfo[]>([]);
+  const [cfgMarcas, setCfgMarcas] = useCfgMarcas("magalu");
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -89,13 +94,17 @@ export default function PromocoesMagaluPage() {
       }
 
       const cMap = new Map<string, number>();
+      const mMap = new Map<string, string>();
       allCustos.forEach((c: any) => {
         const k = normalizarSku(c.sku);
         if (k && k.length >= 10) {
           cMap.set(k, Number(c.custo_unitario || c.custo || 0));
+          mMap.set(k, String(c.marca ?? ""));
         }
       });
       setCustosMap(cMap);
+      setMarcaMap(mMap);
+      setMarcasLista(listarMarcas(allCustos));
 
       let allMapeamentos: any[] = [];
       from = 0;
@@ -195,10 +204,17 @@ export default function PromocoesMagaluPage() {
         const saldoAtual = estoqueMap.get(skuMapeado) || 0;
         const custo = custosMap.get(skuMapeado) || 0;
 
+        const marcaDoSku = marcaMap.get(skuMapeado) || "";
+        const ap = aplicarMarca(cfgMarcas, marcaDoSku, margemDesejada * 100);
+        const margemItem = ap.margemPct / 100;
+
         let statusItem = "APTO";
         let errosList: string[] = [];
 
-        if (saldoAtual <= 0) {
+        if (ap.fora) {
+          statusItem = "INAPTO";
+          errosList.push(`Marca sem lucro definido (${marcaDoSku || "sem marca"})`);
+        } else if (saldoAtual <= 0) {
           statusItem = "INAPTO";
           errosList.push(`Sem estoque (Saldo: ${saldoAtual})`);
         } else if (!skuValido(skuMapeado) || custo <= 0) {
@@ -221,7 +237,7 @@ export default function PromocoesMagaluPage() {
             const tarifaFixa = regraAplicada ? parseNumeroBruto(regraAplicada.tarifa_fixa || regraAplicada.tarifa || 5) : 5;
             const freteValor = regraAplicada ? parseNumeroBruto(regraAplicada.frete || regraAplicada.valor_frete || 0) : 0;
 
-            const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+            const denominador = 1 - (comissaoDec + imposto + margemItem);
             if (denominador > 0) {
               pdvEstimado = (custo + tarifaFixa + freteValor) / denominador;
             }
@@ -242,7 +258,7 @@ export default function PromocoesMagaluPage() {
               const tarifaFixa = regraAlta ? parseNumeroBruto(regraAlta.tarifa_fixa || regraAlta.tarifa || 5) : 5;
               const freteValor = regraAlta ? parseNumeroBruto(regraAlta.frete || regraAlta.valor_frete || 20.45) : 20.45;
 
-              const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+              const denominador = 1 - (comissaoDec + imposto + margemItem);
               if (denominador > 0) {
                 pdvAlto = (custo + tarifaFixa + freteValor) / denominador;
               }
@@ -255,6 +271,8 @@ export default function PromocoesMagaluPage() {
 
         resultados.push({
           SKU: skuMapeado,
+          MARCA: marcaDoSku,
+          LUCRO_PCT: ap.margemPct,
           SALDO: saldoAtual,
           CUSTO: custo,
           FINAL_PRICE: Number(precoSugerido.toFixed(2)),
@@ -441,6 +459,8 @@ export default function PromocoesMagaluPage() {
                 </div>
               </div>
 
+              <PrecificacaoPorMarca cfg={cfgMarcas} onChange={setCfgMarcas} marcas={marcasLista} rotuloPadrao="o lucro desejado acima" />
+
               {dadosProcessados.length > 0 && (
                 <div className="flex flex-col md:flex-row justify-between items-center gap-4 pt-2 border-t border-slate-800">
                   <div className="text-xs text-slate-300 font-medium">
@@ -478,6 +498,8 @@ export default function PromocoesMagaluPage() {
                     <thead className="bg-slate-950 sticky top-0 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] z-10">
                       <tr>
                         <th className="p-3">SKU (Coluna A)</th>
+                        <th className="p-3">Marca</th>
+                        <th className="p-3 text-right">Lucro %</th>
                         <th className="p-3 text-center">Saldo Estoque</th>
                         <th className="p-3 text-right">Custo Unitário</th>
                         <th className="p-3 text-right">PDV Sugerido (Coluna B)</th>
@@ -488,6 +510,8 @@ export default function PromocoesMagaluPage() {
                       {itensAptosList.map((item: any, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                           <td className="p-3 font-mono text-indigo-400">{item.SKU}</td>
+                          <td className="p-3 text-slate-300">{item.MARCA || "—"}</td>
+                          <td className="p-3 text-right font-mono text-amber-300">{Number(item.LUCRO_PCT).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%</td>
                           <td className="p-3 text-center font-mono font-bold text-purple-300">{item.SALDO}</td>
                           <td className="p-3 text-right font-mono text-slate-400">{formatarMoeda(item.CUSTO)}</td>
                           <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.FINAL_PRICE)}</td>
@@ -500,7 +524,7 @@ export default function PromocoesMagaluPage() {
                       ))}
                       {itensAptosList.length === 0 && (
                         <tr>
-                          <td colSpan={5} className="p-8 text-center text-slate-500">Nenhum produto apto encontrado com estoque positivo e mapeado na Magalu.</td>
+                          <td colSpan={7} className="p-8 text-center text-slate-500">Nenhum produto apto encontrado com estoque positivo e mapeado na Magalu.</td>
                         </tr>
                       )}
                     </tbody>

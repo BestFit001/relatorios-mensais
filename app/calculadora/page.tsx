@@ -11,6 +11,8 @@ import { paiDoSku, normalizarSkuPai, custoDoPai, type RegraCustoPai } from "../.
 import { escolherRegraPorPreco, inicioDaFaixa } from "../../lib/faixaTarifa";
 import { avaliarPdv, lerTabelaPdv, lerTolerancia, normalizarSku, pisoDoPdv, regraMaisRigida, textoDoAviso, type RegraPdv } from "../../lib/pdvMarcas";
 import { indiceDaLetra } from "../../lib/cobertura";
+import PrecificacaoPorMarca, { useCfgMarcas } from "../components/PrecificacaoPorMarca";
+import { aplicarMarca, listarMarcas } from "../../lib/precificacaoMarcas";
 
 const matrizFretes = [
   { atePeso: 0.3, faixas: { "78.99": 8.15, "99.99": 12.95, "119.99": 14.95, "149.99": 16.95, "199.99": 19.05, "200": 21.65 } },
@@ -122,8 +124,10 @@ export default function CalculadoraPage() {
   const [canalLote, setCanalLote] = useState("Mercado Livre 1 Clássico");
   const [margemLote, setMargemLote] = useState("30");
   const [processandoLote, setProcessandoLote] = useState(false);
-  const [resultadoLote, setResultadoLote] = useState<{ nomeArquivo: string; canal: string; margem: number; linhas: any[][]; total: number; calculados: number; semCusto: number; inviaveis: number; comRegra: number; alertas: { sku: string; pdv: number; minimo: number; falta: number }[] } | null>(null);
+  const [resultadoLote, setResultadoLote] = useState<{ nomeArquivo: string; canal: string; margem: number; linhas: any[][]; total: number; calculados: number; semCusto: number; inviaveis: number; comRegra: number; porMarca: number; forasMarca: number; marcaAtiva: boolean; alertas: { sku: string; pdv: number; minimo: number; falta: number }[] } | null>(null);
   const [erroLote, setErroLote] = useState("");
+  const [cfgMarcas, setCfgMarcas] = useCfgMarcas("calculadora_lote");
+  const marcasLista = useMemo(() => listarMarcas(Array.from(custosTodos.values())), [custosTodos]);
 
   // SKU pai -> SKUs filhos (base de custos + anúncios). O pai segue a mesma regra do Mapa de Cadastros (5 dígitos + ajustes manuais).
   const filhosPorPai = useMemo(() => {
@@ -498,15 +502,21 @@ export default function CalculadoraPage() {
   const handleUploadLote = async (file: File) => {
     setErroLote("");
     setResultadoLote(null);
-    const margem = parseNumero(margemLote);
-    if (margemLote.trim() === "" || !(margem >= 0) || margem >= 100) { setErroLote("Informe uma margem válida (entre 0 e 99,9%) antes de subir a planilha."); return; }
+    let margem = parseNumero(margemLote);
+    // com "marcas sem regra ficam de fora" a margem padrão não é usada: só vale a de cada marca
+    const soMarcas = cfgMarcas.ativo && cfgMarcas.semRegra === "excluir";
+    const margemPadraoOk = margemLote.trim() !== "" && margem >= 0 && margem < 100;
+    if (!margemPadraoOk && !soMarcas) { setErroLote("Informe uma margem válida (entre 0 e 99,9%) antes de subir a planilha."); return; }
+    if (!margemPadraoOk) margem = 0;
+    if (cfgMarcas.ativo && cfgMarcas.regras.length === 0 && soMarcas) { setErroLote("Adicione ao menos uma marca (ou deixe as demais usarem a margem padrão)."); return; }
     if (!canalLote) { setErroLote("Selecione o canal."); return; }
     setProcessandoLote(true);
     try {
       const linhasArquivo = await lerArquivoComoLinhas(file);
       const valRebate = parseNumero(rebatesCanais[canalLote] || "0");
       const saida: any[][] = [["SKU", "PDV", "PDV de tabela da marca", "PDV mínimo permitido", "Alerta PDV"]];
-      let total = 0, calculados = 0, semCusto = 0, inviaveis = 0, comRegra = 0;
+      let total = 0, calculados = 0, semCusto = 0, inviaveis = 0, comRegra = 0, porMarca = 0, forasMarca = 0;
+      const extras: [string, number | ""][] = [];   // marca e lucro aplicado de cada linha da saída (mesma ordem)
       const alertas: { sku: string; pdv: number; minimo: number; falta: number }[] = [];
 
       linhasArquivo.forEach((linha, idx) => {
@@ -517,29 +527,47 @@ export default function CalculadoraPage() {
         total++;
         const cod = resolverCodigo(texto);
         const custo = cod ? cod.custo : 0;
+        // marca do SKU (no SKU pai, a primeira marca preenchida entre os filhos)
+        const marcaDoSku = !cod ? "" : cod.chave.startsWith("pai:")
+          ? (cod.filhos.map((f) => String(custosTodos.get(f)?.marca ?? "").trim()).find(Boolean) || "")
+          : String(custosTodos.get(cod.chave)?.marca ?? "").trim();
+        const ap = aplicarMarca(cfgMarcas, marcaDoSku, margem);
+        if (ap.fora) {
+          forasMarca++;
+          saida.push([texto, "marca sem lucro definido"]); extras.push([marcaDoSku, ""]);
+          return;
+        }
         if (!cod || !(custo > 0)) {
           semCusto++;
-          saida.push([texto, "sem custo na base"]);
+          saida.push([texto, "sem custo na base"]); extras.push([marcaDoSku, ap.margemPct]);
           return;
         }
-        const r = calcularPdvIdealCanal(canalLote, cod.chave, custo, margem, valRebate);
+        const r = calcularPdvIdealCanal(canalLote, cod.chave, custo, ap.margemPct, valRebate);
         if (r.inviavel || !(r.pdv > 0)) {
           inviaveis++;
-          saida.push([texto, "margem inviável para o canal"]);
+          saida.push([texto, "margem inviável para o canal"]); extras.push([marcaDoSku, ap.margemPct]);
           return;
         }
+        if (ap.daMarca) porMarca++;
         calculados++;
         const pdvFinal = Math.round(r.pdv * 100) / 100;
         const av = avaliarPdv(pdvFinal, regraPdvDe(cod.chave));
         if (av) { comRegra++; if (av.abaixo) alertas.push({ sku: texto, pdv: pdvFinal, minimo: av.minimo, falta: av.falta }); }
-        saida.push([texto, pdvFinal, av ? av.pdvTabela : "", av ? av.minimo : "", textoDoAviso(av)]);
+        saida.push([texto, pdvFinal, av ? av.pdvTabela : "", av ? av.minimo : "", textoDoAviso(av)]); extras.push([marcaDoSku, ap.margemPct]);
       });
 
       if (total === 0) { setErroLote("Não encontrei SKUs na coluna A da planilha."); return; }
       const base = file.name.replace(/\.[^.]+$/, "");
       // sem nenhum SKU com regra de PDV a planilha continua só SKU + PDV (mesmo formato de sempre)
-      const linhasFinais = comRegra > 0 ? saida : saida.map((l) => l.slice(0, 2));
-      setResultadoLote({ nomeArquivo: base, canal: canalLote, margem, linhas: linhasFinais, total, calculados, semCusto, inviaveis, comRegra, alertas });
+      const larg = comRegra > 0 ? 5 : 2;
+      const marcaAtiva = cfgMarcas.ativo;
+      // com a precificação por marca ligada, a marca e o lucro aplicado vão nas duas últimas colunas
+      const linhasFinais = saida.map((l, i) => {
+        const base2 = Array.from({ length: larg }, (_, c) => l[c] ?? "");
+        if (!marcaAtiva) return base2;
+        return i === 0 ? [...base2, "Marca", "Lucro aplicado (%)"] : [...base2, ...extras[i - 1]];
+      });
+      setResultadoLote({ nomeArquivo: base, canal: canalLote, margem, linhas: linhasFinais, total, calculados, semCusto, inviaveis, comRegra, porMarca, forasMarca, marcaAtiva, alertas });
     } catch (e: any) {
       setErroLote("Não consegui ler a planilha: " + (e?.message || e));
     } finally {
@@ -627,7 +655,7 @@ export default function CalculadoraPage() {
       if (a) { a.t = "s"; a.v = String(a.v); }
       for (const c of [1, 2, 3]) { const b = ws[XLSX.utils.encode_cell({ r, c })]; if (b && b.t === "n") b.z = "0.00"; }
     }
-    ws["!cols"] = [{ wch: 20 }, { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 38 }];
+    ws["!cols"] = [{ wch: 20 }, { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 38 }, { wch: 22 }, { wch: 20 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "PDV");
     const canalArq = resultadoLote.canal.replace(/[^a-zA-Z0-9]+/g, "_");
@@ -1442,6 +1470,7 @@ export default function CalculadoraPage() {
               />
             </div>
           </div>
+          <PrecificacaoPorMarca cfg={cfgMarcas} onChange={(c) => { setCfgMarcas(c); setResultadoLote(null); }} marcas={marcasLista} rotuloPadrao="a margem desejada acima" />
           <div>{seletorRegraPai}</div>
           {parseNumero(rebatesCanais[canalLote] || "0") > 0 && (
             <p className="text-[11px] text-purple-300">Rebate de R$ {parseNumero(rebatesCanais[canalLote]).toFixed(2)} informado em {canalLote} será considerado no cálculo.</p>
@@ -1452,6 +1481,7 @@ export default function CalculadoraPage() {
             <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl p-4" data-lote-resultado>
               <div className="text-xs text-slate-300 space-y-0.5">
                 <p><strong className="text-white">{resultadoLote.total}</strong> SKU(s) lidos · <strong className="text-emerald-400">{resultadoLote.calculados}</strong> com PDV calculado ({resultadoLote.canal}, margem {resultadoLote.margem}%)</p>
+                {resultadoLote.marcaAtiva && <p className="text-amber-300" data-lote-por-marca><strong>{resultadoLote.porMarca}</strong> SKU(s) com o lucro da marca{resultadoLote.forasMarca > 0 && <> · <strong>{resultadoLote.forasMarca}</strong> de marca sem lucro definido (ficaram de fora)</>}. A planilha traz a marca e o lucro aplicado nas duas últimas colunas.</p>}
                 {resultadoLote.semCusto > 0 && <p className="text-amber-400"><strong>{resultadoLote.semCusto}</strong> sem custo na base</p>}
                 {resultadoLote.inviaveis > 0 && <p className="text-rose-400"><strong>{resultadoLote.inviaveis}</strong> com margem inviável para o canal (comissão + imposto + margem ≥ 100%)</p>}
                 {resultadoLote.alertas.length > 0 && <p className="text-rose-300 font-bold" data-lote-abaixo-pdv>⚠️ <strong>{resultadoLote.alertas.length}</strong> SKU(s) com PDV calculado abaixo do mínimo da marca (de {resultadoLote.comRegra} com PDV cadastrado). Estão marcados na coluna &quot;Alerta PDV&quot; da planilha.</p>}

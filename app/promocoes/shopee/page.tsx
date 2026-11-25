@@ -6,6 +6,8 @@ import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
 import { escolherRegraPorPreco } from "../../../lib/faixaTarifa";
 import ConfigPromoTiny from "../../components/ConfigPromoTiny";
+import PrecificacaoPorMarca, { useCfgMarcas } from "../../components/PrecificacaoPorMarca";
+import { aplicarMarca, listarMarcas, type MarcaInfo } from "../../../lib/precificacaoMarcas";
 import { carregarConfigPromoTiny, lerEstoqueTiny, PADRAO_PROMO_TINY, type ConfigPromoTiny as CfgPromoTiny } from "../../../lib/promoTiny";
 
 function normalizarSku(valor: any): string {
@@ -48,6 +50,9 @@ export default function PromocoesShopeePage() {
 
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [regrasTarifacao, setRegrasTarifacao] = useState<any[]>([]);
+  const [marcaMap, setMarcaMap] = useState<Map<string, string>>(new Map());   // SKU -> marca (base de custos)
+  const [marcasLista, setMarcasLista] = useState<MarcaInfo[]>([]);
+  const [cfgMarcas, setCfgMarcas] = useCfgMarcas("shopee");
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -76,14 +81,18 @@ export default function PromocoesShopeePage() {
       }
 
       const cMap = new Map<string, number>();
+      const mMap = new Map<string, string>();
       allCustos.forEach((c: any) => {
         const k = normalizarSku(c.sku);
         if (k) {
           const custoVal = parseNumeroBruto(c.custo_unitario ?? c.custo ?? 0);
           cMap.set(k, custoVal);
+          mMap.set(k, String(c.marca ?? ""));
         }
       });
       setCustosMap(cMap);
+      setMarcaMap(mMap);
+      setMarcasLista(listarMarcas(allCustos));
 
       const { data: tarifacaoData } = await supabase.from("config_regras_tarifacao").select("*");
       if (tarifacaoData) {
@@ -208,10 +217,17 @@ export default function PromocoesShopeePage() {
         const saldoAtual = estoqueMap.get(skuVendedor) || 0;
         const custo = custosMap.get(skuVendedor) || 0;
 
+        const marcaDoSku = marcaMap.get(skuVendedor) || "";
+        const ap = aplicarMarca(cfgMarcas, marcaDoSku, margemAlvoDec * 100);
+        const margemItemDec = ap.margemPct / 100;
+
         let statusItem = "APTO";
         let errosList: string[] = [];
 
-        if (saldoAtual <= 0) {
+        if (ap.fora) {
+          statusItem = "INAPTO";
+          errosList.push(`Marca sem lucro definido (${marcaDoSku || "sem marca"})`);
+        } else if (saldoAtual <= 0) {
           statusItem = "INAPTO";
           errosList.push(`Sem estoque (Saldo: ${saldoAtual})`);
         } else if (custo <= 0) {
@@ -229,7 +245,7 @@ export default function PromocoesShopeePage() {
             const tarifaFixa = parseNumeroBruto(regraTabela.tarifa_fixa ?? 0);
             const freteValor = parseNumeroBruto(regraTabela.frete ?? 0);
 
-            const denominador = 1 - (comissaoDec + imposto + margemAlvoDec);
+            const denominador = 1 - (comissaoDec + imposto + margemItemDec);
             if (denominador > 0) {
               pdvEstimado = (custo + tarifaFixa + embalagem + freteValor) / denominador;
             }
@@ -243,6 +259,8 @@ export default function PromocoesShopeePage() {
           sku: r[idxSku],
           originalPrice: precoOriginal,
           offerPrice: Number(precoOferta.toFixed(2)),
+          marca: marcaDoSku,
+          lucroPct: ap.margemPct,
           status: statusItem,
           erro: errosList.join(" | ")
         });
@@ -373,6 +391,8 @@ export default function PromocoesShopeePage() {
             </div>
           </div>
 
+          <PrecificacaoPorMarca cfg={cfgMarcas} onChange={setCfgMarcas} marcas={marcasLista} rotuloPadrao="o lucro desejado acima" />
+
           <div className="flex justify-end gap-2 pt-2 border-t border-slate-800 items-end">
             <button
               type="button"
@@ -412,6 +432,8 @@ export default function PromocoesShopeePage() {
                     <tr>
                       <th className="p-3">ID Produto</th>
                       <th className="p-3">SKU</th>
+                      <th className="p-3">Marca</th>
+                      <th className="p-3 text-right">Lucro %</th>
                       <th className="p-3 text-right">Preço Original</th>
                       <th className="p-3 text-right">Preço de Desconto</th>
                       <th className="p-3 text-center">Status</th>
@@ -422,6 +444,8 @@ export default function PromocoesShopeePage() {
                       <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                         <td className="p-3 font-mono text-indigo-400">{item.productId}</td>
                         <td className="p-3 font-mono text-slate-300">{item.sku}</td>
+                        <td className="p-3 text-slate-300">{item.marca || "—"}</td>
+                        <td className="p-3 text-right font-mono text-amber-300">{Number(item.lucroPct).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%</td>
                         <td className="p-3 text-right font-mono text-slate-300">{formatarMoeda(item.originalPrice)}</td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-400">{formatarMoeda(item.offerPrice)}</td>
                         <td className="p-3 text-center">
@@ -433,7 +457,7 @@ export default function PromocoesShopeePage() {
                     ))}
                     {itensAptos.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="p-8 text-center text-slate-500">Nenhum produto apto encontrado.</td>
+                        <td colSpan={7} className="p-8 text-center text-slate-500">Nenhum produto apto encontrado.</td>
                       </tr>
                     )}
                   </tbody>

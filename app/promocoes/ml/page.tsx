@@ -6,6 +6,8 @@ import Navbar from "../../components/Navbar";
 import * as XLSX from "xlsx";
 import { abaPrincipal } from "../../../lib/lerArquivo";
 import ConfigPromoTiny from "../../components/ConfigPromoTiny";
+import PrecificacaoPorMarca, { useCfgMarcas } from "../../components/PrecificacaoPorMarca";
+import { aplicarMarca, listarMarcas, type MarcaInfo } from "../../../lib/precificacaoMarcas";
 import { carregarConfigPromoTiny, indiceColuna, lerEstoqueTiny, PADRAO_PROMO_TINY, type ConfigPromoTiny as CfgPromoTiny } from "../../../lib/promoTiny";
 import { lerValidadesDaPlanilha, validadeEmTexto, type Validade } from "../../../lib/validadePromo";
 import { resumoSkusPromocionados, type PromoValidade, type MarcaPromovido } from "../../../lib/foraPromocao";
@@ -122,6 +124,9 @@ export default function PromocoesMlPage() {
   const [custosMap, setCustosMap] = useState<Map<string, number>>(new Map());
   const [mlRegrasMap, setMlRegrasMap] = useState<Map<string, any[]>>(new Map());
   const [obsoletosSet, setObsoletosSet] = useState<Set<string>>(new Set());
+  const [marcaMap, setMarcaMap] = useState<Map<string, string>>(new Map());   // SKU -> marca (base de custos)
+  const [marcasLista, setMarcasLista] = useState<MarcaInfo[]>([]);
+  const [cfgMarcas, setCfgMarcas] = useCfgMarcas("ml");   // uma configuração só, vale para as contas ML1, ML2 e ML3
 
   useEffect(() => {
     const usuarioLogado = localStorage.getItem("usuario_logado");
@@ -184,17 +189,21 @@ export default function PromocoesMlPage() {
 
       const cMap = new Map<string, number>();
       const obsSet = new Set<string>();
+      const mMap = new Map<string, string>();
 
       allCustos.forEach((c: any) => {
         const k = normalizarSku(c.sku);
         if (k && k.length >= 10) {
           cMap.set(k, Number(c.custo_unitario || c.custo || 0));
+          mMap.set(k, String(c.marca ?? ""));
           if (String(c.status || "").toLowerCase().includes("obsoleto")) {
             obsSet.add(k);
           }
         }
       });
       setCustosMap(cMap);
+      setMarcaMap(mMap);
+      setMarcasLista(listarMarcas(allCustos));
       setObsoletosSet(obsSet);
 
       let allMlRegras: any[] = [];
@@ -392,6 +401,9 @@ export default function PromocoesMlPage() {
 
         const skuKey = normalizarSku(skuRaw);
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
+        const marcaDoSku = skuKey ? (marcaMap.get(skuKey) || "") : "";
+        const ap = aplicarMarca(cfgMarcas, marcaDoSku, margemDesejada * 100);
+        const margemItem = ap.margemPct / 100;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
@@ -418,6 +430,11 @@ export default function PromocoesMlPage() {
           errosList.push("Custo não encontrado — Atualizar base");
         }
 
+        if (ap.fora) {
+          statusItem = "INAPTO";
+          errosList.push(`Marca sem lucro definido (${marcaDoSku || "sem marca"})`);
+        }
+
         const saldo = skuKey ? (estoqueTiny.mapa.get(skuKey) ?? 0) : 0;
         if (skuKey && saldo <= 0) {
           statusItem = "INAPTO";
@@ -433,7 +450,7 @@ export default function PromocoesMlPage() {
             let tarifaFixaItem = pdvCalculado < 79.00 ? 6.50 : 0.00;
             let freteItem = calcularFreteML(pdvCalculado, pesoReal, altura, largura, comprimento);
             
-            const denominador = 1 - (comissaoDec + imposto + margemDesejada);
+            const denominador = 1 - (comissaoDec + imposto + margemItem);
             if (denominador > 0) {
               pdvCalculado = (custo + tarifaFixaItem + freteItem) / denominador;
             }
@@ -450,6 +467,8 @@ export default function PromocoesMlPage() {
           rowIndex: i,
           MLB: mlbRaw,
           SKU: skuKey,
+          MARCA: marcaDoSku,
+          LUCRO_PCT: ap.margemPct,
           PROMOTION_NAME: promoName,
           DATE_VALIDITY: dateValidity,
           VALIDADE: validade,
@@ -578,6 +597,9 @@ export default function PromocoesMlPage() {
 
         const skuKey = normalizarSku(skuRaw);
         const custo = custosMap.has(skuKey) ? Number(custosMap.get(skuKey)) : 0;
+        const marcaDoSku = skuKey ? (marcaMap.get(skuKey) || "") : "";
+        const ap = aplicarMarca(cfgMarcas, marcaDoSku, margemDesejada * 100);
+        const margemItem = ap.margemPct / 100;
 
         let statusItem = "APTO";
         let errosList: string[] = [];
@@ -590,6 +612,11 @@ export default function PromocoesMlPage() {
         if (finalPrice <= 0) {
           statusItem = "INAPTO";
           errosList.push("Preço Final Inválido");
+        }
+
+        if (ap.fora) {
+          statusItem = "INAPTO";
+          errosList.push(`Marca sem lucro definido (${marcaDoSku || "sem marca"})`);
         }
 
         const saldo = skuKey ? (estoqueTiny.mapa.get(skuKey) ?? 0) : 0;
@@ -607,9 +634,9 @@ export default function PromocoesMlPage() {
           lucroLiquido = newReceives - custo - impostoTotal;
           margemFinal = finalPrice > 0 ? (lucroLiquido / finalPrice) * 100 : 0;
 
-          if (margemFinal < (margemDesejada * 100)) {
+          if (margemFinal < ap.margemPct) {
             statusItem = "INAPTO";
-            errosList.push(`Margem (${margemFinal.toFixed(1)}%) abaixo da meta (${(margemDesejada * 100).toFixed(0)}%)`);
+            errosList.push(`Margem (${margemFinal.toFixed(1)}%) abaixo da meta (${ap.margemPct.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%)`);
           }
         }
 
@@ -617,6 +644,8 @@ export default function PromocoesMlPage() {
           rowIndex: i,
           MLB: mlbRaw,
           SKU: skuKey,
+          MARCA: marcaDoSku,
+          LUCRO_PCT: ap.margemPct,
           PROMOTION_NAME: promoName,
           DATE_VALIDITY: dateValidity,
           VALIDADE: validade,
@@ -888,6 +917,10 @@ export default function PromocoesMlPage() {
               />
             </div>
 
+            <div className="w-full basis-full col-span-full">
+              <PrecificacaoPorMarca cfg={cfgMarcas} onChange={setCfgMarcas} marcas={marcasLista} rotuloPadrao="a margem desejada acima" />
+            </div>
+
             <div className="flex gap-2">
               <button
                 type="button"
@@ -958,6 +991,8 @@ export default function PromocoesMlPage() {
                     <tr>
                       <th className="p-3">MLB</th>
                       <th className="p-3">SKU</th>
+                      <th className="p-3">Marca</th>
+                      <th className="p-3 text-right">Lucro alvo</th>
                       <th className="p-3">Campanha</th>
                       <th className="p-3">Validade</th>
                       <th className="p-3 text-right">Saldo</th>
@@ -972,6 +1007,8 @@ export default function PromocoesMlPage() {
                       <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                         <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
                         <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
+                        <td className="p-3 text-slate-300">{item.MARCA || "—"}</td>
+                        <td className="p-3 text-right font-mono text-amber-300">{Number(item.LUCRO_PCT ?? parseFloat(margemAlvo)).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%</td>
                         <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
                         <td className="p-3 font-mono text-amber-400 whitespace-nowrap">{item.VALIDADE ? validadeEmTexto(item.VALIDADE) : "—"}</td>
                         <td className={`p-3 text-right font-mono ${item.SALDO > 0 ? "text-slate-300" : "text-rose-400"}`}>{item.SALDO}</td>
@@ -1003,6 +1040,8 @@ export default function PromocoesMlPage() {
                     <tr>
                       <th className="p-3">MLB</th>
                       <th className="p-3">SKU</th>
+                      <th className="p-3">Marca</th>
+                      <th className="p-3 text-right">Lucro alvo</th>
                       <th className="p-3">Promoção / Campanha</th>
                       <th className="p-3">Validade</th>
                       <th className="p-3 text-right">Preço Final (PDV)</th>
@@ -1019,13 +1058,15 @@ export default function PromocoesMlPage() {
                       <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
                         <td className="p-3 font-mono text-indigo-400">{item.MLB}</td>
                         <td className="p-3 font-mono text-slate-300">{item.SKU || <span className="text-rose-500 font-bold">SKU INVÁLIDO (&lt; 10 dig)</span>}</td>
+                        <td className="p-3 text-slate-300">{item.MARCA || "—"}</td>
+                        <td className="p-3 text-right font-mono text-amber-300">{Number(item.LUCRO_PCT ?? parseFloat(margemAlvo)).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%</td>
                         <td className="p-3 text-slate-300">{item.PROMOTION_NAME}</td>
                         <td className="p-3 font-mono text-amber-400 whitespace-nowrap">{item.VALIDADE ? validadeEmTexto(item.VALIDADE) : "—"}</td>
                         <td className="p-3 text-right font-mono text-slate-200">{formatarMoeda(item.FINAL_PRICE)}</td>
                         <td className="p-3 text-right font-mono text-purple-300 font-bold">{formatarMoeda(item.NEW_RECEIVES)}</td>
                         <td className={`p-3 text-right font-mono ${item.SALDO > 0 ? "text-slate-300" : "text-rose-400"}`}>{item.SALDO}</td>
                         <td className="p-3 text-right font-mono text-emerald-400 font-bold">{formatarMoeda(item.LUCRO)}</td>
-                        <td className={`p-3 text-right font-mono font-bold ${item.MARGEM >= parseFloat(margemAlvo) ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <td className={`p-3 text-right font-mono font-bold ${item.MARGEM >= Number(item.LUCRO_PCT ?? parseFloat(margemAlvo)) ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {item.MARGEM}%
                         </td>
                         <td className="p-3 text-center">
