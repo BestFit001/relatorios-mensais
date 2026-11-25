@@ -48,7 +48,7 @@ export function analisarErroIA(e: any, nome = "Claude", variavel = "ANTHROPIC_AP
   if (/sem resposta em/i.test(bruto)) return { motivo: `o ${nome} demorou demais (${msg})`, transitorio: true, status: 0 };
   if (status === 402 || /insufficient balance/i.test(bruto)) return { motivo: `o ${nome} está sem saldo (erro 402): ${msg}. Verifique o saldo/plano da conta`, transitorio: false, status: 402 };
   if (status === 429 || /quota|rate.?limit|resource.?exhausted/i.test(bruto)) return { motivo: `limite/cota do ${nome} estourado (erro 429): ${msg}`, transitorio: true, status };
-  if (status === 401 || status === 403 || /api key|permission|authentication/i.test(bruto)) return { motivo: `o ${nome} recusou a chave (erro ${status || 403}): ${msg}. Confira a ${variavel} no Vercel`, transitorio: false, status };
+  if (status === 401 || status === 403 || /api key|permission|authentication/i.test(bruto)) return { motivo: `o ${nome} recusou a chave (erro ${status || 403}): ${msg}. Confira a ${variavel} no Vercel: precisa ser uma chave de API criada em console.anthropic.com > Settings > API Keys (começa com sk-ant-api), colada inteira e sem espaço no fim`, transitorio: false, status };
   if (status === 404) return { motivo: `o ${nome} não encontrou o modelo (erro 404): ${msg}. Informe o modelo certo em ${variavel.replace("API_KEY", "MODEL")} no Vercel`, transitorio: false, status };
   if (status === 400 || status === 422) return { motivo: `o ${nome} recusou o pedido (erro ${status}): ${msg}`, transitorio: false, status };
   if (status >= 500) return { motivo: `o ${nome} está indisponível (erro ${status}): ${msg}`, transitorio: true, status };
