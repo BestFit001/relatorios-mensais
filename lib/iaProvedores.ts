@@ -5,6 +5,7 @@
 //
 // Variáveis de ambiente (Vercel):
 //   ANTHROPIC_API_KEY    chave da API do Claude (console.anthropic.com)
+//   ANTHROPIC_WORKSPACE_ID  opcional: ID do workspace (wrkspc_...), exigido pela Anthropic quando a chave não é amarrada a um workspace
 //   ANTHROPIC_MODEL      opcional: troca o modelo sem mexer no código (padrão: claude-haiku-5-5, o mais barato)
 //   ANTHROPIC_BASE_URL   só para testes (aponta para um servidor falso)
 
@@ -48,6 +49,7 @@ export interface ResultadoIA {
 function criarClaude(apiKey: string): ProvedorIA {
   const base = (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/+$/, "");
   const modelo = process.env.ANTHROPIC_MODEL || MODELO_PADRAO;
+  const workspace = (process.env.ANTHROPIC_WORKSPACE_ID || "").trim();
   return {
     id: "claude", nome: "Claude", variavel: "ANTHROPIC_API_KEY", aceitaImagem: true,
     async gerar(prompt, o) {
@@ -63,7 +65,7 @@ function criarClaude(apiKey: string): ProvedorIA {
       try {
         const res = await fetch(`${base}/v1/messages`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+          headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", ...(workspace ? { "anthropic-workspace-id": workspace } : {}) },
           body: JSON.stringify(corpo),
           signal: ctrl.signal,
         });
