@@ -9,7 +9,7 @@ export type RegrasCabecalho = Record<string, string[]>;
 
 /** Cabeçalhos conhecidos da planilha de vendas (ML, TikTok, Shopee, Amazon...). A ordem de cada lista é a prioridade. */
 export const CABECALHOS_VENDAS: RegrasCabecalho = {
-  pedido: ["n.º de venda", "número do pedido", "id do pedido", "order id", "order_id", "id do pedido no marketplace", "pedido", "n° do pedido"],
+  pedido: ["n.º de venda", "número do pedido", "id do pedido", "amazon-order-id", "order id", "order_id", "id do pedido no marketplace", "pedido", "n° do pedido"],
   status: ["estado", "status do pedido", "order status", "order-status", "status", "situação"],
   sku: ["sku", "seller sku", "sku do vendedor", "sku vendedor", "código sku", "sku do produto", "referência sku", "número de referência sku", "nº de referência do sku"],
   quantidade: ["unidades", "quantidade", "quantity", "quantity-purchased", "qtd", "qtde"],

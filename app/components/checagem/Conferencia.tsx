@@ -159,6 +159,7 @@ export default function Conferencia({ canais }: { canais: string[] }) {
           let l = `SKU e quantidade: ${loteI.length} item(ns) de ${ri.pedidos} pedido(s) cancelado(s).`;
           if (ri.semSku) l += ` ${ri.semSku} linha(s) do cancelado sem SKU.`;
           if (ri.qtdInvalida) l += ` ${ri.qtdInvalida} linha(s) com quantidade inválida (não guardadas).`;
+          if (ri.qtdZeradaComo1) l += ` ${ri.qtdZeradaComo1} linha(s) com quantidade 0 (o canal zera a quantidade dos cancelados): contei 1 unidade por linha.`;
           saida.push(l);
         } else if (lote.length > 0) saida.push("Não achei a coluna de SKU desta planilha: guardei só os cancelados. Digite a letra do SKU (e da quantidade) em “Ajustar colunas manualmente” e suba de novo; o SKU também pode vir das vendas guardadas ou de “Outra planilha de SKU”.");
       }
@@ -248,6 +249,7 @@ export default function Conferencia({ canais }: { canais: string[] }) {
         if (r.ignoradas) l += ` ${r.ignoradas} linha(s) de pedidos que não são cancelados (ignoradas).`;
         if (r.semSku) l += ` ${r.semSku} linha(s) do cancelado sem SKU.`;
         if (r.qtdInvalida) l += ` ${r.qtdInvalida} linha(s) com quantidade inválida (não guardadas).`;
+        if (r.qtdZeradaComo1) l += ` ${r.qtdZeradaComo1} linha(s) com quantidade 0 (o canal zera a quantidade dos cancelados): contei 1 unidade por linha.`;
         if (r.semPedido) l += ` ${r.semPedido} linha(s) sem número de pedido.`;
         saida.push(l);
         if (r.pedidos === 0) {

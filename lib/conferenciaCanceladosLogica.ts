@@ -51,7 +51,7 @@ function pedidoDaCelula(v: unknown): string {
  */
 export function lerItens(linhas: any[][], p: ColunasItens & { linhaInicial: number }, chavesAlvo?: Set<string>) {
   const itens = new Map<string, ItemLido>();
-  let lidas = 0, semPedido = 0, semSku = 0, ignoradas = 0, qtdInvalida = 0;
+  let lidas = 0, semPedido = 0, semSku = 0, ignoradas = 0, qtdInvalida = 0, qtdZeradaComo1 = 0;
   const pedidosAchados = new Set<string>();
   for (let i = Math.max(0, p.linhaInicial - 1); i < linhas.length; i++) {
     const row = linhas[i];
@@ -66,8 +66,9 @@ export function lerItens(linhas: any[][], p: ColunasItens & { linhaInicial: numb
     let qtd = 1;
     if (p.colQtd >= 0 && String(row[p.colQtd] ?? "").trim() !== "") {
       const n = paraNumeroBR(row[p.colQtd]);
-      if (n === null || n <= 0) { qtdInvalida++; continue; }
-      qtd = n;
+      if (n === null || n < 0) { qtdInvalida++; continue; }
+      // a Amazon zera a quantidade dos itens cancelados (e traz uma linha por unidade): a linha existe, então vale 1
+      if (n === 0) qtdZeradaComo1++; else qtd = n;
     }
     pedidosAchados.add(chave);
     const k = chave + "\u0000" + sku;
@@ -75,7 +76,7 @@ export function lerItens(linhas: any[][], p: ColunasItens & { linhaInicial: numb
     if (ja) ja.quantidade += qtd;
     else itens.set(k, { chave, id_pedido: id, sku, quantidade: qtd, produto: p.colProduto >= 0 ? String(row[p.colProduto] ?? "").trim() : "" });
   }
-  return { itens: Array.from(itens.values()), lidas, semPedido, semSku, ignoradas, qtdInvalida, pedidos: pedidosAchados.size };
+  return { itens: Array.from(itens.values()), lidas, semPedido, semSku, ignoradas, qtdInvalida, qtdZeradaComo1, pedidos: pedidosAchados.size };
 }
 
 export interface ItemGuardado { chave: string; sku: string; quantidade: number | string; produto?: string | null; origem?: string | null }
