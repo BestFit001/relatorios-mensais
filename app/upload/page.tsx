@@ -1388,7 +1388,8 @@ export default function UpdatesPage() {
   };
 
   const apagarDadosPorTipo = async (tabela: string) => {
-    if (!confirm(`Deseja limpar os registros de [${tabela}] para o mês [${mesAlvoDash}]?`)) return;
+    const alvo = tabela === 'vendas' ? `vendas do canal ${canalAlvoDash}` : tabela;
+    if (!confirm(`Deseja limpar os registros de [${alvo}] para o mês [${mesAlvoDash}]?`)) return;
     setLoading(true);
     try {
       if (tabela === 'faturados') {
@@ -1399,6 +1400,32 @@ export default function UpdatesPage() {
         await excluirVendasAfiliados(supabase, canalAlvoDash, `${anoUpload}-${String(mesUpload).padStart(2, "0")}`);
       }
       alert(`✅ Registros de ${tabela} limpos.`);
+      carregarVendasPendentes();
+    } catch (err: any) {
+      alert("Erro: " + err.message);
+    }
+    setLoading(false);
+  };
+
+  // Apaga as vendas do mês de TODOS os canais de uma vez (vendas, lives separadas e afiliados). Não mexe nos faturados nem em outros meses.
+  const apagarVendasTodosCanais = async () => {
+    const mesAAAAMM = `${anoUpload}-${String(mesUpload).padStart(2, "0")}`;
+    let total: number | null = null;
+    try {
+      const { count } = await supabase.from('vendas_canais').select('id', { count: 'exact', head: true }).eq('mes_referencia', mesAlvoDash);
+      total = typeof count === 'number' ? count : null;
+    } catch { /* sem a contagem, o aviso sai sem o número */ }
+    if (total === 0 && !confirm(`Não há vendas de ${mesAlvoDash} nos canais. Limpar mesmo assim as lives separadas e os afiliados do mês?`)) return;
+    if (total !== 0 && !confirm(`⚠️ Apagar as vendas de TODOS os canais de ${mesAlvoDash}${total !== null ? ` (${total} linhas)` : ""}?\n\nIsso inclui lives separadas e afiliados do mês. Os faturados e os outros meses não são alterados.\n\nEsta ação não pode ser desfeita.`)) return;
+    setLoading(true);
+    try {
+      const r1 = await supabase.from('vendas_canais').delete().eq('mes_referencia', mesAlvoDash);
+      if (r1.error) throw new Error(r1.error.message);
+      const r2 = await supabase.from('vendas_lives_separadas').delete().eq('mes_referencia', mesAlvoDash);
+      if (r2.error) throw new Error(r2.error.message);
+      const r3 = await supabase.from('config_regras_tiny').delete().like('campo', `afiliados_vendas_%_${mesAAAAMM}`);
+      if (r3.error) throw new Error(r3.error.message);
+      alert(`✅ Vendas de todos os canais de ${mesAlvoDash} apagadas.`);
       carregarVendasPendentes();
     } catch (err: any) {
       alert("Erro: " + err.message);
@@ -2230,12 +2257,15 @@ export default function UpdatesPage() {
                   </select>
                 </div>
               </div>
-              <div className="flex gap-3 pt-2">
+              <div className="flex flex-wrap gap-3 pt-2">
                 <button onClick={() => apagarDadosPorTipo('faturados')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
                   Apagar Faturados ({mesAlvoDash})
                 </button>
                 <button onClick={() => apagarDadosPorTipo('vendas')} className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
-                  Apagar Vendas ({mesAlvoDash})
+                  Apagar Vendas · {canalAlvoDash} ({mesAlvoDash})
+                </button>
+                <button onClick={apagarVendasTodosCanais} data-apagar-vendas-todos className="bg-slate-950 hover:bg-rose-950/40 text-rose-300 border border-rose-900 font-bold py-2 px-4 rounded-xl text-xs transition cursor-pointer">
+                  Apagar Vendas · todos os canais ({mesAlvoDash})
                 </button>
               </div>
               <div className="pt-3 border-t border-slate-800 flex justify-end">
