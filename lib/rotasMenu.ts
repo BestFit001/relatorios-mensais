@@ -50,6 +50,7 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/calculadora", nome: "Calculadora" },
     { id: "/produtos", nome: "Novos Cadastros" },
     { id: "/padronizacao", nome: "Padronização IA" },
+    { id: "/correcao-anuncios", nome: "Correção de anúncios" },
     { id: "/concorrentes", nome: "Análise da concorrência" },
     { id: "/analise-mercado", nome: "Análise de mercado (aba da Análise da concorrência)", oculta: true },
     { id: "/estoque-concorrencia", nome: "Acompanhamento de estoque" },

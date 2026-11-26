@@ -30,7 +30,7 @@ const CORES = new Set([
   "marrom", "bege", "off", "white", "marinho", "dourado", "dourada", "prata", "nude", "coral", "colorido", "colorida", "caramelo", "estampado",
 ]);
 /** linhas (nomes de modelo) da Farm/Best Fit já conhecidas; linhas novas são descobertas por descobrirLinhas() */
-const LINHAS_BASE = ["me leva", "ora bolas", "fervo", "chuchu", "chamego", "ziriguidum", "viva", "carioca", "farofa", "astral", "xodo", "pipoquinha"];
+const LINHAS_BASE = ["me leva", "ora bolas", "que sede ri", "fervo", "chuchu", "chamego", "ziriguidum", "viva", "carioca", "farofa", "astral", "xodo", "pipoquinha", "glub"];
 
 const SINONIMOS: Record<string, string> = { bolsinha: "bolsa", sacolinha: "sacola", mochilinha: "mochila", termica: "termico", necessaires: "necessaire" };
 
