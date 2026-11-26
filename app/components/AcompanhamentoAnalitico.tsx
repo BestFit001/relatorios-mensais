@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { buscarTudo } from "../../lib/buscarTudo";
 import { carregarPaiManual } from "../../lib/skuPaiDb";
+import { campoCarrinho, lerCarrinho, PREFIXO_CARRINHO, serializarCarrinho, type MarcaCarrinho } from "../../lib/prejuizoCarrinho";
 import { montarCustosMap, montarLinhasBase, normalizarSkuLinha, normalizarTextoLinha } from "../../lib/vendasLinhas";
 import {
   AMOSTRA_MIN_DEV, DIAS_ESTOQUE_PARADO, LIMITE_DEV_ATENCAO, LIMITE_DEV_CRITICO, PRESETS_PERIODO, SEM_MODALIDADE,
@@ -12,7 +13,7 @@ import {
   type PresetPeriodo, type ResumoCanalAnalise, type SkuParado,
 } from "../../lib/acompanhamento";
 
-export type SubAnalitica = "canais" | "margem" | "vendas" | "estoque";
+export type SubAnalitica = "canais" | "prejuizo" | "margem" | "vendas" | "estoque";
 
 const moedaBR = (v: number) => "R$ " + (v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const moedaCurta = (v: number) => "R$ " + (v || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
@@ -46,11 +47,12 @@ function Kpi({ titulo, valor, detalhe, cor = "text-white" }: { titulo: string; v
   );
 }
 
-export default function AcompanhamentoAnalitico({ sub, canaisPermitidos, ocultar }: { sub: SubAnalitica; canaisPermitidos: string[] | null; ocultar: boolean }) {
+export default function AcompanhamentoAnalitico({ sub, canaisPermitidos, ocultar, usuarioEmail = "" }: { sub: SubAnalitica; canaisPermitidos: string[] | null; ocultar: boolean; usuarioEmail?: string }) {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [dados, setDados] = useState<{ vendas: any[]; faturados: any[]; custos: any[]; devolucoes: any[]; cancelados: any[]; plp: any[]; tarifas: any[]; regras: any[]; estoque: any[]; status: any[]; impostoPct: number } | null>(null);
   const [paiManual, setPaiManual] = useState<Map<string, string>>(new Map());
+  const [carrinho, setCarrinho] = useState<Map<string, MarcaCarrinho>>(new Map());
 
   const [preset, setPreset] = useState<PresetPeriodo>("30d");
   const [canal, setCanal] = useState("TODOS");
@@ -65,7 +67,7 @@ export default function AcompanhamentoAnalitico({ sub, canaisPermitidos, ocultar
     (async () => {
       setCarregando(true); setErro("");
       try {
-        const [vendas, faturados, custos, devolucoes, cancelados, plp, tarifas, regras, estoque, status, cfg, pai] = await Promise.all([
+        const [vendas, faturados, custos, devolucoes, cancelados, plp, tarifas, regras, estoque, status, cfg, pai, marcas] = await Promise.all([
           buscarTudo("vendas_canais", "id, id_pedido, sku, canal, produto, preco_venda, repasse_liquido, quantidade"),
           buscarTudo("faturados", "id, id_pedido, data_faturamento"),
           buscarTudo("tabela_custos_skus", "id, sku, marca, produto, custo_unitario"),
@@ -78,11 +80,13 @@ export default function AcompanhamentoAnalitico({ sub, canaisPermitidos, ocultar
           buscarTudo("status_skus_catalogo", "id, sku, status"),
           supabase.from("config_regras_tiny").select("campo, coluna").eq("campo", "imposto_global").maybeSingle(),
           carregarPaiManual(),
+          supabase.from("config_regras_tiny").select("campo, coluna").like("campo", `${PREFIXO_CARRINHO}%`),
         ]);
         if (!vivo) return;
         const imp = parseFloat(String(cfg?.data?.coluna ?? "").replace(",", "."));
         setDados({ vendas, faturados, custos, devolucoes, cancelados, plp, tarifas, regras, estoque, status, impostoPct: Number.isFinite(imp) ? imp : 6 });
         setPaiManual(pai);
+        setCarrinho(lerCarrinho(marcas?.data));
       } catch (e: any) {
         if (vivo) setErro(String(e?.message || e));
       } finally {
@@ -120,6 +124,17 @@ export default function AcompanhamentoAnalitico({ sub, canaisPermitidos, ocultar
     return datas.length ? { inicio: datas[0], fim: datas[datas.length - 1] } : null;
   }, [linhasBase]);
 
+  // Marca/desmarca o pedido inteiro como "em carrinho" (vale para todos os analistas). Atualiza na tela já e desfaz se o banco recusar.
+  const alternarCarrinho = async (chave: string, marcar: boolean) => {
+    const antes = carrinho;
+    const marca: MarcaCarrinho = { por: usuarioEmail, em: new Date().toISOString() };
+    setCarrinho((prev) => { const m = new Map(prev); if (marcar) m.set(chave, marca); else m.delete(chave); return m; });
+    const { error } = marcar
+      ? await supabase.from("config_regras_tiny").upsert({ campo: campoCarrinho(chave), coluna: serializarCarrinho(marca) }, { onConflict: "campo" })
+      : await supabase.from("config_regras_tiny").delete().eq("campo", campoCarrinho(chave));
+    if (error) { setCarrinho(antes); alert("Não consegui salvar a marcação: " + error.message); }
+  };
+
   if (carregando) return <div data-analitico-carregando className={`${caixa} p-8 text-xs text-slate-400 text-center`}>Calculando as análises com as vendas, devoluções e custos…</div>;
   if (erro) return <div data-analitico-erro className="p-4 rounded-xl border border-amber-800/60 bg-amber-950/30 text-amber-200 text-xs font-semibold">⚠️ Não consegui carregar os dados: {erro}</div>;
   if (!dados) return null;
@@ -138,7 +153,7 @@ export default function AcompanhamentoAnalitico({ sub, canaisPermitidos, ocultar
             <option value="TODOS">{canaisPermitidos ? "Todos os meus canais" : "Todos os canais"}</option>
             {canaisDisponiveis.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          {(sub === "canais" || sub === "margem") && (
+          {(sub === "canais" || sub === "prejuizo" || sub === "margem") && (
             <label className="flex items-center gap-2 text-[11px] font-bold text-slate-300 cursor-pointer" title="Desconta do lucro o imposto global configurado na aba Regras">
               <input type="checkbox" data-descontar-imposto checked={descontarImposto} onChange={(e) => setDescontarImposto(e.target.checked)} className="accent-indigo-500" />
               Descontar imposto ({pctBR(dados.impostoPct, 1)})
@@ -154,6 +169,7 @@ export default function AcompanhamentoAnalitico({ sub, canaisPermitidos, ocultar
       {semPermissao && <div className="p-4 rounded-xl border border-dashed border-slate-700 text-xs text-slate-400">Você ainda não tem canais atribuídos. Peça ao administrador para marcar os seus canais.</div>}
 
       {!semPermissao && sub === "canais" && <PainelCanais base={base} $={$} $c={$c} />}
+      {!semPermissao && sub === "prejuizo" && <PainelPrejuizo base={base} carrinho={carrinho} alternar={alternarCarrinho} $={$} $c={$c} />}
       {!semPermissao && sub === "margem" && <PainelMargem base={base} $={$} $c={$c} />}
       {!semPermissao && sub === "vendas" && <PainelVendas base={{ ...base, plp: dados.plp, paiManual }} $={$} $c={$c} />}
       {!semPermissao && sub === "estoque" && (
@@ -237,8 +253,6 @@ function CartaoCanal({ r, $ }: { r: ResumoCanalAnalise; $: Moeda }) {
 
 function PainelCanais({ base, $, $c }: { base: any; $: Moeda; $c: Moeda }) {
   const canais = useMemo(() => analisarCanais(base), [base]);
-  const prejuizos = useMemo(() => listarVendasNoPrejuizo(base), [base]);
-  const [verTodos, setVerTodos] = useState(false);
 
   const tot = useMemo(() => {
     const fat = canais.reduce((a, c) => a + c.faturamento, 0), un = canais.reduce((a, c) => a + c.unidades, 0);
@@ -250,15 +264,13 @@ function PainelCanais({ base, $, $c }: { base: any; $: Moeda; $c: Moeda }) {
   }, [canais]);
 
   if (canais.length === 0) return <div className={`${caixa} p-6 text-xs text-slate-400 text-center`}>Nenhuma venda faturada neste período e nos canais escolhidos.</div>;
-  const lista = verTodos ? prejuizos : prejuizos.slice(0, 15);
-  const maxPrej = Math.max(...canais.map((c) => c.prejuizoValor), 0);
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4" data-kpis-canais>
         <Kpi titulo="Faturamento do período" valor={$c(tot.fat)} detalhe={`${inteiro(tot.un)} unidades vendidas`} />
         <Kpi titulo="Devolvido" valor={$c(tot.devV)} cor="text-rose-300" detalhe={`${inteiro(tot.devQ)} unidade(s) · ${pctBR(tot.fat > 0 ? (tot.devV / tot.fat) * 100 : 0)} do faturamento`} />
-        <Kpi titulo="Vendas no prejuízo" valor={inteiro(tot.pL)} cor={tot.pL > 0 ? "text-amber-300" : "text-emerald-400"} detalhe={`${$c(tot.pV)} de prejuízo somado`} />
+        <Kpi titulo="Vendas no prejuízo" valor={inteiro(tot.pL)} cor={tot.pL > 0 ? "text-amber-300" : "text-emerald-400"} detalhe={`${$c(tot.pV)} de prejuízo somado · detalhes na sub-aba “Vendas no prejuízo”`} />
         <Kpi titulo="Lucro líquido (depois das devoluções)" valor={$c(tot.lucro)} cor={corMargem(tot.margem)} detalhe={tot.margem === null ? "sem custo cadastrado" : `${pctBR(tot.margem)} de margem sobre as vendas com custo`} />
       </div>
 
@@ -272,6 +284,46 @@ function PainelCanais({ base, $, $c }: { base: any; $: Moeda; $c: Moeda }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4" data-cards-canais>
         {canais.map((r) => <CartaoCanal key={r.canal} r={r} $={$} />)}
       </div>
+    </div>
+  );
+}
+
+// =====================================================================================================================
+// VENDAS NO PREJUÍZO (com "Pedido em carrinho")
+// =====================================================================================================================
+function PainelPrejuizo({ base, carrinho, alternar, $, $c }: { base: any; carrinho: Map<string, MarcaCarrinho>; alternar: (chave: string, marcar: boolean) => void; $: Moeda; $c: Moeda }) {
+  const [verTodos, setVerTodos] = useState(false);
+  const [esconderCarrinho, setEsconderCarrinho] = useState(false);
+
+  // todas as vendas no prejuízo (inclusive as marcadas), para a pessoa poder desmarcar
+  const todas = useMemo(() => listarVendasNoPrejuizo(base), [base]);
+  // o cálculo desta aba ignora os pedidos em carrinho
+  const canais = useMemo(() => analisarCanais({ ...base, linhas: base.linhas.filter((l: any) => !carrinho.has(l.chave)) }), [base, carrinho]);
+  const ativas = useMemo(() => todas.filter((v) => !carrinho.has(v.chave)), [todas, carrinho]);
+  const marcadas = useMemo(() => todas.filter((v) => carrinho.has(v.chave)), [todas, carrinho]);
+  const pedidosMarcados = useMemo(() => new Set(marcadas.map((v) => v.chave)).size, [marcadas]);
+
+  const tot = useMemo(() => ({
+    linhas: canais.reduce((a, c) => a + c.prejuizoLinhas, 0),
+    valor: canais.reduce((a, c) => a + c.prejuizoValor, 0),
+    estimadas: canais.reduce((a, c) => a + c.prejuizoEstimadoLinhas, 0),
+    semCusto: canais.reduce((a, c) => a + c.semCustoLinhas, 0),
+  }), [canais]);
+  const valorMarcadas = marcadas.reduce((a, v) => a - v.resultado, 0);
+  const maxPrej = Math.max(...canais.map((c) => c.prejuizoValor), 0);
+
+  // as ativas primeiro (da pior para a menos pior); as marcadas vão para o fim
+  const ordenadas = esconderCarrinho ? ativas : [...ativas, ...marcadas];
+  const lista = verTodos ? ordenadas : ordenadas.slice(0, 15);
+
+  return (
+    <div className="space-y-5" data-painel-prejuizo>
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4" data-kpis-prejuizo>
+        <Kpi titulo="Vendas no prejuízo" valor={inteiro(tot.linhas)} cor={tot.linhas > 0 ? "text-amber-300" : "text-emerald-400"} detalhe="itens de pedido, fora os pedidos em carrinho" />
+        <Kpi titulo="Prejuízo somado" valor={$c(tot.valor)} cor={tot.valor > 0 ? "text-rose-300" : "text-emerald-400"} detalhe="antes das devoluções" />
+        <Kpi titulo="Pedidos em carrinho" valor={inteiro(pedidosMarcados)} detalhe={`${$c(valorMarcadas)} que deixaram de contar como prejuízo`} />
+        <Kpi titulo="Repasse estimado" valor={inteiro(tot.estimadas)} cor={tot.estimadas > 0 ? "text-amber-300" : "text-white"} detalhe="vendas no prejuízo em que a planilha veio sem o repasse (usamos 16%)" />
+      </div>
 
       <div className={`${caixa} p-5 space-y-4`} data-prejuizo>
         <div>
@@ -280,56 +332,77 @@ function PainelCanais({ base, $, $c }: { base: any; $: Moeda; $c: Moeda }) {
             São os itens de pedido em que <strong className="text-slate-200">repasse − custo do produto − frete Flex/tarifa</strong> deu negativo: a mesma conta que alimenta o Dashboard, antes de devoluções.
             “Possíveis” porque o repasse pode ser uma estimativa (quando a planilha veio sem o valor, usamos 16% de taxa) e porque o custo cadastrado pode estar defasado. Vendas de SKU sem custo cadastrado ficam de fora, pois o lucro delas não dá para calcular.
           </p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead><tr className="text-[10px] uppercase text-slate-500 border-b border-slate-800">
-              <th className="py-2 pr-3">Canal</th><th className="py-2 pr-3 text-right">Vendas no prejuízo</th><th className="py-2 pr-3 text-right">% das vendas</th><th className="py-2 pr-3 text-right">Prejuízo somado</th><th className="py-2 pr-3 w-40"></th><th className="py-2 text-right">Sem custo cadastrado</th>
-            </tr></thead>
-            <tbody>
-              {canais.map((c) => (
-                <tr key={c.canal} className="border-b border-slate-800/60">
-                  <td className="py-2 pr-3 font-bold text-white">{c.canal}</td>
-                  <td className={`py-2 pr-3 text-right font-bold ${c.prejuizoLinhas > 0 ? "text-amber-300" : "text-slate-400"}`}>{inteiro(c.prejuizoLinhas)}</td>
-                  <td className="py-2 pr-3 text-right text-slate-300">{pctBR(c.prejuizoPct)}</td>
-                  <td className={`py-2 pr-3 text-right font-bold ${c.prejuizoValor > 0 ? "text-rose-300" : "text-slate-400"}`}>{$(c.prejuizoValor)}</td>
-                  <td className="py-2 pr-3"><Barra valor={c.prejuizoValor} max={maxPrej} cor="bg-rose-500" /></td>
-                  <td className="py-2 text-right text-slate-500">{inteiro(c.semCustoLinhas)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+            Marque <strong className="text-slate-200">Pedido em carrinho</strong> nos pedidos que não são prejuízo de verdade: o pedido inteiro sai do cálculo desta aba, para todos os analistas, e dá para desmarcar quando quiser.
+          </p>
         </div>
 
-        {prejuizos.length === 0 ? (
+        {canais.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left" data-tabela-prejuizo-canais>
+              <thead><tr className="text-[10px] uppercase text-slate-500 border-b border-slate-800">
+                <th className="py-2 pr-3">Canal</th><th className="py-2 pr-3 text-right">Vendas no prejuízo</th><th className="py-2 pr-3 text-right">% das vendas</th><th className="py-2 pr-3 text-right">Prejuízo somado</th><th className="py-2 pr-3 w-40"></th><th className="py-2 text-right">Sem custo cadastrado</th>
+              </tr></thead>
+              <tbody>
+                {canais.map((c) => (
+                  <tr key={c.canal} className="border-b border-slate-800/60">
+                    <td className="py-2 pr-3 font-bold text-white">{c.canal}</td>
+                    <td className={`py-2 pr-3 text-right font-bold ${c.prejuizoLinhas > 0 ? "text-amber-300" : "text-slate-400"}`}>{inteiro(c.prejuizoLinhas)}</td>
+                    <td className="py-2 pr-3 text-right text-slate-300">{pctBR(c.prejuizoPct)}</td>
+                    <td className={`py-2 pr-3 text-right font-bold ${c.prejuizoValor > 0 ? "text-rose-300" : "text-slate-400"}`}>{$(c.prejuizoValor)}</td>
+                    <td className="py-2 pr-3"><Barra valor={c.prejuizoValor} max={maxPrej} cor="bg-rose-500" /></td>
+                    <td className="py-2 text-right text-slate-500">{inteiro(c.semCustoLinhas)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {todas.length === 0 ? (
           <p className="text-xs text-emerald-400 font-bold">✅ Nenhuma venda no prejuízo neste período.</p>
         ) : (
           <div>
-            <div className={`${rotulo} mb-2`}>{verTodos ? `Todas as ${prejuizos.length} vendas` : `As ${lista.length} piores de ${prejuizos.length}`}</div>
+            <div className="flex flex-wrap items-center gap-3 mb-2">
+              <div className={rotulo}>{verTodos ? `Todas as ${ordenadas.length} vendas` : `As ${lista.length} piores de ${ordenadas.length}`}</div>
+              {marcadas.length > 0 && (
+                <label className="flex items-center gap-2 text-[11px] font-bold text-slate-300 cursor-pointer ml-auto">
+                  <input type="checkbox" data-esconder-carrinho checked={esconderCarrinho} onChange={(e) => setEsconderCarrinho(e.target.checked)} className="accent-indigo-500" />
+                  Esconder pedidos em carrinho
+                </label>
+              )}
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left whitespace-nowrap" data-tabela-prejuizo>
                 <thead><tr className="text-[10px] uppercase text-slate-500 border-b border-slate-800">
-                  <th className="py-2 pr-3">Pedido</th><th className="py-2 pr-3">Data</th><th className="py-2 pr-3">Canal</th><th className="py-2 pr-3">Produto</th>
+                  <th className="py-2 pr-3">Pedido em carrinho</th><th className="py-2 pr-3">Pedido</th><th className="py-2 pr-3">Data</th><th className="py-2 pr-3">Canal</th><th className="py-2 pr-3">Produto</th>
                   <th className="py-2 pr-3 text-right">Preço</th><th className="py-2 pr-3 text-right">Repasse</th><th className="py-2 pr-3 text-right">Custo</th><th className="py-2 pr-3 text-right">Frete/tarifa</th><th className="py-2 text-right">Resultado</th>
                 </tr></thead>
                 <tbody>
-                  {lista.map((v, i) => (
-                    <tr key={`${v.pedido}-${v.sku}-${i}`} className="border-b border-slate-800/60">
-                      <td className="py-2 pr-3 font-mono text-slate-300">{v.pedido}</td>
-                      <td className="py-2 pr-3 text-slate-400">{dataBR(v.data)}</td>
-                      <td className="py-2 pr-3 text-slate-300">{v.canal}</td>
-                      <td className="py-2 pr-3 max-w-[22rem] truncate" title={v.titulo}><span className="font-mono text-indigo-300 mr-2">{v.sku}</span><span className="text-slate-200">{v.titulo}</span>{v.repasseEstimado && <span className="ml-2 text-[9px] font-bold text-amber-300 border border-amber-700 rounded px-1">repasse estimado</span>}</td>
-                      <td className="py-2 pr-3 text-right text-slate-200">{$(v.preco)}</td>
-                      <td className="py-2 pr-3 text-right text-slate-200">{$(v.repasse)}</td>
-                      <td className="py-2 pr-3 text-right text-slate-200">{$(v.cmv)}</td>
-                      <td className="py-2 pr-3 text-right text-slate-200">{$(v.extra)}</td>
-                      <td className="py-2 text-right font-black text-rose-400">{$(v.resultado)}</td>
-                    </tr>
-                  ))}
+                  {lista.map((v, i) => {
+                    const marca = carrinho.get(v.chave);
+                    return (
+                      <tr key={`${v.chave}-${v.sku}-${i}`} data-linha-prejuizo data-em-carrinho={marca ? "1" : "0"} className={`border-b border-slate-800/60 ${marca ? "opacity-50" : ""}`}>
+                        <td className="py-2 pr-3 text-center">
+                          <input type="checkbox" data-carrinho-check checked={!!marca} onChange={(e) => alternar(v.chave, e.target.checked)} className="accent-indigo-500 cursor-pointer"
+                            title={marca ? `Marcado${marca.por ? " por " + marca.por : ""}${marca.em ? " em " + dataBR(marca.em) : ""}` : "Marcar este pedido como pedido em carrinho"} aria-label={`Pedido ${v.pedido} em carrinho`} />
+                        </td>
+                        <td className="py-2 pr-3 font-mono text-slate-300">{v.pedido}</td>
+                        <td className="py-2 pr-3 text-slate-400">{dataBR(v.data)}</td>
+                        <td className="py-2 pr-3 text-slate-300">{v.canal}</td>
+                        <td className="py-2 pr-3 max-w-[22rem] truncate" title={v.titulo}><span className="font-mono text-indigo-300 mr-2">{v.sku}</span><span className="text-slate-200">{v.titulo}</span>{v.repasseEstimado && <span className="ml-2 text-[9px] font-bold text-amber-300 border border-amber-700 rounded px-1">repasse estimado</span>}</td>
+                        <td className="py-2 pr-3 text-right text-slate-200">{$(v.preco)}</td>
+                        <td className="py-2 pr-3 text-right text-slate-200">{$(v.repasse)}</td>
+                        <td className="py-2 pr-3 text-right text-slate-200">{$(v.cmv)}</td>
+                        <td className="py-2 pr-3 text-right text-slate-200">{$(v.extra)}</td>
+                        <td className={`py-2 text-right font-black ${marca ? "text-slate-400 line-through" : "text-rose-400"}`}>{$(v.resultado)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-            {prejuizos.length > 15 && <button type="button" onClick={() => setVerTodos((v) => !v)} className="mt-3 text-[11px] text-slate-400 underline hover:text-white cursor-pointer">{verTodos ? "mostrar só as piores" : `ver todas as ${prejuizos.length}`}</button>}
+            {ordenadas.length > 15 && <button type="button" onClick={() => setVerTodos((v) => !v)} className="mt-3 text-[11px] text-slate-400 underline hover:text-white cursor-pointer">{verTodos ? "mostrar só as piores" : `ver todas as ${ordenadas.length}`}</button>}
           </div>
         )}
       </div>

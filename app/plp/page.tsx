@@ -81,8 +81,13 @@ function obterAnalistaDoCanal(canalNome: string, mapaAnalistas: Record<string, s
   return "Expedição";
 }
 
+/** Frete Flex padrão quando o canal ainda não tem taxa salva: Amazon cobra R$ 2,99; os demais, R$ 12,99. */
+function taxaFlexPadrao(canalNome?: string): number {
+  return String(canalNome || "").trim().toLowerCase().includes("amazon") ? 2.99 : 12.99;
+}
+
 function obterTaxaFlexDoCanal(canalNome: string, mapaTaxas: Record<string, number>): number {
-  if (!canalNome) return 12.99;
+  if (!canalNome) return taxaFlexPadrao();
   const cNorm = String(canalNome).trim().toLowerCase();
 
   for (const [k, v] of Object.entries(mapaTaxas)) {
@@ -95,7 +100,7 @@ function obterTaxaFlexDoCanal(canalNome: string, mapaTaxas: Record<string, numbe
       return Number(v);
     }
   }
-  return 12.99;
+  return taxaFlexPadrao(canalNome);
 }
 
 const formatarMoeda = (valor: number) =>
@@ -199,14 +204,14 @@ export default function PlpPage() {
           const nomeCanal = String(row.canal).trim();
           canaisDoBanco.push(nomeCanal);
           mapaAnalistas[nomeCanal] = String(row.analista_responsavel || "Expedição").trim();
-          mapaTaxas[nomeCanal] = Number(row.taxa_flex ?? 12.99);
+          mapaTaxas[nomeCanal] = Number(row.taxa_flex ?? taxaFlexPadrao(nomeCanal));
         });
 
         canaisPadraoBase.forEach((c) => {
           if (!canaisDoBanco.includes(c)) {
             canaisDoBanco.push(c);
             mapaAnalistas[c] = analistasPadraoBase[c] || "Expedição";
-            mapaTaxas[c] = 12.99;
+            mapaTaxas[c] = taxaFlexPadrao(c);
           }
         });
 
@@ -239,7 +244,7 @@ export default function PlpPage() {
       const salvoTaxas = localStorage.getItem("plp_taxas_flex_por_canal");
       const taxas: Record<string, number> = salvoTaxas ? JSON.parse(salvoTaxas) : {};
       lista.forEach((c) => {
-        if (taxas[c] === undefined) taxas[c] = 12.99;
+        if (taxas[c] === undefined) taxas[c] = taxaFlexPadrao(c);
       });
       setTaxasFlexCanal(taxas);
 
@@ -268,7 +273,7 @@ export default function PlpPage() {
       const payload = canais.map((c) => ({
         canal: c,
         analista_responsavel: analistasPorCanal[c]?.trim() || "Expedição",
-        taxa_flex: Number(taxasFlexCanal[c] ?? 12.99),
+        taxa_flex: Number(taxasFlexCanal[c] ?? taxaFlexPadrao(c)),
         updated_at: new Date().toISOString()
       }));
 
@@ -316,7 +321,7 @@ export default function PlpPage() {
     if (!canais.some((c) => c.toLowerCase() === n.toLowerCase())) {
       const novaLista = [...canais, n].sort((a, b) => a.localeCompare(b));
       setCanais(novaLista);
-      const novoTaxas = { ...taxasFlexCanal, [n]: 12.99 };
+      const novoTaxas = { ...taxasFlexCanal, [n]: taxaFlexPadrao(n) };
       const novoAnalistas = { ...analistasPorCanal, [n]: "Expedição" };
       setTaxasFlexCanal(novoTaxas);
       setAnalistasPorCanal(novoAnalistas);
@@ -325,7 +330,7 @@ export default function PlpPage() {
       await supabase.from("plp_config_canais").upsert({
         canal: n,
         analista_responsavel: "Expedição",
-        taxa_flex: 12.99,
+        taxa_flex: taxaFlexPadrao(n),
         updated_at: new Date().toISOString()
       }, { onConflict: "canal" });
     } else {
@@ -488,7 +493,7 @@ export default function PlpPage() {
     }
 
     setSalvando(true);
-    const valorFreteUnit = modalidade === "FLEX" ? Number(taxasFlexCanal[canalSelecionado] ?? 12.99) : 0;
+    const valorFreteUnit = modalidade === "FLEX" ? Number(taxasFlexCanal[canalSelecionado] ?? taxaFlexPadrao(canalSelecionado)) : 0;
 
     const payload = listaPedidos.map((ped) => ({
       data_envio: dataEnvio,
@@ -1307,7 +1312,7 @@ export default function PlpPage() {
                         <input
                           type="number"
                           step="0.01"
-                          value={taxasFlexCanal[c] ?? 12.99}
+                          value={taxasFlexCanal[c] ?? taxaFlexPadrao(c)}
                           onChange={(e) => atualizarTaxaFlexLocal(c, parseFloat(e.target.value) || 0)}
                           className="w-full bg-slate-900 border border-amber-600/50 rounded-lg p-1.5 text-xs font-mono text-center text-amber-300 font-bold outline-none"
                         />

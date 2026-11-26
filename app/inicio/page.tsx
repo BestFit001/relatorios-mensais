@@ -34,7 +34,6 @@ const DEV_CRITICO = 10;    // % a partir da qual o envio ao Full não é recomen
 const DEV_AMOSTRA_MIN = 5; // vendas mínimas para a taxa ser considerada
 
 const norm = (v: any) => String(v ?? "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ");
-const moeda = (v: number) => "R$ " + (v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = (v: number) => (v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
 const hojeSP = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
 const dataBR = (iso?: string | null) => (iso ? String(iso).slice(0, 10).split("-").reverse().join("/") : "—");
@@ -326,17 +325,6 @@ export default function InicioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumo, mapeamentos, usuario, isAdmin, analistaFiltro, emailAlvo]);
   const nomesVisiveis = useMemo(() => new Set(canaisVisiveis.map((c) => norm(c.canal))), [canaisVisiveis]);
-
-  const totais = useMemo(() => {
-    const fat = canaisVisiveis.reduce((a, c) => a + c.faturadoComRedutor, 0);
-    const meta = canaisVisiveis.reduce((a, c) => a + c.metaValor, 0);
-    const lucro = canaisVisiveis.reduce((a, c) => a + c.lucroLiquidoReal, 0);
-    const bruto = canaisVisiveis.reduce((a, c) => a + c.faturadoBruto, 0);
-    return { fat, meta, lucro, margem: bruto > 0 ? (lucro / bruto) * 100 : 0, progresso: meta > 0 ? (fat / meta) * 100 : 0 };
-  }, [canaisVisiveis]);
-
-  const analistasDoCanal = (canal: string) =>
-    mapeamentos.filter((m: any) => norm(m.canal) === norm(canal)).map((m: any) => nomeDoEmail(m.email).split(" ")[0]);
 
   // ---- Tarefas
   // Cada tarefa é UMA só, com vários responsáveis; cada um tem o próprio status (por ciclo, nas cíclicas).
@@ -854,7 +842,8 @@ export default function InicioPage() {
         {/* FILTROS */}
         <div className="flex flex-wrap items-center gap-3 mb-6">
           {abaInicio === "acompanhamento" && (<>
-          <div className="flex bg-slate-900 border border-slate-800 rounded-xl p-1">
+          {subAcomp === "notificacoes" && (<>
+          <div className="flex bg-slate-900 border border-slate-800 rounded-xl p-1" data-mes-notificacoes>
             {(["atual", "anterior"] as const).map((m) => (
               <button key={m} onClick={() => setMesModo(m)} className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider cursor-pointer transition-all ${mesModo === m ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}>
                 {m === "atual" ? "Mês atual" : "Mês anterior"}
@@ -862,7 +851,8 @@ export default function InicioPage() {
             ))}
           </div>
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Competência {mesBarra}</span>
-          <button onClick={alternarOcultar} title={ocultarInfo ? "Mostrar faturamento, metas e canais" : "Esconder faturamento, metas e canais"}
+          </>)}
+          <button onClick={alternarOcultar} title={ocultarInfo ? "Mostrar os valores em R$" : "Esconder os valores em R$"}
             className={`px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider cursor-pointer border transition-all flex items-center gap-2 ${ocultarInfo ? "bg-slate-700 border-slate-500 text-white" : "bg-slate-900 border-slate-700 text-slate-300 hover:text-white"}`}>
             <span aria-hidden>{ocultarInfo ? "🙈" : "👁️"}</span>{ocultarInfo ? "Mostrar informações" : "Ocultar informações"}
           </button>
@@ -1069,7 +1059,7 @@ export default function InicioPage() {
 
         {abaInicio === "acompanhamento" && (
           <div className="flex flex-wrap gap-2 mb-6" data-subabas-acompanhamento>
-            {([["notificacoes", "🔔 Notificações", totalPendentes], ["canais", "🧭 Canais e devoluções", null], ["margem", "💰 Margem líquida", null], ["vendas", "📈 Dashboard de vendas", null], ["estoque", "📦 Estoque parado", null]] as const).map(([k, nome, n]) => (
+            {([["notificacoes", "🔔 Notificações", totalPendentes], ["canais", "🧭 Canais e devoluções", null], ["prejuizo", "⚠️ Vendas no prejuízo", null], ["margem", "💰 Margem líquida", null], ["vendas", "📈 Dashboard de vendas", null], ["estoque", "📦 Estoque parado", null]] as const).map(([k, nome, n]) => (
               <button key={k} type="button" data-subaba-acomp={k} onClick={() => setSubAcomp(k)}
                 className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border cursor-pointer transition-all ${subAcomp === k ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>
                 {nome}{n !== null ? ` (${carregando ? "…" : n})` : ""}
@@ -1078,74 +1068,8 @@ export default function InicioPage() {
           </div>
         )}
 
-        {abaInicio === "acompanhamento" && subAcomp === "canais" && !ocultarInfo && (
-        <>
-        {/* RESUMO */}
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800">
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Faturamento total</div>
-            <div className="text-xl font-black text-white mt-1">{carregando ? "…" : moeda(totais.fat)}</div>
-          </div>
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800">
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Meta (objetivo)</div>
-            <div className="text-xl font-black text-indigo-300 mt-1">{carregando ? "…" : moeda(totais.meta)}</div>
-            <div className="text-[10px] text-slate-500 mt-1">{carregando ? "" : `${pct(totais.progresso)} atingido`}</div>
-          </div>
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800">
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">% Líquido</div>
-            <div className={`text-xl font-black mt-1 ${totais.margem < 0 ? "text-rose-400" : "text-emerald-400"}`}>{carregando ? "…" : pct(totais.margem)}</div>
-            <div className="text-[10px] text-slate-500 mt-1">{carregando ? "" : `Lucro ${moeda(totais.lucro)}`}</div>
-          </div>
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800">
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Avisos ativos</div>
-            <div className={`text-xl font-black mt-1 ${totalPendentes ? "text-amber-300" : "text-emerald-400"}`}>{carregando ? "…" : totalPendentes}</div>
-            <div className="text-[10px] text-slate-500 mt-1">{qtdAndamento} tarefa(s) em andamento</div>
-          </div>
-        </div>
-
-        {/* CANAIS */}
-        <h2 className="text-sm font-black text-slate-300 uppercase tracking-wider mb-3">📊 {isAdmin && analistaFiltro === "TODOS" ? "Todos os canais" : isAdmin ? `Canais de ${nomeDoEmail(analistaFiltro)}` : "Meus canais"}</h2>
-        {carregando ? (
-          <div className="text-xs text-slate-500 mb-8">Calculando os números do Dashboard…</div>
-        ) : canaisVisiveis.length === 0 ? (
-          <div className="mb-8 bg-slate-900/60 border border-dashed border-slate-700 rounded-2xl p-6 text-xs text-slate-400">
-            {isAdmin ? "Esse analista ainda não tem canais atribuídos. Use “Configuração do administrador” para marcar os canais dele." : "Você ainda não tem canais atribuídos. Peça ao administrador para marcar os seus canais."}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-            {canaisVisiveis.map((c) => {
-              const prog = Math.min(100, Math.max(0, c.progressoMetaPct));
-              return (
-                <div key={c.canal} className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-lg" data-canal={c.canal}>
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-9 h-9 rounded-xl bg-slate-800 overflow-hidden flex items-center justify-center text-xs font-black text-white border border-slate-700 flex-shrink-0">
-                      {c.logoUrl ? <img src={c.logoUrl} alt="" className="w-full h-full object-cover" /> : c.canal.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-black text-white truncate">{c.canal}</div>
-                      {isAdmin && analistaFiltro === "TODOS" && <div className="text-[10px] text-slate-500 truncate">{analistasDoCanal(c.canal).join(", ") || "sem analista"}</div>}
-                    </div>
-                  </div>
-                  <div className="space-y-2.5">
-                    <div className="flex justify-between items-baseline"><span className="text-[10px] font-bold text-slate-400 uppercase">Faturamento</span><span className="text-sm font-black text-white">{moeda(c.faturadoComRedutor)}</span></div>
-                    <div className="flex justify-between items-baseline"><span className="text-[10px] font-bold text-slate-400 uppercase">Meta</span><span className="text-sm font-bold text-indigo-300">{moeda(c.metaValor)}</span></div>
-                    <div>
-                      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden"><div className={`h-full ${c.progressoMetaPct >= 100 ? "bg-emerald-500" : c.progressoMetaPct >= 60 ? "bg-indigo-500" : "bg-amber-500"}`} style={{ width: `${prog}%` }} /></div>
-                      <div className="text-[10px] text-slate-500 mt-1">{pct(c.progressoMetaPct)} da meta</div>
-                    </div>
-                    <div className="flex justify-between items-baseline pt-1 border-t border-slate-800"><span className="text-[10px] font-bold text-slate-400 uppercase">% Líquido</span><span className={`text-sm font-black ${c.margemLiquidaPct < 0 ? "text-rose-400" : "text-emerald-400"}`}>{pct(c.margemLiquidaPct)}</span></div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        </>
-        )}
-
         {abaInicio === "acompanhamento" && subAcomp !== "notificacoes" && (
-          <AcompanhamentoAnalitico sub={subAcomp} ocultar={ocultarInfo} canaisPermitidos={isAdmin && analistaFiltro === "TODOS" ? null : canaisVisiveis.map((c) => c.canal)} />
+          <AcompanhamentoAnalitico sub={subAcomp} ocultar={ocultarInfo} usuarioEmail={usuario?.email || ""} canaisPermitidos={isAdmin && analistaFiltro === "TODOS" ? null : canaisVisiveis.map((c) => c.canal)} />
         )}
 
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">

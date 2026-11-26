@@ -181,7 +181,7 @@ export function analisarCanais(o: OpcoesAnalise): ResumoCanalAnalise[] {
 }
 
 export interface VendaPrejuizo {
-  pedido: string; canal: string; data: string; sku: string; titulo: string; marca: string;
+  pedido: string; chave: string; canal: string; data: string; sku: string; titulo: string; marca: string;
   qtd: number; preco: number; repasse: number; cmv: number; extra: number; resultado: number; repasseEstimado: boolean;
 }
 
@@ -193,7 +193,7 @@ export function listarVendasNoPrejuizo(o: OpcoesAnalise): VendaPrejuizo[] {
     const { resultado, semCusto, cmv } = resultadoDaLinha(l, o.custosMap, imposto);
     if (semCusto || resultado >= 0) continue;
     const info = o.custosMap[l.skuNorm];
-    out.push({ pedido: String(l.ped ?? ""), canal: l.canal, data: l.data, sku: String(l.sku ?? ""), titulo: info?.titulo || l.tituloVenda, marca: info?.marca || "SEM MARCA",
+    out.push({ pedido: String(l.ped ?? ""), chave: l.chave, canal: l.canal, data: l.data, sku: String(l.sku ?? ""), titulo: info?.titulo || l.tituloVenda, marca: info?.marca || "SEM MARCA",
       qtd: l.qtd, preco: l.preco, repasse: l.repasse, cmv, extra: l.extra, resultado, repasseEstimado: l.repasseEstimado });
   }
   return out.sort((a, b) => a.resultado - b.resultado);
