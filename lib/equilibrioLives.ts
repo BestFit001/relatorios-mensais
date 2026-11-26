@@ -1,5 +1,7 @@
 // Ponto de equilíbrio dia a dia das lives: a cada dia do calendário entra a liquidez das vendas e sai o custo da colaboradora
 // (e, se quiser, o custo de lives/Ads), e o acumulado do mês mostra a partir de que dia as lives passaram a dar lucro.
+// Sábado e domingo são folga: o custo é dividido só entre os dias trabalhados (segunda a sexta, mais qualquer fim de semana em que
+// houve venda), então folga nunca aparece como dia de prejuízo nem como "dia sem venda".
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
@@ -38,6 +40,9 @@ export function vinculoNoMes(mes: string, admissao: string | null | undefined): 
   return { diasMes, diasVinculo, fator: diasVinculo / diasMes, inicio, semData: false };
 }
 
+/** sábado ou domingo */
+export const ehFimDeSemana = (iso: string) => { const d = diaSemana(iso); return d === "sáb" || d === "dom"; };
+
 export interface VendaDia { vendas: number; liquidez: number; pedidos: number }
 
 export interface DiaSerie {
@@ -48,6 +53,8 @@ export interface DiaSerie {
   custoColab: number; custoAds: number;
   resultado: number; acumulado: number;
   temVenda: boolean; vinculada: boolean;
+  /** dia de trabalho: segunda a sexta, ou fim de semana com venda. Folga tem custo e resultado zerados */
+  trabalhado: boolean;
 }
 
 export interface SerieEquilibrio {
@@ -58,7 +65,12 @@ export interface SerieEquilibrio {
   equilibrio: { data: string; dia: number; desdeOInicio: boolean } | null;
   acumuladoFinal: number;
   liquidezAcumulada: number; custoColabAcumulado: number; custoAdsAcumulado: number;
+  /** contados só entre os dias trabalhados (folga não entra) */
   diasLucro: number; diasPrejuizo: number; diasSemVenda: number;
+  /** sábados/domingos sem venda até o último dia contado */
+  diasDeFolga: number;
+  /** dias trabalhados do vínculo no mês inteiro (segunda a sexta + fim de semana com venda) e o custo da colaboradora por dia trabalhado */
+  diasTrabalhadosVinculo: number; custoColabPorDia: number;
   melhorDia: DiaSerie | null; piorDia: DiaSerie | null;
   /** quanto falta de liquidez para o acumulado chegar a zero (0 se já chegou) */
   faltaParaEquilibrar: number;
@@ -83,7 +95,7 @@ export function serieEquilibrio(o: {
   porDia: Map<string, VendaDia>;
 }): SerieEquilibrio {
   const { mes, hoje, vinculo, porDia } = o;
-  const vazio: SerieEquilibrio = { dias: [], ultimoDia: null, equilibrio: null, acumuladoFinal: 0, liquidezAcumulada: 0, custoColabAcumulado: 0, custoAdsAcumulado: 0, diasLucro: 0, diasPrejuizo: 0, diasSemVenda: 0, melhorDia: null, piorDia: null, faltaParaEquilibrar: 0, previsao: null, projecaoFechamento: null };
+  const vazio: SerieEquilibrio = { dias: [], ultimoDia: null, equilibrio: null, acumuladoFinal: 0, liquidezAcumulada: 0, custoColabAcumulado: 0, custoAdsAcumulado: 0, diasLucro: 0, diasPrejuizo: 0, diasSemVenda: 0, melhorDia: null, piorDia: null, faltaParaEquilibrar: 0, previsao: null, projecaoFechamento: null, diasDeFolga: 0, diasTrabalhadosVinculo: 0, custoColabPorDia: 0 };
   const total = vinculo.diasMes;
   if (!total) return vazio;
   const primeiro = `${mes}-01`, fim = `${mes}-${pad(total)}`;
@@ -91,20 +103,32 @@ export function serieEquilibrio(o: {
   const ultimo = hoje < fim ? hoje : fim;
   const nUltimo = Number(ultimo.slice(8, 10));
 
-  const custoColabDia = vinculo.diasVinculo > 0 ? o.custoColabMes / vinculo.diasVinculo : 0;
-  const custoAdsDia = o.incluirAds ? o.custoLivesMes / total : 0;
+  // dia trabalhado = segunda a sexta, ou sábado/domingo em que houve venda
+  const trabalha = (data: string) => !ehFimDeSemana(data) || (porDia.get(data)?.pedidos ?? 0) > 0;
+  let trabMes = 0, trabVinculo = 0;
+  for (let d = 1; d <= total; d++) {
+    const data = `${mes}-${pad(d)}`;
+    if (!trabalha(data)) continue;
+    trabMes++;
+    if (vinculo.inicio && data >= vinculo.inicio) trabVinculo++;
+  }
+  // mês/vínculo sem nenhum dia trabalhado (ex.: registrada só no fim de semana): volta a dividir pelos dias do calendário
+  const custoColabDia = vinculo.diasVinculo > 0 ? o.custoColabMes / (trabVinculo || vinculo.diasVinculo) : 0;
+  const custoAdsDia = o.incluirAds ? o.custoLivesMes / (trabMes || total) : 0;
 
   const dias: DiaSerie[] = [];
   let acum = 0;
   for (let d = 1; d <= nUltimo; d++) {
     const data = `${mes}-${pad(d)}`;
     const v = porDia.get(data);
+    const trabalhado = trabalha(data);
     const vinculada = !!vinculo.inicio && data >= vinculo.inicio;
-    const custoColab = vinculada ? custoColabDia : 0;
+    const custoColab = vinculada && trabalhado ? custoColabDia : 0;
+    const custoAds = trabalhado ? custoAdsDia : 0;
     const liquidez = v?.liquidez ?? 0;
-    const resultado = liquidez - custoColab - custoAdsDia;
+    const resultado = liquidez - custoColab - custoAds;
     acum += resultado;
-    dias.push({ data, dia: d, diaSemana: diaSemana(data), vendas: v?.vendas ?? 0, pedidos: v?.pedidos ?? 0, liquidez, custoColab, custoAds: custoAdsDia, resultado, acumulado: acum, temVenda: !!v && v.pedidos > 0, vinculada });
+    dias.push({ data, dia: d, diaSemana: diaSemana(data), vendas: v?.vendas ?? 0, pedidos: v?.pedidos ?? 0, liquidez, custoColab, custoAds, resultado, acumulado: acum, temVenda: !!v && v.pedidos > 0, vinculada, trabalhado });
   }
 
   const acumuladoFinal = acum;
@@ -118,20 +142,22 @@ export function serieEquilibrio(o: {
   const liquidezAcumulada = dias.reduce((a, d) => a + d.liquidez, 0);
   const custoColabAcumulado = dias.reduce((a, d) => a + d.custoColab, 0);
   const custoAdsAcumulado = dias.reduce((a, d) => a + d.custoAds, 0);
-  const ordenados = [...dias].sort((a, b) => a.resultado - b.resultado);
+  const ordenados = dias.filter((d) => d.trabalhado).sort((a, b) => a.resultado - b.resultado);
 
-  // previsão: ritmo médio de liquidez por dia (calendário) até agora contra o custo diário que continua correndo
+  // previsão: ritmo médio de liquidez por DIA TRABALHADO até agora contra o custo diário que continua correndo (folga não conta)
   let previsao: SerieEquilibrio["previsao"] = null;
   let projecaoFechamento: number | null = null;
-  const faltam = total - nUltimo;
-  if (dias.length && faltam > 0) {
-    const ritmo = liquidezAcumulada / nUltimo;
-    projecaoFechamento = ritmo * total - (vinculo.diasVinculo > 0 ? o.custoColabMes : 0) - (o.incluirAds ? o.custoLivesMes : 0);
+  const trabalhadosAteAgora = dias.filter((d) => d.trabalhado).length;
+  const futuros: string[] = [];   // dias úteis que ainda faltam no mês
+  for (let d = nUltimo + 1; d <= total; d++) { const data = `${mes}-${pad(d)}`; if (!ehFimDeSemana(data)) futuros.push(data); }
+  if (dias.length && futuros.length > 0 && trabalhadosAteAgora > 0) {
+    const ritmo = liquidezAcumulada / trabalhadosAteAgora;
+    projecaoFechamento = ritmo * (trabalhadosAteAgora + futuros.length) - (vinculo.diasVinculo > 0 ? o.custoColabMes : 0) - (o.incluirAds ? o.custoLivesMes : 0);
     if (!positivo(acumuladoFinal)) {
       const liquidoPorDia = ritmo - custoColabDia - custoAdsDia;   // supõe o vínculo já em curso
       if (liquidoPorDia > 0) {
         const n = Math.ceil(-acumuladoFinal / liquidoPorDia);
-        previsao = n <= faltam ? { data: `${mes}-${pad(nUltimo + n)}`, dia: nUltimo + n } : "fora_do_mes";
+        previsao = n <= futuros.length ? { data: futuros[n - 1], dia: Number(futuros[n - 1].slice(8, 10)) } : "fora_do_mes";
       } else previsao = "fora_do_mes";
     }
   }
@@ -139,8 +165,9 @@ export function serieEquilibrio(o: {
   return {
     dias, ultimoDia: ultimo, equilibrio,
     acumuladoFinal, liquidezAcumulada, custoColabAcumulado, custoAdsAcumulado,
-    diasLucro: dias.filter((d) => centavos(d.resultado) > 0).length, diasPrejuizo: dias.filter((d) => centavos(d.resultado) < 0).length,
-    diasSemVenda: dias.filter((d) => !d.temVenda).length,
+    diasLucro: dias.filter((d) => d.trabalhado && centavos(d.resultado) > 0).length, diasPrejuizo: dias.filter((d) => d.trabalhado && centavos(d.resultado) < 0).length,
+    diasSemVenda: dias.filter((d) => d.trabalhado && !d.temVenda).length, diasDeFolga: dias.filter((d) => !d.trabalhado).length,
+    diasTrabalhadosVinculo: trabVinculo || vinculo.diasVinculo, custoColabPorDia: custoColabDia,
     melhorDia: ordenados.length ? ordenados[ordenados.length - 1] : null, piorDia: ordenados.length ? ordenados[0] : null,
     faltaParaEquilibrar: positivo(acumuladoFinal) ? 0 : -acumuladoFinal,
     previsao, projecaoFechamento,

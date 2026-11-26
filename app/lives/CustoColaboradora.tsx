@@ -362,14 +362,14 @@ export default function CustoColaboradora({ itens, custoLives, roiMedio, percent
           <div>
             <h3 className="text-sm font-bold text-white uppercase tracking-wider">⚖️ Ponto de equilíbrio dia a dia — {mesBR(mes)}</h3>
             <p className="text-[11px] text-slate-400 mt-1 max-w-3xl leading-relaxed">
-              Cada dia do calendário soma a liquidez das vendas e desconta o custo da colaboradora
-              {vinc.diasVinculo > 0 ? <> (<strong className="text-slate-200">{moeda(custo.total)}</strong> ÷ {vinc.diasVinculo} dias de vínculo = <strong className="text-slate-200">{moeda(custo.total / vinc.diasVinculo)}</strong> por dia)</> : null}.
+              Cada dia trabalhado soma a liquidez das vendas e desconta o custo da colaboradora; sábado e domingo são folga e ficam fora da conta
+              {vinc.diasVinculo > 0 && serie.diasTrabalhadosVinculo > 0 ? <> (<strong className="text-slate-200">{moeda(custo.total)}</strong> ÷ {serie.diasTrabalhadosVinculo} dias trabalhados no vínculo = <strong className="text-slate-200">{moeda(serie.custoColabPorDia)}</strong> por dia)</> : null}.
               O acumulado do mês mostra o dia a partir do qual as lives passaram a dar lucro.
             </p>
           </div>
-          <label className="flex items-center gap-2 text-[11px] font-bold text-slate-300 cursor-pointer" title="O custo de lives vem da planilha de Ads, sem datas: aqui ele é dividido igualmente pelos dias do mês">
+          <label className="flex items-center gap-2 text-[11px] font-bold text-slate-300 cursor-pointer" title="O custo de lives vem da planilha de Ads, sem datas: aqui ele é dividido igualmente pelos dias trabalhados do mês (sábado e domingo não entram)">
             <input type="checkbox" data-colab-incluir-ads checked={incluirAds} onChange={(e) => setIncluirAds(e.target.checked)} className="accent-indigo-500" />
-            Incluir o custo de lives (Ads), dividido por dia
+            Incluir o custo de lives (Ads), dividido por dia trabalhado
           </label>
         </div>
 
@@ -390,7 +390,7 @@ export default function CustoColaboradora({ itens, custoLives, roiMedio, percent
                 detalhe={serie.equilibrio ? (serie.equilibrio.desdeOInicio ? "sem dia negativo no acumulado" : `${serie.dias[serie.equilibrio.dia - 1].diaSemana}, ${dataBR(serie.equilibrio.data)}`) : `faltam ${moeda(serie.faltaParaEquilibrar)}`} />
               <Cartao titulo={`Acumulado até ${dataBR(serie.ultimoDia || "")}`} valor={moeda(serie.acumuladoFinal)} cor={serie.acumuladoFinal < 0 ? "text-rose-400" : "text-emerald-400"}
                 detalhe={`liquidez ${moeda(serie.liquidezAcumulada)} − colaboradora ${moeda(serie.custoColabAcumulado)}${incluirAds ? ` − lives ${moeda(serie.custoAdsAcumulado)}` : ""}`} />
-              <Cartao titulo="Dias no lucro / no prejuízo" valor={`${serie.diasLucro} / ${serie.diasPrejuizo}`} detalhe={`${serie.diasSemVenda} dia(s) sem nenhuma venda`} />
+              <Cartao titulo="Dias no lucro / no prejuízo" valor={`${serie.diasLucro} / ${serie.diasPrejuizo}`} detalhe={`${serie.diasSemVenda} dia(s) útil(eis) sem venda · ${serie.diasDeFolga} dia(s) de folga (sáb/dom) fora da conta`} />
               <Cartao titulo="Melhor dia" valor={serie.melhorDia ? moeda(serie.melhorDia.resultado) : "—"} cor="text-cyan-400" detalhe={serie.melhorDia ? `dia ${serie.melhorDia.dia} (${serie.melhorDia.diaSemana})` : undefined} />
               <Cartao titulo="Pior dia" valor={serie.piorDia ? moeda(serie.piorDia.resultado) : "—"} cor={serie.piorDia && serie.piorDia.resultado < 0 ? "text-rose-400" : "text-cyan-400"} detalhe={serie.piorDia ? `dia ${serie.piorDia.dia} (${serie.piorDia.diaSemana})` : undefined} />
             </div>
@@ -417,13 +417,13 @@ export default function CustoColaboradora({ itens, custoLives, roiMedio, percent
                     {serie.dias.map((d) => {
                       const eq = serie.equilibrio?.dia === d.dia;
                       return (
-                        <tr key={d.data} data-dia-linha={d.dia} data-equilibrio={eq ? "1" : "0"} className={`border-b border-slate-800/60 ${eq ? "bg-emerald-950/40" : ""}`}>
+                        <tr key={d.data} data-dia-linha={d.dia} data-equilibrio={eq ? "1" : "0"} data-folga={d.trabalhado ? "0" : "1"} className={`border-b border-slate-800/60 ${eq ? "bg-emerald-950/40" : ""} ${d.trabalhado ? "" : "opacity-50"}`}>
                           <td className="py-1.5 pr-3 font-mono text-slate-300">{String(d.dia).padStart(2, "0")}/{mes.slice(5, 7)} <span className="text-slate-500">{d.diaSemana}</span>{eq && <span className="ml-2 text-[9px] font-bold text-emerald-300 border border-emerald-700 rounded px-1">equilíbrio</span>}</td>
-                          <td className="py-1.5 pr-3 text-right text-slate-200">{d.temVenda ? `${moeda(d.vendas)} (${d.pedidos})` : <span className="text-slate-500">sem vendas</span>}</td>
+                          <td className="py-1.5 pr-3 text-right text-slate-200">{d.temVenda ? `${moeda(d.vendas)} (${d.pedidos})` : <span className="text-slate-500">{d.trabalhado ? "sem vendas" : "folga"}</span>}</td>
                           <td className="py-1.5 pr-3 text-right text-slate-200">{moeda(d.liquidez)}</td>
-                          <td className="py-1.5 pr-3 text-right text-slate-300">{d.vinculada ? `- ${moeda(d.custoColab)}` : <span className="text-slate-600">—</span>}</td>
-                          {incluirAds && <td className="py-1.5 pr-3 text-right text-slate-300">- {moeda(d.custoAds)}</td>}
-                          <td className={`py-1.5 pr-3 text-right font-bold ${d.resultado < 0 ? "text-rose-400" : "text-emerald-400"}`}>{moeda(d.resultado)}</td>
+                          <td className="py-1.5 pr-3 text-right text-slate-300">{d.vinculada && d.trabalhado ? `- ${moeda(d.custoColab)}` : <span className="text-slate-600">—</span>}</td>
+                          {incluirAds && <td className="py-1.5 pr-3 text-right text-slate-300">{d.trabalhado ? `- ${moeda(d.custoAds)}` : <span className="text-slate-600">—</span>}</td>}
+                          <td className={`py-1.5 pr-3 text-right font-bold ${!d.trabalhado ? "text-slate-500" : d.resultado < 0 ? "text-rose-400" : "text-emerald-400"}`}>{d.trabalhado ? moeda(d.resultado) : "—"}</td>
                           <td className={`py-1.5 text-right font-black ${d.acumulado < 0 ? "text-rose-400" : "text-emerald-400"}`}>{moeda(d.acumulado)}</td>
                         </tr>
                       );

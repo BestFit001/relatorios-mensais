@@ -115,7 +115,7 @@ export default function GraficoEquilibrio({ dias, diasMes, equilibrio, inicioVin
       {sel && (
         <div className="absolute z-10 pointer-events-none rounded-lg border px-3 py-2 text-[11px] shadow-xl bg-slate-950/95 border-slate-700 text-slate-300"
           style={{ top: 28, left: `${Math.min(80, Math.max(2, ((xDia(sel.dia) / W) * 100) + 1))}%` }} data-tooltip-equilibrio>
-          <div className="font-bold text-white">Dia {sel.dia} ({sel.diaSemana}) · {sel.pedidos} venda(s)</div>
+          <div className="font-bold text-white">Dia {sel.dia} ({sel.diaSemana}) · {sel.trabalhado ? `${sel.pedidos} venda(s)` : "folga"}</div>
           <div className="mt-1 space-y-0.5">
             <div className="flex justify-between gap-6"><span>Liquidez das vendas</span><span className="font-mono text-white">{valorTxt(sel.liquidez)}</span></div>
             <div className="flex justify-between gap-6"><span>Custo da colaboradora</span><span className="font-mono text-white">{valorTxt(-sel.custoColab)}</span></div>
