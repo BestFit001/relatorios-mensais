@@ -6,6 +6,8 @@ import { ehAdminGeral } from "./perfis";
 
 export const PREFIXO_RH = "rh_lives:";
 export const campoRh = (mes: string) => PREFIXO_RH + mes;
+/** Data de registro (admissão) da colaboradora: vale para todos os meses. Guarda só a data (AAAA-MM-DD). */
+export const CAMPO_ADMISSAO = "rh_lives_admissao";
 
 /** Salário e encargos são sensíveis: só o Admin Geral enxerga. (Para liberar também o Admin de Área, troque por acessoTotal.) */
 export const podeVerCustoColaboradora = (perfil?: string | null) => ehAdminGeral(perfil);
@@ -66,8 +68,13 @@ export interface CustoColaboradora {
   acimaDoSalarioPct: number;
 }
 
-export function calcularCustoColaboradora(p: ParamsColaboradora): CustoColaboradora {
-  const salario = Math.max(0, num(p.salario));
+/**
+ * `fator` é a parte do mês em que a colaboradora estava registrada (dias de vínculo ÷ dias do mês): salário, 13º, férias, 1/3 e encargos
+ * são proporcionais a ele. Vale-transporte e outros custos são o que foi digitado para o mês e não mudam com o fator.
+ */
+export function calcularCustoColaboradora(p: ParamsColaboradora, fator = 1): CustoColaboradora {
+  const f = Math.min(1, Math.max(0, Number.isFinite(fator) ? fator : 1));
+  const salario = Math.max(0, num(p.salario)) * f;
   const decimoTerceiro = salario / 12;
   const ferias = salario / 12;
   const tercoFerias = ferias / 3;
