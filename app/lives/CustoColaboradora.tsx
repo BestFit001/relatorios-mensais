@@ -177,7 +177,7 @@ export default function CustoColaboradora({ itens, custoLives, roiMedio, percent
     { nome: `Terceiros / Sistema S (${pct(params.pTerceiros, 1)})`, valor: custo.terceiros },
     { nome: `FGTS (${pct(params.pFgts, 1)})`, valor: custo.fgts },
     ...(params.multaFgts ? [{ nome: "Provisão da multa de 40% do FGTS", valor: custo.multaFgts }] : []),
-    { nome: "Vale-transporte (manual)", valor: custo.valeTransporte },
+    { nome: "Vale-transporte pago pela empresa", valor: custo.valeTransporte, dica: custo.descontoVt > 0 ? `VT ${moeda(custo.valeTransporteBruto)} − ${moeda(custo.descontoVt)} descontados da funcionária` : undefined },
     ...(params.outros.length ? [{ nome: "Outros custos", valor: custo.outros }] : []),
     { nome: "Custo total da colaboradora no mês", valor: custo.total, forte: true },
   ];
@@ -246,7 +246,7 @@ export default function CustoColaboradora({ itens, custoLives, roiMedio, percent
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Salário bruto mensal (R$):</label>
               <CampoNumero dado="salario" valor={params.salario} onChange={(n) => mudar({ salario: n })} />
@@ -255,9 +255,20 @@ export default function CustoColaboradora({ itens, custoLives, roiMedio, percent
             <div>
               <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Vale-transporte do mês (R$):</label>
               <CampoNumero dado="vt" valor={params.valeTransporte} onChange={(n) => mudar({ valeTransporte: n })} />
-              <p className="text-[10px] text-slate-500 mt-1">O que a empresa paga de fato no mês.</p>
+              <p className="text-[10px] text-slate-500 mt-1">Valor total do VT do mês, antes do desconto da funcionária.</p>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Desconto do VT na funcionária:</label>
+              <CampoNumero dado="desconto-vt" valor={params.descontoVtPct} onChange={(n) => mudar({ descontoVtPct: Math.min(100, Math.max(0, n)) })} sufixo="% do salário" />
+              <p className="text-[10px] text-slate-500 mt-1">Ela paga até 6% do salário do próprio VT; a empresa arca com o resto. Use 0 para a empresa pagar tudo.</p>
             </div>
           </div>
+          {custo.valeTransporteBruto > 0 && (
+            <p data-colab-vt-resumo className="text-[11px] text-slate-300 -mt-2">
+              VT do mês <strong className="text-slate-100">{moeda(custo.valeTransporteBruto)}</strong> − desconto da funcionária ({pct(params.descontoVtPct, 1)} do salário = <strong className="text-slate-100">{moeda(custo.descontoVt)}</strong>)
+              {" "}= a empresa paga <strong className="text-emerald-300">{moeda(custo.valeTransporte)}</strong>.
+            </p>
+          )}
 
           <div>
             <label className="block text-[10px] font-bold text-amber-400 uppercase mb-1">Encargos sobre a folha (imposto pago ao governo):</label>

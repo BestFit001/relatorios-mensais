@@ -18,8 +18,10 @@ export type RegimeEncargos = "presumido_real" | "simples" | "personalizado";
 export interface ParamsColaboradora {
   /** salário base do mês (R$) */
   salario: number;
-  /** vale-transporte do mês, digitado à mão (R$): o que a empresa efetivamente paga */
+  /** vale-transporte do mês, digitado à mão (R$): valor TOTAL do VT, antes do desconto da funcionária */
   valeTransporte: number;
+  /** % do salário que a funcionária paga do próprio VT (6% é o limite legal); a empresa arca com o resto */
+  descontoVtPct: number;
   /** outros custos do mês: vale-refeição, plano de saúde, bonificação... */
   outros: OutroCusto[];
   regime: RegimeEncargos;
@@ -36,7 +38,7 @@ export const REGIMES: { valor: RegimeEncargos; nome: string; dica: string; pInss
 ];
 
 export const PARAMS_PADRAO: ParamsColaboradora = {
-  salario: 0, valeTransporte: 0, outros: [], regime: "presumido_real", pInss: 20, pRat: 2, pTerceiros: 5.8, pFgts: 8, multaFgts: false,
+  salario: 0, valeTransporte: 0, descontoVtPct: 6, outros: [], regime: "presumido_real", pInss: 20, pRat: 2, pTerceiros: 5.8, pFgts: 8, multaFgts: false,
 };
 
 /** Troca o regime e, se não for o personalizado, preenche os percentuais dele. */
@@ -61,7 +63,12 @@ export interface CustoColaboradora {
   baseEncargos: number;
   inss: number; rat: number; terceiros: number; fgts: number; multaFgts: number;
   encargos: number;
+  /** VT que a EMPRESA paga: VT do mês − desconto da funcionária */
   valeTransporte: number;
+  /** VT total do mês (antes do desconto) */
+  valeTransporteBruto: number;
+  /** parte do VT paga pela funcionária (% do salário do mês, nunca mais que o próprio VT) */
+  descontoVt: number;
   outros: number;
   total: number;
   /** quanto o custo total passa do salário, em % */
@@ -70,7 +77,7 @@ export interface CustoColaboradora {
 
 /**
  * `fator` é a parte do mês em que a colaboradora estava registrada (dias de vínculo ÷ dias do mês): salário, 13º, férias, 1/3 e encargos
- * são proporcionais a ele. Vale-transporte e outros custos são o que foi digitado para o mês e não mudam com o fator.
+ * são proporcionais a ele. O vale-transporte e os outros custos são o que foi digitado para o mês e não mudam com o fator; o desconto do VT na funcionária é % do salário já proporcional.
  */
 export function calcularCustoColaboradora(p: ParamsColaboradora, fator = 1): CustoColaboradora {
   const f = Math.min(1, Math.max(0, Number.isFinite(fator) ? fator : 1));
@@ -85,13 +92,16 @@ export function calcularCustoColaboradora(p: ParamsColaboradora, fator = 1): Cus
   const fgts = (baseEncargos * Math.max(0, num(p.pFgts))) / 100;
   const multaFgts = p.multaFgts ? fgts * 0.4 : 0;
   const encargos = inss + rat + terceiros + fgts + multaFgts;
-  const valeTransporte = Math.max(0, num(p.valeTransporte));
+  const valeTransporteBruto = Math.max(0, num(p.valeTransporte));
+  // desconto em folha: % do salário (proporcional ao vínculo), limitado ao próprio valor do VT
+  const descontoVt = Math.min(valeTransporteBruto, (salario * Math.max(0, Math.min(100, num(p.descontoVtPct)))) / 100);
+  const valeTransporte = valeTransporteBruto - descontoVt;
   const outros = (p.outros || []).reduce((a, o) => a + Math.max(0, num(o.valor)), 0);
   const total = salario + decimoTerceiro + ferias + tercoFerias + encargos + valeTransporte + outros;
   return {
     salario: arred(salario), decimoTerceiro: arred(decimoTerceiro), ferias: arred(ferias), tercoFerias: arred(tercoFerias), baseEncargos: arred(baseEncargos),
     inss: arred(inss), rat: arred(rat), terceiros: arred(terceiros), fgts: arred(fgts), multaFgts: arred(multaFgts), encargos: arred(encargos),
-    valeTransporte: arred(valeTransporte), outros: arred(outros), total: arred(total),
+    valeTransporte: arred(valeTransporte), valeTransporteBruto: arred(valeTransporteBruto), descontoVt: arred(descontoVt), outros: arred(outros), total: arred(total),
     acimaDoSalarioPct: salario > 0 ? (total / salario - 1) * 100 : 0,
   };
 }
@@ -106,6 +116,8 @@ export function lerParams(texto: any): ParamsColaboradora | null {
     const regime: RegimeEncargos = ["presumido_real", "simples", "personalizado"].includes(j.regime) ? j.regime : "presumido_real";
     return {
       salario: num(j.salario), valeTransporte: num(j.valeTransporte),
+      // meses salvos antes deste campo existir: 6% (padrão legal)
+      descontoVtPct: j.descontoVtPct === undefined || j.descontoVtPct === null ? 6 : num(j.descontoVtPct),
       outros: Array.isArray(j.outros) ? j.outros.map((o: any) => ({ nome: String(o?.nome ?? ""), valor: num(o?.valor) })) : [],
       regime, pInss: num(j.pInss), pRat: num(j.pRat), pTerceiros: num(j.pTerceiros), pFgts: num(j.pFgts), multaFgts: !!j.multaFgts,
     };
