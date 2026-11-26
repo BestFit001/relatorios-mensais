@@ -205,6 +205,13 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
     };
   }, [ativos]);
 
+  // dias desde a última captura (data de São Paulo); null se nunca houve
+  const diasSemCaptura = useMemo(() => {
+    if (!resumo.ultima) return null;
+    const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    return Math.max(0, Math.round((Date.parse(hoje) - Date.parse(String(resumo.ultima).slice(0, 10))) / 86_400_000));
+  }, [resumo.ultima]);
+
   const cadastrar = async () => {
     setCadastrando(true); setAviso(null);
     try {
@@ -319,6 +326,7 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
         if (r.manual) { avisar("erro", 'O servidor está em modo manual (não lê o Mercado Livre): use “Atualizar pelo navegador”.'); setAtualizarAberto(true); setAtualizando(null); return; }
         ok += r.ok; falhas += r.falhas; mudancas += r.mudancasPreco || 0; if (r.erros?.[0]) ultimoErro = r.erros[0].motivo;
         if (r.pendentes === 0 || r.processados === 0) break; // acabou, ou a rodada não avançou
+        if (r.ok === 0 && ok === 0) break; // a rodada inteira falhou: o servidor não está conseguindo ler o canal, repetir só gasta minutos
         setAtualizando(`Capturando… ${ok + falhas} anúncio(s) processados`);
       }
       await carregarAnuncios(categoriaId);
@@ -445,7 +453,7 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
                     ["Total vendido", num(resumo.total), "acumulado informado pelo canal"],
                   ]),
                   ["Preço médio", brl(resumo.precoMedio), "preço atual dos anúncios"],
-                  ["Última captura", dataBR(resumo.ultima), !categoria.ativo ? "categoria pausada" : ehML ? "captura automática diária" : "atualize pelo favorito"],
+                  ["Última captura", dataBR(resumo.ultima), !categoria.ativo ? "categoria pausada" : ehML ? (diasSemCaptura != null && diasSemCaptura >= 2 ? `há ${diasSemCaptura} dias · automática não está lendo` : "captura automática diária") : "atualize pelo favorito"],
                 ].map(([t, v, d]) => (
                   <div key={t} className="px-4 py-3">
                     <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{t}</p>
@@ -454,6 +462,12 @@ export default function ConcorrentesPainel({ canal = "mercadolivre" }: { canal?:
                   </div>
                 ))}
               </div>
+
+              {ehML && categoria.ativo && diasSemCaptura != null && diasSemCaptura >= 2 && (
+                <div data-aviso-desatualizado className="p-3 rounded-xl border border-amber-800/60 bg-amber-950/30 text-amber-200 text-xs font-semibold">
+                  ⚠️ Preços e vendas estão desatualizados há {diasSemCaptura} dias. A leitura automática do servidor não está conseguindo acessar o Mercado Livre (a API recusa e o proxy não responde a tempo). Use “Atualizar pelo navegador”: ele lê os anúncios pelo seu próprio navegador e grava aqui.
+                </div>
+              )}
 
               {ehML && <AtualizarPeloNavegador canal={canal} anuncios={ativos} aberto={atualizarAberto} onAbrir={setAtualizarAberto} onAviso={avisar} onImportado={recarregarTudo} />}
 
