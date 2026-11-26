@@ -8,6 +8,9 @@ import * as XLSX from "xlsx";
 import { letrasDaFormula, avaliarFormulaLive } from "@/lib/formulaLive";
 import { detectarOrdemData, interpretarDataHora, dataIsoParaBr, type ItemAnalise } from "@/lib/analiseLives";
 import AnaliseDesempenho from "./AnaliseDesempenho";
+import { resumirLives } from "@/lib/livesResumo";
+import CustoColaboradora from "./CustoColaboradora";
+import { podeVerCustoColaboradora } from "@/lib/custoColaboradora";
 import { colunaParaIndice, normalizarSkuLive as normalizarSku, parseNumeroBruto, formatarDataCurta, PADRAO_COL_MODAL, PADRAO_COL_VENDEDOR, PADRAO_TEXTO_LIVE } from "@/lib/livesVendas";
 
 function parseDataParaTimestamp(dataStr: any): number | null {
@@ -50,7 +53,8 @@ export default function RelatorioLivesPage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [subAba, setSubAba] = useState<"dados" | "analise" | "config">("dados");
+  const [subAba, setSubAba] = useState<"dados" | "analise" | "config" | "colab">("dados");
+  const [perfil, setPerfil] = useState("");
   const [modoPainel, setModoPainel] = useState<"detalhado" | "compacto">("detalhado");
 
   // Configurações
@@ -97,6 +101,7 @@ export default function RelatorioLivesPage() {
       router.push("/login");
       return;
     }
+    try { setPerfil(String(JSON.parse(usuarioLogado).perfil || "")); } catch { /* sem perfil: não vê a aba restrita */ }
     carregarTudoDoSupabase();
   }, []);
 
@@ -312,7 +317,7 @@ export default function RelatorioLivesPage() {
   const ordemData = detectarOrdemData(dadosBrutos.map((r) => r.dataHora || r.data));
 
   // Processamento e Filtragem Corrigida por Timestamp
-  const dadosProcessados = dadosBrutos.map((row) => {
+  const dadosProcessadosTodos = dadosBrutos.map((row) => {
     const skuRaw = row.sku;
     const skuNorm = normalizarSku(skuRaw);
     const valorPago = parseNumeroBruto(row.valorPago);
@@ -364,14 +369,17 @@ export default function RelatorioLivesPage() {
       vendedor,
       idPedido: String(row.idPedido || ""),
     };
-  }).filter(item => {
+  });
+
+  // vendas válidas (com SKU e status de venda), antes dos filtros da tela: a aba "Custo da colaboradora" parte daqui
+  const dadosValidos = dadosProcessadosTodos.filter(item => {
     if (!item.skuNorm) return false;
-
-    if (filtroVendedor === SEM_VENDEDOR ? item.vendedor !== "" : (filtroVendedor && item.vendedor !== filtroVendedor)) return false;
-
     const statusLimpo = item.status.replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    const statusValido = statusPermitidos.some(st => statusLimpo.includes(st.toLowerCase()));
-    if (!statusValido) return false;
+    return statusPermitidos.some(st => statusLimpo.includes(st.toLowerCase()));
+  });
+
+  const dadosProcessados = dadosValidos.filter(item => {
+    if (filtroVendedor === SEM_VENDEDOR ? item.vendedor !== "" : (filtroVendedor && item.vendedor !== filtroVendedor)) return false;
 
     if (buscaSku && !item.skuNorm.includes(buscaSku.toLowerCase()) && !item.nomeProduto.toLowerCase().includes(buscaSku.toLowerCase())) {
       return false;
@@ -398,23 +406,13 @@ export default function RelatorioLivesPage() {
     return true;
   });
 
-  const totalVenda = dadosProcessados.reduce((acc, cur) => acc + cur.valorPago, 0);
-  const totalTarifas = dadosProcessados.reduce((acc, cur) => acc + cur.tarifas, 0);
-  const totalRebate = dadosProcessados.reduce((acc, cur) => acc + cur.rebate, 0);
-  const totalRepasse = dadosProcessados.reduce((acc, cur) => acc + cur.repasse, 0);
-  const semFormula = !formulaDoCanal();
-  const totalCusto = dadosProcessados.reduce((acc, cur) => acc + cur.custo, 0);
-  const totalImposto = dadosProcessados.reduce((acc, cur) => acc + cur.imposto, 0);
-  const totalComissaoVendedora = dadosProcessados.reduce((acc, cur) => acc + cur.comissaoVendedora, 0);
-  
   const custoTotalLivesImportado = custosLiveBrutos.reduce((acc, cur) => acc + (cur.custoTotal || 0), 0);
   const roiMedioImportado = custosLiveBrutos.length > 0 ? custosLiveBrutos[0].roiMedio || 0 : 0;
+  const semFormula = !formulaDoCanal();
 
-  const totalLiquidez = dadosProcessados.reduce((acc, cur) => acc + cur.liquidez, 0) - custoTotalLivesImportado;
-  
-  // % de lucro sobre o PDV, ponderado pelo valor (soma da liquidez / soma do PDV)
-  const totalPdv = dadosProcessados.reduce((acc, cur) => acc + cur.pdv, 0);
-  const mediaLucroPdvGeral = totalPdv > 0 ? (totalLiquidez / totalPdv) * 100 : 0;
+  // mesma conta da aba "Custo da colaboradora" (lib/livesResumo)
+  const { totalVenda, totalTarifas, totalRebate, totalRepasse, totalCusto, totalImposto, totalComissaoVendedora, totalLiquidez, mediaLucroPdvGeral } =
+    resumirLives(dadosProcessados, custoTotalLivesImportado);
 
   const compactoMap = new Map<string, { sku: string; nome: string; qtd: number; venda: number; tarifas: number; rebate: number; pdv: number; repasse: number; custo: number; comissaoVendedora: number; liquidez: number; percentualLucroPdv: number }>();
   dadosProcessados.forEach(item => {
@@ -573,6 +571,17 @@ export default function RelatorioLivesPage() {
             >
               ⚙️ Configurações Live
             </button>
+            {podeVerCustoColaboradora(perfil) && (
+              <button
+                data-subaba-colab
+                onClick={() => setSubAba("colab")}
+                className={`px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider cursor-pointer transition-all shadow-md ${
+                  subAba === "colab" ? "bg-amber-600 text-white shadow-amber-950/50" : "bg-slate-950 text-amber-300 border border-amber-900/60"
+                }`}
+              >
+                🔒 Custo da colaboradora
+              </button>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-4">
@@ -603,6 +612,17 @@ export default function RelatorioLivesPage() {
             }))}
           />
           </div>
+        )}
+
+        {subAba === "colab" && podeVerCustoColaboradora(perfil) && (
+          <CustoColaboradora
+            itens={dadosValidos.map((d) => ({ valorPago: d.valorPago, tarifas: d.tarifas, rebate: d.rebate, repasse: d.repasse, custo: d.custo, imposto: d.imposto, comissaoVendedora: d.comissaoVendedora, liquidez: d.liquidez, pdv: d.pdv, vendedor: d.vendedor, dataIso: d.dataIso, timestamp: d.timestamp }))}
+            custoLives={custoTotalLivesImportado}
+            roiMedio={roiMedioImportado}
+            percentualImposto={percentualImposto}
+            percentualComissao={percentualComissao}
+            canalRegras={canalRegras}
+          />
         )}
 
         {subAba === "config" && (
