@@ -9,6 +9,7 @@
 
 import { norm } from "./padroesAnuncios";
 import { ajustarTitulo, LIMITE_TITULO } from "./adaptarModelo";
+import { adaptarTituloPelaEstampa } from "./estampa";
 
 interface Palavra { texto: string; chave: string; capacidade: boolean; fixa: boolean }
 
@@ -67,9 +68,32 @@ export interface Comparacao {
   capacidadeDiferente: boolean;
   /** 0..1: quanto do produto novo (sem a estampa) já existe no modelo */
   parecido: number;
+  /** estampa identificada no modelo e no produto novo (vazio quando a identificação não foi possível e valeu a comparação palavra a palavra) */
+  estampaAntiga: string;
+  estampaNova: string;
+  /** linha do modelo e linha que sai no título (diferentes quando o produto novo é de outra linha) */
+  linhaAntiga: string;
+  linhaNova: string;
 }
 
-export function compararProdutoModelo(nomeNovo: string, tituloModelo: string, marca: string): Comparacao {
+/**
+ * Título do produto novo a partir do modelo: identifica a ESTAMPA nos dois nomes (lib/estampa.ts) e troca só ela;
+ * tipo, marca, linha, formato, "Estampa/Original" e capacidade do modelo ficam como estão. Se não der para identificar a estampa,
+ * cai na comparação palavra a palavra (compararPorPalavras).
+ */
+export function compararProdutoModelo(nomeNovo: string, tituloModelo: string, marca: string, linhasExtras: string[] = []): Comparacao {
+  const a = adaptarTituloPelaEstampa(nomeNovo, tituloModelo, marca, linhasExtras);
+  const antigo = compararPorPalavras(nomeNovo, tituloModelo, marca);
+  if (!a) return { ...antigo, estampaAntiga: "", estampaNova: "", linhaAntiga: "", linhaNova: "" };
+  return {
+    titulo: a.titulo, trocas: a.trocas, sai: a.sai, entra: a.entra, capacidadeDiferente: a.capacidadeDiferente, parecido: antigo.parecido,
+    estampaAntiga: a.estampaAntiga, estampaNova: a.estampaNova, linhaAntiga: a.linhaAntiga, linhaNova: a.linhaNova,
+  };
+}
+
+type ComparacaoBase = Omit<Comparacao, "estampaAntiga" | "estampaNova" | "linhaAntiga" | "linhaNova">;
+
+function compararPorPalavras(nomeNovo: string, tituloModelo: string, marca: string): ComparacaoBase {
   const base = palavras(tituloModelo, marca);
   const novo = palavras(nomeNovo, marca).filter((w) => !w.fixa);
   const candidatas = base.map((w, i) => ({ w, i })).filter((x) => !x.w.fixa);
@@ -173,8 +197,8 @@ export function acharModeloPorSku<T extends ModeloLinha>(skuDigitado: string, mo
 }
 
 /** Tudo que o modelo entrega para o produto novo SEM IA: título, SEO, palavras-chave, slug e a descrição com as trocas feitas. */
-export function conteudoPeloModelo(nomeNovo: string, marca: string, modelo: ModeloLinha) {
-  const c = compararProdutoModelo(nomeNovo, String(modelo.titulo || ""), marca);
+export function conteudoPeloModelo(nomeNovo: string, marca: string, modelo: ModeloLinha, linhasExtras: string[] = []) {
+  const c = compararProdutoModelo(nomeNovo, String(modelo.titulo || ""), marca, linhasExtras);
   return {
     comparacao: c,
     titulo: c.titulo,

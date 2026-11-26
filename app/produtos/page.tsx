@@ -9,6 +9,7 @@ import {
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import CadastrosTiny from "../components/CadastrosTiny";
+import { descobrirLinhas } from "../../lib/estampa";
 import ComparacaoModelos, { type EscolhaTela, type ModeloResumo, type PaiParaComparar } from "../components/ComparacaoModelos";
 import Paginacao from "../components/Paginacao";
 import * as XLSX from "xlsx";
@@ -244,7 +245,7 @@ export default function ProdutosPage() {
   };
 
   // 1º passo: tela comparativa (produto novo x modelo da Padronização). Só depois de confirmar é que a planilha é gerada.
-  const [comparacao, setComparacao] = useState<{ pais: PaiParaComparar[]; modelos: ModeloResumo[]; iaConfigurada: boolean } | null>(null);
+  const [comparacao, setComparacao] = useState<{ pais: PaiParaComparar[]; modelos: ModeloResumo[]; iaConfigurada: boolean; linhas: string[] } | null>(null);
 
   const baixarPlanilhaTinySelecionados = async () => {
     if (skusSelecionados.length === 0) {
@@ -266,11 +267,22 @@ export default function ProdutosPage() {
       const pais: PaiParaComparar[] = Array.from(grupos.entries()).map(([chave, itens]) => ({
         chave, nome: formatar(String(itens[0].produto || "").split("-")[0]), marca: itens[0].marca || "Best Fit", variacoes: itens.length,
       }));
-      const { data: modelos, error } = await supabase.from("padroes_anuncios").select("id, titulo, marca, sku, categoria, altura, largura, comprimento, peso").order("titulo");
+      const { data: modelos, error } = await supabase.from("padroes_anuncios").select("id, titulo, marca, sku, categoria, altura, largura, comprimento, peso, created_at").order("titulo");
       if (error) throw error;
       let iaConfigurada = false;
       try { iaConfigurada = !!(await (await fetch("/api/ia-status")).json()).configurada; } catch { /* sem resposta: trata como sem IA */ }
-      setComparacao({ pais, modelos: (modelos || []).map((m: any) => ({ ...m, id: String(m.id) })), iaConfigurada });
+      // linhas novas (ex.: "Xodo" em 5 mochilas): descobertas em todos os pendentes, por marca, para separar linha e estampa no título
+      const nomesPorMarca = new Map<string, string[]>();
+      const vistos = new Set<string>();
+      dadosPendentes.forEach((it: any) => {
+        const pai = it.sku_pai || String(it.sku).substring(0, 5);
+        if (vistos.has(pai)) return;
+        vistos.add(pai);
+        const marca = it.marca || "Best Fit";
+        nomesPorMarca.set(marca, [...(nomesPorMarca.get(marca) || []), formatar(String(it.produto || "").split("-")[0])]);
+      });
+      const linhas = Array.from(nomesPorMarca.entries()).flatMap(([marca, nomes]) => descobrirLinhas(nomes, marca));
+      setComparacao({ pais, modelos: (modelos || []).map((m: any) => ({ ...m, id: String(m.id) })), iaConfigurada, linhas });
     } catch (err: any) {
       alert("Erro ao preparar a comparação: " + (err?.message || err));
     }
@@ -278,6 +290,7 @@ export default function ProdutosPage() {
   };
 
   const gerarPlanilhaTiny = async (escolhas: Record<string, EscolhaTela>) => {
+    const linhasDoLote = comparacao?.linhas || [];
     setComparacao(null);
     try {
       setLoading(true);
@@ -311,7 +324,7 @@ export default function ProdutosPage() {
         const res = await fetch("/api/exportar-tiny", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ skus: lotes[i], escolhas })
+          body: JSON.stringify({ skus: lotes[i], escolhas, linhas: linhasDoLote })
         });
         const texto = await res.text();
         let data: any = {};
@@ -794,7 +807,7 @@ export default function ProdutosPage() {
           </div>
           <Navbar />
           {comparacao && (
-            <ComparacaoModelos pais={comparacao.pais} modelos={comparacao.modelos} iaConfigurada={comparacao.iaConfigurada}
+            <ComparacaoModelos pais={comparacao.pais} modelos={comparacao.modelos} iaConfigurada={comparacao.iaConfigurada} linhas={comparacao.linhas}
               onCancelar={() => setComparacao(null)} onConfirmar={gerarPlanilhaTiny} />
           )}
         </div>

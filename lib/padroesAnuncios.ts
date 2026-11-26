@@ -1,5 +1,6 @@
 // Padrões de anúncio (aba Padronização): leitura da planilha de produtos do Tiny/Olist e escolha do modelo
 // que serve a um produto novo (usado para trazer medidas, categoria e peso na exportação).
+import { analisarTitulo, parecidoDeTipo } from "./estampa";
 
 export const norm = (v: any) =>
   String(v ?? "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ");
@@ -151,16 +152,22 @@ export function acharPadrao<T extends PadraoBase>(nome: string, marca: string, p
   return melhor ? { padrao: melhor.padrao, score: melhor.score } : null;
 }
 
-export interface ModeloParecido<T> { padrao: T; comuns: number; proporcao: number }
+export interface ModeloParecido<T> {
+  padrao: T; comuns: number; proporcao: number;
+  /** "mesma-linha": mesmo tipo de produto e mesma linha (Fervo, Me Leva…); "mesmo-tipo": mesmo tipo, linha diferente (confira) */
+  nivel: "mesma-linha" | "mesmo-tipo";
+  score: number;
+}
 
 /**
- * Modelos da Padronização que podem ser "o mesmo tipo de produto" do produto novo — mesma marca e mesmo tipo/linha,
- * mesmo que a estampa/cor seja outra (ex.: "Mini Cooler Farofa Lenço Magia" x "Mini Cooler Farofa Praia Bahia Thal").
- * Ordenados do mais parecido para o menos. Quem decide se serve de verdade é a IA (ou a regra de modeloParecido).
+ * Modelos da Padronização que servem de exemplo para o produto novo: mesma marca e MESMO TIPO de produto (Bolsa, Mochila, Mini Cooler…),
+ * mesmo que a linha e a estampa sejam outras. Quem tem a mesma linha vem primeiro; depois o tipo mais próximo; depois o cadastro mais recente.
+ * (Antes exigia 2 palavras em comum no nome, e produtos de linha nova ficavam sem exemplo e saíam com medidas genéricas e sem categoria.)
  */
-export function rankearModelos<T extends PadraoBase>(nome: string, marca: string, padroes: T[]): ModeloParecido<T>[] {
+export function rankearModelos<T extends PadraoBase>(nome: string, marca: string, padroes: T[], linhasExtras: string[] = []): ModeloParecido<T>[] {
   const tp = tokens(nome, marca);
   if (tp.length === 0) return [];
+  const an = analisarTitulo(nome, marca, linhasExtras);
   const out: ModeloParecido<T>[] = [];
   for (const p of padroes) {
     if (!p.titulo) continue;
@@ -170,18 +177,20 @@ export function rankearModelos<T extends PadraoBase>(nome: string, marca: string
     if (tm.length === 0) continue;
     const capA = capacidade(tm), capB = capacidade(tp);
     if (capA.length && capB.length && !capA.some((c) => capB.includes(c))) continue;   // 350ml x 500ml: outro produto
+    const am = analisarTitulo(String(p.titulo), String(p.marca || marca), linhasExtras);
+    const tipo = parecidoDeTipo(an, am);
+    if (tipo < 0.5) continue;                                                           // Bolsa x Mochila: outro tipo de produto
     const comuns = tm.filter((t) => tp.includes(t)).length;
     const proporcao = comuns / Math.min(tm.length, tp.length);
-    if (comuns < Math.min(2, tm.length) || proporcao < 0.4) continue;
-    out.push({ padrao: p, comuns, proporcao });
+    const mesmaLinha = !!an.linha && !!am.linha && norm(an.linha) === norm(am.linha);
+    out.push({ padrao: p, comuns, proporcao, nivel: mesmaLinha ? "mesma-linha" : "mesmo-tipo", score: tipo * 10 + (mesmaLinha ? 5 : 0) + proporcao });
   }
-  return out.sort((a, b) => b.proporcao - a.proporcao || b.comuns - a.comuns || String(b.padrao.created_at || "").localeCompare(String(a.padrao.created_at || "")));
+  return out.sort((a, b) => b.score - a.score || String(b.padrao.created_at || "").localeCompare(String(a.padrao.created_at || "")));
 }
 
-/** Melhor modelo "do mesmo tipo" quando a IA não está disponível (medidas, peso e categoria vêm dele). */
-export function modeloParecido<T extends PadraoBase>(nome: string, marca: string, padroes: T[]): T | null {
-  const r = rankearModelos(nome, marca, padroes)[0];
-  return r && r.comuns >= 2 && (r.comuns >= 3 || r.proporcao >= 0.6) ? r.padrao : null;
+/** Melhor exemplo do mesmo tipo de produto (medidas, peso e categoria vêm dele). null só quando não há nenhum do mesmo tipo e marca. */
+export function modeloParecido<T extends PadraoBase>(nome: string, marca: string, padroes: T[], linhasExtras: string[] = []): T | null {
+  return rankearModelos(nome, marca, padroes, linhasExtras)[0]?.padrao ?? null;
 }
 
 /** true se os dois nomes têm exatamente as mesmas palavras (mesmo produto, mesma estampa). */
@@ -192,20 +201,23 @@ export function nomesEquivalentes(a: string, b: string, marca = ""): boolean {
 
 export const MEDIDAS_GENERICAS = { altura: 20, largura: 20, comprimento: 20, peso: 0.5 };
 
-/** Medidas finais de um produto: as dele, senão as do modelo da Padronização, senão as genéricas. */
+/**
+ * Medidas finais de um produto. O EXEMPLO da Padronização manda (altura, largura, comprimento e peso vêm todos dele);
+ * o que o exemplo não tiver, o cadastro do próprio produto completa; as genéricas (20x20x20 cm, 0,5 kg) só entram quando NÃO há informação nenhuma.
+ * Sem exemplo, valem as medidas do cadastro do produto.
+ */
 export function medidasDoProduto(
   item: { altura?: any; largura?: any; comprimento?: any; peso?: any },
   padrao?: PadraoBase | null
 ): { altura: number; largura: number; comprimento: number; peso: number; origem: "produto" | "padrao" | "generica" } {
   const g = MEDIDAS_GENERICAS;
-  const pick = (a: any, b: any, def: number) => numero(a) ?? numero(b) ?? def;
-  const temProprio = [item.altura, item.largura, item.comprimento].some((v) => numero(v) !== null);
-  const temPadrao = !!padrao && [padrao.altura, padrao.largura, padrao.comprimento].some((v) => numero(v) !== null);
+  const campos = ["altura", "largura", "comprimento", "peso"] as const;
+  const tem = (o: any) => !!o && campos.some((c) => numero(o[c]) !== null);
+  const temPadrao = tem(padrao), temProprio = tem(item);
+  const [primeiro, segundo] = temPadrao ? [padrao, item] : [item, padrao];
+  const pick = (c: typeof campos[number]) => numero((primeiro as any)?.[c]) ?? numero((segundo as any)?.[c]) ?? g[c];
   return {
-    altura: pick(item.altura, padrao?.altura, g.altura),
-    largura: pick(item.largura, padrao?.largura, g.largura),
-    comprimento: pick(item.comprimento, padrao?.comprimento, g.comprimento),
-    peso: pick(item.peso, padrao?.peso, g.peso),
-    origem: temProprio ? "produto" : temPadrao ? "padrao" : "generica",
+    altura: pick("altura"), largura: pick("largura"), comprimento: pick("comprimento"), peso: pick("peso"),
+    origem: temPadrao ? "padrao" : temProprio ? "produto" : "generica",
   };
 }

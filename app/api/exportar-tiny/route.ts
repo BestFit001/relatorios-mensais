@@ -154,7 +154,8 @@ async function conteudoDoPai(
   modelo: any | null,
   escolha: Escolha,
   provedores: ProvedorIA[],
-  prazoFinal: number
+  prazoFinal: number,
+  linhas: string[] = []
 ): Promise<ConteudoPai> {
   if (histSku?.resposta_ia) {
     return { descricao: limparDescricao(histSku.resposta_ia), fonte: "historico", padrao: modelo };
@@ -165,7 +166,7 @@ async function conteudoDoPai(
   const motivoSemChave = quer && !temIA ? MOTIVO_SEM_CHAVE : "";
 
   if (modelo) {
-    const c = conteudoPeloModelo(nomePaiFormatado, marcaPai, modelo);
+    const c = conteudoPeloModelo(nomePaiFormatado, marcaPai, modelo, linhas);
     const titulo = escolha.titulo?.trim() ? toTitleCase(escolha.titulo) : toTitleCase(c.titulo);
     const base: ConteudoPai = {
       descricao: limparDescricao(c.descricao), fonte: "modelo-igual", padrao: modelo,
@@ -266,6 +267,8 @@ export async function POST(req: Request) {
     const skus: string[] = Array.isArray(corpo?.skus) ? corpo.skus : [];
     // decisões da tela de comparação, por produto pai (sem decisão: usa o modelo mais parecido, se houver, e não usa IA)
     const escolhas: Record<string, Escolha> = corpo?.escolhas && typeof corpo.escolhas === "object" ? corpo.escolhas : {};
+    // linhas novas do lote (ex.: "Xodo"), descobertas na tela: ajudam a separar a linha da estampa no título
+    const linhas: string[] = Array.isArray(corpo?.linhas) ? corpo.linhas.map((l: any) => String(l)).filter(Boolean).slice(0, 50) : [];
 
     if (skus.length === 0) {
       return NextResponse.json({ error: "Nenhum SKU selecionado para exportação." }, { status: 400 });
@@ -310,12 +313,13 @@ export async function POST(req: Request) {
         const esc = escolhas[paiKey];
         const modelo = esc
           ? (esc.modeloId ? (padroesOficiais || []).find((m: any) => String(m.id) === String(esc.modeloId)) || null : null)
-          : modeloParecido(nomeRaw, marca, padroesOficiais || []);
-        return conteudoDoPai(toTitleCase(nomeRaw), marca, histPorSku.get(base.sku) || null, modelo, esc || {}, provedores, prazoIA);
+          : modeloParecido(nomeRaw, marca, padroesOficiais || [], linhas);
+        return conteudoDoPai(toTitleCase(nomeRaw), marca, histPorSku.get(base.sku) || null, modelo, esc || {}, provedores, prazoIA, linhas);
       })
     );
 
-    // medidas e peso REAIS informados na aba "Dimensões e Peso" (por SKU pai): prioridade máxima
+    // medidas e peso REAIS informados na aba "Dimensões e Peso" (por SKU pai): prioridade máxima; depois vêm as do EXEMPLO da Padronização
+    // (as quatro, sem alterar); o padrão genérico só entra quando não há informação nenhuma
     const { data: dimensoes } = await supabase.from("dimensoes_peso").select("*").in("sku_pai", entradas.map(([k]) => k));
     const dimPorPai = new Map<string, any>();
     (dimensoes || []).forEach((d: any) => dimPorPai.set(normSkuPai(d.sku_pai), d));
@@ -360,7 +364,7 @@ export async function POST(req: Request) {
       const slugDe = (t: string) => (cont.titulo && cont.padrao ? slugDoTitulo(t, cont.padrao?.slug || "") : gerarSlug(t));
       const kwDe = (t: string) => cont.palavrasChave || gerarPalavrasChave(t);
 
-      // outras informações do produto: modelo escolhido na Padronização (medidas, peso, categoria)
+      // categoria, medidas e peso: copiados do exemplo da Padronização, sem mudar uma letra (a categoria vai exatamente como está cadastrada)
       const padrao = cont.padrao;
       const categoria = padrao?.categoria ? String(padrao.categoria) : "";
       if (padrao?.titulo && !resumo.padroesUsados.includes(String(padrao.titulo))) resumo.padroesUsados.push(String(padrao.titulo));

@@ -22,9 +22,11 @@ const medidas = (m: ModeloResumo) => {
   return `${n(m.altura)}×${n(m.largura)}×${n(m.comprimento)} cm · ${n(m.peso)} kg`;
 };
 
-export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCancelar, onConfirmar }: {
+export default function ComparacaoModelos({ pais, modelos, iaConfigurada, linhas = [], onCancelar, onConfirmar }: {
   pais: PaiParaComparar[];
   modelos: ModeloResumo[];
+  /** linhas novas do lote (ex.: "Xodo"), para separar linha e estampa no título */
+  linhas?: string[];
   /** false = a chave ANTHROPIC_API_KEY não está no Vercel: a opção de IA fica desligada */
   iaConfigurada: boolean;
   onCancelar: () => void;
@@ -33,18 +35,17 @@ export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCanc
   const inicial = useMemo(() => {
     const r: Record<string, Estado> = {};
     for (const p of pais) {
-      const ranque = rankearModelos(p.nome, p.marca, modelos);
-      const parecido = modeloParecido(p.nome, p.marca, modelos);
-      const modelo = parecido || ranque[0]?.padrao || null;
+      const parecido = modeloParecido(p.nome, p.marca, modelos, linhas);
+      const modelo = parecido;
       const decisao: "sim" | "nao" = parecido ? "sim" : "nao";
       r[p.chave] = {
         decisao, modeloId: modelo ? String(modelo.id) : "",
-        titulo: modelo ? compararProdutoModelo(p.nome, modelo.titulo, p.marca).titulo : p.nome,
+        titulo: modelo ? compararProdutoModelo(p.nome, modelo.titulo, p.marca, linhas).titulo : p.nome,
         tituloEditado: false, usarIA: decisao === "nao" && iaConfigurada, skuBusca: "", msgBusca: "",
       };
     }
     return r;
-  }, [pais, modelos, iaConfigurada]);
+  }, [pais, modelos, iaConfigurada, linhas]);
   const [estado, setEstado] = useState<Record<string, Estado>>(inicial);
 
   const mudar = (chave: string, f: (e: Estado) => Estado) => setEstado((s) => ({ ...s, [chave]: f(s[chave]) }));
@@ -54,7 +55,7 @@ export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCanc
   const escolherModelo = (p: PaiParaComparar, id: string, extra: Partial<Estado> = {}) =>
     mudar(p.chave, (e) => {
       const m = modeloDe(id);
-      return { ...e, modeloId: id, titulo: e.tituloEditado || !m ? e.titulo : compararProdutoModelo(p.nome, m.titulo, p.marca).titulo, ...extra };
+      return { ...e, modeloId: id, titulo: e.tituloEditado || !m ? e.titulo : compararProdutoModelo(p.nome, m.titulo, p.marca, linhas).titulo, ...extra };
     });
 
   const decidir = (p: PaiParaComparar, decisao: "sim" | "nao") =>
@@ -63,7 +64,7 @@ export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCanc
       return {
         ...e, decisao,
         usarIA: iaConfigurada && decisao === "nao",   // sem modelo a IA é quem escreve a descrição; com modelo bastam as trocas automáticas
-        titulo: e.tituloEditado ? e.titulo : decisao === "sim" && m ? compararProdutoModelo(p.nome, m.titulo, p.marca).titulo : p.nome,
+        titulo: e.tituloEditado ? e.titulo : decisao === "sim" && m ? compararProdutoModelo(p.nome, m.titulo, p.marca, linhas).titulo : p.nome,
       };
     });
 
@@ -76,7 +77,7 @@ export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCanc
     }
     mudar(p.chave, (x) => ({
       ...x, decisao: "sim", modeloId: String(achou.id), usarIA: false, msgBusca: `Modelo encontrado: ${achou.titulo}`,
-      titulo: x.tituloEditado ? x.titulo : compararProdutoModelo(p.nome, achou.titulo, p.marca).titulo,
+      titulo: x.tituloEditado ? x.titulo : compararProdutoModelo(p.nome, achou.titulo, p.marca, linhas).titulo,
     }));
   };
 
@@ -99,7 +100,7 @@ export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCanc
           <h2 className="text-xl font-bold text-white">Confirmar o modelo de cada produto</h2>
           <p className="text-xs text-gray-400 mt-1">
             Compare o produto novo com o produto base da aba Padronização. Se for o mesmo modelo, o app só troca a estampa (e a capacidade, se mudar) no título,
-            na descrição, no SEO e nas palavras-chave, e pega medidas, peso e categoria do modelo. Se não for, a descrição sai genérica.
+            na descrição, no SEO e nas palavras-chave, e copia categoria, medidas e peso do modelo exatamente como estão cadastrados. Se não for, a descrição sai genérica.
             {iaConfigurada
               ? " A IA (Claude, modelo mais barato) só é usada nas descrições marcadas abaixo."
               : " A IA não está configurada (falta a chave ANTHROPIC_API_KEY no Vercel): as descrições saem pelas regras automáticas."}
@@ -109,11 +110,12 @@ export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCanc
         <div className="p-5 space-y-4">
           {pais.map((p) => {
             const e = estado[p.chave];
-            const ranque = rankearModelos(p.nome, p.marca, modelos);
+            const ranque = rankearModelos(p.nome, p.marca, modelos, linhas);
             const idsParecidos = new Set(ranque.map((r) => String(r.padrao.id)));
             const outros = modelos.filter((m) => !idsParecidos.has(String(m.id))).sort((a, b) => String(a.titulo).localeCompare(String(b.titulo)));
             const modelo = modeloDe(e.modeloId);
-            const cmp = modelo ? compararProdutoModelo(p.nome, modelo.titulo, p.marca) : null;
+            const cmp = modelo ? compararProdutoModelo(p.nome, modelo.titulo, p.marca, linhas) : null;
+            const nivel = modelo ? ranque.find((r) => String(r.padrao.id) === String(modelo.id))?.nivel : undefined;
             return (
               <div key={p.chave} data-comp-pai={p.chave} className="bg-[#131625] border border-gray-800 rounded-xl p-4 space-y-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -141,7 +143,14 @@ export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCanc
                         )}
                       </select>
                     )}
-                    {modelo && <p className="text-xs text-gray-400 mt-1">{modelo.categoria || "sem categoria"} · {medidas(modelo)}</p>}
+                    {modelo && (
+                      <p data-comp-dados-modelo className="text-xs text-gray-400 mt-1">
+                        Categoria (copiada do modelo, sem alteração): <span className="text-purple-200">{modelo.categoria || "sem categoria"}</span> · {medidas(modelo)}
+                      </p>
+                    )}
+                    {modelo && nivel === "mesma-linha" && <p data-comp-nivel className="text-xs text-emerald-300 mt-1">Mesmo tipo de produto e mesma linha.</p>}
+                    {modelo && nivel === "mesmo-tipo" && <p data-comp-nivel className="text-xs text-amber-300 mt-1">Mesmo tipo de produto, mas outra linha: confira se a categoria e as medidas servem.</p>}
+                    {modelo && !nivel && <p data-comp-nivel className="text-xs text-amber-300 mt-1">Este modelo é de outro tipo de produto: confira a categoria e as medidas.</p>}
                   </div>
                 </div>
 
@@ -168,6 +177,11 @@ export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCanc
                 {e.decisao === "sim" && cmp ? (
                   <div className="space-y-2">
                     <p data-comp-muda className="text-xs text-gray-300">
+                      {cmp.estampaNova && (
+                        <span data-comp-estampa className="block mb-1">
+                          Estampa identificada: <b className="text-red-300">{cmp.estampaAntiga || "(nenhuma no modelo)"}</b> → <b className="text-emerald-300">{cmp.estampaNova}</b>. O resto do título é do modelo, sem mudar.
+                        </span>
+                      )}
                       {cmp.trocas.length === 0
                         ? "Mesmo nome do modelo: nada a trocar nos textos."
                         : <>Troca nos textos: {cmp.trocas.map((t, i) => <span key={i} className="mr-2"><b className="text-red-300">{t.de}</b> → <b className="text-emerald-300">{t.para || "(remover)"}</b></span>)}</>}
@@ -182,7 +196,7 @@ export default function ComparacaoModelos({ pais, modelos, iaConfigurada, onCanc
                     {e.titulo.length > LIMITE_TITULO && <p className="text-xs text-red-300">O título passa de {LIMITE_TITULO} caracteres; o marketplace pode cortar.</p>}
                   </div>
                 ) : (
-                  <p data-comp-generico className="text-xs text-gray-300">Sem modelo de referência: o título fica como o nome do produto e as medidas vêm da aba Dimensões e Peso (ou ficam genéricas). A descrição sai genérica.</p>
+                  <p data-comp-generico className="text-xs text-gray-300">Sem modelo de referência: o título fica como o nome do produto, a categoria fica em branco e as medidas vêm da aba Dimensões e Peso ou do cadastro (só se não houver nenhuma informação ficam as genéricas 20×20×20 cm e 0,5 kg). A descrição sai genérica.</p>
                 )}
 
                 <label className={`flex items-center gap-2 text-xs ${iaConfigurada ? "text-gray-300" : "text-gray-600"}`}>
