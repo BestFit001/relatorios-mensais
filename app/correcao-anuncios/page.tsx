@@ -10,6 +10,7 @@ import ComparacaoModelos, { type EscolhaTela, type ModeloResumo, type PaiParaCom
 import { descobrirLinhas } from "../../lib/estampa";
 import { conteudoPeloModelo } from "../../lib/comparacaoModelos";
 import { normSkuPai } from "../../lib/dimensoesPeso";
+import { baixarBytes, gerarArquivoPlanilha, linhasParaMatriz, nomeDoArquivoCorrigido, origemDoArquivo, type OrigemPlanilha } from "../../lib/planilhaTiny";
 import {
   agruparAnuncios, colunasObrigatorias, corrigirGrupo, mapearColunas, montarPlanilhaCorrigida, nomeParaComparar, OPCOES_PADRAO,
   type Colunas, type GrupoAnuncio, type Linha, type OpcoesCorrecao, type ResultadoGrupo,
@@ -17,7 +18,7 @@ import {
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 
-interface Planilha { arquivo: string; headers: string[]; linhas: Linha[]; colunas: Colunas; grupos: GrupoAnuncio[] }
+interface Planilha { arquivo: string; origem: OrigemPlanilha; headers: string[]; linhas: Linha[]; colunas: Colunas; grupos: GrupoAnuncio[] }
 interface ParaEscolha { pais: PaiParaComparar[]; modelos: any[]; iaConfigurada: boolean; linhas: string[]; dimensoes: Map<string, any> }
 interface Resultado { resultados: ResultadoGrupo[]; semModelo: string[]; avisosIA: string[]; iaUsada: number; planilha: Linha[] }
 
@@ -56,7 +57,7 @@ export default function CorrecaoAnunciosPage() {
       if (falta.length) { setMsg(`Essa planilha não parece ser a de produtos do Tiny: faltam as colunas ${falta.join(" e ")}. Exporte os produtos pelo Tiny e suba o arquivo sem mudar o cabeçalho.`); return; }
       const grupos = agruparAnuncios(linhas, colunas);
       if (grupos.length === 0) { setMsg("Não encontrei nenhum produto nessa planilha."); return; }
-      setPlanilha({ arquivo: arquivo.name, headers, linhas, colunas, grupos });
+      setPlanilha({ arquivo: arquivo.name, origem: origemDoArquivo(arquivo.name, wb.SheetNames[0]), headers, linhas, colunas, grupos });
     } catch (err: any) {
       setMsg("Não consegui ler a planilha: " + (err?.message || err));
     }
@@ -136,10 +137,9 @@ export default function CorrecaoAnunciosPage() {
 
   function baixarPlanilha() {
     if (!planilha || !resultado) return;
-    const ws = XLSX.utils.json_to_sheet(resultado.planilha, { header: planilha.headers });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Produtos Tiny");
-    XLSX.writeFile(wb, `anuncios_corrigidos_${Date.now()}.xlsx`);
+    // volta no mesmo formato do upload (xls → xls, xlsx → xlsx), com a mesma aba e as mesmas colunas
+    const bytes = gerarArquivoPlanilha(linhasParaMatriz(planilha.headers, resultado.planilha), planilha.origem);
+    baixarBytes(bytes, nomeDoArquivoCorrigido(planilha.origem), planilha.origem.formato);
   }
 
   function baixarRelatorio() {
@@ -224,7 +224,7 @@ export default function CorrecaoAnunciosPage() {
             </p>
             {resultado.avisosIA.length > 0 && <p className="text-xs text-amber-300">⚠️ IA: {resultado.avisosIA.join(" | ")}</p>}
             <div className="flex flex-wrap gap-3">
-              <button type="button" data-corr-baixar onClick={baixarPlanilha} className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg text-sm font-bold cursor-pointer">Baixar planilha corrigida (Tiny)</button>
+              <button type="button" data-corr-baixar onClick={baixarPlanilha} className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg text-sm font-bold cursor-pointer">Baixar planilha corrigida (.{planilha?.origem.formato})</button>
               <button type="button" data-corr-relatorio onClick={baixarRelatorio} className="bg-gray-700 hover:bg-gray-600 text-white px-5 py-2.5 rounded-lg text-sm cursor-pointer">Baixar relatório de alterações</button>
               <button type="button" data-corr-trocar onClick={escolherModelos} className="bg-gray-800 hover:bg-gray-700 text-gray-200 px-5 py-2.5 rounded-lg text-sm cursor-pointer">Refazer as escolhas</button>
             </div>
