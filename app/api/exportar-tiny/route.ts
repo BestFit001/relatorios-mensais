@@ -11,7 +11,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;   // a IA pode demorar: sem isso a Vercel corta a resposta e o navegador recebe corpo vazio
 const PRAZO_IA_MS = 50000;        // tempo total da IA (todas as tentativas) antes de usar o texto padrão; a função tem 60 s
-const MAX_TOKENS_DESCRICAO = 1100; // uma descrição de produto cabe em ~900 tokens: teto baixo para gastar o mínimo
+// Teto (não é gasto fixo: a IA só cobra os tokens que escreve). Uma descrição de ~2.200 caracteres passa de 1.100 tokens em português, então o teto é folgado.
+const MAX_TOKENS_DESCRICAO = 3000;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";

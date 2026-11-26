@@ -13,8 +13,8 @@ import { analisarErroIA, motivoRespostaInvalida } from "./adaptarModelo";
 
 /** Modelo padrão: o mais simples e barato. Para mais capricho, ANTHROPIC_MODEL=claude-sonnet-5-5 no Vercel. */
 export const MODELO_PADRAO = "claude-haiku-5-5";
-/** Teto de tokens da resposta quando quem chama não pede outro (a descrição de um produto cabe em ~900). */
-const MAX_TOKENS_PADRAO = 1200;
+/** Teto de tokens da resposta quando quem chama não pede outro (uma descrição completa passa de 1.100 tokens). */
+const MAX_TOKENS_PADRAO = 3000;
 
 export interface OpcoesGerar {
   json: boolean;
@@ -73,6 +73,8 @@ function criarClaude(apiKey: string): ProvedorIA {
         if (!res.ok) throw Object.assign(new Error(bruto || `HTTP ${res.status}`), { status: res.status });
         let j: any;
         try { j = JSON.parse(bruto); } catch { throw new Error("resposta que não é JSON: " + bruto.slice(0, 100)); }
+        // resposta cortada pelo limite de tokens: nunca aproveitar texto pela metade (uma descrição que acaba em "Confe" vai para o Tiny)
+        if (j?.stop_reason === "max_tokens") throw Object.assign(new Error("resposta da IA cortada pelo limite de tokens"), { cortada: true });
         const uso = j?.usage ? ` (${j.usage.input_tokens ?? "?"} tokens de entrada, ${j.usage.output_tokens ?? "?"} de saída)` : "";
         console.log(`IA Claude (${modelo}): resposta em ${Date.now() - inicio} ms${uso}`);
         return (Array.isArray(j?.content) ? j.content : []).filter((b: any) => b?.type === "text").map((b: any) => String(b.text ?? "")).join("");
@@ -125,6 +127,10 @@ export async function gerarTexto(
       falhas.push({ provedor: p.nome, motivo: motivoRespostaInvalida(texto, p.nome) });
       console.error(`IA ${p.nome}: resposta fora do formato:`, String(texto).slice(0, 300));
     } catch (e) {
+      if ((e as any)?.cortada) {   // repetir daria o mesmo corte: desiste e deixa o app usar as regras automáticas
+        falhas.push({ provedor: p.nome, motivo: "a resposta da IA veio cortada pelo limite de tokens, então não foi usada" });
+        break;
+      }
       const a = analisarErroIA(e, p.nome, p.variavel);
       falhas.push({ provedor: p.nome, motivo: a.motivo });
       console.error(`Erro na IA ${p.nome}:`, (e as any)?.status ?? "", a.motivo);   // não registra o erro bruto: nada de chave em log
