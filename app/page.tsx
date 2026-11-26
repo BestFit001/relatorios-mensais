@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import Navbar from "./components/Navbar";
-import { avaliarFormulaPorUnidade } from "../lib/formulaRepasse";
+import { montarCustosMap, montarLinhasBase } from "../lib/vendasLinhas";
 import { diasDoPeriodo } from "../lib/cobertura";
 import CoberturaEstoque from "./components/CoberturaEstoque";
 import { padraoDePreco } from "@/lib/padraoPreco";
@@ -198,23 +198,8 @@ export default function CurvaABCPage() {
     }
   };
 
-  // SKU -> custo, marca e título; marcas equivalentes são unificadas
-  const custosMap = useMemo(() => {
-    const rotuloPorChave: Record<string, string> = {};
-    const bruto = custosLista.map((c) => {
-      const marca = String(c.marca || "SEM MARCA").trim().toUpperCase().replace(/\s+/g, " ");
-      const ch = chaveMarca(marca);
-      // entre "BESTFIT" e "BEST FIT" fica o escrito com espaço
-      if (!rotuloPorChave[ch] || (marca.includes(" ") && !rotuloPorChave[ch].includes(" "))) rotuloPorChave[ch] = marca;
-      return { c, ch };
-    });
-    const map: Record<string, { custo: number; marca: string; titulo: string; skuOriginal: string }> = {};
-    bruto.forEach(({ c, ch }) => {
-      const k = normalizarSku(c.sku);
-      if (k) map[k] = { custo: num(c.custo_unitario), marca: rotuloPorChave[ch], titulo: c.produto || "Produto não identificado", skuOriginal: String(c.sku ?? "").trim() };
-    });
-    return map;
-  }, [custosLista]);
+  // SKU -> custo, marca e título; marcas equivalentes são unificadas (mesma regra do Acompanhamento da tela inicial: lib/vendasLinhas)
+  const custosMap = useMemo(() => montarCustosMap(custosLista), [custosLista]);
 
   const availableBrands = useMemo(() => {
     const brands = new Set<string>();
@@ -228,76 +213,10 @@ export default function CurvaABCPage() {
   );
 
   // Linhas de venda prontas: data vem dos faturados, Flex/tarifa do Site rateados por pedido, cancelados marcados
-  const { linhasBase, semFaturamento, chavesVendas } = useMemo(() => {
-    const dataPorPedido = new Map<string, string>();
-    faturados.forEach((f) => {
-      const k = normalizarPedido(f.id_pedido);
-      const d = paraIso(f.data_faturamento);
-      if (k && d && !dataPorPedido.has(k)) dataPorPedido.set(k, d);
-    });
-    const flex = new Map<string, number>();
-    plp.forEach((p) => { const k = normalizarPedido(p.numero_pedido); const val = num(p.valor_frete); if (k && val > 0) flex.set(k, val); });
-    const tarifa = new Map<string, number>();
-    tarifasSite.forEach((t) => { const k = normalizarPedido(t.id_pedido); if (k) tarifa.set(k, num(t.valor_tarifa)); });
-    const canc = new Set<string>();
-    cancelados.forEach((c) => { const k = normalizarPedido(c.id_pedido); if (k) canc.add(`${normalizarTexto(c.canal)}|${k}`); });
-
-    // Amazon: vendas antigas ainda com sufixo F / -F / -FBA casam com o SKU da base (mesma regra do upload)
-    const resolverSku = (canal: any, norm: string): string => {
-      if (!norm || custosMap[norm] || !normalizarTexto(canal).includes("amazon")) return norm;
-      if (norm.endsWith("fba") && custosMap[norm.slice(0, -3)]) return norm.slice(0, -3);
-      if (norm.endsWith("f") && custosMap[norm.slice(0, -1)]) return norm.slice(0, -1);
-      return norm;
-    };
-
-    const regraDoCanal = (canal: any) => {
-      const n = normalizarTexto(canal);
-      return regrasCanais.find((r) => normalizarTexto(r.canal) === n)
-        || (n.includes("magalu") || n.includes("magazine") ? regrasCanais.find((r) => normalizarTexto(r.canal).includes("magalu")) : undefined);
-    };
-
-    const linhas: any[] = [];
-    const chaves = new Set<string>();
-    let sem = 0;
-    vendas.forEach((s) => {
-      if (ehFisico(s.canal)) return;
-      const pedN = normalizarPedido(s.id_pedido);
-      const chave = `${normalizarTexto(s.canal)}|${pedN}`;
-      chaves.add(chave);
-      const data = dataPorPedido.get(pedN);
-      if (!data) { sem++; return; }
-      const skuNorm = resolverSku(s.canal, normalizarSku(s.sku));
-      const qtdLinha = num(s.quantidade) || 1;
-      const precoLinha = num(s.preco_venda);
-      // Mesmo repasse do Dashboard: fórmula do canal (aba Regras) calculada por unidade; senão o repasse gravado no upload
-      let repasseLinha = num(s.repasse_liquido);
-      const regra = regraDoCanal(s.canal);
-      if (regra?.formula_excel && String(regra.formula_excel).trim()) {
-        const calc = avaliarFormulaPorUnidade(String(regra.formula_excel), precoLinha, qtdLinha, regra.col_pdv || "P", regra.col_quantidade || "O");
-        if (calc !== null) repasseLinha = calc;
-      }
-      if (isNaN(repasseLinha) || repasseLinha <= 0 || (precoLinha > 0 && repasseLinha > precoLinha * qtdLinha * 1.5)) {
-        repasseLinha = Math.max(0, precoLinha - precoLinha * 0.16);
-      }
-      linhas.push({
-        ped: s.id_pedido, pedN, chave, canal: s.canal, sku: custosMap[skuNorm]?.skuOriginal || s.sku, skuNorm,
-        qtd: qtdLinha, preco: precoLinha, repasse: repasseLinha,
-        data, t: new Date(data + "T00:00:00").getTime(), cancelado: canc.has(chave), extra: 0,
-      });
-    });
-
-    // Frete Flex (e tarifa Vindi no Site) é do pedido: divide entre os itens na proporção do valor
-    const porPedido = new Map<string, any[]>();
-    linhas.forEach((l) => porPedido.set(l.chave, [...(porPedido.get(l.chave) || []), l]));
-    porPedido.forEach((itens) => {
-      const pedN = itens[0].pedN;
-      const total = (flex.get(pedN) || 0) + (normalizarTexto(itens[0].canal).includes("site") ? tarifa.get(pedN) || 0 : 0);
-      if (total <= 0) return;
-      const soma = itens.reduce((a, i) => a + i.preco, 0);
-      itens.forEach((i) => { i.extra = total * (soma > 0 ? i.preco / soma : 1 / itens.length); });
-    });
-    return { linhasBase: linhas, semFaturamento: sem, chavesVendas: chaves };
-  }, [vendas, faturados, plp, tarifasSite, cancelados, custosMap, regrasCanais]);
+  const { linhasBase, semFaturamento, chavesVendas } = useMemo(
+    () => montarLinhasBase({ vendas, faturados, plp, tarifasSite, cancelados, regrasCanais, custosMap }),
+    [vendas, faturados, plp, tarifasSite, cancelados, custosMap, regrasCanais]
+  );
 
   // ----- Análise principal (respeita canal, período, marca e pesquisa) -----
   const analise = useMemo(() => {

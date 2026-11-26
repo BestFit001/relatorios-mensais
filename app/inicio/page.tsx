@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Navbar from "../components/Navbar";
 import Avatar from "../components/Avatar";
+import AcompanhamentoAnalitico, { type SubAnalitica } from "../components/AcompanhamentoAnalitico";
 import { calcularResumoCanais, TABELAS_RESUMO, type ResumoCanal } from "../../lib/resumoCanais";
 import {
   agoraSP, concluiu, statusPorResponsavel, vencimento, estaAtrasada, ehCiclica, textoCiclo, emFolga,
@@ -95,6 +96,9 @@ export default function InicioPage() {
   const [pagina, setPagina] = useState(1);
   const [filtroResp, setFiltroResp] = useState("TODOS");
   const [filtroNotif, setFiltroNotif] = useState<"todas" | "full" | "devolucao" | "tarefa" | "promocao" | "correcao" | "estoque">("todas");
+  // Início = duas abas: Tarefas (agenda e ações) e Acompanhamento (avisos do Full/Devoluções/Vídeos + análises dos canais)
+  const [abaInicio, setAbaInicio] = useState<"tarefas" | "acompanhamento">("tarefas");
+  const [subAcomp, setSubAcomp] = useState<"notificacoes" | SubAnalitica>("notificacoes");
   // Correções de vídeo: produtos marcados "Com problemas" na aba Vídeos, por canal (cada analista marca o(s) canal(is) dele)
   const [correcoes, setCorrecoes] = useState<Correcao[]>([]);
   const [resolucoes, setResolucoes] = useState<Map<string, Resolucao>>(new Map());   // marcações "Resolvido / Sem ação efetiva" das notificações
@@ -646,9 +650,10 @@ export default function InicioPage() {
   const estaResolvida = (n: Notificacao) => n.ref !== undefined && resolucaoVale(resolucoes.get(n.id), n.ref);
   const pendentes = notificacoes.filter((n) => !estaResolvida(n));
   const resolvidasLista = notificacoes.filter((n) => estaResolvida(n));
-  const notifFiltradas = pendentes.filter((n) => (filtroNotif === "todas" ? !n.informativa : n.tipo === filtroNotif));
+  // As notificações de tarefa ficam na aba Tarefas (lá o prazo e o atraso já aparecem em cada cartão): o Acompanhamento mostra só o resto
+  const notifFiltradas = pendentes.filter((n) => (filtroNotif === "todas" ? !n.informativa && n.tipo !== "tarefa" : n.tipo === filtroNotif));
   const contar = (tipo: string) => pendentes.filter((n) => n.tipo === tipo && !n.informativa).length;
-  const totalPendentes = pendentes.filter((n) => !n.informativa).length;
+  const totalPendentes = pendentes.filter((n) => !n.informativa && n.tipo !== "tarefa").length;
   const listaCorrecoes = useMemo(() => correcoesVisiveis(correcoes, correcoesCanais, mapeamentos, { admin: isAdmin, email: emailAlvo }), [correcoes, correcoesCanais, mapeamentos, isAdmin, emailAlvo]);
 
   // ---------------------------------------------------------------------------------------------
@@ -835,8 +840,20 @@ export default function InicioPage() {
           </div>
         )}
 
+        {/* ABAS DO INÍCIO */}
+        <div className="flex gap-2 mb-6 border-b border-slate-800" role="tablist" data-abas-inicio>
+          {([["tarefas", "📝 Tarefas", qtdAndamento, "em andamento"], ["acompanhamento", "📊 Acompanhamento", totalPendentes, "aviso(s)"]] as const).map(([k, nome, n, rot]) => (
+            <button key={k} type="button" role="tab" aria-selected={abaInicio === k} data-aba-inicio={k} onClick={() => setAbaInicio(k)}
+              className={`px-5 py-3 text-sm font-black tracking-wide cursor-pointer border-b-2 -mb-px transition-colors flex items-center gap-2 ${abaInicio === k ? "border-indigo-400 text-white" : "border-transparent text-slate-500 hover:text-slate-300"}`}>
+              {nome}
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${n > 0 ? (abaInicio === k ? "bg-indigo-600 text-white" : "bg-slate-800 text-amber-300") : "bg-slate-800 text-slate-500"}`} title={`${n} ${rot}`}>{carregando ? "…" : n}</span>
+            </button>
+          ))}
+        </div>
+
         {/* FILTROS */}
         <div className="flex flex-wrap items-center gap-3 mb-6">
+          {abaInicio === "acompanhamento" && (<>
           <div className="flex bg-slate-900 border border-slate-800 rounded-xl p-1">
             {(["atual", "anterior"] as const).map((m) => (
               <button key={m} onClick={() => setMesModo(m)} className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider cursor-pointer transition-all ${mesModo === m ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}>
@@ -849,12 +866,13 @@ export default function InicioPage() {
             className={`px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider cursor-pointer border transition-all flex items-center gap-2 ${ocultarInfo ? "bg-slate-700 border-slate-500 text-white" : "bg-slate-900 border-slate-700 text-slate-300 hover:text-white"}`}>
             <span aria-hidden>{ocultarInfo ? "🙈" : "👁️"}</span>{ocultarInfo ? "Mostrar informações" : "Ocultar informações"}
           </button>
+          </>)}
           {isAdmin && (
             <>
-              <select value={analistaFiltro} onChange={(e) => { setAnalistaFiltro(e.target.value); setFiltroNotif("todas"); }} className="bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
+              {abaInicio === "acompanhamento" && <select value={analistaFiltro} onChange={(e) => { setAnalistaFiltro(e.target.value); setFiltroNotif("todas"); }} className="bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white outline-none cursor-pointer">
                 <option value="TODOS">Canais de: todos os analistas</option>
                 {analistas.map((a) => <option key={a.email} value={a.email}>Canais de: {nomeDoEmail(a.email)}</option>)}
-              </select>
+              </select>}
               <button onClick={() => setPainelAdmin((v) => !v)} className={`ml-auto px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider cursor-pointer border transition-all ${painelAdmin ? "bg-cyan-600 border-cyan-400 text-white" : "bg-slate-900 border-slate-700 text-slate-300 hover:text-white"}`}>
                 ⚙️ Configuração do administrador
               </button>
@@ -1049,7 +1067,18 @@ export default function InicioPage() {
           </div>
         )}
 
-        {!ocultarInfo && (
+        {abaInicio === "acompanhamento" && (
+          <div className="flex flex-wrap gap-2 mb-6" data-subabas-acompanhamento>
+            {([["notificacoes", "🔔 Notificações", totalPendentes], ["canais", "🧭 Canais e devoluções", null], ["margem", "💰 Margem líquida", null], ["vendas", "📈 Dashboard de vendas", null], ["estoque", "📦 Estoque parado", null]] as const).map(([k, nome, n]) => (
+              <button key={k} type="button" data-subaba-acomp={k} onClick={() => setSubAcomp(k)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border cursor-pointer transition-all ${subAcomp === k ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>
+                {nome}{n !== null ? ` (${carregando ? "…" : n})` : ""}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {abaInicio === "acompanhamento" && subAcomp === "canais" && !ocultarInfo && (
         <>
         {/* RESUMO */}
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
@@ -1115,12 +1144,17 @@ export default function InicioPage() {
         </>
         )}
 
+        {abaInicio === "acompanhamento" && subAcomp !== "notificacoes" && (
+          <AcompanhamentoAnalitico sub={subAcomp} ocultar={ocultarInfo} canaisPermitidos={isAdmin && analistaFiltro === "TODOS" ? null : canaisVisiveis.map((c) => c.canal)} />
+        )}
+
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
           {/* NOTIFICAÇÕES */}
-          <div className="xl:col-span-2 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
+          {abaInicio === "acompanhamento" && subAcomp === "notificacoes" && (
+          <div className="xl:col-span-5 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
             <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider mb-3">🔔 Notificações</h2>
             <div className="flex flex-wrap gap-2 mb-4">
-              {([["todas", "Todas", totalPendentes], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["tarefa", "📝 Tarefas", contar("tarefa")], ["promocao", "🏷️ Itens fora de promoção", foraPromo.length], ["correcao", "🛠️ Correções", listaCorrecoes.length], ["estoque", "🚨 Acabou na concorrência", contar("estoque")]] as const).map(([k, nome, n]) => (
+              {([["todas", "Todas", totalPendentes], ["full", "📦 Full", contar("full")], ["devolucao", "↩️ Devoluções", contar("devolucao")], ["promocao", "🏷️ Itens fora de promoção", foraPromo.length], ["correcao", "🛠️ Correções", listaCorrecoes.length], ["estoque", "🚨 Acabou na concorrência", contar("estoque")]] as const).map(([k, nome, n]) => (
                 <button key={k} data-notif-aba={k} onClick={() => setFiltroNotif(k)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer ${filtroNotif === k ? "bg-indigo-600 border-indigo-400 text-white" : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"}`}>{nome} ({n})</button>
               ))}
             </div>
@@ -1277,9 +1311,11 @@ export default function InicioPage() {
             )}
             <p className="text-[10px] text-slate-500 mt-3">Cards de devolução por motivo: “Arrependimento da compra” não afeta a reputação; qualquer outro motivo afeta (mês selecionado). Marcado como Resolvido / Sem ação efetiva, o aviso sai da lista e volta se a situação mudar (ex.: nova devolução). Devolução por SKU: avisa a partir de {DEV_ATENCAO}% (crítico a partir de {DEV_CRITICO}%), com no mínimo {DEV_AMOSTRA_MIN} vendas, usando as análises salvas na aba Fulfillment. Full: prazos configurados por canal na aba Regras.</p>
           </div>
+          )}
 
           {/* TAREFAS */}
-          <div className="xl:col-span-3 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
+          {abaInicio === "tarefas" && (
+          <div className="xl:col-span-5 bg-slate-900/90 p-6 rounded-2xl border border-slate-800 shadow-xl">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider">📝 Tarefas</h2>
               <div className="flex flex-wrap items-center gap-2">
@@ -1407,6 +1443,7 @@ export default function InicioPage() {
             )}
             </>)}
           </div>
+          )}
         </div>
       </div>
     </div>
