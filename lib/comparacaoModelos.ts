@@ -75,41 +75,49 @@ export function compararProdutoModelo(nomeNovo: string, tituloModelo: string, ma
   const candidatas = base.map((w, i) => ({ w, i })).filter((x) => !x.w.fixa);
   const par = casar(candidatas.map((x) => x.w.chave), novo.map((w) => w.chave));
 
-  const casadoBase = new Set<number>();            // posições (em `base`) que continuam iguais
+  // "lacunas": o que fica entre duas palavras iguais. Em cada lacuna, o que é do modelo sai e o que é do produto novo entra,
+  // então a estampa nova ocupa o lugar da estampa antiga (e não o lugar de uma palavra solta como "Estojo").
+  const nLacunas = par.filter((x) => x >= 0).length + 1;
+  const lacBase: Palavra[][] = Array.from({ length: nLacunas }, () => []);
+  const lacNovo: Palavra[][] = Array.from({ length: nLacunas }, () => []);
+  const lacunaDaBase = new Map<number, number>();      // posição em `base` -> lacuna (só palavras que saem)
   const casadoNovo = new Set<number>();
-  candidatas.forEach((x, k) => { if (par[k] >= 0) { casadoBase.add(x.i); casadoNovo.add(par[k]); } });
+  let ancoras = 0;
+  candidatas.forEach((x, k) => {
+    if (par[k] >= 0) { ancoras++; casadoNovo.add(par[k]); }
+    else { lacBase[ancoras].push(x.w); lacunaDaBase.set(x.i, ancoras); }
+  });
+  let a = 0;
+  novo.forEach((w, j) => { if (casadoNovo.has(j)) a++; else lacNovo[a].push(w); });
 
-  const saem = candidatas.filter((x) => !casadoBase.has(x.i)).map((x) => x.i);
-  const entram = novo.map((w, j) => ({ w, j })).filter((x) => !casadoNovo.has(x.j)).map((x) => x.w);
-
-  // monta o título: a estampa/capacidade nova entra onde estava a primeira palavra que saiu
+  // título: percorre o modelo; palavras iguais ficam, a lacuna é preenchida com as palavras novas
   const partes: string[] = [];
-  let inseriu = false;
-  const inserir = () => { if (!inseriu) { partes.push(...entram.map((w) => w.texto)); inseriu = true; } };
-  const ultimaVariavel = candidatas.length ? candidatas[candidatas.length - 1].i : -1;
+  const preenchida = new Array(nLacunas).fill(false);
+  const preencher = (g: number) => { if (!preenchida[g]) { preenchida[g] = true; partes.push(...lacNovo[g].map((w) => w.texto)); } };
+  if (lacBase[0].length === 0) preencher(0);
+  let vistas = 0;
+  const ehCandidata = new Set(candidatas.map((x) => x.i));
   base.forEach((w, i) => {
-    if (saem.includes(i)) { inserir(); return; }
+    if (lacunaDaBase.has(i)) { preencher(lacunaDaBase.get(i)!); return; }   // palavra do modelo que sai
     partes.push(w.texto);
-    if (!inseriu && i === ultimaVariavel && saem.length === 0) inserir();   // nada saiu: o novo entra depois da última palavra do modelo
+    if (ehCandidata.has(i)) { vistas++; if (lacBase[vistas].length === 0) preencher(vistas); }   // nada saiu aqui: o novo entra logo após a palavra igual
   });
-  if (!inseriu) inserir();
+  for (let g = 0; g < nLacunas; g++) preencher(g);
 
-  const doTipo = (cap: boolean) => ({
-    de: saem.map((i) => base[i]).filter((w) => w.capacidade === cap).map((w) => w.texto).join(" "),
-    para: entram.filter((w) => w.capacidade === cap).map((w) => w.texto).join(" "),
-  });
-  const cap = doTipo(true), estampa = doTipo(false);
-  const trocas = [estampa, cap].filter((t) => t.de && norm(t.de) !== norm(t.para));
+  // trocas nos textos: só onde algo SAI e algo ENTRA na mesma lacuna (apagar uma palavra solta no texto estragaria frases)
+  const trocas: Troca[] = [];
+  let capacidadeDiferente = false;
+  for (let g = 0; g < nLacunas; g++) {
+    for (const cap of [false, true]) {
+      const de = lacBase[g].filter((w) => w.capacidade === cap).map((w) => w.texto).join(" ");
+      const para = lacNovo[g].filter((w) => w.capacidade === cap).map((w) => w.texto).join(" ");
+      if (de && para && norm(de) !== norm(para)) { trocas.push({ de, para }); if (cap) capacidadeDiferente = true; }
+    }
+  }
+  const sai = lacBase.flat().map((w) => w.texto), entra = lacNovo.flat().map((w) => w.texto);
   const parecido = novo.length ? casadoNovo.size / novo.length : 0;
 
-  return {
-    titulo: ajustarTitulo(partes.join(" "), LIMITE_TITULO),
-    trocas,
-    sai: saem.map((i) => base[i].texto),
-    entra: entram.map((w) => w.texto),
-    capacidadeDiferente: !!cap.de && !!cap.para && norm(cap.de) !== norm(cap.para),
-    parecido,
-  };
+  return { titulo: ajustarTitulo(partes.join(" "), LIMITE_TITULO), trocas, sai, entra, capacidadeDiferente, parecido };
 }
 
 /** Troca `de` por `para` no texto sem diferenciar maiúsculas/acentos e só em palavra inteira. Devolve o texto e quantas trocas fez. */
