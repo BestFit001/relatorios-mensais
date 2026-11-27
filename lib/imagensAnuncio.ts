@@ -2,7 +2,7 @@
 // inicial, a geometria (testável sem navegador) e a montagem no canvas do navegador com as fotos do produto.
 // Posição do tipo "cena_ia" = imagem criada por IA; fica TRAVADA até existir um serviço de imagem configurado (lib/provedorImagemIA.ts).
 
-import { caixaDoCorpo, calcularLayoutGuia, criarMascara, textoMedida, type CaixaFrac, type LayoutGuia, type Mascara } from "./guiaMedidas";
+import { caixaDoCorpo, calcularLayoutGuia, corDeFundo, criarMascara, textoMedida, type CaixaFrac, type LayoutGuia, type Mascara } from "./guiaMedidas";
 import { classificarFundo, removerFundo } from "./recorteFundo";
 export type { CaixaFrac } from "./guiaMedidas";
 
@@ -153,7 +153,8 @@ export function linhasDeMedidas(m: MedidasProduto): { rotulo: string; valor: str
 
 // ───────────── montagem no canvas (só no navegador) ─────────────
 
-export type Foto = { img: HTMLImageElement | HTMLCanvasElement; largura: number; altura: number };
+/** `jaBranco`: a foto já tem fundo branco; no modo "fundo branco" ela entra como veio, sem recorte (o recorte poderia comer parte do produto). */
+export type Foto = { img: HTMLImageElement | HTMLCanvasElement; largura: number; altura: number; jaBranco?: boolean };
 
 export function carregarImagem(src: string, cors = false): Promise<HTMLImageElement> {
   return new Promise((ok, erro) => {
@@ -165,10 +166,18 @@ export function carregarImagem(src: string, cors = false): Promise<HTMLImageElem
   });
 }
 
+/** Palpite inicial: os 4 cantos da foto são (quase) brancos? */
+export function temFundoBranco(img: HTMLImageElement): boolean {
+  const k = Math.min(1, 64 / Math.max(img.naturalWidth, img.naturalHeight)); const w = Math.max(4, Math.round(img.naturalWidth * k)), h = Math.max(4, Math.round(img.naturalHeight * k));
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const x = c.getContext("2d", { willReadFrequently: true })!;
+  x.fillStyle = "#fff"; x.fillRect(0, 0, w, h); x.drawImage(img, 0, 0, w, h);
+  const [r, g, b] = corDeFundo(x.getImageData(0, 0, w, h).data, w, h); return r >= 245 && g >= 245 && b >= 245;
+}
+
 export async function carregarFoto(arquivo: File): Promise<Foto & { url: string }> {
   const url = URL.createObjectURL(arquivo);
   const img = await carregarImagem(url);
-  return { img, largura: img.naturalWidth, altura: img.naturalHeight, url };
+  return { img, largura: img.naturalWidth, altura: img.naturalHeight, url, jaBranco: temFundoBranco(img) };
 }
 
 function desenhar(ctx: CanvasRenderingContext2D, foto: Foto, caixa: Retangulo, modo: "conter" | "cobrir") {
@@ -319,7 +328,7 @@ export function montarImagem(p: PadraoImagem, c: ContextoMontagem): HTMLCanvasEl
   const liso = p.fundo_modo === "liso";
   c.avisoFundo = undefined;
   // fundo liso: tira o fundo da foto (a cor de fundo da posição aparece no lugar); ambientado: a foto fica como veio
-  const fotos = originais.map((f) => { if (!liso) return f; const r = recortarFundoDaFoto(f); if (!r.removido) c.avisoFundo = "Não consegui tirar o fundo de uma foto (o fundo dela não é liso): mantive como veio."; return r.foto; });
+  const fotos = originais.map((f) => { if (!liso || f.jaBranco) return f; const r = recortarFundoDaFoto(f); if (!r.removido) c.avisoFundo = "Não consegui tirar o fundo de uma foto (o fundo dela não é liso): mantive como veio."; return r.foto; });
   const escala = Math.min(p.largura, p.altura) / 1200;
   const fonte = (px: number, peso = 600) => `${peso} ${Math.round(px * escala)}px "Helvetica Neue", Arial, sans-serif`;
 

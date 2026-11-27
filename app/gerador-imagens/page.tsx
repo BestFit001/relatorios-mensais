@@ -244,6 +244,12 @@ export default function GeradorImagensPage() {
                       <span className="absolute top-1 left-1 bg-black/70 text-xs px-1.5 rounded">{i + 1}</span>
                       <button type="button" onClick={() => removerFoto(i)} className="absolute top-1 right-1 bg-black/70 hover:bg-red-700 text-xs w-5 h-5 rounded cursor-pointer" aria-label="Remover foto">×</button>
                       <p className="text-[10px] text-gray-400 truncate mt-1" title={f.nome}>{f.nome}</p>
+                      <select data-gi-fundo-foto value={f.jaBranco ? "sim" : "nao"} title="Se a foto já tem fundo branco, ela não é recortada. Se não (cinza, colorido), o fundo é tirado nas posições em “Fundo branco”."
+                        onChange={(e) => { const v = e.target.value === "sim"; setFotos((l) => l.map((x, k) => (k === i ? { ...x, jaBranco: v } : x))); setResultados([]); }}
+                        className="w-full mt-1 bg-[#0d0f18] border border-gray-700 rounded px-1 py-1 text-[11px]">
+                        <option value="sim">Tem fundo branco</option>
+                        <option value="nao">Sem fundo branco</option>
+                      </select>
                     </div>
                   ))}
                 </div>
