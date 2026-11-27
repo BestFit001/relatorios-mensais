@@ -6,6 +6,7 @@ import { caixaDoCorpo, caixaTotal, calcularLayoutGuia, corDeFundo, criarMascara,
 import { classificarFundo, removerFundo } from "./recorteFundo";
 import { calcularLayoutBeneficios, colocarProduto, tipoIcone, type MedirTexto, type TipoIcone } from "./layoutBeneficios";
 import type { DadosImagemModelo } from "./beneficiosModelo";
+import { PROMPT_CENA_PESSOA } from "./promptCena";
 export type { CaixaFrac } from "./guiaMedidas";
 
 export type TipoImagem = "montagem" | "cena_ia";
@@ -60,7 +61,7 @@ export function padraoInicial(marca: string): PadraoImagem[] {
     { ...base, posicao: 2, nome: "Detalhe", layout: "detalhe", margem_pct: 0, fotos: [2] },
     { ...base, posicao: 3, nome: "Colagem", layout: "colagem" },
     { ...base, posicao: 4, nome: "Medidas", layout: "medidas", fotos: [1] },
-    { ...base, posicao: 5, nome: "Cena (IA)", tipo: "cena_ia", layout: "foto_unica", fotos: [1], prompt_ia: "Foto de catálogo do produto em um ambiente real, iluminação natural, o produto idêntico à foto enviada (mesma estampa e cores)." },
+    { ...base, posicao: 5, nome: "Cena (IA)", tipo: "cena_ia", layout: "foto_unica", fotos: [1], prompt_ia: PROMPT_CENA_PESSOA },
   ];
 }
 

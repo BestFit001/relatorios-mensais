@@ -10,6 +10,7 @@ import {
   MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, novaPosicao, padraoInicial, renumerarPosicoes,
   type CaixaFrac, type Foto, type FundoModo, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
+import { PROMPT_CENA_PESSOA, preencherPrompt } from "../../lib/promptCena";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
 import { MAX_BENEFICIOS, dividirTitulo, normalizarBeneficios, type BeneficioModelo } from "../../lib/beneficiosModelo";
 
@@ -219,6 +220,13 @@ export default function GeradorImagensPage() {
       setResultados((lista) => lista.map((x) => { if (x.posicao !== posicao) return x; if (x.url) URL.revokeObjectURL(x.url); return { ...x, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia, aviso: r.aviso }; }));
     } catch (e: any) { setMsg("Não consegui refazer a imagem de medidas: " + (e?.message || e)); }
   }
+  /** Preenche os campos {{titulo}}, {{beneficios}}, {{altura}}… do prompt com os dados do modelo escolhido (Padronização IA). */
+  function promptDaCena(texto: string): string {
+    return preencherPrompt(texto, {
+      titulo: modeloAtual?.titulo, categoria: modeloAtual?.categoria, descricao: modeloAtual?.descricao_complementar || modeloAtual?.descricao_seo,
+      beneficios: dadosModelo.beneficios, altura: medidas.altura, largura: medidas.largura, comprimento: medidas.comprimento,
+    });
+  }
   async function gerar() {
     setMsg(""); setResultados([]); setAjustes({});
     const ativos = padroes.filter((p) => p.ativo).sort((a, b) => a.posicao - b.posicao).slice(0, MAX_POSICOES);
@@ -236,8 +244,8 @@ export default function GeradorImagensPage() {
             try {
               const idx = fotosDaPosicao(p, fotos.length);
               const refs = (idx.length ? idx : [0]).slice(0, 3).map((i) => fotoReduzida(fotos[i] ?? fotos[0]));
-              const blob = await cenaPeloCanva(p.prompt_ia, refs, p.largura, p.altura);
-              saida.push({ ...base, blob, url: URL.createObjectURL(blob) });
+              const blob = await cenaPeloCanva(promptDaCena(p.prompt_ia), refs, p.largura, p.altura);
+              saida.push({ ...base, blob, url: URL.createObjectURL(blob), aviso: !modeloAtual && /\{\{/.test(p.prompt_ia) ? "Sem modelo escolhido: a cena foi pedida sem título, benefícios e medidas do produto." : undefined });
             } catch (e: any) { saida.push({ ...base, erro: String(e?.message || e) }); }
             setOcupado("Montando as imagens…");
             continue;
@@ -245,7 +253,7 @@ export default function GeradorImagensPage() {
           if (!statusIA.configurado) { saida.push({ ...base, travada: canva.chaves ? "Conecte o Canva (botão no topo da página) para gerar a cena por IA." : statusIA.mensagem }); continue; }
           try {
             const ref = fotoReduzida(fotos[fotosDaPosicao(p, fotos.length)[0] ?? 0]);
-            const r = await fetch("/api/gerar-cena-ia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: p.prompt_ia, fotoBase64: ref.base64, fotoMime: ref.mime, largura: p.largura, altura: p.altura }) });
+            const r = await fetch("/api/gerar-cena-ia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: promptDaCena(p.prompt_ia), fotoBase64: ref.base64, fotoMime: ref.mime, largura: p.largura, altura: p.altura }) });
             const j = await r.json();
             if (!r.ok) { saida.push({ ...base, travada: r.status === 423 ? String(j.mensagem || statusIA.mensagem) : undefined, erro: r.status === 423 ? undefined : String(j.erro || "falhou") }); continue; }
             const blob = await (await fetch(`data:${j.mime};base64,${j.base64}`)).blob();
@@ -556,6 +564,10 @@ export default function GeradorImagensPage() {
                     {p.tipo === "cena_ia" && (
                       <div><label className="text-xs text-gray-400 block mb-1">Instrução para a IA (como deve ser a cena)</label>
                         <textarea data-gi-prompt rows={3} value={p.prompt_ia} onChange={(e) => ajustar(p.posicao, { prompt_ia: e.target.value })} className={campo} />
+                        <div className="flex flex-wrap items-center gap-3 mt-1">
+                          <button type="button" data-gi-prompt-pessoa onClick={() => ajustar(p.posicao, { prompt_ia: PROMPT_CENA_PESSOA })} className={`${botao} bg-gray-700 hover:bg-gray-600 text-white py-1 text-xs`}>Usar o prompt “pessoa usando o produto”</button>
+                          <span className="text-xs text-gray-500">Os campos {"{{titulo}}"}, {"{{beneficios}}"}, {"{{altura}}"}… são preenchidos com o modelo escolhido na hora de gerar (escolha o modelo na aba Gerar).</span>
+                        </div>
                         <p className="text-xs text-gray-500 mt-1">{canva.conectado || statusIA.configurado ? "Serviço de imagem configurado." : canva.chaves ? "🔒 Falta conectar o Canva (botão no topo da página): o padrão já fica salvo." : "🔒 Travada por enquanto: o padrão já fica salvo e passa a valer quando o serviço de imagem for configurado."}</p></div>
                     )}
                   </div>
