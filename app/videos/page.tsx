@@ -6,7 +6,7 @@ import { supabase } from "../../lib/supabase";
 import { canaisSemRepeticao } from "../../lib/vendasCanaisLogica";
 import { useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
-import { STATUS_SEM_ESTOQUE, canaisNaoMarcados, estadoDaCorrecao, paisEmCorrecao, situacaoDoItem, type Correcao, type CorrecaoCanal, type SituacaoVideo } from "../../lib/videoCorrecoes";
+import { STATUS_SEM_ESTOQUE, canaisNaoMarcados, estadoDaCorrecao, paisEmCorrecao, produtoConcluido, situacaoDoItem, type Correcao, type CorrecaoCanal, type SituacaoVideo } from "../../lib/videoCorrecoes";
 import { lerSemAcaoLinhas } from "../../lib/notifResolucao";
 
 const CHAVE_CONFIG_CLIPES = "bestfit_canais_clipes_config";   // mesma chave de antes: a escolha de canais já feita continua valendo
@@ -246,8 +246,10 @@ export default function VideosPage() {
     // Correção: enquanto os analistas corrigem, o produto fica em "concluído" (se já tem algum canal marcado). Corrigido (≥1 "Resolvido") volta
     // para os pendentes com a tag verde; fechado só com "Sem ação efetiva" continua em concluído.
     const correcao = estadoDaCorrecao(String(item.sku), correcoes, correcoesCanais, semAcao);
-    const finalizado = correcao === "aberta" || correcao === "sem_acao" ? (item.algumMarcado ? true : item.finalizado) : item.finalizado;
-    return { ...item, correcao, finalizado, situacao: situacaoDoItem(item.tipo === "realizado" ? item.itensGrupo : [item.itemManual]) as SituacaoVideo };
+    const situacao = situacaoDoItem(item.tipo === "realizado" ? item.itensGrupo : [item.itemManual]) as SituacaoVideo;
+    // "Sem estoque" também vai para os concluídos: não há o que gravar, então não fica nos pendentes
+    const finalizado = produtoConcluido({ finalizado: item.finalizado, algumMarcado: item.algumMarcado, correcao, situacao });
+    return { ...item, correcao, finalizado, situacao };
   })
   .filter((item: any) => {
     if (filtroStatusVideo === "pendentes") return !item.finalizado;

@@ -44,6 +44,15 @@ export function situacaoDoItem(itens: { clipes_enviados?: Record<string, any> | 
   return itens.length > 0 && itens.every((it) => Boolean((it.clipes_enviados || {})[STATUS_SEM_ESTOQUE])) ? "sem_estoque" : "";
 }
 
+/**
+ * O produto conta como concluído (sai dos pendentes) quando: está marcado "Sem estoque" (não há o que gravar); ou todos os canais já têm vídeo;
+ * ou está em correção / fechado sem ação efetiva e já tem algum canal marcado.
+ */
+export function produtoConcluido(o: { finalizado: boolean; algumMarcado: boolean; correcao: EstadoCorrecao; situacao: SituacaoVideo }): boolean {
+  if (o.situacao === "sem_estoque") return true;
+  return o.correcao === "aberta" || o.correcao === "sem_acao" ? (o.algumMarcado ? true : o.finalizado) : o.finalizado;
+}
+
 /** Linhas pendentes de correção que a pessoa enxerga: do analista = canais dele; do admin = todos (ou os do analista filtrado). */
 export function correcoesVisiveis(
   correcoes: Correcao[], canais: CorrecaoCanal[], resp: Responsavel[],
