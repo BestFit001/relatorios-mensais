@@ -2,21 +2,23 @@
 // (Padronização IA): título, categoria, descrição, benefícios e medidas. Quem decide COMO o produto é usado é o gerador de imagem, a partir da
 // foto de referência e desses dados. O texto fixo não cita a marca (o gerador tende a inventar logo ou texto); o título do produto pode citar, e por isso o prompt manda evitar qualquer texto ou logo na imagem.
 
-export const PROMPT_CENA_PESSOA = `Create a photorealistic lifestyle photograph of one person using the product shown in the reference image(s). The product is the hero of the photo.
+export const PROMPT_CENA_PESSOA = `Create a photorealistic lifestyle photograph of one person using the product shown in the reference images. The reference images show the same real product from different angles and in close-up. The product is the hero of the photo.
 
 Product: {{titulo}}. Category: {{categoria}}. Details: {{descricao_resumida}}. Key benefits: {{beneficios}}. Real size: {{altura}} x {{largura}} x {{comprimento}} cm.
 
-Work out how this product is naturally used (carried, worn, held or opened) from the reference image and the product information above, and show exactly that natural use. Choose the pose, the moment and the setting that best demonstrate the product's main benefits.
+Work out how this product is naturally used (carried, worn, held or opened) from the reference images and the product information above, and show exactly that natural use. Choose the pose, the moment and the setting that best demonstrate the product's main benefits.
 
-Product fidelity is the top priority: the product must look identical to the reference image, with the same print, colors, shape, proportions, straps, zippers, pockets, hardware and trims. Do not redesign, recolor, simplify or invent details. Keep it fully visible and sharp, not hidden by hands, hair or clothing, and at a realistic scale for the stated dimensions.
+Product fidelity is the top priority. The product must be an exact copy of the real product in the reference images: same shape, proportions, colors and materials. Reproduce the print exactly, with the same motifs, the same placement and the same colors, with nothing repainted, blurred, merged, simplified or missing. Reproduce every functional detail exactly: straps and handles (width, padding, shoulder pad, mesh, stitching, adjusters, buckles, sliders and attachment points), zippers and zipper pulls, pockets, piping, labels and hardware. Do not redesign, recolor, simplify or invent anything.
 
-Person: a natural, relaxed, smiling adult, aged 25 to 40, in a simple summery outfit in neutral or soft tones so the print stands out. Natural anatomy, correct hands with five fingers, real skin texture.
+Framing: the product must be large, sharp and fully visible, with its straps, handles and hardware clearly readable and not hidden by hands, hair or clothing. Keep a realistic scale for the stated dimensions.
 
-Scene and mood: sunny Brazilian tropical lifestyle, vibrant, joyful, fresh and carefree. Pick a real everyday-leisure location that fits how the product is used. The background must be uncluttered and must not compete with the print.
+Person: a natural, relaxed adult, aged 25 to 40, in a simple outfit in neutral or soft tones so the print stands out. Candid, unposed moment, not a staged ad. Natural anatomy, correct hands with five fingers.
 
-Light and camera: warm natural daylight with soft shadows, shallow depth of field with the product in sharp focus, eye-level framing, 85mm look, medium shot showing the product and the person. Square 1:1 composition with breathing room around the subject.
+Scene: a real everyday-leisure location that fits how the product is used, with a sunny, fresh, Brazilian summer feel. Uncluttered background that does not compete with the print.
 
-Avoid: any text, letters, logos, watermarks, labels or price tags; extra products; duplicated or distorted product; extra fingers or deformed hands; plastic-looking skin; collage; borders; heavy filters.`;
+Realism: it must look like an unretouched photograph taken with a real camera and a prime lens. Natural skin with visible pores, small imperfections and flyaway hairs, true-to-life colors, soft natural daylight, slight natural film grain, realistic depth of field, natural fabric wrinkles and shadows. No HDR look, no airbrushed or glossy skin, no over-sharpening, no glow, no cinematic color grading, no illustration or 3D render look. Square 1:1 composition.
+
+Avoid: any text, letters, logos added to the scene, watermarks, added labels or price tags; extra products; duplicated, distorted or simplified product; extra fingers or deformed hands; plastic-looking skin; collage; borders; heavy filters.`;
 
 export interface DadosPrompt {
   titulo?: string | null; categoria?: string | null; descricao?: string | null;

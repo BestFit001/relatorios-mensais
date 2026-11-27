@@ -10,6 +10,7 @@ import {
   MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, novaPosicao, padraoInicial, renumerarPosicoes,
   type CaixaFrac, type Foto, type FundoModo, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
+import { extrairQuadros, quadrosIniciais, type Quadro } from "../../lib/videoQuadros";
 import { PROMPT_CENA_PESSOA, preencherPrompt } from "../../lib/promptCena";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
 import { MAX_BENEFICIOS, dividirTitulo, normalizarBeneficios, type BeneficioModelo } from "../../lib/beneficiosModelo";
@@ -40,6 +41,10 @@ async function ajustarAoTamanho(blob: Blob, largura: number, altura: number): Pr
   return await new Promise<Blob>((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error("não consegui converter a imagem"))), "image/jpeg", 0.92));
 }
 
+/** Quadros do vídeo que entram como referência extra na Cena (IA); as fotos da posição vão primeiro. */
+const MAX_QUADROS_REF = 4;
+const QUADROS_INICIAIS = 3;
+
 const campo = "bg-[#0d0f18] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white w-full";
 const botao = "px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
 
@@ -60,6 +65,9 @@ export default function GeradorImagensPage() {
   const [novaMarca, setNovaMarca] = useState("");
   const [padroes, setPadroes] = useState<PadraoImagem[]>([]);
   const [statusIA, setStatusIA] = useState<StatusIA>({ configurado: false, mensagem: "Verificando o serviço de imagem…" });
+  const [quadros, setQuadros] = useState<Quadro[]>([]);
+  const [quadrosSel, setQuadrosSel] = useState<number[]>([]);
+  const [lendoVideo, setLendoVideo] = useState(false);
   const [canva, setCanva] = useState<{ chaves: boolean; conectado: boolean; mensagem: string }>({ chaves: false, conectado: false, mensagem: "Verificando o Canva…" });
   const [fotos, setFotos] = useState<FotoEnviada[]>([]);
   const [sku, setSku] = useState("");
@@ -98,6 +106,17 @@ export default function GeradorImagensPage() {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, []);
+  async function escolherVideo(e: React.ChangeEvent<HTMLInputElement>) {
+    const arq = e.target.files?.[0]; e.target.value = "";
+    if (!arq) return;
+    setLendoVideo(true); setMsg(""); setQuadros([]); setQuadrosSel([]);
+    try { const q = await extrairQuadros(arq, 12); setQuadros(q); setQuadrosSel(quadrosIniciais(q.length, QUADROS_INICIAIS)); }
+    catch (err: any) { setMsg("Não consegui tirar os quadros do vídeo: " + (err?.message || err)); }
+    setLendoVideo(false);
+  }
+  function alternarQuadro(i: number) {
+    setQuadrosSel((l) => (l.includes(i) ? l.filter((x) => x !== i) : l.length >= MAX_QUADROS_REF ? l : [...l, i].sort((a, b) => a - b)));
+  }
   async function conectarCanva() {
     try {
       const r = await fetch("/api/canva/conectar", { method: "POST" });
@@ -108,7 +127,7 @@ export default function GeradorImagensPage() {
   }
   /** Gera a cena pelo Canva: abre o job, consulta até ficar pronto e baixa a imagem (ajustada ao tamanho da posição). */
   async function cenaPeloCanva(prompt: string, refs: { base64: string; mime: string }[], largura: number, altura: number): Promise<Blob> {
-    const r = await fetch("/api/canva/cena", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, fotos: refs }) });
+    const r = await fetch("/api/canva/cena", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, fotos: refs, largura, altura }) });
     const j = await r.json();
     if (!r.ok) { if (j.desconectado) setCanva((c) => ({ ...c, conectado: false, mensagem: j.erro })); throw new Error(String(j.erro || "o Canva não aceitou o pedido")); }
     const fim = Date.now() + 180_000;
@@ -243,7 +262,10 @@ export default function GeradorImagensPage() {
             setOcupado(`Gerando “${base.nome}” no Canva… (pode levar até 1 minuto)`);
             try {
               const idx = fotosDaPosicao(p, fotos.length);
-              const refs = (idx.length ? idx : [0]).slice(0, 3).map((i) => fotoReduzida(fotos[i] ?? fotos[0]));
+              const refs = [
+                ...(idx.length ? idx : [0]).slice(0, 4).map((i) => fotoReduzida(fotos[i] ?? fotos[0])),
+                ...quadrosSel.map((i) => quadros[i]).filter(Boolean).map((q) => ({ base64: q.base64, mime: q.mime })),
+              ];
               const blob = await cenaPeloCanva(promptDaCena(p.prompt_ia), refs, p.largura, p.altura);
               saida.push({ ...base, blob, url: URL.createObjectURL(blob), aviso: !modeloAtual && /\{\{/.test(p.prompt_ia) ? "Sem modelo escolhido: a cena foi pedida sem título, benefícios e medidas do produto." : undefined });
             } catch (e: any) { saida.push({ ...base, erro: String(e?.message || e) }); }
@@ -386,6 +408,27 @@ export default function GeradorImagensPage() {
                   ))}
                 </div>
               )}
+              <div className="border-t border-gray-800 pt-4 space-y-2" data-gi-video-bloco>
+                <h3 className="text-sm font-semibold text-purple-300">Vídeo do produto (opcional, melhora a Cena de IA)</h3>
+                <p className="text-xs text-gray-500">O app tira quadros do vídeo no seu navegador e usa os que você marcar como fotos de referência extras da Cena (IA): alça, zíper, etiqueta e estampa de perto. Prefira um vídeo girando o produto e mostrando os detalhes. As outras imagens não mudam. Atenção: no Canva cada foto de referência além da primeira consome créditos de IA a mais, então marque só os quadros que ajudam.</p>
+                <input data-gi-video type="file" accept="video/*" onChange={escolherVideo} disabled={lendoVideo}
+                  className="block text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-700 file:text-white file:font-semibold file:cursor-pointer" />
+                {lendoVideo && <p className="text-xs text-purple-200" data-gi-video-lendo>Tirando os quadros do vídeo…</p>}
+                {quadros.length > 0 && (
+                  <>
+                    <p className="text-xs text-gray-400" data-gi-video-qtd>{quadrosSel.length}/{MAX_QUADROS_REF} quadros marcados. Marque os que mostram melhor os detalhes do produto.</p>
+                    <div className="flex flex-wrap gap-2">
+                      {quadros.map((q, i) => (
+                        <button type="button" key={i} data-gi-quadro={i} aria-pressed={quadrosSel.includes(i)} onClick={() => alternarQuadro(i)}
+                          className={`relative w-20 h-20 rounded-lg overflow-hidden border-2 cursor-pointer ${quadrosSel.includes(i) ? "border-purple-400" : "border-gray-700 opacity-60"}`}>
+                          <img src={q.url} alt={`quadro ${i + 1}`} className="w-full h-full object-cover" />
+                          {quadrosSel.includes(i) && <span className="absolute top-0.5 right-0.5 bg-purple-600 text-[10px] px-1 rounded">✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
               <div className="grid md:grid-cols-3 gap-3">
                 <div className="md:col-span-2">
                   <label className="text-xs text-gray-400 block mb-1">Modelo (cadastrado na Padronização IA): traz as medidas e os benefícios</label>

@@ -128,13 +128,28 @@ export async function subirReferencia(token: string, bytes: Buffer, nome: string
   return String(id);
 }
 
-export interface PedidoCena { prompt: string; referencias: { bytes: Buffer; nome: string }[] }
+export interface PedidoCena { prompt: string; referencias: { bytes: Buffer; nome: string }[]; largura?: number; altura?: number }
+
+/** Formatos aceitos pelo Canva (aspect_ratio) e a proporção de cada um (largura/altura). */
+const FORMATOS_CANVA: [string, number][] = [
+  ["square", 1], ["landscape", 16 / 9], ["portrait", 9 / 16], ["landscape_3_2", 3 / 2], ["portrait_2_3", 2 / 3], ["portrait_4_5", 4 / 5],
+  ["landscape_4_3", 4 / 3], ["portrait_3_4", 3 / 4], ["landscape_5_4", 5 / 4], ["landscape_2_1", 2], ["portrait_1_2", 1 / 2],
+];
+/** O formato do Canva mais parecido com o tamanho da posição (1200x1200 = "square"). */
+export function formatoCanva(largura?: number, altura?: number): string {
+  const r = Number(largura) / Number(altura);
+  if (!(r > 0) || !Number.isFinite(r)) return "square";
+  return FORMATOS_CANVA.reduce((m, f) => (Math.abs(Math.log(r / f[1])) < Math.abs(Math.log(r / m[1])) ? f : m))[0];
+}
 
 /** Sobe as referências e abre o job de geração. Devolve o id do job (o navegador consulta depois). */
 export async function iniciarCena(token: string, p: PedidoCena): Promise<string> {
   const ids: string[] = [];
-  for (const [i, ref] of p.referencias.slice(0, 12).entries()) ids.push(await subirReferencia(token, ref.bytes, ref.nome || `referencia_${i + 1}`));
-  const corpo: any = { prompt: p.prompt.slice(0, 4000), idempotency_key: randomUUID(), model: MODELO_IMAGEM };
+  const refs = p.referencias.slice(0, 12);
+  for (let i = 0; i < refs.length; i += 3) { // em lotes de 3 para ganhar tempo sem estourar o limite de chamadas do Canva
+    ids.push(...(await Promise.all(refs.slice(i, i + 3).map((ref, k) => subirReferencia(token, ref.bytes, ref.nome || `referencia_${i + k + 1}`)))));
+  }
+  const corpo: any = { prompt: p.prompt.slice(0, 8000), idempotency_key: randomUUID(), model: MODELO_IMAGEM, aspect_ratio: formatoCanva(p.largura, p.altura) };
   if (ids.length) corpo.images = ids.map((asset_id) => ({ type: "asset", asset_id }));
   const j = await api(token, "/image-generations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });
   const id = j?.job?.id; if (!id) throw new Error("o Canva não devolveu o número do job de geração");
