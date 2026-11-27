@@ -2,6 +2,9 @@
 // inicial, a geometria (testável sem navegador) e a montagem no canvas do navegador com as fotos do produto.
 // Posição do tipo "cena_ia" = imagem criada por IA; fica TRAVADA até existir um serviço de imagem configurado (lib/provedorImagemIA.ts).
 
+import { caixaDoCorpo, calcularLayoutGuia, criarMascara, textoMedida, type CaixaFrac, type LayoutGuia, type Mascara } from "./guiaMedidas";
+export type { CaixaFrac } from "./guiaMedidas";
+
 export type TipoImagem = "montagem" | "cena_ia";
 export type LayoutImagem = "foto_unica" | "detalhe" | "colagem" | "medidas" | "beneficios";
 export type LogoPosicao = "superior_esquerdo" | "superior_direito" | "inferior_esquerdo" | "inferior_direito" | "centro_inferior";
@@ -29,7 +32,7 @@ export interface PadraoImagem {
   ativo: boolean;
 }
 
-export interface MedidasProduto { altura?: number | null; largura?: number | null; comprimento?: number | null; peso?: number | null }
+export interface MedidasProduto { altura?: number | null; largura?: number | null; comprimento?: number | null; peso?: number | null; /** texto livre, ex.: "8 Litros" */ capacidade?: string | null }
 
 export const MAX_FOTOS = 5;
 export const MAX_POSICOES = 5;
@@ -38,7 +41,7 @@ export const ROTULO_LAYOUT: Record<LayoutImagem, string> = {
   foto_unica: "Foto inteira (fundo liso)",
   detalhe: "Detalhe (foto ampliada, sem sobras)",
   colagem: "Colagem de fotos",
-  medidas: "Foto + medidas e peso",
+  medidas: "Foto com guia de medidas (setas)",
   beneficios: "Foto + textos de benefícios",
 };
 
@@ -49,7 +52,7 @@ export function padraoInicial(marca: string): PadraoImagem[] {
     { ...base, posicao: 1, nome: "Principal", layout: "foto_unica", fotos: [1] },
     { ...base, posicao: 2, nome: "Detalhe", layout: "detalhe", margem_pct: 0, fotos: [2] },
     { ...base, posicao: 3, nome: "Colagem", layout: "colagem" },
-    { ...base, posicao: 4, nome: "Medidas e peso", layout: "medidas", fotos: [1] },
+    { ...base, posicao: 4, nome: "Medidas", layout: "medidas", fotos: [1] },
     { ...base, posicao: 5, nome: "Cena (IA)", tipo: "cena_ia", layout: "foto_unica", fotos: [1], prompt_ia: "Foto de catálogo do produto em um ambiente real, iluminação natural, o produto idêntico à foto enviada (mesma estampa e cores)." },
   ];
 }
@@ -179,7 +182,84 @@ function quebrarTexto(ctx: CanvasRenderingContext2D, texto: string, larguraMax: 
   return linhas;
 }
 
-export interface ContextoMontagem { fotos: Foto[]; logo?: Foto | null; medidas?: MedidasProduto }
+export interface ContextoMontagem {
+  fotos: Foto[]; logo?: Foto | null; medidas?: MedidasProduto;
+  /** corpo do produto ajustado à mão (frações da foto); vazio = detecção automática */
+  caixaProduto?: CaixaFrac | null;
+  /** preenchido por montarImagem na imagem de medidas */
+  layoutGuia?: LayoutGuia;
+}
+
+/** Máscara (onde há produto) e corpo detectado de uma foto; calculado uma vez por foto. */
+const CACHE_ANALISE = new WeakMap<HTMLImageElement, { mascara: Mascara; corpo: CaixaFrac }>();
+export function analisarFoto(foto: Foto): { mascara: Mascara; corpo: CaixaFrac } {
+  const guardado = CACHE_ANALISE.get(foto.img); if (guardado) return guardado;
+  const k = Math.min(1, 320 / Math.max(foto.largura, foto.altura)); const w = Math.max(1, Math.round(foto.largura * k)), h = Math.max(1, Math.round(foto.altura * k));
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const x = c.getContext("2d", { willReadFrequently: true })!;
+  x.drawImage(foto.img, 0, 0, w, h);
+  const mascara = criarMascara(x.getImageData(0, 0, w, h).data, w, h);
+  const r = { mascara, corpo: caixaDoCorpo(mascara) }; CACHE_ANALISE.set(foto.img, r); return r;
+}
+
+const CONDENSADO = 0.84; // fonte do guia é condensada: texto normal comprimido na horizontal
+const FONTE_GUIA = '"Arial Narrow", "Helvetica Neue", Arial, sans-serif';
+function medirCondensado(ctx: CanvasRenderingContext2D, t: string, px: number, peso = 400) { ctx.font = `${peso} ${px}px ${FONTE_GUIA}`; return ctx.measureText(t).width * CONDENSADO; }
+function textoCond(ctx: CanvasRenderingContext2D, t: string, x: number, y: number, px: number, cor: string, alinhar: "left" | "center" | "right" = "left", peso = 400) {
+  ctx.save(); ctx.font = `${peso} ${px}px ${FONTE_GUIA}`; ctx.fillStyle = cor; ctx.textBaseline = "alphabetic";
+  const w = ctx.measureText(t).width * CONDENSADO; const x0 = alinhar === "left" ? x : alinhar === "center" ? x - w / 2 : x - w;
+  ctx.translate(x0, y); ctx.scale(CONDENSADO, 1); ctx.fillText(t, 0, 0); ctx.restore();
+}
+function seta(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, esc: number, cor: string) {
+  ctx.save(); ctx.strokeStyle = cor; ctx.fillStyle = cor; ctx.lineWidth = Math.max(1.5, 1.8 * esc);
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  const ang = Math.atan2(y1 - y0, x1 - x0), c = 17 * esc, l = 6.5 * esc;
+  const ponta = (x: number, y: number, a: number) => { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - c * Math.cos(a) + l * Math.sin(a), y - c * Math.sin(a) - l * Math.cos(a)); ctx.lineTo(x - c * Math.cos(a) - l * Math.sin(a), y - c * Math.sin(a) + l * Math.cos(a)); ctx.closePath(); ctx.fill(); };
+  ponta(x1, y1, ang); ponta(x0, y0, ang + Math.PI); ctx.restore();
+}
+
+/** Monta a imagem de medidas e devolve o layout usado (a tela usa para mostrar/ajustar a caixa do produto). */
+export function desenharGuiaMedidas(ctx: CanvasRenderingContext2D, p: PadraoImagem, foto: Foto, m: MedidasProduto, caixaProduto?: CaixaFrac | null): LayoutGuia {
+  const W = p.largura, H = p.altura; const { mascara, corpo } = analisarFoto(foto);
+  const textos = { altura: textoMedida(m.altura), largura: textoMedida(m.largura), comprimento: textoMedida(m.comprimento), capacidade: String(m.capacidade || "").trim() };
+  const l = calcularLayoutGuia({ W, H, fotoW: foto.largura, fotoH: foto.altura, mascara, corpo: caixaProduto || corpo, textos, medir: (t, px) => medirCondensado(ctx, t, px) });
+  const esc = l.escala, f = l.fonte, cinza = "#3a3a3a", cor = p.cor_texto;
+  ctx.drawImage(foto.img, l.foto.x, l.foto.y, l.foto.w, l.foto.h);
+  // caixa GUIA DE TAMANHO (sem preenchimento: só contorno e texto)
+  const g = l.guia; const itens = [["Altura", textos.altura], ["Comprimento", textos.comprimento], ["Largura", textos.largura]].filter((i) => i[1]);
+  if (itens.length) {
+    ctx.save(); ctx.strokeStyle = "#e3e3e3"; ctx.lineWidth = Math.max(1.5, 2 * esc); ctx.strokeRect(g.x, g.y, g.w, g.h);
+    const cab = g.h * 0.25; ctx.beginPath(); ctx.moveTo(g.x, g.y + cab); ctx.lineTo(g.x + g.w, g.y + cab); ctx.stroke(); ctx.restore();
+    textoCond(ctx, "GUIA DE TAMANHO", g.x + g.w / 2, g.y + cab * 0.64, 34 * esc, cor, "center");
+    const passo = (g.h - cab) / itens.length;
+    itens.forEach(([nome, valor], i) => {
+      const yb = g.y + cab + passo * i + passo * 0.64; const fs = 37 * esc;
+      ctx.save(); ctx.fillStyle = "#111"; ctx.beginPath(); const tx = g.x + g.w * 0.07, ty = yb - fs * 0.32; ctx.moveTo(tx, ty - 9 * esc); ctx.lineTo(tx + 17 * esc, ty); ctx.lineTo(tx, ty + 9 * esc); ctx.closePath(); ctx.fill(); ctx.restore();
+      const xl = g.x + g.w * 0.145; textoCond(ctx, nome, xl, yb, fs, cor);
+      const wv = medirCondensado(ctx, valor, fs); const xv = g.x + g.w - g.w * 0.045; textoCond(ctx, valor, xv, yb, fs, cor, "right");
+      const xi = xl + medirCondensado(ctx, nome, fs) + 10 * esc, xf = xv - wv - 10 * esc;
+      if (xf > xi) { ctx.save(); ctx.strokeStyle = cinza; ctx.lineWidth = Math.max(1.5, 2 * esc); ctx.beginPath(); ctx.moveTo(xi, yb + 2 * esc); ctx.lineTo(xf, yb + 2 * esc); ctx.stroke(); ctx.restore(); }
+    });
+  }
+  // capacidade com gota
+  if (l.capacidade && textos.capacidade) {
+    const c = l.capacidade; const dh = 46 * esc, dw = dh * 0.55, cx = c.x + dw / 2, topo = c.y + 2 * esc;
+    ctx.save(); ctx.strokeStyle = cinza; ctx.lineWidth = Math.max(1.5, 2 * esc); ctx.beginPath(); ctx.moveTo(cx, topo);
+    ctx.bezierCurveTo(cx + dw * 0.12, topo + dh * 0.30, cx + dw * 0.5, topo + dh * 0.55, cx + dw * 0.5, topo + dh * 0.72);
+    ctx.arc(cx, topo + dh * 0.72, dw * 0.5, 0, Math.PI, false);
+    ctx.bezierCurveTo(cx - dw * 0.5, topo + dh * 0.55, cx - dw * 0.12, topo + dh * 0.30, cx, topo); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, topo + dh * 0.74, dw * 0.28, Math.PI * 0.55, Math.PI * 0.95, false); ctx.stroke(); ctx.restore();
+    textoCond(ctx, textos.capacidade, c.x + dw + 24 * esc, c.y + 40 * esc, 40 * esc, cor);
+  }
+  // setas e rótulos
+  if (l.altura) { const a = l.altura; seta(ctx, a.seta.x, a.seta.y0, a.seta.x, a.seta.y1, esc, cinza);
+    textoCond(ctx, "Altura", a.rotulo.x, a.rotulo.y + f * 0.95, f, cor); textoCond(ctx, textos.altura, a.rotulo.x, a.rotulo.y + f * 2.15, f, cor); }
+  if (l.largura) { const a = l.largura; seta(ctx, a.seta.x0, a.seta.y, a.seta.x1, a.seta.y, esc, cinza);
+    textoCond(ctx, "Largura " + textos.largura, a.rotulo.x, a.rotulo.y + f * 0.95, f, cor); }
+  if (l.comprimento) { const a = l.comprimento; seta(ctx, a.seta.x0, a.seta.y0, a.seta.x1, a.seta.y1, esc, cinza);
+    const dir = a.rotulo.x + a.rotulo.w; textoCond(ctx, "Comprimento", dir, a.rotulo.y + f * 0.95, f, cor, "right"); textoCond(ctx, textos.comprimento, dir, a.rotulo.y + f * 2.15, f, cor, "right"); }
+  return l;
+}
+
 
 /** Monta UMA imagem do padrão (tipo "montagem"). Devolve o canvas pronto. */
 export function montarImagem(p: PadraoImagem, c: ContextoMontagem): HTMLCanvasElement {
@@ -201,16 +281,16 @@ export function montarImagem(p: PadraoImagem, c: ContextoMontagem): HTMLCanvasEl
     else if (p.layout === "colagem") {
       const grade = gradeColagem(fotos.length, util, Math.round(16 * escala));
       grade.forEach((cx, i) => { ctx.save(); ctx.beginPath(); ctx.rect(cx.x, cx.y, cx.w, cx.h); ctx.clip(); desenhar(ctx, fotos[i], cx, "cobrir"); ctx.restore(); });
+    } else if (p.layout === "medidas") {
+      c.layoutGuia = desenharGuiaMedidas(ctx, p, fotos[0], c.medidas || {}, c.caixaProduto);
     } else {
-      // medidas / benefícios: foto à esquerda (58%) e painel de texto à direita
+      // benefícios: foto à esquerda (58%) e lista de textos à direita
       const gap = Math.round(24 * escala);
       const larguraFoto = Math.round(util.w * 0.58);
       desenhar(ctx, fotos[0], { x: util.x, y: util.y, w: larguraFoto, h: util.h }, "conter");
       const painel: Retangulo = { x: util.x + larguraFoto + gap, y: util.y, w: util.w - larguraFoto - gap, h: util.h };
       ctx.textBaseline = "top";
-      const itens = p.layout === "medidas"
-        ? linhasDeMedidas(c.medidas || {}).map((l) => ({ titulo: l.rotulo, texto: l.valor }))
-        : p.textos.map((t) => ({ titulo: "", texto: t }));
+      const itens = p.textos.map((t) => ({ texto: t }));
       if (itens.length) {
         const alturaItem = Math.min(painel.h / itens.length, 190 * escala);
         const topo = painel.y + (painel.h - alturaItem * itens.length) / 2;
@@ -218,10 +298,8 @@ export function montarImagem(p: PadraoImagem, c: ContextoMontagem): HTMLCanvasEl
           const y = topo + i * alturaItem;
           ctx.fillStyle = p.cor_destaque; ctx.fillRect(painel.x, y + 8 * escala, 8 * escala, alturaItem - 28 * escala);
           const x = painel.x + 28 * escala; const larg = painel.w - 28 * escala;
-          let cy = y + 8 * escala;
-          if (it.titulo) { ctx.font = fonte(30, 500); ctx.fillStyle = p.cor_destaque; ctx.fillText(it.titulo, x, cy); cy += 42 * escala; }
-          ctx.font = fonte(it.titulo ? 54 : 40, 700); ctx.fillStyle = p.cor_texto;
-          quebrarTexto(ctx, it.texto, larg).slice(0, 3).forEach((ln, k) => ctx.fillText(ln, x, cy + k * (it.titulo ? 62 : 48) * escala));
+          ctx.font = fonte(40, 700); ctx.fillStyle = p.cor_texto;
+          quebrarTexto(ctx, it.texto, larg).slice(0, 3).forEach((ln, k) => ctx.fillText(ln, x, y + 8 * escala + k * 48 * escala));
         });
       }
     }

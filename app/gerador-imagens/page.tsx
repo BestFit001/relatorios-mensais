@@ -2,20 +2,22 @@
 // Gerador de imagens do anúncio: sobe até 5 fotos do produto, escolhe a marca e o app monta até 5 imagens no padrão cadastrado para a marca
 // (tabela padroes_imagens). As posições "cena de IA" ficam travadas até existir um serviço de geração de imagem configurado no servidor.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import Navbar from "../components/Navbar";
 import {
   MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, padraoInicial,
-  type Foto, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
+  type CaixaFrac, type Foto, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 
 interface FotoEnviada extends Foto { url: string; nome: string }
-interface Resultado { posicao: number; nome: string; arquivo: string; url?: string; blob?: Blob; largura: number; altura: number; travada?: string; erro?: string }
+interface GuiaUsado { foto: number; corpo: CaixaFrac; limpo: boolean }
+interface Resultado { posicao: number; nome: string; arquivo: string; url?: string; blob?: Blob; largura: number; altura: number; travada?: string; erro?: string; guia?: GuiaUsado }
+interface AjusteMedidas { foto?: number; corpo?: CaixaFrac }
 interface StatusIA { configurado: boolean; mensagem: string }
 
 const ROTULO_LOGO: Record<LogoPosicao, string> = {
@@ -47,6 +49,8 @@ export default function GeradorImagensPage() {
   const [sku, setSku] = useState("");
   const [medidas, setMedidas] = useState<MedidasProduto>({});
   const [resultados, setResultados] = useState<Resultado[]>([]);
+  const [ajustes, setAjustes] = useState<Record<number, AjusteMedidas>>({});
+  const logosCache = useRef(new Map<string, Foto>());
 
   async function carregarMarcas(manter?: string) {
     const [a, b] = await Promise.all([supabase.from("padroes_anuncios").select("marca"), supabase.from("padroes_imagens").select("marca")]);
@@ -90,19 +94,42 @@ export default function GeradorImagensPage() {
     const { data } = await supabase.from("dimensoes_peso").select("*").ilike("sku_pai", pai).limit(1);
     const d: any = data?.[0];
     if (!d) { setMsg(`Não achei medidas do SKU pai ${pai} na aba Dimensões e Peso. Preencha à mão se quiser a imagem de medidas.`); return; }
-    setMsg(""); setMedidas({ altura: d.altura, largura: d.largura, comprimento: d.comprimento, peso: d.peso });
+    setMsg(""); setMedidas((m) => ({ ...m, altura: d.altura, largura: d.largura, comprimento: d.comprimento }));
   }
 
   // ───────── gerar ─────────
+  async function carregarLogo(p: PadraoImagem): Promise<Foto | null> {
+    if (!p.logo_url) return null;
+    if (!logosCache.current.has(p.logo_url)) { try { const img = await carregarImagem(p.logo_url, true); logosCache.current.set(p.logo_url, { img, largura: img.naturalWidth, altura: img.naturalHeight }); } catch { return null; } }
+    return logosCache.current.get(p.logo_url) || null;
+  }
+  /** Monta uma imagem do tipo "montagem"; na de medidas aceita foto e caixa do produto escolhidas à mão. */
+  async function montarUma(p: PadraoImagem, ajuste?: AjusteMedidas): Promise<{ blob: Blob; guia?: GuiaUsado; semLogo: boolean }> {
+    const logo = await carregarLogo(p);
+    const usado: PadraoImagem = p.layout === "medidas" && ajuste?.foto ? { ...p, fotos: [ajuste.foto] } : p;
+    const ctxM = { fotos, logo, medidas, caixaProduto: ajuste?.corpo || null } as Parameters<typeof montarImagem>[1];
+    const canvas = montarImagem(usado, ctxM);
+    const blob = await canvasParaBlob(canvas, p.formato);
+    const g = ctxM.layoutGuia;
+    return { blob, guia: g ? { foto: (fotosDaPosicao(usado, fotos.length)[0] ?? 0) + 1, corpo: ajuste?.corpo || { x0: (g.corpo.x - g.foto.x) / g.foto.w, y0: (g.corpo.y - g.foto.y) / g.foto.h, x1: (g.corpo.x + g.corpo.w - g.foto.x) / g.foto.w, y1: (g.corpo.y + g.corpo.h - g.foto.y) / g.foto.h }, limpo: g.limpo } : undefined, semLogo: !!p.logo_url && !logo };
+  }
+  async function ajustarMedidas(posicao: number, mudanca: AjusteMedidas) {
+    const p = padroes.find((x) => x.posicao === posicao); if (!p) return;
+    const novo = { ...(ajustes[posicao] || {}), ...mudanca }; if (mudanca.foto) delete novo.corpo; // foto nova: volta à detecção automática
+    setAjustes((a) => ({ ...a, [posicao]: novo }));
+    try {
+      const r = await montarUma(p, novo);
+      setResultados((lista) => lista.map((x) => { if (x.posicao !== posicao) return x; if (x.url) URL.revokeObjectURL(x.url); return { ...x, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia }; }));
+    } catch (e: any) { setMsg("Não consegui refazer a imagem de medidas: " + (e?.message || e)); }
+  }
   async function gerar() {
-    setMsg(""); setResultados([]);
+    setMsg(""); setResultados([]); setAjustes({});
     const ativos = padroes.filter((p) => p.ativo).sort((a, b) => a.posicao - b.posicao).slice(0, MAX_POSICOES);
     if (!marca) { setMsg("Escolha a marca."); return; }
     if (!ativos.length) { setMsg("Essa marca ainda não tem padrão de imagens. Cadastre na aba “Padrão da marca”."); return; }
     if (!fotos.length) { setMsg("Suba pelo menos uma foto do produto."); return; }
     setOcupado("Montando as imagens…");
     const saida: Resultado[] = [];
-    const logos = new Map<string, Foto>();
     try {
       for (const p of ativos) {
         const base = { posicao: p.posicao, nome: p.nome || `Imagem ${p.posicao}`, arquivo: nomeDoArquivoImagem(sku, p), largura: p.largura, altura: p.altura };
@@ -118,15 +145,9 @@ export default function GeradorImagensPage() {
           } catch (e: any) { saida.push({ ...base, erro: String(e?.message || e) }); }
           continue;
         }
-        let logo: Foto | null = null;
-        if (p.logo_url) {
-          if (!logos.has(p.logo_url)) { try { const img = await carregarImagem(p.logo_url, true); logos.set(p.logo_url, { img, largura: img.naturalWidth, altura: img.naturalHeight }); } catch { /* sem logo */ } }
-          logo = logos.get(p.logo_url) || null;
-          if (!logo) base.nome += " (logo não carregou)";
-        }
-        const canvas = montarImagem(p, { fotos, logo, medidas });
-        const blob = await canvasParaBlob(canvas, p.formato);
-        saida.push({ ...base, blob, url: URL.createObjectURL(blob) });
+        const r = await montarUma(p, ajustes[p.posicao]);
+        if (r.semLogo) base.nome += " (logo não carregou)";
+        saida.push({ ...base, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia });
       }
       setResultados(saida);
     } catch (e: any) { setMsg("Erro ao montar as imagens: " + (e?.message || e)); }
@@ -234,12 +255,13 @@ export default function GeradorImagensPage() {
                 </div>
               </div>
               <div>
-                <p className="text-xs text-gray-400 mb-1">Medidas e peso (usadas só nas imagens “Foto + medidas e peso”; vêm da aba Dimensões e Peso quando o SKU está lá)</p>
+                <p className="text-xs text-gray-400 mb-1">Medidas da imagem de medidas (vêm da aba Dimensões e Peso quando o SKU está lá; você pode editar)</p>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {([["altura", "Altura (cm)"], ["largura", "Largura (cm)"], ["comprimento", "Comprimento (cm)"], ["peso", "Peso (kg)"]] as const).map(([k, rot]) => (
+                  {([["altura", "Altura (cm)"], ["largura", "Largura (cm)"], ["comprimento", "Comprimento (cm)"]] as const).map(([k, rot]) => (
                     <input key={k} data-gi-medida={k} inputMode="decimal" placeholder={rot} value={medidas[k] ?? ""}
                       onChange={(e) => { const n = Number(e.target.value.replace(",", ".")); setMedidas((m) => ({ ...m, [k]: e.target.value === "" ? null : Number.isFinite(n) ? n : m[k] })); }} className={campo} />
                   ))}
+                  <input data-gi-medida="capacidade" placeholder="Capacidade (opcional, ex.: 8 Litros)" value={medidas.capacidade ?? ""} onChange={(e) => setMedidas((m) => ({ ...m, capacidade: e.target.value }))} className={campo} />
                 </div>
               </div>
               <button type="button" data-gi-gerar onClick={gerar} disabled={!!ocupado || !marca || !fotos.length}
@@ -264,6 +286,23 @@ export default function GeradorImagensPage() {
                         <span>{r.largura}×{r.altura}px{r.url ? ` · ${r.arquivo}` : ""}</span>
                         {r.url && <button type="button" onClick={() => baixar(r)} className="text-purple-300 hover:text-purple-200 cursor-pointer">Baixar</button>}
                       </div>
+                      {r.guia && (
+                        <div data-gi-ajuste className="border-t border-gray-800 pt-2 space-y-2 text-xs text-gray-300">
+                          {!r.guia.limpo && <p className="text-amber-300">As medidas não couberam sem encostar no produto. Use outra foto ou ajuste a caixa abaixo.</p>}
+                          <label className="flex items-center gap-2">Foto usada
+                            <select data-gi-ajuste-foto value={r.guia.foto} onChange={(e) => ajustarMedidas(r.posicao, { foto: Number(e.target.value) })} className="bg-[#0d0f18] border border-gray-700 rounded px-2 py-1">
+                              {fotos.map((_, i) => <option key={i} value={i + 1}>Foto {i + 1}</option>)}
+                            </select></label>
+                          <p className="text-gray-400">Caixa do corpo do produto (onde as setas encostam). Ajuste se alguma seta ficou fora do lugar:</p>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                            {([["x0", "Esquerda"], ["x1", "Direita"], ["y0", "Topo"], ["y1", "Base"]] as const).map(([k, rot]) => (
+                              <label key={k} className="flex items-center gap-2">{rot}
+                                <input data-gi-caixa={k} type="range" min={0} max={100} value={Math.round(r.guia!.corpo[k] * 100)} className="flex-1"
+                                  onChange={(e) => ajustarMedidas(r.posicao, { corpo: { ...r.guia!.corpo, [k]: Number(e.target.value) / 100 } })} /></label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
