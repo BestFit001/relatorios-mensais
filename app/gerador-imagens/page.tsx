@@ -29,6 +29,16 @@ const ROTULO_LOGO: Record<LogoPosicao, string> = {
   inferior_direito: "Canto inferior direito", centro_inferior: "Centro, embaixo",
 };
 
+/** Recorta (cover) a imagem gerada para o tamanho exato da posição e devolve em JPEG. */
+async function ajustarAoTamanho(blob: Blob, largura: number, altura: number): Promise<Blob> {
+  const bmp = await createImageBitmap(blob);
+  const c = document.createElement("canvas"); c.width = largura; c.height = altura;
+  const ctx = c.getContext("2d")!; ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, largura, altura);
+  const k = Math.max(largura / bmp.width, altura / bmp.height), w = bmp.width * k, h = bmp.height * k;
+  ctx.drawImage(bmp, (largura - w) / 2, (altura - h) / 2, w, h);
+  return await new Promise<Blob>((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error("não consegui converter a imagem"))), "image/jpeg", 0.92));
+}
+
 const campo = "bg-[#0d0f18] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white w-full";
 const botao = "px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
 
@@ -49,6 +59,7 @@ export default function GeradorImagensPage() {
   const [novaMarca, setNovaMarca] = useState("");
   const [padroes, setPadroes] = useState<PadraoImagem[]>([]);
   const [statusIA, setStatusIA] = useState<StatusIA>({ configurado: false, mensagem: "Verificando o serviço de imagem…" });
+  const [canva, setCanva] = useState<{ chaves: boolean; conectado: boolean; mensagem: string }>({ chaves: false, conectado: false, mensagem: "Verificando o Canva…" });
   const [fotos, setFotos] = useState<FotoEnviada[]>([]);
   const [sku, setSku] = useState("");
   const [medidas, setMedidas] = useState<MedidasProduto>({});
@@ -78,6 +89,40 @@ export default function GeradorImagensPage() {
     carregarMarcas();
     fetch("/api/gerar-cena-ia").then((r) => r.json()).then((s) => setStatusIA({ configurado: !!s.configurado, mensagem: String(s.mensagem || "") })).catch(() => setStatusIA({ configurado: false, mensagem: "Travado: não consegui consultar o serviço de imagem." }));
   }, []);
+  useEffect(() => {
+    fetch("/api/canva/status").then((r) => r.json()).then((s) => setCanva({ chaves: !!s.chaves, conectado: !!s.conectado, mensagem: String(s.mensagem || "") })).catch(() => setCanva({ chaves: false, conectado: false, mensagem: "Não consegui consultar o Canva." }));
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("canva")) {
+      setMsg(q.get("canva") === "ok" ? "Canva conectado. Agora a posição “Cena (IA)” pode gerar imagens." : "Não consegui conectar o Canva: " + (q.get("motivo") || "tente de novo."));
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
+  async function conectarCanva() {
+    try {
+      const r = await fetch("/api/canva/conectar", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok || !j.url) { setMsg("Não consegui iniciar a conexão com o Canva: " + (j.erro || r.status)); return; }
+      window.location.href = j.url;
+    } catch (e: any) { setMsg("Não consegui iniciar a conexão com o Canva: " + (e?.message || e)); }
+  }
+  /** Gera a cena pelo Canva: abre o job, consulta até ficar pronto e baixa a imagem (ajustada ao tamanho da posição). */
+  async function cenaPeloCanva(prompt: string, refs: { base64: string; mime: string }[], largura: number, altura: number): Promise<Blob> {
+    const r = await fetch("/api/canva/cena", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, fotos: refs }) });
+    const j = await r.json();
+    if (!r.ok) { if (j.desconectado) setCanva((c) => ({ ...c, conectado: false, mensagem: j.erro })); throw new Error(String(j.erro || "o Canva não aceitou o pedido")); }
+    const fim = Date.now() + 180_000;
+    for (;;) {
+      if (Date.now() > fim) throw new Error("o Canva demorou demais para gerar a imagem");
+      await new Promise((ok) => setTimeout(ok, 3000));
+      const s = await (await fetch(`/api/canva/cena?job=${encodeURIComponent(j.jobId)}`)).json();
+      if (s.status === "falhou") throw new Error(String(s.mensagem || "o Canva não conseguiu gerar a imagem"));
+      if (s.status === "pronto") break;
+      if (s.erro) throw new Error(String(s.erro));
+    }
+    const img = await fetch(`/api/canva/cena?job=${encodeURIComponent(j.jobId)}&baixar=1`);
+    if (!img.ok) throw new Error("não consegui baixar a imagem pronta");
+    return await ajustarAoTamanho(await img.blob(), largura, altura);
+  }
   useEffect(() => { setResultados([]); carregarPadroes(marca); carregarModelos(marca); }, [marca]);
 
   // ───────── modelo (Padronização IA): medidas e benefícios ─────────
@@ -186,7 +231,18 @@ export default function GeradorImagensPage() {
       for (const p of ativos) {
         const base = { posicao: p.posicao, nome: p.nome || `Imagem ${p.posicao}`, arquivo: nomeDoArquivoImagem(sku, p), largura: p.largura, altura: p.altura };
         if (p.tipo === "cena_ia") {
-          if (!statusIA.configurado) { saida.push({ ...base, travada: statusIA.mensagem }); continue; }
+          if (canva.conectado) {
+            setOcupado(`Gerando “${base.nome}” no Canva… (pode levar até 1 minuto)`);
+            try {
+              const idx = fotosDaPosicao(p, fotos.length);
+              const refs = (idx.length ? idx : [0]).slice(0, 3).map((i) => fotoReduzida(fotos[i] ?? fotos[0]));
+              const blob = await cenaPeloCanva(p.prompt_ia, refs, p.largura, p.altura);
+              saida.push({ ...base, blob, url: URL.createObjectURL(blob) });
+            } catch (e: any) { saida.push({ ...base, erro: String(e?.message || e) }); }
+            setOcupado("Montando as imagens…");
+            continue;
+          }
+          if (!statusIA.configurado) { saida.push({ ...base, travada: canva.chaves ? "Conecte o Canva (botão no topo da página) para gerar a cena por IA." : statusIA.mensagem }); continue; }
           try {
             const ref = fotoReduzida(fotos[fotosDaPosicao(p, fotos.length)[0] ?? 0]);
             const r = await fetch("/api/gerar-cena-ia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: p.prompt_ia, fotoBase64: ref.base64, fotoMime: ref.mime, largura: p.largura, altura: p.altura }) });
@@ -286,8 +342,14 @@ export default function GeradorImagensPage() {
             <button type="button" data-gi-usar-nova disabled={!novaMarca.trim()} className={`${botao} bg-gray-700 hover:bg-gray-600 text-white`}
               onClick={() => { const m = novaMarca.trim(); setMarcas((l) => (l.some((x) => x.toLowerCase() === m.toLowerCase()) ? l : [...l, m])); setMarca(m); setNovaMarca(""); }}>Usar essa marca</button>
           </div>
-          <div data-gi-status-ia className={`text-xs ${statusIA.configurado ? "text-emerald-300" : "text-gray-400"}`}>
-            {statusIA.configurado ? "✅ " : "🔒 "}Cena de IA: {statusIA.mensagem}
+          <div data-gi-status-ia className={`text-xs flex flex-wrap items-center gap-3 ${canva.conectado || statusIA.configurado ? "text-emerald-300" : "text-gray-400"}`}>
+            <span>{canva.conectado || statusIA.configurado ? "✅ " : "🔒 "}Cena de IA: {canva.conectado ? "Canva conectado (gera pelo Canva, usando os créditos de IA da sua conta)." : canva.chaves ? "falta conectar o Canva." : statusIA.mensagem}</span>
+            {canva.chaves && !canva.conectado && (
+              <button type="button" data-gi-conectar-canva onClick={conectarCanva} className={`${botao} bg-sky-700 hover:bg-sky-600 text-white py-1 text-xs`}>Conectar ao Canva</button>
+            )}
+            {canva.chaves && canva.conectado && (
+              <button type="button" data-gi-reconectar-canva onClick={conectarCanva} className="text-gray-400 underline cursor-pointer">reconectar</button>
+            )}
           </div>
         </div>
 
@@ -493,7 +555,7 @@ export default function GeradorImagensPage() {
                     {p.tipo === "cena_ia" && (
                       <div><label className="text-xs text-gray-400 block mb-1">Instrução para a IA (como deve ser a cena)</label>
                         <textarea data-gi-prompt rows={3} value={p.prompt_ia} onChange={(e) => ajustar(p.posicao, { prompt_ia: e.target.value })} className={campo} />
-                        <p className="text-xs text-gray-500 mt-1">{statusIA.configurado ? "Serviço de imagem configurado." : "🔒 Travada por enquanto: o padrão já fica salvo e passa a valer quando o serviço de imagem for configurado."}</p></div>
+                        <p className="text-xs text-gray-500 mt-1">{canva.conectado || statusIA.configurado ? "Serviço de imagem configurado." : canva.chaves ? "🔒 Falta conectar o Canva (botão no topo da página): o padrão já fica salvo." : "🔒 Travada por enquanto: o padrão já fica salvo e passa a valer quando o serviço de imagem for configurado."}</p></div>
                     )}
                   </div>
                 ))}
