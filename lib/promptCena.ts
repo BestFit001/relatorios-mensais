@@ -16,9 +16,7 @@ Person: a natural, relaxed adult, aged 25 to 40, in a simple outfit in neutral o
 
 Scene: a real everyday-leisure location that fits how the product is used, with a sunny, fresh, Brazilian summer feel. Uncluttered background that does not compete with the print.
 
-Realism: it must look like an unretouched photograph taken with a real camera and a prime lens. Natural skin with visible pores, small imperfections and flyaway hairs, true-to-life colors, soft natural daylight, slight natural film grain, realistic depth of field, natural fabric wrinkles and shadows. No HDR look, no airbrushed or glossy skin, no over-sharpening, no glow, no cinematic color grading, no illustration or 3D render look. Square 1:1 composition.
-
-Avoid: any text, letters, logos added to the scene, watermarks, added labels or price tags; extra products; duplicated, distorted or simplified product; extra fingers or deformed hands; plastic-looking skin; collage; borders; heavy filters.`;
+Realism: it must look like an unretouched photograph taken with a real camera and a prime lens. Natural skin with visible pores, small imperfections and flyaway hairs, true-to-life colors, soft natural daylight, slight natural film grain, realistic depth of field, natural fabric wrinkles and shadows. No HDR look, no airbrushed or glossy skin, no over-sharpening, no glow, no cinematic color grading, no illustration or 3D render look. Square 1:1 composition.`;
 
 export interface DadosPrompt {
   titulo?: string | null; categoria?: string | null; descricao?: string | null;
@@ -61,4 +59,22 @@ export function preencherPrompt(texto: string, d: DadosPrompt): string {
     altura: num(d.altura), largura: num(d.largura), comprimento: num(d.comprimento),
   };
   return String(texto || "").replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_m, k: string) => (k.toLowerCase() in v ? v[k.toLowerCase()] || SEM_DADO : "")).replace(/[ \t]{2,}/g, " ").trim();
+}
+
+/** Prompt negativo padrão da Cena (IA): uma regra por linha. A API de imagem do Canva não tem campo de prompt negativo, então o app junta isto ao pedido como regras obrigatórias. */
+export const PROMPT_NEGATIVO_CENA = `Missing, blank, blurred, moved or altered brand label, patch, logo or text that exists on the product (it must appear exactly as in the reference images)
+Missing or simplified straps, shoulder pad, mesh, buckles, sliders, zippers or zipper pulls
+Changed, repainted, blurred, merged or missing parts of the print
+Changed product colors, proportions or shape
+Any text, letters, logos, watermarks or price tags added to the scene or to the clothes
+Extra products or accessories, duplicated or distorted product
+Extra fingers, deformed hands, plastic-looking skin
+Collage, borders, heavy filters, illustration or 3D render look`;
+
+/** Texto final enviado ao gerador: o prompt com os dados do produto + as proibições (uma por linha vira um item). */
+export function montarPromptCena(positivo: string, negativo: string | null | undefined, d: DadosPrompt): string {
+  const base = preencherPrompt(positivo, d);
+  const itens = preencherPrompt(String(negativo || ""), d).split("\n").map((l) => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
+  if (!itens.length) return base;
+  return `${base}\n\nMust NOT happen (hard requirements, never break these):\n${itens.map((x) => "- " + x).join("\n")}`;
 }

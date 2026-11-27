@@ -6,7 +6,7 @@ import { caixaDoCorpo, caixaTotal, calcularLayoutGuia, corDeFundo, criarMascara,
 import { classificarFundo, removerFundo } from "./recorteFundo";
 import { calcularLayoutBeneficios, colocarProduto, tipoIcone, type MedirTexto, type TipoIcone } from "./layoutBeneficios";
 import type { DadosImagemModelo } from "./beneficiosModelo";
-import { PROMPT_CENA_PESSOA } from "./promptCena";
+import { PROMPT_CENA_PESSOA, PROMPT_NEGATIVO_CENA } from "./promptCena";
 export type { CaixaFrac } from "./guiaMedidas";
 
 export type TipoImagem = "montagem" | "cena_ia";
@@ -36,6 +36,7 @@ export interface PadraoImagem {
   cor_texto: string;
   cor_destaque: string;
   prompt_ia: string;
+  prompt_negativo: string;   // Cena (IA): o que NÃO pode acontecer (uma regra por linha)
   ativo: boolean;
 }
 
@@ -55,13 +56,13 @@ export const ROTULO_LAYOUT: Record<LayoutImagem, string> = {
 
 /** Padrão inicial de uma marca nova: 4 montagens e 1 cena de IA (travada). */
 export function padraoInicial(marca: string): PadraoImagem[] {
-  const base = { marca, tipo: "montagem" as TipoImagem, fundo_modo: "liso" as FundoModo, largura: 1200, altura: 1200, fundo: "#FFFFFF", margem_pct: 8, formato: "jpg" as const, fotos: [] as number[], logo_url: null, logo_posicao: "inferior_direito" as LogoPosicao, logo_tamanho_pct: 14, textos: [] as string[], cor_texto: "#111111", cor_destaque: "#6D28D9", prompt_ia: "", ativo: true };
+  const base = { marca, tipo: "montagem" as TipoImagem, fundo_modo: "liso" as FundoModo, largura: 1200, altura: 1200, fundo: "#FFFFFF", margem_pct: 8, formato: "jpg" as const, fotos: [] as number[], logo_url: null, logo_posicao: "inferior_direito" as LogoPosicao, logo_tamanho_pct: 14, textos: [] as string[], cor_texto: "#111111", cor_destaque: "#6D28D9", prompt_ia: "", prompt_negativo: "", ativo: true };
   return [
     { ...base, posicao: 1, nome: "Principal", layout: "foto_unica", fotos: [1] },
     { ...base, posicao: 2, nome: "Detalhe", layout: "detalhe", margem_pct: 0, fotos: [2] },
     { ...base, posicao: 3, nome: "Colagem", layout: "colagem" },
     { ...base, posicao: 4, nome: "Medidas", layout: "medidas", fotos: [1] },
-    { ...base, posicao: 5, nome: "Cena (IA)", tipo: "cena_ia", layout: "foto_unica", fotos: [1], prompt_ia: PROMPT_CENA_PESSOA },
+    { ...base, posicao: 5, nome: "Cena (IA)", tipo: "cena_ia", layout: "foto_unica", fotos: [1], prompt_ia: PROMPT_CENA_PESSOA, prompt_negativo: PROMPT_NEGATIVO_CENA },
   ];
 }
 
@@ -97,7 +98,7 @@ export function normalizarPadrao(l: any): PadraoImagem {
     logo_tamanho_pct: num(l.logo_tamanho_pct, 14, 3, 50),
     textos: (Array.isArray(l.textos) ? l.textos : []).map((t: any) => String(t).trim()).filter(Boolean),
     cor_texto: cor(l.cor_texto, "#111111"), cor_destaque: cor(l.cor_destaque, "#6D28D9"),
-    prompt_ia: String(l.prompt_ia || ""), ativo: l.ativo !== false,
+    prompt_ia: String(l.prompt_ia || ""), prompt_negativo: String(l.prompt_negativo || ""), ativo: l.ativo !== false,
   };
 }
 

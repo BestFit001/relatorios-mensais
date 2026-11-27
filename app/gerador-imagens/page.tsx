@@ -11,7 +11,7 @@ import {
   type CaixaFrac, type Foto, type FundoModo, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
 import { extrairQuadros, quadrosIniciais, type Quadro } from "../../lib/videoQuadros";
-import { PROMPT_CENA_PESSOA, preencherPrompt } from "../../lib/promptCena";
+import { PROMPT_CENA_PESSOA, PROMPT_NEGATIVO_CENA, montarPromptCena } from "../../lib/promptCena";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
 import { MAX_BENEFICIOS, dividirTitulo, normalizarBeneficios, type BeneficioModelo } from "../../lib/beneficiosModelo";
 
@@ -239,9 +239,9 @@ export default function GeradorImagensPage() {
       setResultados((lista) => lista.map((x) => { if (x.posicao !== posicao) return x; if (x.url) URL.revokeObjectURL(x.url); return { ...x, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia, aviso: r.aviso }; }));
     } catch (e: any) { setMsg("Não consegui refazer a imagem de medidas: " + (e?.message || e)); }
   }
-  /** Preenche os campos {{titulo}}, {{beneficios}}, {{altura}}… do prompt com os dados do modelo escolhido (Padronização IA). */
-  function promptDaCena(texto: string): string {
-    return preencherPrompt(texto, {
+  /** Prompt final da cena: preenche {{titulo}}, {{beneficios}}, {{altura}}… com o modelo escolhido e junta o prompt negativo ("não pode acontecer"). */
+  function promptDaCena(p: PadraoImagem): string {
+    return montarPromptCena(p.prompt_ia, p.prompt_negativo, {
       titulo: modeloAtual?.titulo, categoria: modeloAtual?.categoria, descricao: modeloAtual?.descricao_complementar || modeloAtual?.descricao_seo,
       beneficios: dadosModelo.beneficios, altura: medidas.altura, largura: medidas.largura, comprimento: medidas.comprimento,
     });
@@ -266,7 +266,7 @@ export default function GeradorImagensPage() {
                 ...(idx.length ? idx : [0]).slice(0, 4).map((i) => fotoReduzida(fotos[i] ?? fotos[0])),
                 ...quadrosSel.map((i) => quadros[i]).filter(Boolean).map((q) => ({ base64: q.base64, mime: q.mime })),
               ];
-              const blob = await cenaPeloCanva(promptDaCena(p.prompt_ia), refs, p.largura, p.altura);
+              const blob = await cenaPeloCanva(promptDaCena(p), refs, p.largura, p.altura);
               saida.push({ ...base, blob, url: URL.createObjectURL(blob), aviso: !modeloAtual && /\{\{/.test(p.prompt_ia) ? "Sem modelo escolhido: a cena foi pedida sem título, benefícios e medidas do produto." : undefined });
             } catch (e: any) { saida.push({ ...base, erro: String(e?.message || e) }); }
             setOcupado("Montando as imagens…");
@@ -275,7 +275,7 @@ export default function GeradorImagensPage() {
           if (!statusIA.configurado) { saida.push({ ...base, travada: canva.chaves ? "Conecte o Canva (botão no topo da página) para gerar a cena por IA." : statusIA.mensagem }); continue; }
           try {
             const ref = fotoReduzida(fotos[fotosDaPosicao(p, fotos.length)[0] ?? 0]);
-            const r = await fetch("/api/gerar-cena-ia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: promptDaCena(p.prompt_ia), fotoBase64: ref.base64, fotoMime: ref.mime, largura: p.largura, altura: p.altura }) });
+            const r = await fetch("/api/gerar-cena-ia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: promptDaCena(p), fotoBase64: ref.base64, fotoMime: ref.mime, largura: p.largura, altura: p.altura }) });
             const j = await r.json();
             if (!r.ok) { saida.push({ ...base, travada: r.status === 423 ? String(j.mensagem || statusIA.mensagem) : undefined, erro: r.status === 423 ? undefined : String(j.erro || "falhou") }); continue; }
             const blob = await (await fetch(`data:${j.mime};base64,${j.base64}`)).blob();
@@ -607,8 +607,12 @@ export default function GeradorImagensPage() {
                     {p.tipo === "cena_ia" && (
                       <div><label className="text-xs text-gray-400 block mb-1">Instrução para a IA (como deve ser a cena)</label>
                         <textarea data-gi-prompt rows={3} value={p.prompt_ia} onChange={(e) => ajustar(p.posicao, { prompt_ia: e.target.value })} className={campo} />
+                        <label className="text-xs text-gray-400 block mt-3 mb-1">O que NÃO pode acontecer (prompt negativo, uma regra por linha)</label>
+                        <textarea data-gi-prompt-negativo rows={5} value={p.prompt_negativo} onChange={(e) => ajustar(p.posicao, { prompt_negativo: e.target.value })} className={campo}
+                          placeholder="Ex.: faltar a etiqueta/logo do produto; a alça sem a ombreira; a estampa alterada…" />
+                        <p className="text-xs text-gray-500 mt-1">O Canva não tem um campo de prompt negativo próprio: o app junta estas linhas ao pedido como “Must NOT happen”. Escreva em inglês, se puder, e diga também o que deve ficar (ex.: “the rubber brand label on the front must be visible”). Texto muito pequeno, como letras de uma etiqueta, o gerador nem sempre consegue reproduzir.</p>
                         <div className="flex flex-wrap items-center gap-3 mt-1">
-                          <button type="button" data-gi-prompt-pessoa onClick={() => ajustar(p.posicao, { prompt_ia: PROMPT_CENA_PESSOA })} className={`${botao} bg-gray-700 hover:bg-gray-600 text-white py-1 text-xs`}>Usar o prompt “pessoa usando o produto”</button>
+                          <button type="button" data-gi-prompt-pessoa onClick={() => ajustar(p.posicao, { prompt_ia: PROMPT_CENA_PESSOA, prompt_negativo: PROMPT_NEGATIVO_CENA })} className={`${botao} bg-gray-700 hover:bg-gray-600 text-white py-1 text-xs`}>Usar o prompt padrão “pessoa usando o produto” (com o negativo)</button>
                           <span className="text-xs text-gray-500">Os campos {"{{titulo}}"}, {"{{beneficios}}"}, {"{{altura}}"}… são preenchidos com o modelo escolhido na hora de gerar (escolha o modelo na aba Gerar).</span>
                         </div>
                         <p className="text-xs text-gray-500 mt-1">{canva.conectado || statusIA.configurado ? "Serviço de imagem configurado." : canva.chaves ? "🔒 Falta conectar o Canva (botão no topo da página): o padrão já fica salvo." : "🔒 Travada por enquanto: o padrão já fica salvo e passa a valer quando o serviço de imagem for configurado."}</p></div>
