@@ -54,8 +54,8 @@ export function padraoInicial(marca: string): PadraoImagem[] {
   const base = { marca, tipo: "montagem" as TipoImagem, fundo_modo: "liso" as FundoModo, largura: 1200, altura: 1200, fundo: "#FFFFFF", margem_pct: 8, formato: "jpg" as const, fotos: [] as number[], logo_url: null, logo_posicao: "inferior_direito" as LogoPosicao, logo_tamanho_pct: 14, textos: [] as string[], cor_texto: "#111111", cor_destaque: "#6D28D9", prompt_ia: "", ativo: true };
   return [
     { ...base, posicao: 1, nome: "Principal", layout: "foto_unica", fotos: [1] },
-    { ...base, posicao: 2, nome: "Detalhe", layout: "detalhe", fundo_modo: "ambientado", margem_pct: 0, fotos: [2] },
-    { ...base, posicao: 3, nome: "Colagem", layout: "colagem", fundo_modo: "ambientado" },
+    { ...base, posicao: 2, nome: "Detalhe", layout: "detalhe", margem_pct: 0, fotos: [2] },
+    { ...base, posicao: 3, nome: "Colagem", layout: "colagem" },
     { ...base, posicao: 4, nome: "Medidas", layout: "medidas", fotos: [1] },
     { ...base, posicao: 5, nome: "Cena (IA)", tipo: "cena_ia", layout: "foto_unica", fotos: [1], prompt_ia: "Foto de catálogo do produto em um ambiente real, iluminação natural, o produto idêntico à foto enviada (mesma estampa e cores)." },
   ];
