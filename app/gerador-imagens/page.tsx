@@ -289,7 +289,8 @@ export default function GeradorImagensPage() {
     if (!marca) return;
     setOcupado("Salvando o padrão…"); setMsg("");
     const ordenadas = renumerarPosicoes(padroes);
-    const linhas = ordenadas.map((p) => ({ ...p, id: undefined, marca, updated_at: new Date().toISOString() }));
+    // sem a chave "id": com `id: undefined` o supabase-js manda a coluna id como null e o banco recusa (not-null). O conflito é por marca+posição.
+    const linhas = ordenadas.map((p) => { const { id: _id, ...resto } = p; return { ...resto, marca, updated_at: new Date().toISOString() }; });
     let { error } = await supabase.from("padroes_imagens").upsert(linhas, { onConflict: "marca,posicao" });
     if (!error) ({ error } = await supabase.from("padroes_imagens").delete().eq("marca", marca).gt("posicao", ordenadas.length)); // imagens removidas da lista
     setOcupado("");
@@ -564,6 +565,7 @@ export default function GeradorImagensPage() {
                   <span className="text-xs text-gray-500">Cada imagem tem o seu layout, fotos e fundo. Salve o padrão para valer.</span>
                 </div>
                 <button type="button" data-gi-salvar onClick={salvarPadrao} disabled={!!ocupado} className={`${botao} bg-purple-700 hover:bg-purple-600 text-white px-6 py-2.5`}>Salvar padrão de {marcaAtual}</button>
+                {msg && <p data-gi-msg-salvar className="text-sm text-amber-200">{msg}</p>}
               </>
             )}
           </div>
