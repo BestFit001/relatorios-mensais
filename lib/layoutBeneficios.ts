@@ -4,6 +4,7 @@
 
 import type { Retangulo } from "./imagensAnuncio";
 import type { BeneficioModelo } from "./beneficiosModelo";
+import { colide, type Mascara } from "./guiaMedidas";
 
 export type MedirTexto = (texto: string, px: number, peso: number) => number;
 
@@ -24,6 +25,8 @@ export interface LayoutBeneficios {
   colunaX1: number;
   pilula: Retangulo;
   produto: Retangulo;
+  /** título (linhas e risco): o produto pode subir por trás deles, mas sem encostar */
+  obstaculos: Retangulo[];
   /** true quando coube sem passar do espaço (com a menor escala testada, ainda cabendo ou não) */
   coube: boolean;
 }
@@ -86,7 +89,11 @@ export function calcularLayoutBeneficios(e: EntradaBeneficios): LayoutBeneficios
     });
     const larguraTitulo = Math.max(w1, w2) * ajusteTitulo * esc;
     const prodY = temTitulo && larguraTitulo > larguraCol ? Math.round(y2 + 36 * k * esc) : produto.y;
-    const l: LayoutBeneficios = { esc, fontes: f, linha1: { x: margem, y: y1 }, linha2: { x: margem, y: y2 }, risco: { x: margem, y: riscoY, w: 107 * k * esc, esp: Math.max(3, 3.4 * k) }, itens, colunaX1, pilula, produto: { ...produto, y: prodY, h: Math.max(H - margem - prodY, 1) }, coube: cabe };
+    const obstaculos: Retangulo[] = [];
+    if (e.linha1) obstaculos.push({ x: margem, y: y1 - f.linha1 * 0.85, w: w1 * ajusteTitulo * esc, h: f.linha1 * 1.1 });
+    if (e.linha2) obstaculos.push({ x: margem, y: y2 - f.linha2 * 0.85, w: w2 * ajusteTitulo * esc, h: f.linha2 * 1.1 });
+    if (temTitulo) obstaculos.push({ x: margem, y: riscoY, w: 107 * k * esc, h: Math.max(3, 3.4 * k) });
+    const l: LayoutBeneficios = { esc, fontes: f, linha1: { x: margem, y: y1 }, linha2: { x: margem, y: y2 }, risco: { x: margem, y: riscoY, w: 107 * k * esc, esp: Math.max(3, 3.4 * k) }, itens, colunaX1, pilula, produto: { ...produto, y: prodY, h: Math.max(H - margem - prodY, 1) }, obstaculos, coube: cabe };
     melhor = l; if (cabe) return l;
   }
   return melhor!;
@@ -108,4 +115,25 @@ export function tipoIcone(texto: string): TipoIcone {
   if (/capacidade|espaco|litros|compartiment|bolso|organiz|cabe /.test(t)) return "caixa";
   if (/silicone|material|premium|resisten|qualidade|original|garantia|durabil|reforcad/.test(t)) return "escudo";
   return "check";
+}
+
+/**
+ * Onde desenhar o produto: o maior possível na área da direita (quase a imagem inteira, de cima a baixo), sem encostar no título nem nas
+ * colunas de benefícios. Usa a máscara do produto: a alça/tira fina pode subir ao lado do título; tenta centralizado e, se bater, encolhe
+ * ou encosta embaixo/à direita. Sem máscara útil, usa a caixa `l.produto`.
+ */
+export function colocarProduto(l: LayoutBeneficios, W: number, H: number, fotoW: number, fotoH: number, mascara: Mascara | null): Retangulo {
+  const k = Math.min(W, H) / 1254; const folga = 14 * k;
+  const x0 = l.colunaX1 + W * 0.012, y0 = H * 0.035, area: Retangulo = { x: x0, y: y0, w: W - x0 - W * 0.02, h: H * 0.93 };
+  if (!mascara || fotoW <= 0 || fotoH <= 0) return l.produto;
+  const fitMax = Math.min(area.w / fotoW, area.h / fotoH);
+  const ancoras: [number, number][] = [[0.5, 0.5], [0.5, 1], [1, 0.5], [1, 1], [0, 1], [0.5, 0]]; // horizontal, vertical (0 = esquerda/topo, 1 = direita/baixo)
+  for (let s = 1; s >= 0.5; s -= 0.02) {
+    const w = fotoW * fitMax * s, h = fotoH * fitMax * s;
+    for (const [ax, ay] of ancoras) {
+      const r: Retangulo = { x: area.x + (area.w - w) * ax, y: area.y + (area.h - h) * ay, w, h };
+      if (!l.obstaculos.some((o) => colide(mascara, r, o, folga))) return r;
+    }
+  }
+  return l.produto;
 }

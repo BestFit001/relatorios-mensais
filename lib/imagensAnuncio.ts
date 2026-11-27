@@ -2,9 +2,9 @@
 // inicial, a geometria (testável sem navegador) e a montagem no canvas do navegador com as fotos do produto.
 // Posição do tipo "cena_ia" = imagem criada por IA; fica TRAVADA até existir um serviço de imagem configurado (lib/provedorImagemIA.ts).
 
-import { caixaDoCorpo, calcularLayoutGuia, corDeFundo, criarMascara, textoMedida, type CaixaFrac, type LayoutGuia, type Mascara } from "./guiaMedidas";
+import { caixaDoCorpo, caixaTotal, calcularLayoutGuia, corDeFundo, criarMascara, textoMedida, type CaixaFrac, type LayoutGuia, type Mascara } from "./guiaMedidas";
 import { classificarFundo, removerFundo } from "./recorteFundo";
-import { calcularLayoutBeneficios, tipoIcone, type MedirTexto, type TipoIcone } from "./layoutBeneficios";
+import { calcularLayoutBeneficios, colocarProduto, tipoIcone, type MedirTexto, type TipoIcone } from "./layoutBeneficios";
 import type { DadosImagemModelo } from "./beneficiosModelo";
 export type { CaixaFrac } from "./guiaMedidas";
 
@@ -248,6 +248,23 @@ export function recortarFundoDaFoto(foto: Foto): { foto: Foto; removido: boolean
   CACHE_RECORTE.set(foto.img, saida); return saida;
 }
 
+/** Corta a sobra branca em volta do produto (sem mexer nos pixels; o fundo continua branco). Usado quando a foto já tem fundo branco mas o produto ocupa pouco dela. */
+const CACHE_APARADA = new WeakMap<object, Foto>();
+export function apararFoto(foto: Foto): Foto {
+  const guardado = CACHE_APARADA.get(foto.img); if (guardado) return guardado;
+  const caixa = caixaTotal(analisarFoto(foto).mascara); let saida = foto;
+  if (caixa) {
+    const folga = 0.02; const fx0 = Math.max(0, caixa.x0 - folga * (foto.altura / foto.largura)), fx1 = Math.min(1, caixa.x1 + folga * (foto.altura / foto.largura)), fy0 = Math.max(0, caixa.y0 - folga), fy1 = Math.min(1, caixa.y1 + folga);
+    if ((fx1 - fx0) * (fy1 - fy0) < 0.85) {
+      const sx = Math.round(fx0 * foto.largura), sy = Math.round(fy0 * foto.altura), sw = Math.max(1, Math.round((fx1 - fx0) * foto.largura)), sh = Math.max(1, Math.round((fy1 - fy0) * foto.altura));
+      const k = Math.min(1, 1600 / Math.max(sw, sh)); const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(sw * k)); c.height = Math.max(1, Math.round(sh * k));
+      const x = c.getContext("2d")!; x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(foto.img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+      saida = { img: c, largura: c.width, altura: c.height, jaBranco: true };
+    }
+  }
+  CACHE_APARADA.set(foto.img, saida); return saida;
+}
+
 /** Fundo ambientado de foto de estúdio: repete as bordas da foto para fora até a borda da imagem (sem faixa branca em volta). */
 export function estenderBordas(ctx: CanvasRenderingContext2D, foto: Foto, d: Retangulo, W: number, H: number) {
   const sw = foto.largura, sh = foto.altura, e = 2; const dr = d.x + d.w, db = d.y + d.h; const img = foto.img;
@@ -370,7 +387,8 @@ export function desenharBeneficios(ctx: CanvasRenderingContext2D, p: PadraoImage
   const d = dadosDosBeneficios(p, c);
   const l = calcularLayoutBeneficios({ W, H, linha1: d.linha1, linha2: d.linha2, beneficios: d.beneficios, medir });
   const cor = p.cor_texto, destaque = p.cor_destaque, f = l.fontes;
-  desenhar(ctx, foto, l.produto, "conter");
+  const caixa = colocarProduto(l, W, H, foto.largura, foto.altura, analisarFoto(foto).mascara);
+  ctx.drawImage(foto.img, caixa.x, caixa.y, caixa.w, caixa.h); // o produto é o maior possível sem encostar no título
   ctx.textBaseline = "alphabetic"; ctx.fillStyle = cor;
   if (d.linha1) { ctx.font = `300 ${f.linha1}px ${FONTE_BEN}`; ctx.fillText(d.linha1, l.linha1.x, l.linha1.y); }
   if (d.linha2) { ctx.font = `800 ${f.linha2}px ${FONTE_BEN}`; ctx.fillText(d.linha2, l.linha2.x, l.linha2.y); }
@@ -412,7 +430,7 @@ export function montarImagem(p: PadraoImagem, c: ContextoMontagem): HTMLCanvasEl
   const liso = p.fundo_modo === "liso" || p.layout === "beneficios"; // a imagem de benefícios é sempre em fundo branco
   c.avisoFundo = undefined;
   // fundo liso: tira o fundo da foto (a cor de fundo da posição aparece no lugar); ambientado: a foto fica como veio
-  const fotos = originais.map((f) => { if (!liso || f.jaBranco) return f; const r = recortarFundoDaFoto(f); if (!r.removido) c.avisoFundo = "Não consegui tirar o fundo de uma foto (o fundo dela não é liso): mantive como veio."; return r.foto; });
+  const fotos = originais.map((f) => { if (f.jaBranco) return p.layout === "beneficios" ? apararFoto(f) : f; if (!liso) return f; const r = recortarFundoDaFoto(f); if (!r.removido) c.avisoFundo = "Não consegui tirar o fundo de uma foto (o fundo dela não é liso): mantive como veio."; return r.foto; });
   const escala = Math.min(p.largura, p.altura) / 1200;
   const fonte = (px: number, peso = 600) => `${peso} ${Math.round(px * escala)}px "Helvetica Neue", Arial, sans-serif`;
 
