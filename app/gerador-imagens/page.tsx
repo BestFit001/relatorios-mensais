@@ -1,22 +1,26 @@
 "use client";
-// Gerador de imagens do anúncio: sobe até 5 fotos do produto, escolhe a marca e o app monta até 5 imagens no padrão cadastrado para a marca
-// (tabela padroes_imagens). As posições "cena de IA" ficam travadas até existir um serviço de geração de imagem configurado no servidor.
+// Gerador de imagens do anúncio: sobe as fotos do produto (até 10), escolhe a marca e o modelo (Padronização IA) e o app monta as imagens do padrão
+// cadastrado para a marca (tabela padroes_imagens: 5 no início, até 12). Medidas e benefícios vêm do modelo escolhido. As posições "cena de IA" ficam travadas até existir um serviço de geração de imagem configurado no servidor.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import Navbar from "../components/Navbar";
 import {
-  MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, padraoInicial,
+  MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, novaPosicao, padraoInicial, renumerarPosicoes,
   type CaixaFrac, type Foto, type FundoModo, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
+import { MAX_BENEFICIOS, dividirTitulo, normalizarBeneficios, type BeneficioModelo } from "../../lib/beneficiosModelo";
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 
 interface FotoEnviada extends Foto { url: string; nome: string }
 interface GuiaUsado { foto: number; corpo: CaixaFrac; limpo: boolean }
 interface Resultado { posicao: number; nome: string; arquivo: string; url?: string; blob?: Blob; largura: number; altura: number; travada?: string; erro?: string; guia?: GuiaUsado; aviso?: string }
+interface ModeloLinha { id: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; descricao_complementar: string | null; descricao_seo: string | null }
+interface DadosModelo { linha1: string; linha2: string; beneficios: BeneficioModelo[] }
+const DADOS_VAZIOS: DadosModelo = { linha1: "", linha2: "", beneficios: [] };
 interface AjusteMedidas { foto?: number; corpo?: CaixaFrac }
 interface StatusIA { configurado: boolean; mensagem: string }
 
@@ -51,6 +55,10 @@ export default function GeradorImagensPage() {
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [ajustes, setAjustes] = useState<Record<number, AjusteMedidas>>({});
   const logosCache = useRef(new Map<string, Foto>());
+  const [modelos, setModelos] = useState<ModeloLinha[]>([]);
+  const [modeloId, setModeloId] = useState("");
+  const [dadosModelo, setDadosModelo] = useState<DadosModelo>(DADOS_VAZIOS);
+  const [qtdBeneficios, setQtdBeneficios] = useState(4);
 
   async function carregarMarcas(manter?: string) {
     const [a, b] = await Promise.all([supabase.from("padroes_anuncios").select("marca"), supabase.from("padroes_imagens").select("marca")]);
@@ -70,7 +78,50 @@ export default function GeradorImagensPage() {
     carregarMarcas();
     fetch("/api/gerar-cena-ia").then((r) => r.json()).then((s) => setStatusIA({ configurado: !!s.configurado, mensagem: String(s.mensagem || "") })).catch(() => setStatusIA({ configurado: false, mensagem: "Travado: não consegui consultar o serviço de imagem." }));
   }, []);
-  useEffect(() => { setResultados([]); carregarPadroes(marca); }, [marca]);
+  useEffect(() => { setResultados([]); carregarPadroes(marca); carregarModelos(marca); }, [marca]);
+
+  // ───────── modelo (Padronização IA): medidas e benefícios ─────────
+  async function carregarModelos(m: string) {
+    setModeloId(""); setDadosModelo(DADOS_VAZIOS);
+    if (!m) { setModelos([]); return; }
+    const { data, error } = await supabase.from("padroes_anuncios").select("id,titulo,marca,sku,categoria,altura,largura,comprimento,descricao_complementar,descricao_seo").ilike("marca", m).order("titulo");
+    if (error) { setMsg("Não consegui ler os modelos da Padronização IA: " + error.message); setModelos([]); return; }
+    setModelos((data || []) as ModeloLinha[]);
+  }
+  const modeloAtual = useMemo(() => modelos.find((x) => x.id === modeloId) || null, [modelos, modeloId]);
+  async function escolherModelo(id: string) {
+    setModeloId(id); setMsg(""); setResultados([]);
+    const m = modelos.find((x) => x.id === id);
+    if (!m) { setDadosModelo(DADOS_VAZIOS); return; }
+    const num = (v: any) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+    setSku(m.sku || "");
+    setMedidas((a) => ({ ...a, altura: num(m.altura), largura: num(m.largura), comprimento: num(m.comprimento), capacidade: "" }));
+    const { data } = await supabase.from("modelos_imagem").select("*").eq("modelo_id", id).maybeSingle();
+    const t = dividirTitulo(m.titulo, m.marca);
+    if (data) {
+      setDadosModelo({ linha1: String((data as any).linha1 || t.linha1), linha2: String((data as any).linha2 || t.linha2), beneficios: normalizarBeneficios((data as any).beneficios) });
+      setMedidas((a) => ({ ...a, capacidade: String((data as any).capacidade || "") }));
+    } else setDadosModelo({ linha1: t.linha1, linha2: t.linha2, beneficios: [] });
+  }
+  async function sugerirBeneficios() {
+    if (!modeloAtual) return;
+    setOcupado("Lendo o modelo e sugerindo os benefícios…"); setMsg("");
+    try {
+      const r = await fetch("/api/beneficios-modelo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ titulo: modeloAtual.titulo, marca: modeloAtual.marca, categoria: modeloAtual.categoria, descricao: modeloAtual.descricao_complementar, descricao_seo: modeloAtual.descricao_seo, quantidade: qtdBeneficios }) });
+      const j = await r.json();
+      if (!r.ok) { setMsg(String(j.erro || "A IA não respondeu.")); if (j.sugestaoTitulo) setDadosModelo((d) => ({ ...d, linha1: d.linha1 || j.sugestaoTitulo.linha1, linha2: d.linha2 || j.sugestaoTitulo.linha2 })); }
+      else { setDadosModelo({ linha1: String(j.linha1 || ""), linha2: String(j.linha2 || ""), beneficios: normalizarBeneficios(j.beneficios) }); if (j.capacidade) setMedidas((a) => ({ ...a, capacidade: String(j.capacidade) })); }
+    } catch (e: any) { setMsg("Não consegui falar com a IA: " + (e?.message || e)); }
+    setOcupado("");
+  }
+  async function salvarDadosModelo() {
+    if (!modeloAtual) return;
+    setOcupado("Salvando no modelo…"); setMsg("");
+    const { error } = await supabase.from("modelos_imagem").upsert({ modelo_id: modeloAtual.id, linha1: dadosModelo.linha1.trim(), linha2: dadosModelo.linha2.trim(), capacidade: String(medidas.capacidade || "").trim(), beneficios: dadosModelo.beneficios.filter((b) => b.titulo.trim()), updated_at: new Date().toISOString() }, { onConflict: "modelo_id" });
+    setOcupado("");
+    setMsg(error ? "Não consegui salvar no modelo: " + error.message : "Título, capacidade e benefícios salvos no modelo. Da próxima vez é só escolher o modelo.");
+  }
+  function mudarBeneficio(i: number, campo2: keyof BeneficioModelo, v: string) { setDadosModelo((d) => ({ ...d, beneficios: d.beneficios.map((b, k) => (k === i ? { ...b, [campo2]: v } : b)) })); }
 
   // ───────── fotos ─────────
   async function escolherFotos(e: React.ChangeEvent<HTMLInputElement>) {
@@ -90,6 +141,7 @@ export default function GeradorImagensPage() {
   function removerFoto(i: number) { setFotos((f) => { URL.revokeObjectURL(f[i].url); return f.filter((_, k) => k !== i); }); setResultados([]); }
 
   async function buscarMedidas() {
+    if (modeloAtual) return; // com modelo escolhido, as medidas vêm dele
     const pai = chavePaiDe({ sku }); if (!pai) return;
     const { data } = await supabase.from("dimensoes_peso").select("*").ilike("sku_pai", pai).limit(1);
     const d: any = data?.[0];
@@ -107,7 +159,7 @@ export default function GeradorImagensPage() {
   async function montarUma(p: PadraoImagem, ajuste?: AjusteMedidas): Promise<{ blob: Blob; guia?: GuiaUsado; semLogo: boolean; aviso?: string }> {
     const logo = await carregarLogo(p);
     const usado: PadraoImagem = p.layout === "medidas" && ajuste?.foto ? { ...p, fotos: [ajuste.foto] } : p;
-    const ctxM = { fotos, logo, medidas, caixaProduto: ajuste?.corpo || null } as Parameters<typeof montarImagem>[1];
+    const ctxM = { fotos, logo, medidas, caixaProduto: ajuste?.corpo || null, modelo: { ...dadosModelo, marca: modeloAtual?.marca || marca } } as Parameters<typeof montarImagem>[1];
     const canvas = montarImagem(usado, ctxM);
     const blob = await canvasParaBlob(canvas, p.formato);
     const g = ctxM.layoutGuia;
@@ -170,11 +222,20 @@ export default function GeradorImagensPage() {
   // ───────── padrão da marca ─────────
   function ajustar(posicao: number, mudanca: Partial<PadraoImagem>) { setPadroes((l) => l.map((p) => (p.posicao === posicao ? { ...p, ...mudanca } : p))); }
   function criarPadraoInicial() { if (marca) setPadroes(padraoInicial(marca)); }
+  function adicionarPosicao() { const n = novaPosicao(marca, padroes); if (!n) { setMsg(`O máximo é ${MAX_POSICOES} imagens por marca.`); return; } setMsg(""); setPadroes((l) => [...l, n]); }
+  function removerPosicao(posicao: number) {
+    const p = padroes.find((x) => x.posicao === posicao); if (!p) return;
+    if (padroes.length <= 1) { setMsg("A marca precisa de pelo menos uma imagem."); return; }
+    if (!confirm(`Tirar a imagem ${posicao}${p.nome ? ` (${p.nome})` : ""} do padrão? As seguintes sobem uma posição. Vale quando você salvar.`)) return;
+    setPadroes((l) => renumerarPosicoes(l.filter((x) => x.posicao !== posicao)));
+  }
   async function salvarPadrao() {
     if (!marca) return;
     setOcupado("Salvando o padrão…"); setMsg("");
-    const linhas = padroes.map((p) => ({ ...p, id: undefined, marca, updated_at: new Date().toISOString() }));
-    const { error } = await supabase.from("padroes_imagens").upsert(linhas, { onConflict: "marca,posicao" });
+    const ordenadas = renumerarPosicoes(padroes);
+    const linhas = ordenadas.map((p) => ({ ...p, id: undefined, marca, updated_at: new Date().toISOString() }));
+    let { error } = await supabase.from("padroes_imagens").upsert(linhas, { onConflict: "marca,posicao" });
+    if (!error) ({ error } = await supabase.from("padroes_imagens").delete().eq("marca", marca).gt("posicao", ordenadas.length)); // imagens removidas da lista
     setOcupado("");
     if (error) { setMsg("Não consegui salvar o padrão: " + error.message); return; }
     setMsg(`Padrão da marca ${marca} salvo.`); carregarMarcas(marca); carregarPadroes(marca);
@@ -255,13 +316,20 @@ export default function GeradorImagensPage() {
                 </div>
               )}
               <div className="grid md:grid-cols-3 gap-3">
+                <div className="md:col-span-2">
+                  <label className="text-xs text-gray-400 block mb-1">Modelo (cadastrado na Padronização IA): traz as medidas e os benefícios</label>
+                  <select data-gi-modelo value={modeloId} onChange={(e) => escolherModelo(e.target.value)} disabled={!marca} className={campo}>
+                    <option value="">{!marca ? "Escolha a marca primeiro" : modelos.length ? "Escolha o modelo…" : "Essa marca não tem modelos na Padronização IA"}</option>
+                    {modelos.map((m) => <option key={m.id} value={m.id}>{m.titulo}{m.sku ? ` (SKU ${m.sku})` : ""}</option>)}
+                  </select>
+                </div>
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">SKU (nome dos arquivos)</label>
                   <input data-gi-sku value={sku} onChange={(e) => setSku(e.target.value)} onBlur={buscarMedidas} placeholder="ex.: 22819" className={campo} />
                 </div>
               </div>
               <div>
-                <p className="text-xs text-gray-400 mb-1">Medidas da imagem de medidas (vêm da aba Dimensões e Peso quando o SKU está lá; você pode editar)</p>
+                <p className="text-xs text-gray-400 mb-1">Medidas da imagem de medidas (vêm do modelo escolhido; sem modelo, da aba Dimensões e Peso pelo SKU; você pode editar)</p>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {([["altura", "Altura (cm)"], ["largura", "Largura (cm)"], ["comprimento", "Comprimento (cm)"]] as const).map(([k, rot]) => (
                     <input key={k} data-gi-medida={k} inputMode="decimal" placeholder={rot} value={medidas[k] ?? ""}
@@ -270,6 +338,36 @@ export default function GeradorImagensPage() {
                   <input data-gi-medida="capacidade" placeholder="Capacidade (opcional, ex.: 8 Litros)" value={medidas.capacidade ?? ""} onChange={(e) => setMedidas((m) => ({ ...m, capacidade: e.target.value }))} className={campo} />
                 </div>
               </div>
+              {modeloAtual && (
+                <div data-gi-beneficios className="border border-gray-800 rounded-xl p-4 space-y-3">
+                  <div className="flex flex-wrap items-center gap-3 justify-between">
+                    <p className="text-sm font-semibold text-purple-300">Imagem de benefícios (usa o layout “Benefícios do modelo” do padrão da marca)</p>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300">
+                      <label className="flex items-center gap-1">Quantos benefícios
+                        <select data-gi-qtd-beneficios value={qtdBeneficios} onChange={(e) => setQtdBeneficios(Number(e.target.value))} className="bg-[#0d0f18] border border-gray-700 rounded px-2 py-1">
+                          {Array.from({ length: MAX_BENEFICIOS }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select></label>
+                      <button type="button" data-gi-sugerir onClick={sugerirBeneficios} disabled={!!ocupado} className={`${botao} bg-purple-700 hover:bg-purple-600 text-white py-1.5`}>Sugerir benefícios com IA</button>
+                      <button type="button" data-gi-salvar-modelo onClick={salvarDadosModelo} disabled={!!ocupado} className={`${botao} bg-gray-700 hover:bg-gray-600 text-white py-1.5`}>Salvar no modelo</button>
+                    </div>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-3">
+                    <input data-gi-linha1 value={dadosModelo.linha1} onChange={(e) => setDadosModelo((d) => ({ ...d, linha1: e.target.value }))} placeholder="Título, linha 1 (fina) — ex.: Touca" className={campo} />
+                    <input data-gi-linha2 value={dadosModelo.linha2} onChange={(e) => setDadosModelo((d) => ({ ...d, linha2: e.target.value }))} placeholder="Título, linha 2 (grossa) — ex.: Flat Swim Cap" className={campo} />
+                  </div>
+                  {dadosModelo.beneficios.map((b, i) => (
+                    <div key={i} data-gi-beneficio={i} className="grid md:grid-cols-[1fr_2fr_auto] gap-2">
+                      <input data-gi-ben-titulo value={b.titulo} onChange={(e) => mudarBeneficio(i, "titulo", e.target.value)} placeholder="Título do benefício" className={campo} />
+                      <input data-gi-ben-descricao value={b.descricao} onChange={(e) => mudarBeneficio(i, "descricao", e.target.value)} placeholder="Descrição curta" className={campo} />
+                      <button type="button" onClick={() => setDadosModelo((d) => ({ ...d, beneficios: d.beneficios.filter((_, k) => k !== i) }))} className="text-xs text-red-300 hover:text-red-200 cursor-pointer px-2" aria-label="Tirar benefício">Tirar</button>
+                    </div>
+                  ))}
+                  {dadosModelo.beneficios.length < MAX_BENEFICIOS && (
+                    <button type="button" data-gi-add-beneficio onClick={() => setDadosModelo((d) => ({ ...d, beneficios: [...d.beneficios, { titulo: "", descricao: "" }] }))} className="text-xs text-purple-300 hover:text-purple-200 cursor-pointer">+ Adicionar benefício à mão</button>
+                  )}
+                  {dadosModelo.beneficios.length === 0 && <p className="text-xs text-gray-500">Ainda sem benefícios neste modelo: clique em “Sugerir benefícios com IA” (a IA só reorganiza o que está na descrição do modelo) ou escreva à mão. Depois salve no modelo.</p>}
+                </div>
+              )}
               <button type="button" data-gi-gerar onClick={gerar} disabled={!!ocupado || !marca || !fotos.length}
                 className={`${botao} bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5`}>Gerar {ativosQtd || ""} imagem(ns)</button>
             </div>
@@ -339,6 +437,7 @@ export default function GeradorImagensPage() {
                         <option value="cena_ia">Cena criada por IA (travada)</option>
                       </select>
                       <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" checked={p.ativo} onChange={(e) => ajustar(p.posicao, { ativo: e.target.checked })} /> Gerar esta imagem</label>
+                      <button type="button" data-gi-remover-posicao onClick={() => removerPosicao(p.posicao)} className="ml-auto text-xs text-red-300 hover:text-red-200 cursor-pointer">Tirar esta imagem</button>
                     </div>
                     <div className="grid md:grid-cols-4 gap-3">
                       {p.tipo === "montagem" && (
@@ -361,7 +460,7 @@ export default function GeradorImagensPage() {
                       <div><label className="text-xs text-gray-400 block mb-1">Formato</label>
                         <select value={p.formato} onChange={(e) => ajustar(p.posicao, { formato: e.target.value as any })} className={campo}><option value="jpg">JPG</option><option value="png">PNG</option></select></div>
                       <div className="md:col-span-2"><label className="text-xs text-gray-400 block mb-1">Fotos usadas (vazio = automático)</label>
-                        <div className="flex gap-3 text-sm">{[1, 2, 3, 4, 5].map((n) => (
+                        <div className="flex flex-wrap gap-3 text-sm">{Array.from({ length: MAX_FOTOS }, (_, i) => i + 1).map((n) => (
                           <label key={n} className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={p.fotos.includes(n)}
                             onChange={(e) => ajustar(p.posicao, { fotos: e.target.checked ? [...p.fotos, n].sort() : p.fotos.filter((x) => x !== n) })} />{n}</label>
                         ))}</div></div>
@@ -398,6 +497,10 @@ export default function GeradorImagensPage() {
                     )}
                   </div>
                 ))}
+                <div className="flex flex-wrap items-center gap-3">
+                  <button type="button" data-gi-add-posicao onClick={adicionarPosicao} disabled={padroes.length >= MAX_POSICOES} className={`${botao} bg-gray-700 hover:bg-gray-600 text-white`}>+ Adicionar imagem ({padroes.length}/{MAX_POSICOES})</button>
+                  <span className="text-xs text-gray-500">Cada imagem tem o seu layout, fotos e fundo. Salve o padrão para valer.</span>
+                </div>
                 <button type="button" data-gi-salvar onClick={salvarPadrao} disabled={!!ocupado} className={`${botao} bg-purple-700 hover:bg-purple-600 text-white px-6 py-2.5`}>Salvar padrão de {marcaAtual}</button>
               </>
             )}

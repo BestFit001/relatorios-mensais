@@ -4,6 +4,8 @@
 
 import { caixaDoCorpo, calcularLayoutGuia, corDeFundo, criarMascara, textoMedida, type CaixaFrac, type LayoutGuia, type Mascara } from "./guiaMedidas";
 import { classificarFundo, removerFundo } from "./recorteFundo";
+import { calcularLayoutBeneficios, tipoIcone, type MedirTexto, type TipoIcone } from "./layoutBeneficios";
+import type { DadosImagemModelo } from "./beneficiosModelo";
 export type { CaixaFrac } from "./guiaMedidas";
 
 export type TipoImagem = "montagem" | "cena_ia";
@@ -38,15 +40,16 @@ export interface PadraoImagem {
 
 export interface MedidasProduto { altura?: number | null; largura?: number | null; comprimento?: number | null; peso?: number | null; /** texto livre, ex.: "8 Litros" */ capacidade?: string | null }
 
-export const MAX_FOTOS = 5;
-export const MAX_POSICOES = 5;
+/** Fotos do produto que podem ser enviadas de uma vez e imagens (posições) que cada marca pode ter. O padrão inicial da marca tem 5. */
+export const MAX_FOTOS = 10;
+export const MAX_POSICOES = 12;
 
 export const ROTULO_LAYOUT: Record<LayoutImagem, string> = {
   foto_unica: "Foto inteira (fundo liso)",
   detalhe: "Detalhe (foto ampliada, sem sobras)",
   colagem: "Colagem de fotos",
   medidas: "Foto com guia de medidas (setas)",
-  beneficios: "Foto + textos de benefícios",
+  beneficios: "Benefícios do modelo (título, ícones e produto em fundo branco)",
 };
 
 /** Padrão inicial de uma marca nova: 4 montagens e 1 cena de IA (travada). */
@@ -59,6 +62,19 @@ export function padraoInicial(marca: string): PadraoImagem[] {
     { ...base, posicao: 4, nome: "Medidas", layout: "medidas", fotos: [1] },
     { ...base, posicao: 5, nome: "Cena (IA)", tipo: "cena_ia", layout: "foto_unica", fotos: [1], prompt_ia: "Foto de catálogo do produto em um ambiente real, iluminação natural, o produto idêntico à foto enviada (mesma estampa e cores)." },
   ];
+}
+
+/** Próxima imagem do padrão da marca: layout "foto inteira", fundo branco e o logo igual ao da primeira posição. */
+export function novaPosicao(marca: string, atuais: PadraoImagem[]): PadraoImagem | null {
+  if (atuais.length >= MAX_POSICOES) return null;
+  const usadas = new Set(atuais.map((p) => p.posicao)); let posicao = 1; while (usadas.has(posicao)) posicao++;
+  const base = padraoInicial(marca)[0]; const primeira = [...atuais].sort((a, b) => a.posicao - b.posicao)[0];
+  return { ...base, posicao, nome: `Imagem ${posicao}`, layout: "foto_unica", fotos: [], logo_url: primeira?.logo_url ?? null, logo_posicao: primeira?.logo_posicao ?? base.logo_posicao, logo_tamanho_pct: primeira?.logo_tamanho_pct ?? base.logo_tamanho_pct, id: undefined };
+}
+
+/** Deixa as posições em ordem e numeradas 1..n (sem buracos), como os nomes dos arquivos esperam. */
+export function renumerarPosicoes(lista: PadraoImagem[]): PadraoImagem[] {
+  return [...lista].sort((a, b) => a.posicao - b.posicao).slice(0, MAX_POSICOES).map((p, i) => ({ ...p, posicao: i + 1 }));
 }
 
 /** Linha do banco -> padrão (garante tipos e valores válidos). */
@@ -185,22 +201,14 @@ function desenhar(ctx: CanvasRenderingContext2D, foto: Foto, caixa: Retangulo, m
   ctx.drawImage(foto.img, e.origem.x, e.origem.y, e.origem.w, e.origem.h, e.destino.x, e.destino.y, e.destino.w, e.destino.h);
 }
 
-function quebrarTexto(ctx: CanvasRenderingContext2D, texto: string, larguraMax: number): string[] {
-  const palavras = texto.split(/\s+/).filter(Boolean); const linhas: string[] = []; let atual = "";
-  for (const p of palavras) {
-    const teste = atual ? atual + " " + p : p;
-    if (ctx.measureText(teste).width <= larguraMax || !atual) atual = teste; else { linhas.push(atual); atual = p; }
-  }
-  if (atual) linhas.push(atual);
-  return linhas;
-}
-
 export interface ContextoMontagem {
   fotos: Foto[]; logo?: Foto | null; medidas?: MedidasProduto;
   /** corpo do produto ajustado à mão (frações da foto); vazio = detecção automática */
   caixaProduto?: CaixaFrac | null;
   /** preenchido por montarImagem na imagem de medidas */
   layoutGuia?: LayoutGuia;
+  /** dados do modelo (Padronização IA) para a imagem de benefícios: título em 2 linhas e benefícios; `marca` vai na pílula do rodapé */
+  modelo?: (Partial<DadosImagemModelo> & { marca?: string }) | null;
   /** preenchido por montarImagem: aviso quando o fundo de alguma foto não pôde ser tirado */
   avisoFundo?: string;
 }
@@ -314,18 +322,94 @@ export function desenharGuiaMedidas(ctx: CanvasRenderingContext2D, p: PadraoImag
 }
 
 
+// ───────────── imagem de benefícios (igual ao modelo: título, benefícios com ícone, pílula da marca e produto grande) ─────────────
+
+const FONTE_BEN = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+
+function desenharIcone(ctx: CanvasRenderingContext2D, tipo: TipoIcone, cx: number, cy: number, r: number, cor: string) {
+  const u = r * 0.44; ctx.save(); ctx.translate(cx, cy); ctx.strokeStyle = cor; ctx.fillStyle = cor; ctx.lineWidth = Math.max(2, r * 0.05); ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const caminho = (pts: [number, number][], fechar = false) => { ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * u, y * u) : ctx.moveTo(x * u, y * u))); if (fechar) ctx.closePath(); ctx.stroke(); };
+  if (tipo === "escudo") {
+    ctx.beginPath(); ctx.moveTo(0, -u); ctx.lineTo(0.85 * u, -0.55 * u); ctx.lineTo(0.85 * u, 0.1 * u); ctx.quadraticCurveTo(0.85 * u, 0.65 * u, 0, u); ctx.quadraticCurveTo(-0.85 * u, 0.65 * u, -0.85 * u, 0.1 * u); ctx.lineTo(-0.85 * u, -0.55 * u); ctx.closePath(); ctx.stroke();
+    caminho([[-0.4, 0.05], [-0.08, 0.37], [0.45, -0.25]]);
+  } else if (tipo === "setas") {
+    for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      caminho([[sx * 0.2, sy * 0.2], [sx * 0.95, sy * 0.95]]); caminho([[sx * 0.95 - sx * 0.42, sy * 0.95], [sx * 0.95, sy * 0.95], [sx * 0.95, sy * 0.95 - sy * 0.42]]);
+    }
+  } else if (tipo === "ondas") {
+    for (const i of [-1, 0, 1]) { ctx.beginPath(); for (let a = 0; a <= 40; a++) { const x = (-1 + a / 20) * u; const y = i * 0.55 * u + Math.sin((a / 40) * Math.PI * 2.4) * 0.2 * u; a ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); }
+  } else if (tipo === "cabeca") {
+    ctx.beginPath(); ctx.arc(0, -0.3 * u, 0.55 * u, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(0, 1.0 * u, 0.9 * u, 0.62 * u, 0, Math.PI, Math.PI * 2); ctx.stroke();
+  } else if (tipo === "termometro") {
+    ctx.beginPath(); ctx.moveTo(-0.22 * u, 0.3 * u); ctx.lineTo(-0.22 * u, -0.7 * u); ctx.arc(0, -0.7 * u, 0.22 * u, Math.PI, 0); ctx.lineTo(0.22 * u, 0.3 * u); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0.62 * u, 0.42 * u, -Math.PI * 0.72, Math.PI * 1.72, false); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 0.55 * u); ctx.lineTo(0, -0.35 * u); ctx.stroke();
+  } else if (tipo === "caixa") {
+    caminho([[-0.85, -0.45], [0.85, -0.45], [0.85, 0.85], [-0.85, 0.85]], true); caminho([[-0.85, -0.05], [0.85, -0.05]]); caminho([[-0.3, -0.45], [-0.3, -0.85], [0.3, -0.85], [0.3, -0.45]]);
+  } else {
+    ctx.beginPath(); ctx.arc(0, 0, 0.85 * u, 0, Math.PI * 2); ctx.stroke(); caminho([[-0.38, 0.02], [-0.08, 0.32], [0.45, -0.3]]);
+  }
+  ctx.restore();
+}
+
+function retanguloArredondado(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const rr = Math.min(r, w / 2, h / 2); ctx.beginPath(); ctx.moveTo(x + rr, y); ctx.arcTo(x + w, y, x + w, y + h, rr); ctx.arcTo(x + w, y + h, x, y + h, rr); ctx.arcTo(x, y + h, x, y, rr); ctx.arcTo(x, y, x + w, y, rr); ctx.closePath();
+}
+
+/** Benefícios e título: os do modelo escolhido; sem modelo, usa as linhas de texto da posição (só título, sem descrição). */
+export function dadosDosBeneficios(p: PadraoImagem, c: ContextoMontagem) {
+  const m = c.modelo; const doModelo = (m?.beneficios || []).filter((b) => b && b.titulo);
+  const beneficios = doModelo.length ? doModelo : p.textos.filter(Boolean).map((t) => ({ titulo: t, descricao: "" }));
+  return { linha1: m?.linha1 || "", linha2: m?.linha2 || "", beneficios, marca: m?.marca || "" };
+}
+
+export function desenharBeneficios(ctx: CanvasRenderingContext2D, p: PadraoImagem, foto: Foto, c: ContextoMontagem) {
+  const W = p.largura, H = p.altura; const k = Math.min(W, H) / 1254;
+  const medir: MedirTexto = (t, px, peso) => { ctx.font = `${peso} ${px}px ${FONTE_BEN}`; return ctx.measureText(t).width; };
+  const d = dadosDosBeneficios(p, c);
+  const l = calcularLayoutBeneficios({ W, H, linha1: d.linha1, linha2: d.linha2, beneficios: d.beneficios, medir });
+  const cor = p.cor_texto, destaque = p.cor_destaque, f = l.fontes;
+  desenhar(ctx, foto, l.produto, "conter");
+  ctx.textBaseline = "alphabetic"; ctx.fillStyle = cor;
+  if (d.linha1) { ctx.font = `300 ${f.linha1}px ${FONTE_BEN}`; ctx.fillText(d.linha1, l.linha1.x, l.linha1.y); }
+  if (d.linha2) { ctx.font = `800 ${f.linha2}px ${FONTE_BEN}`; ctx.fillText(d.linha2, l.linha2.x, l.linha2.y); }
+  if (d.linha1 || d.linha2) { ctx.fillStyle = destaque; ctx.fillRect(l.risco.x, l.risco.y, l.risco.w, l.risco.esp); }
+  l.itens.forEach((it, i) => {
+    const b = d.beneficios[i];
+    ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.14)"; ctx.shadowBlur = 16 * k; ctx.shadowOffsetY = 4 * k; ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(it.circulo.cx, it.circulo.cy, it.circulo.r, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.strokeStyle = "#ececec"; ctx.lineWidth = Math.max(1, k); ctx.beginPath(); ctx.arc(it.circulo.cx, it.circulo.cy, it.circulo.r, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    desenharIcone(ctx, tipoIcone(b.titulo + " " + b.descricao), it.circulo.cx, it.circulo.cy, it.circulo.r, "#1f1f1f");
+    ctx.fillStyle = cor; ctx.font = `700 ${f.titulo}px ${FONTE_BEN}`; it.titulo.linhas.forEach((ln, j) => ctx.fillText(ln, it.xTexto, it.titulo.ys[j]));
+    ctx.fillStyle = "#4a4a4a"; ctx.font = `400 ${f.descricao}px ${FONTE_BEN}`; it.descricao.linhas.forEach((ln, j) => ctx.fillText(ln, it.xTexto, it.descricao.ys[j]));
+    if (it.separador !== null) { ctx.fillStyle = "#e6e6e6"; ctx.fillRect(l.pilula.x, it.separador, l.colunaX1 - l.pilula.x, Math.max(1, k)); }
+  });
+  // pílula do rodapé: logo (ou nome da marca) • Produto original
+  const pl = l.pilula; const marca = d.marca.trim();
+  if (marca || c.logo) {
+    ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.13)"; ctx.shadowBlur = 18 * k; ctx.shadowOffsetY = 4 * k; ctx.fillStyle = "#ffffff"; retanguloArredondado(ctx, pl.x, pl.y, pl.w, pl.h, pl.h / 2); ctx.fill(); ctx.restore();
+    let x = pl.x + pl.h * 0.55; const yb = pl.y + pl.h / 2;
+    if (c.logo) { const lh = pl.h * 0.58, lw = (c.logo.largura / c.logo.altura) * lh; ctx.drawImage(c.logo.img, x, yb - lh / 2, lw, lh); x += lw + pl.h * 0.3; }
+    else { ctx.fillStyle = cor; ctx.font = `600 ${f.rodape}px ${FONTE_BEN}`; ctx.textBaseline = "middle"; ctx.fillText(marca, x, yb + 1); x += medir(marca, f.rodape, 600) + pl.h * 0.3; }
+    ctx.fillStyle = destaque; ctx.beginPath(); ctx.arc(x, yb, Math.max(3, 4 * k), 0, Math.PI * 2); ctx.fill(); x += pl.h * 0.28;
+    ctx.fillStyle = cor; ctx.font = `400 ${f.rodape * 0.92}px ${FONTE_BEN}`; ctx.textBaseline = "middle"; ctx.fillText("Produto original", x, yb + 1); ctx.textBaseline = "alphabetic";
+  }
+  return l;
+}
+
 /** Monta UMA imagem do padrão (tipo "montagem"). Devolve o canvas pronto. */
 export function montarImagem(p: PadraoImagem, c: ContextoMontagem): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = p.largura; canvas.height = p.altura;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("o navegador não liberou o canvas");
-  ctx.fillStyle = p.fundo; ctx.fillRect(0, 0, p.largura, p.altura);
+  ctx.fillStyle = p.layout === "beneficios" ? "#FFFFFF" : p.fundo; ctx.fillRect(0, 0, p.largura, p.altura);
   ctx.imageSmoothingQuality = "high";
   const util = areaUtil(p.largura, p.altura, p.margem_pct);
   const idx = fotosDaPosicao(p, c.fotos.length);
   const originais = idx.map((i) => c.fotos[i]).filter(Boolean);
-  const liso = p.fundo_modo === "liso";
+  const liso = p.fundo_modo === "liso" || p.layout === "beneficios"; // a imagem de benefícios é sempre em fundo branco
   c.avisoFundo = undefined;
   // fundo liso: tira o fundo da foto (a cor de fundo da posição aparece no lugar); ambientado: a foto fica como veio
   const fotos = originais.map((f) => { if (!liso || f.jaBranco) return f; const r = recortarFundoDaFoto(f); if (!r.removido) c.avisoFundo = "Não consegui tirar o fundo de uma foto (o fundo dela não é liso): mantive como veio."; return r.foto; });
@@ -346,28 +430,11 @@ export function montarImagem(p: PadraoImagem, c: ContextoMontagem): HTMLCanvasEl
     } else if (p.layout === "medidas") {
       c.layoutGuia = desenharGuiaMedidas(ctx, p, fotos[0], c.medidas || {}, c.caixaProduto, !liso);
     } else {
-      // benefícios: foto à esquerda (58%) e lista de textos à direita
-      const gap = Math.round(24 * escala);
-      const larguraFoto = Math.round(util.w * 0.58);
-      desenhar(ctx, fotos[0], { x: util.x, y: util.y, w: larguraFoto, h: util.h }, "conter");
-      const painel: Retangulo = { x: util.x + larguraFoto + gap, y: util.y, w: util.w - larguraFoto - gap, h: util.h };
-      ctx.textBaseline = "top";
-      const itens = p.textos.map((t) => ({ texto: t }));
-      if (itens.length) {
-        const alturaItem = Math.min(painel.h / itens.length, 190 * escala);
-        const topo = painel.y + (painel.h - alturaItem * itens.length) / 2;
-        itens.forEach((it, i) => {
-          const y = topo + i * alturaItem;
-          ctx.fillStyle = p.cor_destaque; ctx.fillRect(painel.x, y + 8 * escala, 8 * escala, alturaItem - 28 * escala);
-          const x = painel.x + 28 * escala; const larg = painel.w - 28 * escala;
-          ctx.font = fonte(40, 700); ctx.fillStyle = p.cor_texto;
-          quebrarTexto(ctx, it.texto, larg).slice(0, 3).forEach((ln, k) => ctx.fillText(ln, x, y + 8 * escala + k * 48 * escala));
-        });
-      }
+      desenharBeneficios(ctx, p, fotos[0], c);
     }
   }
 
-  if (c.logo) {
+  if (c.logo && p.layout !== "beneficios") { // na imagem de benefícios o logo fica na pílula do rodapé
     const lw = Math.round((p.largura * p.logo_tamanho_pct) / 100); const lh = Math.round((c.logo.altura / c.logo.largura) * lw);
     const r = posicaoLogo(lw, lh, p.largura, p.altura, p.logo_posicao, p.margem_pct);
     ctx.drawImage(c.logo.img, r.x, r.y, r.w, r.h);
