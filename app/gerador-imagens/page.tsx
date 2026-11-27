@@ -8,7 +8,7 @@ import JSZip from "jszip";
 import Navbar from "../components/Navbar";
 import {
   MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, padraoInicial,
-  type CaixaFrac, type Foto, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
+  type CaixaFrac, type Foto, type FundoModo, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
 
@@ -16,7 +16,7 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", proces
 
 interface FotoEnviada extends Foto { url: string; nome: string }
 interface GuiaUsado { foto: number; corpo: CaixaFrac; limpo: boolean }
-interface Resultado { posicao: number; nome: string; arquivo: string; url?: string; blob?: Blob; largura: number; altura: number; travada?: string; erro?: string; guia?: GuiaUsado }
+interface Resultado { posicao: number; nome: string; arquivo: string; url?: string; blob?: Blob; largura: number; altura: number; travada?: string; erro?: string; guia?: GuiaUsado; aviso?: string }
 interface AjusteMedidas { foto?: number; corpo?: CaixaFrac }
 interface StatusIA { configurado: boolean; mensagem: string }
 
@@ -104,14 +104,14 @@ export default function GeradorImagensPage() {
     return logosCache.current.get(p.logo_url) || null;
   }
   /** Monta uma imagem do tipo "montagem"; na de medidas aceita foto e caixa do produto escolhidas à mão. */
-  async function montarUma(p: PadraoImagem, ajuste?: AjusteMedidas): Promise<{ blob: Blob; guia?: GuiaUsado; semLogo: boolean }> {
+  async function montarUma(p: PadraoImagem, ajuste?: AjusteMedidas): Promise<{ blob: Blob; guia?: GuiaUsado; semLogo: boolean; aviso?: string }> {
     const logo = await carregarLogo(p);
     const usado: PadraoImagem = p.layout === "medidas" && ajuste?.foto ? { ...p, fotos: [ajuste.foto] } : p;
     const ctxM = { fotos, logo, medidas, caixaProduto: ajuste?.corpo || null } as Parameters<typeof montarImagem>[1];
     const canvas = montarImagem(usado, ctxM);
     const blob = await canvasParaBlob(canvas, p.formato);
     const g = ctxM.layoutGuia;
-    return { blob, guia: g ? { foto: (fotosDaPosicao(usado, fotos.length)[0] ?? 0) + 1, corpo: ajuste?.corpo || { x0: (g.corpo.x - g.foto.x) / g.foto.w, y0: (g.corpo.y - g.foto.y) / g.foto.h, x1: (g.corpo.x + g.corpo.w - g.foto.x) / g.foto.w, y1: (g.corpo.y + g.corpo.h - g.foto.y) / g.foto.h }, limpo: g.limpo } : undefined, semLogo: !!p.logo_url && !logo };
+    return { blob, guia: g ? { foto: (fotosDaPosicao(usado, fotos.length)[0] ?? 0) + 1, corpo: ajuste?.corpo || { x0: (g.corpo.x - g.foto.x) / g.foto.w, y0: (g.corpo.y - g.foto.y) / g.foto.h, x1: (g.corpo.x + g.corpo.w - g.foto.x) / g.foto.w, y1: (g.corpo.y + g.corpo.h - g.foto.y) / g.foto.h }, limpo: g.limpo } : undefined, semLogo: !!p.logo_url && !logo, aviso: ctxM.avisoFundo };
   }
   async function ajustarMedidas(posicao: number, mudanca: AjusteMedidas) {
     const p = padroes.find((x) => x.posicao === posicao); if (!p) return;
@@ -119,7 +119,7 @@ export default function GeradorImagensPage() {
     setAjustes((a) => ({ ...a, [posicao]: novo }));
     try {
       const r = await montarUma(p, novo);
-      setResultados((lista) => lista.map((x) => { if (x.posicao !== posicao) return x; if (x.url) URL.revokeObjectURL(x.url); return { ...x, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia }; }));
+      setResultados((lista) => lista.map((x) => { if (x.posicao !== posicao) return x; if (x.url) URL.revokeObjectURL(x.url); return { ...x, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia, aviso: r.aviso }; }));
     } catch (e: any) { setMsg("Não consegui refazer a imagem de medidas: " + (e?.message || e)); }
   }
   async function gerar() {
@@ -147,7 +147,7 @@ export default function GeradorImagensPage() {
         }
         const r = await montarUma(p, ajustes[p.posicao]);
         if (r.semLogo) base.nome += " (logo não carregou)";
-        saida.push({ ...base, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia });
+        saida.push({ ...base, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia, aviso: r.aviso });
       }
       setResultados(saida);
     } catch (e: any) { setMsg("Erro ao montar as imagens: " + (e?.message || e)); }
@@ -286,6 +286,7 @@ export default function GeradorImagensPage() {
                         <span>{r.largura}×{r.altura}px{r.url ? ` · ${r.arquivo}` : ""}</span>
                         {r.url && <button type="button" onClick={() => baixar(r)} className="text-purple-300 hover:text-purple-200 cursor-pointer">Baixar</button>}
                       </div>
+                      {r.aviso && <p data-gi-aviso className="text-xs text-amber-300">{r.aviso}</p>}
                       {r.guia && (
                         <div data-gi-ajuste className="border-t border-gray-800 pt-2 space-y-2 text-xs text-gray-300">
                           {!r.guia.limpo && <p className="text-amber-300">As medidas não couberam sem encostar no produto. Use outra foto ou ajuste a caixa abaixo.</p>}
@@ -342,7 +343,14 @@ export default function GeradorImagensPage() {
                       )}
                       <div><label className="text-xs text-gray-400 block mb-1">Largura (px)</label><input type="number" min={200} max={4000} value={p.largura} onChange={(e) => ajustar(p.posicao, { largura: Number(e.target.value) })} className={campo} /></div>
                       <div><label className="text-xs text-gray-400 block mb-1">Altura (px)</label><input type="number" min={200} max={4000} value={p.altura} onChange={(e) => ajustar(p.posicao, { altura: Number(e.target.value) })} className={campo} /></div>
-                      <div><label className="text-xs text-gray-400 block mb-1">Fundo</label><input type="color" value={p.fundo} onChange={(e) => ajustar(p.posicao, { fundo: e.target.value })} className="h-10 w-full bg-transparent" /></div>
+                      {p.tipo === "montagem" && (
+                        <div className="md:col-span-2"><label className="text-xs text-gray-400 block mb-1">Fundo da foto</label>
+                          <select data-gi-fundo-modo value={p.fundo_modo} onChange={(e) => ajustar(p.posicao, { fundo_modo: e.target.value as FundoModo })} className={campo}>
+                            <option value="liso">Fundo branco/liso: tira o fundo da foto</option>
+                            <option value="ambientado">Ambientado: mantém o fundo da foto</option>
+                          </select></div>
+                      )}
+                      {(p.tipo !== "montagem" || p.fundo_modo === "liso") && <div><label className="text-xs text-gray-400 block mb-1">Cor do fundo</label><input data-gi-fundo-cor type="color" value={p.fundo} onChange={(e) => ajustar(p.posicao, { fundo: e.target.value })} className="h-10 w-full bg-transparent" /></div>}
                       <div><label className="text-xs text-gray-400 block mb-1">Margem (% do menor lado)</label><input type="number" min={0} max={40} value={p.margem_pct} onChange={(e) => ajustar(p.posicao, { margem_pct: Number(e.target.value) })} className={campo} /></div>
                       <div><label className="text-xs text-gray-400 block mb-1">Formato</label>
                         <select value={p.formato} onChange={(e) => ajustar(p.posicao, { formato: e.target.value as any })} className={campo}><option value="jpg">JPG</option><option value="png">PNG</option></select></div>

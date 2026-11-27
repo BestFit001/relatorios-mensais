@@ -3,10 +3,13 @@
 // Posição do tipo "cena_ia" = imagem criada por IA; fica TRAVADA até existir um serviço de imagem configurado (lib/provedorImagemIA.ts).
 
 import { caixaDoCorpo, calcularLayoutGuia, criarMascara, textoMedida, type CaixaFrac, type LayoutGuia, type Mascara } from "./guiaMedidas";
+import { classificarFundo, removerFundo } from "./recorteFundo";
 export type { CaixaFrac } from "./guiaMedidas";
 
 export type TipoImagem = "montagem" | "cena_ia";
 export type LayoutImagem = "foto_unica" | "detalhe" | "colagem" | "medidas" | "beneficios";
+/** liso = tira o fundo da foto e põe a cor de fundo da posição (branco, por padrão); ambientado = mantém o fundo da foto. */
+export type FundoModo = "liso" | "ambientado";
 export type LogoPosicao = "superior_esquerdo" | "superior_direito" | "inferior_esquerdo" | "inferior_direito" | "centro_inferior";
 
 export interface PadraoImagem {
@@ -18,7 +21,8 @@ export interface PadraoImagem {
   layout: LayoutImagem;
   largura: number;
   altura: number;
-  fundo: string;             // #RRGGBB
+  fundo: string;             // #RRGGBB: cor atrás do produto quando o fundo da foto é tirado (fundo_modo = liso)
+  fundo_modo: FundoModo;
   margem_pct: number;        // % do menor lado
   formato: "jpg" | "png";
   fotos: number[];           // quais fotos enviadas (1..5) entram; vazio = automático
@@ -47,11 +51,11 @@ export const ROTULO_LAYOUT: Record<LayoutImagem, string> = {
 
 /** Padrão inicial de uma marca nova: 4 montagens e 1 cena de IA (travada). */
 export function padraoInicial(marca: string): PadraoImagem[] {
-  const base = { marca, tipo: "montagem" as TipoImagem, largura: 1200, altura: 1200, fundo: "#FFFFFF", margem_pct: 8, formato: "jpg" as const, fotos: [] as number[], logo_url: null, logo_posicao: "inferior_direito" as LogoPosicao, logo_tamanho_pct: 14, textos: [] as string[], cor_texto: "#111111", cor_destaque: "#6D28D9", prompt_ia: "", ativo: true };
+  const base = { marca, tipo: "montagem" as TipoImagem, fundo_modo: "liso" as FundoModo, largura: 1200, altura: 1200, fundo: "#FFFFFF", margem_pct: 8, formato: "jpg" as const, fotos: [] as number[], logo_url: null, logo_posicao: "inferior_direito" as LogoPosicao, logo_tamanho_pct: 14, textos: [] as string[], cor_texto: "#111111", cor_destaque: "#6D28D9", prompt_ia: "", ativo: true };
   return [
     { ...base, posicao: 1, nome: "Principal", layout: "foto_unica", fotos: [1] },
-    { ...base, posicao: 2, nome: "Detalhe", layout: "detalhe", margem_pct: 0, fotos: [2] },
-    { ...base, posicao: 3, nome: "Colagem", layout: "colagem" },
+    { ...base, posicao: 2, nome: "Detalhe", layout: "detalhe", fundo_modo: "ambientado", margem_pct: 0, fotos: [2] },
+    { ...base, posicao: 3, nome: "Colagem", layout: "colagem", fundo_modo: "ambientado" },
     { ...base, posicao: 4, nome: "Medidas", layout: "medidas", fotos: [1] },
     { ...base, posicao: 5, nome: "Cena (IA)", tipo: "cena_ia", layout: "foto_unica", fotos: [1], prompt_ia: "Foto de catálogo do produto em um ambiente real, iluminação natural, o produto idêntico à foto enviada (mesma estampa e cores)." },
   ];
@@ -68,7 +72,7 @@ export function normalizarPadrao(l: any): PadraoImagem {
     tipo: l.tipo === "cena_ia" ? "cena_ia" : "montagem",
     layout: layouts.includes(l.layout) ? l.layout : "foto_unica",
     largura: Math.round(num(l.largura, 1200, 200, 4000)), altura: Math.round(num(l.altura, 1200, 200, 4000)),
-    fundo: cor(l.fundo, "#FFFFFF"), margem_pct: num(l.margem_pct, 8, 0, 40),
+    fundo: cor(l.fundo, "#FFFFFF"), fundo_modo: l.fundo_modo === "ambientado" ? "ambientado" : "liso", margem_pct: num(l.margem_pct, 8, 0, 40),
     formato: l.formato === "png" ? "png" : "jpg",
     fotos: (Array.isArray(l.fotos) ? l.fotos : []).map(Number).filter((n: number) => Number.isInteger(n) && n >= 1 && n <= MAX_FOTOS),
     logo_url: l.logo_url ? String(l.logo_url) : null,
@@ -149,7 +153,7 @@ export function linhasDeMedidas(m: MedidasProduto): { rotulo: string; valor: str
 
 // ───────────── montagem no canvas (só no navegador) ─────────────
 
-export type Foto = { img: HTMLImageElement; largura: number; altura: number };
+export type Foto = { img: HTMLImageElement | HTMLCanvasElement; largura: number; altura: number };
 
 export function carregarImagem(src: string, cors = false): Promise<HTMLImageElement> {
   return new Promise((ok, erro) => {
@@ -188,17 +192,56 @@ export interface ContextoMontagem {
   caixaProduto?: CaixaFrac | null;
   /** preenchido por montarImagem na imagem de medidas */
   layoutGuia?: LayoutGuia;
+  /** preenchido por montarImagem: aviso quando o fundo de alguma foto não pôde ser tirado */
+  avisoFundo?: string;
 }
 
 /** Máscara (onde há produto) e corpo detectado de uma foto; calculado uma vez por foto. */
-const CACHE_ANALISE = new WeakMap<HTMLImageElement, { mascara: Mascara; corpo: CaixaFrac }>();
-export function analisarFoto(foto: Foto): { mascara: Mascara; corpo: CaixaFrac } {
+const CACHE_ANALISE = new WeakMap<object, { mascara: Mascara; corpo: CaixaFrac; fundo: "liso" | "cena" }>();
+export function analisarFoto(foto: Foto): { mascara: Mascara; corpo: CaixaFrac; fundo: "liso" | "cena" } {
   const guardado = CACHE_ANALISE.get(foto.img); if (guardado) return guardado;
   const k = Math.min(1, 320 / Math.max(foto.largura, foto.altura)); const w = Math.max(1, Math.round(foto.largura * k)), h = Math.max(1, Math.round(foto.altura * k));
   const c = document.createElement("canvas"); c.width = w; c.height = h; const x = c.getContext("2d", { willReadFrequently: true })!;
   x.drawImage(foto.img, 0, 0, w, h);
-  const mascara = criarMascara(x.getImageData(0, 0, w, h).data, w, h);
-  const r = { mascara, corpo: caixaDoCorpo(mascara) }; CACHE_ANALISE.set(foto.img, r); return r;
+  const dados = x.getImageData(0, 0, w, h).data;
+  const mascara = criarMascara(dados, w, h);
+  const r = { mascara, corpo: caixaDoCorpo(mascara), fundo: classificarFundo(dados, w, h) }; CACHE_ANALISE.set(foto.img, r); return r;
+}
+
+/** Foto com o fundo tirado (transparente). Se o fundo não é liso, devolve a própria foto e `removido: false`. Calculado uma vez por foto. */
+const CACHE_RECORTE = new WeakMap<object, { foto: Foto; removido: boolean }>();
+export function recortarFundoDaFoto(foto: Foto): { foto: Foto; removido: boolean } {
+  const guardado = CACHE_RECORTE.get(foto.img); if (guardado) return guardado;
+  const k = Math.min(1, 1600 / Math.max(foto.largura, foto.altura)); const w = Math.max(1, Math.round(foto.largura * k)), h = Math.max(1, Math.round(foto.altura * k));
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const x = c.getContext("2d", { willReadFrequently: true })!;
+  x.drawImage(foto.img, 0, 0, w, h);
+  const r = removerFundo(x.getImageData(0, 0, w, h).data, w, h);
+  let saida: { foto: Foto; removido: boolean } = { foto, removido: false };
+  if (r.removido) {
+    const img = x.createImageData(w, h); img.data.set(r.rgba); x.putImageData(img, 0, 0);
+    // sem o fundo, corta a sobra em volta do produto (com 2% de folga) para ele ocupar a imagem
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) for (let xx = 0; xx < w; xx++) if (r.rgba[(y * w + xx) * 4 + 3] > 20) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    const folga = Math.round(Math.max(w, h) * 0.02); const ax = Math.max(0, x0 - folga), ay = Math.max(0, y0 - folga), bx = Math.min(w, x1 + 1 + folga), by = Math.min(h, y1 + 1 + folga);
+    if (x1 >= 0 && (bx - ax) >= w * 0.05 && (by - ay) >= h * 0.05) {
+      const c2 = document.createElement("canvas"); c2.width = bx - ax; c2.height = by - ay; c2.getContext("2d")!.drawImage(c, ax, ay, c2.width, c2.height, 0, 0, c2.width, c2.height);
+      saida = { foto: { img: c2, largura: c2.width, altura: c2.height }, removido: true };
+    } else saida = { foto: { img: c, largura: w, altura: h }, removido: true };
+  }
+  CACHE_RECORTE.set(foto.img, saida); return saida;
+}
+
+/** Fundo ambientado de foto de estúdio: repete as bordas da foto para fora até a borda da imagem (sem faixa branca em volta). */
+export function estenderBordas(ctx: CanvasRenderingContext2D, foto: Foto, d: Retangulo, W: number, H: number) {
+  const sw = foto.largura, sh = foto.altura, e = 2; const dr = d.x + d.w, db = d.y + d.h; const img = foto.img;
+  if (d.y > 0) ctx.drawImage(img, 0, 0, sw, e, d.x, 0, d.w, d.y);
+  if (db < H) ctx.drawImage(img, 0, sh - e, sw, e, d.x, db, d.w, H - db);
+  if (d.x > 0) ctx.drawImage(img, 0, 0, e, sh, 0, d.y, d.x, d.h);
+  if (dr < W) ctx.drawImage(img, sw - e, 0, e, sh, dr, d.y, W - dr, d.h);
+  if (d.x > 0 && d.y > 0) ctx.drawImage(img, 0, 0, e, e, 0, 0, d.x, d.y);
+  if (dr < W && d.y > 0) ctx.drawImage(img, sw - e, 0, e, e, dr, 0, W - dr, d.y);
+  if (d.x > 0 && db < H) ctx.drawImage(img, 0, sh - e, e, e, 0, db, d.x, H - db);
+  if (dr < W && db < H) ctx.drawImage(img, sw - e, sh - e, e, e, dr, db, W - dr, H - db);
 }
 
 const CONDENSADO = 0.84; // fonte do guia é condensada: texto normal comprimido na horizontal
@@ -218,11 +261,12 @@ function seta(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number,
 }
 
 /** Monta a imagem de medidas e devolve o layout usado (a tela usa para mostrar/ajustar a caixa do produto). */
-export function desenharGuiaMedidas(ctx: CanvasRenderingContext2D, p: PadraoImagem, foto: Foto, m: MedidasProduto, caixaProduto?: CaixaFrac | null): LayoutGuia {
+export function desenharGuiaMedidas(ctx: CanvasRenderingContext2D, p: PadraoImagem, foto: Foto, m: MedidasProduto, caixaProduto?: CaixaFrac | null, estender = false): LayoutGuia {
   const W = p.largura, H = p.altura; const { mascara, corpo } = analisarFoto(foto);
   const textos = { altura: textoMedida(m.altura), largura: textoMedida(m.largura), comprimento: textoMedida(m.comprimento), capacidade: String(m.capacidade || "").trim() };
   const l = calcularLayoutGuia({ W, H, fotoW: foto.largura, fotoH: foto.altura, mascara, corpo: caixaProduto || corpo, textos, medir: (t, px) => medirCondensado(ctx, t, px) });
   const esc = l.escala, f = l.fonte, cinza = "#3a3a3a", cor = p.cor_texto;
+  if (estender) estenderBordas(ctx, foto, l.foto, W, H);
   ctx.drawImage(foto.img, l.foto.x, l.foto.y, l.foto.w, l.foto.h);
   // caixa GUIA DE TAMANHO (sem preenchimento: só contorno e texto)
   const g = l.guia; const itens = [["Altura", textos.altura], ["Comprimento", textos.comprimento], ["Largura", textos.largura]].filter((i) => i[1]);
@@ -271,18 +315,27 @@ export function montarImagem(p: PadraoImagem, c: ContextoMontagem): HTMLCanvasEl
   ctx.imageSmoothingQuality = "high";
   const util = areaUtil(p.largura, p.altura, p.margem_pct);
   const idx = fotosDaPosicao(p, c.fotos.length);
-  const fotos = idx.map((i) => c.fotos[i]).filter(Boolean);
+  const originais = idx.map((i) => c.fotos[i]).filter(Boolean);
+  const liso = p.fundo_modo === "liso";
+  c.avisoFundo = undefined;
+  // fundo liso: tira o fundo da foto (a cor de fundo da posição aparece no lugar); ambientado: a foto fica como veio
+  const fotos = originais.map((f) => { if (!liso) return f; const r = recortarFundoDaFoto(f); if (!r.removido) c.avisoFundo = "Não consegui tirar o fundo de uma foto (o fundo dela não é liso): mantive como veio."; return r.foto; });
   const escala = Math.min(p.largura, p.altura) / 1200;
   const fonte = (px: number, peso = 600) => `${peso} ${Math.round(px * escala)}px "Helvetica Neue", Arial, sans-serif`;
 
   if (fotos.length) {
-    if (p.layout === "foto_unica") desenhar(ctx, fotos[0], util, "conter");
-    else if (p.layout === "detalhe") desenhar(ctx, fotos[0], util, "cobrir");
+    if (p.layout === "foto_unica") {
+      if (!liso && analisarFoto(fotos[0]).fundo === "cena") desenhar(ctx, fotos[0], { x: 0, y: 0, w: p.largura, h: p.altura }, "cobrir"); // foto de cenário: ocupa a imagem toda
+      else { if (!liso) estenderBordas(ctx, fotos[0], enquadrar(fotos[0].largura, fotos[0].altura, util, "conter").destino, p.largura, p.altura); desenhar(ctx, fotos[0], util, "conter"); }
+    } else if (p.layout === "detalhe") desenhar(ctx, fotos[0], util, "cobrir");
     else if (p.layout === "colagem") {
       const grade = gradeColagem(fotos.length, util, Math.round(16 * escala));
-      grade.forEach((cx, i) => { ctx.save(); ctx.beginPath(); ctx.rect(cx.x, cx.y, cx.w, cx.h); ctx.clip(); desenhar(ctx, fotos[i], cx, "cobrir"); ctx.restore(); });
+      grade.forEach((cx, i) => {
+        ctx.save(); ctx.beginPath(); ctx.rect(cx.x, cx.y, cx.w, cx.h); ctx.clip(); desenhar(ctx, fotos[i], cx, "cobrir"); ctx.restore();
+        if (liso) { ctx.save(); ctx.strokeStyle = "#e4e4e4"; ctx.lineWidth = Math.max(1.5, 2 * escala); ctx.strokeRect(cx.x, cx.y, cx.w, cx.h); ctx.restore(); } // fundo branco: o contorno separa as fotos
+      });
     } else if (p.layout === "medidas") {
-      c.layoutGuia = desenharGuiaMedidas(ctx, p, fotos[0], c.medidas || {}, c.caixaProduto);
+      c.layoutGuia = desenharGuiaMedidas(ctx, p, fotos[0], c.medidas || {}, c.caixaProduto, !liso);
     } else {
       // benefícios: foto à esquerda (58%) e lista de textos à direita
       const gap = Math.round(24 * escala);
