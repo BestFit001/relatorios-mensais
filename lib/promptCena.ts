@@ -2,7 +2,7 @@
 // (Padronização IA): título, categoria, descrição, benefícios e medidas. Quem decide COMO o produto é usado é o gerador de imagem, a partir da
 // foto de referência e desses dados. O texto fixo não cita a marca (o gerador tende a inventar logo ou texto); o título do produto pode citar, e por isso o prompt manda evitar qualquer texto ou logo na imagem.
 
-export const PROMPT_CENA_PESSOA = `Create a photorealistic lifestyle photograph of one person using the product shown in the reference images. The reference images show the same real product from different angles and in close-up. The product is the hero of the photo.
+export const PROMPT_CENA_PESSOA = `Create a photorealistic lifestyle photograph of one person using the product shown in the reference images. The reference images show the same real product. The product is the hero of the photo.
 
 Product: {{titulo}}. Category: {{categoria}}. Details: {{descricao_resumida}}. Key benefits: {{beneficios}}. Real size: {{altura}} x {{largura}} x {{comprimento}} cm.
 
@@ -71,9 +71,29 @@ Extra products or accessories, duplicated or distorted product
 Extra fingers, deformed hands, plastic-looking skin
 Collage, borders, heavy filters, illustration or 3D render look`;
 
+/** Quantas imagens de referência seguem no pedido: as fotos principais primeiro e, depois, os quadros do vídeo. */
+export interface RefsDoPedido { fotos: number; quadros: number }
+
+/**
+ * Avisa o gerador de qual é cada referência. As fotos principais são a fonte da verdade; os quadros do vídeo entram só como complemento,
+ * para conferir detalhes que as fotos não mostram (verso, laterais, alças, ferragens), sem copiar a luz, o fundo nem a qualidade do vídeo.
+ */
+export function textoDasReferencias(r: RefsDoPedido): string {
+  const n = Math.max(0, Math.floor(r.fotos)), m = Math.max(0, Math.floor(r.quadros));
+  if (m === 0 || n === 0) return "";
+  const principais = n === 1 ? "Image 1 is the main product photo" : `Images 1 to ${n} are the main product photos`;
+  const quadros = m === 1 ? `Image ${n + 1} is a frame` : `Images ${n + 1} to ${n + m} are frames`;
+  return `Reference images: ${principais} and the source of truth for the product's shape, print, colors and details. ${quadros} from a product video, supplied only as a complement to check details that are not visible in the main photos (for example the back, the sides, the straps, the hardware or small details). Never copy the video frames' lighting, background, framing, motion blur or lower image quality, and if a video frame conflicts with the main photos, follow the main photos.`;
+}
+
 /** Texto final enviado ao gerador: o prompt com os dados do produto + as proibições (uma por linha vira um item). */
-export function montarPromptCena(positivo: string, negativo: string | null | undefined, d: DadosPrompt): string {
-  const base = preencherPrompt(positivo, d);
+export function montarPromptCena(positivo: string, negativo: string | null | undefined, d: DadosPrompt, refs?: RefsDoPedido): string {
+  let base = preencherPrompt(positivo, d);
+  const complemento = refs ? textoDasReferencias(refs) : "";
+  if (complemento) { // logo depois do primeiro parágrafo
+    const corte = base.indexOf("\n\n");
+    base = corte < 0 ? `${base}\n\n${complemento}` : `${base.slice(0, corte)}\n\n${complemento}${base.slice(corte)}`;
+  }
   const itens = preencherPrompt(String(negativo || ""), d).split("\n").map((l) => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
   if (!itens.length) return base;
   return `${base}\n\nMust NOT happen (hard requirements, never break these):\n${itens.map((x) => "- " + x).join("\n")}`;

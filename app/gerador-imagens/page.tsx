@@ -11,7 +11,7 @@ import {
   type CaixaFrac, type Foto, type FundoModo, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
 import { extrairQuadros, quadrosIniciais, type Quadro } from "../../lib/videoQuadros";
-import { PROMPT_CENA_PESSOA, PROMPT_NEGATIVO_CENA, montarPromptCena } from "../../lib/promptCena";
+import { PROMPT_CENA_PESSOA, PROMPT_NEGATIVO_CENA, montarPromptCena, type RefsDoPedido } from "../../lib/promptCena";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
 import { MAX_BENEFICIOS, dividirTitulo, normalizarBeneficios, type BeneficioModelo } from "../../lib/beneficiosModelo";
 
@@ -43,7 +43,7 @@ async function ajustarAoTamanho(blob: Blob, largura: number, altura: number): Pr
 
 /** Quadros do vídeo que entram como referência extra na Cena (IA); as fotos da posição vão primeiro. */
 const MAX_QUADROS_REF = 4;
-const QUADROS_INICIAIS = 3;
+const QUADROS_INICIAIS = 2;
 
 const campo = "bg-[#0d0f18] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white w-full";
 const botao = "px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
@@ -240,11 +240,11 @@ export default function GeradorImagensPage() {
     } catch (e: any) { setMsg("Não consegui refazer a imagem de medidas: " + (e?.message || e)); }
   }
   /** Prompt final da cena: preenche {{titulo}}, {{beneficios}}, {{altura}}… com o modelo escolhido e junta o prompt negativo ("não pode acontecer"). */
-  function promptDaCena(p: PadraoImagem): string {
+  function promptDaCena(p: PadraoImagem, refs?: RefsDoPedido): string {
     return montarPromptCena(p.prompt_ia, p.prompt_negativo, {
       titulo: modeloAtual?.titulo, categoria: modeloAtual?.categoria, descricao: modeloAtual?.descricao_complementar || modeloAtual?.descricao_seo,
       beneficios: dadosModelo.beneficios, altura: medidas.altura, largura: medidas.largura, comprimento: medidas.comprimento,
-    });
+    }, refs);
   }
   async function gerar() {
     setMsg(""); setResultados([]); setAjustes({});
@@ -262,11 +262,10 @@ export default function GeradorImagensPage() {
             setOcupado(`Gerando “${base.nome}” no Canva… (pode levar até 1 minuto)`);
             try {
               const idx = fotosDaPosicao(p, fotos.length);
-              const refs = [
-                ...(idx.length ? idx : [0]).slice(0, 4).map((i) => fotoReduzida(fotos[i] ?? fotos[0])),
-                ...quadrosSel.map((i) => quadros[i]).filter(Boolean).map((q) => ({ base64: q.base64, mime: q.mime })),
-              ];
-              const blob = await cenaPeloCanva(promptDaCena(p), refs, p.largura, p.altura);
+              const refsFotos = (idx.length ? idx : [0]).slice(0, 4).map((i) => fotoReduzida(fotos[i] ?? fotos[0]));
+              const refsQuadros = quadrosSel.map((i) => quadros[i]).filter(Boolean).map((q) => ({ base64: q.base64, mime: q.mime }));
+              const refs = [...refsFotos, ...refsQuadros]; // as fotos principais vão primeiro; os quadros do vídeo, só como complemento
+              const blob = await cenaPeloCanva(promptDaCena(p, { fotos: refsFotos.length, quadros: refsQuadros.length }), refs, p.largura, p.altura);
               saida.push({ ...base, blob, url: URL.createObjectURL(blob), aviso: !modeloAtual && /\{\{/.test(p.prompt_ia) ? "Sem modelo escolhido: a cena foi pedida sem título, benefícios e medidas do produto." : undefined });
             } catch (e: any) { saida.push({ ...base, erro: String(e?.message || e) }); }
             setOcupado("Montando as imagens…");
@@ -409,8 +408,8 @@ export default function GeradorImagensPage() {
                 </div>
               )}
               <div className="border-t border-gray-800 pt-4 space-y-2" data-gi-video-bloco>
-                <h3 className="text-sm font-semibold text-purple-300">Vídeo do produto (opcional, melhora a Cena de IA)</h3>
-                <p className="text-xs text-gray-500">O app tira quadros do vídeo no seu navegador e usa os que você marcar como fotos de referência extras da Cena (IA): alça, zíper, etiqueta e estampa de perto. Prefira um vídeo girando o produto e mostrando os detalhes. As outras imagens não mudam. Atenção: no Canva cada foto de referência além da primeira consome créditos de IA a mais, então marque só os quadros que ajudam.</p>
+                <h3 className="text-sm font-semibold text-purple-300">Vídeo do produto (opcional, só como complemento da Cena de IA)</h3>
+                <p className="text-xs text-gray-500">Complemento, não fonte principal: as fotos continuam sendo a referência do produto. Os quadros marcados vão para a Cena (IA) só para o gerador conferir o que as fotos não mostram (verso, laterais, alça, ferragens, detalhes), e o pedido diz isso a ele. Se o vídeo e as fotos divergirem, valem as fotos. As outras imagens não mudam. Atenção: no Canva cada foto de referência além da primeira consome créditos de IA a mais, então marque só os quadros que ajudam.</p>
                 <input data-gi-video type="file" accept="video/*" onChange={escolherVideo} disabled={lendoVideo}
                   className="block text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-700 file:text-white file:font-semibold file:cursor-pointer" />
                 {lendoVideo && <p className="text-xs text-purple-200" data-gi-video-lendo>Tirando os quadros do vídeo…</p>}
