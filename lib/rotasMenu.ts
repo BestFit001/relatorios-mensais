@@ -51,6 +51,7 @@ export const SECOES_MENU: SecaoMenu[] = [
     { id: "/produtos", nome: "Novos Cadastros" },
     { id: "/padronizacao", nome: "Padronização IA" },
     { id: "/correcao-anuncios", nome: "Correção de anúncios" },
+    { id: "/gerador-imagens", nome: "Gerador de imagens do anúncio" },
     { id: "/concorrentes", nome: "Análise da concorrência" },
     { id: "/analise-mercado", nome: "Análise de mercado (aba da Análise da concorrência)", oculta: true },
     { id: "/estoque-concorrencia", nome: "Acompanhamento de estoque" },
