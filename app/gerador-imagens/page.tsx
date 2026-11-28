@@ -12,7 +12,7 @@ import {
 } from "../../lib/imagensAnuncio";
 import { extrairQuadros, quadrosIniciais, type Quadro } from "../../lib/videoQuadros";
 import * as XLSX from "xlsx";
-import { MAX_EXTRAS } from "../../lib/guiaMedidas";
+import { MAX_EXTRAS, textoMedida, type EdicaoMedidas } from "../../lib/guiaMedidas";
 import { chaveProduto, emLotes, linhasUnicas, linhaDoProduto, modelosDaPlanilha, MARCA_PADRAO, type ModeloPadrao } from "../../lib/produtosImagens";
 import { PROMPT_CENA_PESSOA, PROMPT_NEGATIVO_CENA, montarPromptCena, type RefsDoPedido } from "../../lib/promptCena";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
@@ -21,14 +21,14 @@ import { MAX_BENEFICIOS, dividirTitulo, normalizarBeneficios, type BeneficioMode
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 
 interface FotoEnviada extends Foto { url: string; nome: string }
-interface GuiaUsado { foto: number; corpo: CaixaFrac; limpo: boolean }
+interface GuiaUsado { foto: number; corpo: CaixaFrac; limpo: boolean; fator: number }
 interface Resultado { posicao: number; nome: string; arquivo: string; url?: string; blob?: Blob; largura: number; altura: number; travada?: string; erro?: string; guia?: GuiaUsado; aviso?: string }
 interface ModeloLinha { texto_logo?: string | null; medidas_extras?: any; id: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; descricao_complementar: string | null; descricao_seo: string | null; linha1?: string | null; linha2?: string | null; capacidade?: string | null; beneficios?: any }
 interface ProdutoLista { id: string; chave: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; beneficios: any }
 interface PreviaProdutos { arquivo: string; modelos: (ModeloPadrao & { marcada: boolean })[]; ignoradas: number }
 interface DadosModelo { linha1: string; linha2: string; beneficios: BeneficioModelo[] }
 const DADOS_VAZIOS: DadosModelo = { linha1: "", linha2: "", beneficios: [] };
-interface AjusteMedidas { foto?: number; corpo?: CaixaFrac }
+interface AjusteMedidas { foto?: number; corpo?: CaixaFrac; edicao?: EdicaoMedidas }
 interface StatusIA { configurado: boolean; mensagem: string }
 
 const ROTULO_LOGO: Record<LogoPosicao, string> = {
@@ -60,6 +60,17 @@ function fotoReduzida(f: Foto, maxLado = 1024, qualidade = 0.85): { base64: stri
   const c = document.createElement("canvas"); c.width = Math.round(f.largura * k); c.height = Math.round(f.altura * k);
   c.getContext("2d")!.drawImage(f.img, 0, 0, c.width, c.height);
   return { base64: c.toDataURL("image/jpeg", qualidade).split(",")[1], mime: "image/jpeg" };
+}
+
+/** Controle deslizante com nome e valor, usado na edição da imagem de medidas. */
+function Desliza({ rot, id, min, max, valor, unidade = "%", onMudar }: { rot: string; id: string; min: number; max: number; valor: number; unidade?: string; onMudar: (v: number) => void }) {
+  return (
+    <label className="flex items-center gap-2">
+      <span className="w-28 shrink-0">{rot}</span>
+      <input data-gi-ed={id} type="range" min={min} max={max} value={Math.min(max, Math.max(min, Math.round(valor)))} onChange={(e) => onMudar(Number(e.target.value))} className="flex-1" />
+      <span className="w-10 text-right tabular-nums text-gray-400">{Math.round(valor)}{unidade}</span>
+    </label>
+  );
 }
 
 /** Texto digitado → número em cm. Aceita "3,5", "3.5" e "3,5 cm". Vazio = sem medida; texto que não é número = null (mantém o anterior). */
@@ -114,6 +125,9 @@ export default function GeradorImagensPage() {
   const [medidas, setMedidas] = useState<MedidasProduto>({});
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [ajustes, setAjustes] = useState<Record<number, AjusteMedidas>>({});
+  const ajustesRef = useRef<Record<number, AjusteMedidas>>({}); // espelho síncrono de `ajustes` (vários movimentos do controle seguidos)
+  const seqAjuste = useRef<Record<number, number>>({}); // só o último pedido de cada imagem vale
+  const [regerando, setRegerando] = useState<number | null>(null);
   const logosCache = useRef(new Map<string, Foto>());
   const recortesEmCurso = useRef(new Map<object, Promise<void>>()); // fotos que estão sendo recortadas no Canva
   const avisosRecorte = useRef(new Set<string>());
@@ -357,21 +371,25 @@ export default function GeradorImagensPage() {
     const logo = await carregarLogo(p);
     const usado: PadraoImagem = p.layout === "medidas" && ajuste?.foto ? { ...p, fotos: [ajuste.foto] } : p;
     await prepararRecortes(usado);
-    const ctxM = { fotos, logo, medidas, caixaProduto: ajuste?.corpo || null, modelo: { ...dadosModelo, marca: modeloAtual?.marca || marca } } as Parameters<typeof montarImagem>[1];
+    const ctxM = { fotos, logo, medidas, caixaProduto: ajuste?.corpo || null, edicaoMedidas: ajuste?.edicao || null, modelo: { ...dadosModelo, marca: modeloAtual?.marca || marca } } as Parameters<typeof montarImagem>[1];
     const canvas = montarImagem(usado, ctxM);
     const blob = await canvasParaBlob(canvas, p.formato);
     const g = ctxM.layoutGuia;
-    return { blob, guia: g ? { foto: (fotosDaPosicao(usado, fotos.length)[0] ?? 0) + 1, corpo: ajuste?.corpo || { x0: (g.corpo.x - g.foto.x) / g.foto.w, y0: (g.corpo.y - g.foto.y) / g.foto.h, x1: (g.corpo.x + g.corpo.w - g.foto.x) / g.foto.w, y1: (g.corpo.y + g.corpo.h - g.foto.y) / g.foto.h }, limpo: g.limpo } : undefined, semLogo: !!p.logo_url && !logo, aviso: ctxM.avisoFundo };
+    return { blob, guia: g ? { foto: (fotosDaPosicao(usado, fotos.length)[0] ?? 0) + 1, corpo: ajuste?.corpo || { x0: (g.corpo.x - g.foto.x) / g.foto.w, y0: (g.corpo.y - g.foto.y) / g.foto.h, x1: (g.corpo.x + g.corpo.w - g.foto.x) / g.foto.w, y1: (g.corpo.y + g.corpo.h - g.foto.y) / g.foto.h }, limpo: g.limpo, fator: g.fator } : undefined, semLogo: !!p.logo_url && !logo, aviso: ctxM.avisoFundo };
   }
   async function ajustarMedidas(posicao: number, mudanca: AjusteMedidas) {
     const p = padroes.find((x) => x.posicao === posicao); if (!p) return;
-    const novo = { ...(ajustes[posicao] || {}), ...mudanca }; if (mudanca.foto) delete novo.corpo; // foto nova: volta à detecção automática
-    setAjustes((a) => ({ ...a, [posicao]: novo }));
+    const novo = { ...(ajustesRef.current[posicao] || {}), ...mudanca }; if (mudanca.foto) delete novo.corpo; // foto nova: volta à detecção automática
+    ajustesRef.current = { ...ajustesRef.current, [posicao]: novo }; setAjustes(ajustesRef.current);
+    const minha = (seqAjuste.current[posicao] = (seqAjuste.current[posicao] || 0) + 1);
     try {
       const r = await montarUma(p, novo);
+      if (minha !== seqAjuste.current[posicao]) return; // chegou um ajuste mais novo
       setResultados((lista) => lista.map((x) => { if (x.posicao !== posicao) return x; if (x.url) URL.revokeObjectURL(x.url); return { ...x, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia, aviso: r.aviso }; }));
     } catch (e: any) { setMsg("Não consegui refazer a imagem de medidas: " + (e?.message || e)); }
   }
+  /** Muda só a edição manual da imagem de medidas (tamanho/posição do produto, guia, rótulos, textos). */
+  const editarMedidas = (posicao: number, f: (e: EdicaoMedidas) => EdicaoMedidas) => ajustarMedidas(posicao, { edicao: f(ajustesRef.current[posicao]?.edicao || {}) });
   /** Prompt final da cena: preenche {{titulo}}, {{beneficios}}, {{altura}}… com o modelo escolhido e junta o prompt negativo ("não pode acontecer"). */
   function promptDaCena(p: PadraoImagem, refs?: RefsDoPedido): string {
     return montarPromptCena(p.prompt_ia, p.prompt_negativo, {
@@ -379,8 +397,37 @@ export default function GeradorImagensPage() {
       beneficios: dadosModelo.beneficios, altura: medidas.altura, largura: medidas.largura, comprimento: medidas.comprimento,
     }, refs);
   }
+  /** Gera UMA posição do padrão (montagem ou cena de IA) e devolve o resultado; usada por "Gerar" (todas) e por "Regerar" (só a escolhida). */
+  async function gerarPosicao(p: PadraoImagem, ajuste?: AjusteMedidas): Promise<Resultado> {
+    const base = { posicao: p.posicao, nome: p.nome || `Imagem ${p.posicao}`, arquivo: nomeDoArquivoImagem(sku, p), largura: p.largura, altura: p.altura };
+    if (p.tipo === "cena_ia") {
+      if (canva.conectado) {
+        setOcupado(`Gerando “${base.nome}” no Canva… (pode levar até 1 minuto)`);
+        try {
+          const idx = fotosDaPosicao(p, fotos.length);
+          const refsFotos = (idx.length ? idx : [0]).slice(0, 4).map((i) => fotoReduzida(fotos[i] ?? fotos[0]));
+          const refsQuadros = quadrosSel.map((i) => quadros[i]).filter(Boolean).map((q) => ({ base64: q.base64, mime: q.mime }));
+          const refsDetalhes = detalhes.map((d) => ({ base64: d.base64, mime: d.mime }));
+          const refs = [...refsFotos, ...refsDetalhes, ...refsQuadros]; // fotos principais, depois close da etiqueta/logo e, por último, os quadros do vídeo (só complemento)
+          const blob = await cenaPeloCanva(promptDaCena(p, { fotos: refsFotos.length, quadros: refsQuadros.length, detalhes: refsDetalhes.length, textoLogo }), refs, p.largura, p.altura);
+          return { ...base, blob, url: URL.createObjectURL(blob), aviso: !modeloAtual && /\{\{/.test(p.prompt_ia) ? "Sem modelo escolhido: a cena foi pedida sem título, benefícios e medidas do produto." : undefined };
+        } catch (e: any) { return { ...base, erro: String(e?.message || e) }; }
+      }
+      if (!statusIA.configurado) return { ...base, travada: canva.chaves ? "Conecte o Canva (botão no topo da página) para gerar a cena por IA." : statusIA.mensagem };
+      try {
+        const ref = fotoReduzida(fotos[fotosDaPosicao(p, fotos.length)[0] ?? 0]);
+        const r = await fetch("/api/gerar-cena-ia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: promptDaCena(p), fotoBase64: ref.base64, fotoMime: ref.mime, largura: p.largura, altura: p.altura }) });
+        const j = await r.json();
+        if (!r.ok) return { ...base, travada: r.status === 423 ? String(j.mensagem || statusIA.mensagem) : undefined, erro: r.status === 423 ? undefined : String(j.erro || "falhou") };
+        const blob = await (await fetch(`data:${j.mime};base64,${j.base64}`)).blob();
+        return { ...base, blob, url: URL.createObjectURL(blob) };
+      } catch (e: any) { return { ...base, erro: String(e?.message || e) }; }
+    }
+    const r = await montarUma(p, ajuste);
+    return { ...base, nome: r.semLogo ? base.nome + " (logo não carregou)" : base.nome, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia, aviso: r.aviso };
+  }
   async function gerar() {
-    setMsg(""); setResultados([]); setAjustes({}); avisosRecorte.current.clear();
+    setMsg(""); setResultados([]); setAjustes({}); ajustesRef.current = {}; seqAjuste.current = {}; avisosRecorte.current.clear();
     const ativos = padroes.filter((p) => p.ativo).sort((a, b) => a.posicao - b.posicao).slice(0, MAX_POSICOES);
     if (!marca) { setMsg("Escolha a marca."); return; }
     if (!ativos.length) { setMsg("Essa marca ainda não tem padrão de imagens. Cadastre na aba “Padrão da marca”."); return; }
@@ -388,42 +435,23 @@ export default function GeradorImagensPage() {
     setOcupado("Montando as imagens…");
     const saida: Resultado[] = [];
     try {
-      for (const p of ativos) {
-        const base = { posicao: p.posicao, nome: p.nome || `Imagem ${p.posicao}`, arquivo: nomeDoArquivoImagem(sku, p), largura: p.largura, altura: p.altura };
-        if (p.tipo === "cena_ia") {
-          if (canva.conectado) {
-            setOcupado(`Gerando “${base.nome}” no Canva… (pode levar até 1 minuto)`);
-            try {
-              const idx = fotosDaPosicao(p, fotos.length);
-              const refsFotos = (idx.length ? idx : [0]).slice(0, 4).map((i) => fotoReduzida(fotos[i] ?? fotos[0]));
-              const refsQuadros = quadrosSel.map((i) => quadros[i]).filter(Boolean).map((q) => ({ base64: q.base64, mime: q.mime }));
-              const refsDetalhes = detalhes.map((d) => ({ base64: d.base64, mime: d.mime }));
-              const refs = [...refsFotos, ...refsDetalhes, ...refsQuadros]; // fotos principais, depois close da etiqueta/logo e, por último, os quadros do vídeo (só complemento)
-              const blob = await cenaPeloCanva(promptDaCena(p, { fotos: refsFotos.length, quadros: refsQuadros.length, detalhes: refsDetalhes.length, textoLogo }), refs, p.largura, p.altura);
-              saida.push({ ...base, blob, url: URL.createObjectURL(blob), aviso: !modeloAtual && /\{\{/.test(p.prompt_ia) ? "Sem modelo escolhido: a cena foi pedida sem título, benefícios e medidas do produto." : undefined });
-            } catch (e: any) { saida.push({ ...base, erro: String(e?.message || e) }); }
-            setOcupado("Montando as imagens…");
-            continue;
-          }
-          if (!statusIA.configurado) { saida.push({ ...base, travada: canva.chaves ? "Conecte o Canva (botão no topo da página) para gerar a cena por IA." : statusIA.mensagem }); continue; }
-          try {
-            const ref = fotoReduzida(fotos[fotosDaPosicao(p, fotos.length)[0] ?? 0]);
-            const r = await fetch("/api/gerar-cena-ia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: promptDaCena(p), fotoBase64: ref.base64, fotoMime: ref.mime, largura: p.largura, altura: p.altura }) });
-            const j = await r.json();
-            if (!r.ok) { saida.push({ ...base, travada: r.status === 423 ? String(j.mensagem || statusIA.mensagem) : undefined, erro: r.status === 423 ? undefined : String(j.erro || "falhou") }); continue; }
-            const blob = await (await fetch(`data:${j.mime};base64,${j.base64}`)).blob();
-            saida.push({ ...base, blob, url: URL.createObjectURL(blob) });
-          } catch (e: any) { saida.push({ ...base, erro: String(e?.message || e) }); }
-          continue;
-        }
-        const r = await montarUma(p, ajustes[p.posicao]);
-        if (r.semLogo) base.nome += " (logo não carregou)";
-        saida.push({ ...base, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia, aviso: r.aviso });
-      }
+      for (const p of ativos) { saida.push(await gerarPosicao(p)); setOcupado("Montando as imagens…"); }
       setResultados(saida);
       if (avisosRecorte.current.size) setMsg([...avisosRecorte.current].join(" "));
     } catch (e: any) { setMsg("Erro ao montar as imagens: " + (e?.message || e)); }
     setOcupado("");
+  }
+  /** Gera de novo só a imagem escolhida (as outras ficam como estão). Na cena de IA gera outra imagem e gasta créditos do Canva; nas montagens refaz com os dados atuais da tela e mantém a edição das medidas. */
+  async function regerar(posicao: number) {
+    const p = padroes.find((x) => x.posicao === posicao); if (!p) return;
+    if (!fotos.length) { setMsg("Suba pelo menos uma foto do produto para regerar."); return; }
+    setMsg(""); avisosRecorte.current.clear(); setRegerando(posicao); setOcupado(`Regerando “${p.nome || `Imagem ${posicao}`}”…`);
+    try {
+      const novo = await gerarPosicao(p, ajustesRef.current[posicao]);
+      setResultados((lista) => lista.map((x) => { if (x.posicao !== posicao) return x; if (x.url) URL.revokeObjectURL(x.url); return novo; }));
+      if (avisosRecorte.current.size) setMsg([...avisosRecorte.current].join(" "));
+    } catch (e: any) { setMsg("Não consegui regerar: " + (e?.message || e)); }
+    setRegerando(null); setOcupado("");
   }
 
   function baixar(r: Resultado) {
@@ -668,14 +696,19 @@ export default function GeradorImagensPage() {
                         : <div data-gi-travada className="aspect-square flex items-center justify-center text-center text-sm text-gray-400 border border-dashed border-gray-700 rounded-lg p-4">
                             {r.travada ? `🔒 ${r.travada}` : `⚠️ ${r.erro || "não gerou"}`}
                           </div>}
-                      <div className="flex items-center justify-between text-xs text-gray-400">
+                      <div className="flex items-center justify-between gap-2 text-xs text-gray-400">
                         <span>{r.largura}×{r.altura}px{r.url ? ` · ${r.arquivo}` : ""}</span>
-                        {r.url && <button type="button" onClick={() => baixar(r)} className="text-purple-300 hover:text-purple-200 cursor-pointer">Baixar</button>}
+                        <span className="flex items-center gap-3">
+                          <button type="button" data-gi-regerar={r.posicao} onClick={() => regerar(r.posicao)} disabled={!!ocupado}
+                            title={padroes.find((x) => x.posicao === r.posicao)?.tipo === "cena_ia" ? "Gera outra imagem só desta posição (consome créditos de IA do Canva)" : "Refaz só esta imagem com os dados atuais da tela"}
+                            className="text-amber-300 hover:text-amber-200 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">{regerando === r.posicao ? "Regerando…" : "↻ Regerar"}</button>
+                          {r.url && <button type="button" onClick={() => baixar(r)} className="text-purple-300 hover:text-purple-200 cursor-pointer">Baixar</button>}
+                        </span>
                       </div>
                       {r.aviso && <p data-gi-aviso className="text-xs text-amber-300">{r.aviso}</p>}
                       {r.guia && (
                         <div data-gi-ajuste className="border-t border-gray-800 pt-2 space-y-2 text-xs text-gray-300">
-                          {!r.guia.limpo && <p className="text-amber-300">As medidas não couberam sem encostar no produto. Use outra foto ou ajuste a caixa abaixo.</p>}
+                          {!r.guia.limpo && !ajustes[r.posicao]?.edicao && <p className="text-amber-300">As medidas não couberam sem encostar no produto. Use outra foto ou ajuste a caixa abaixo.</p>}
                           <label className="flex items-center gap-2">Foto usada
                             <select data-gi-ajuste-foto value={r.guia.foto} onChange={(e) => ajustarMedidas(r.posicao, { foto: Number(e.target.value) })} className="bg-[#0d0f18] border border-gray-700 rounded px-2 py-1">
                               {fotos.map((_, i) => <option key={i} value={i + 1}>Foto {i + 1}</option>)}
@@ -688,6 +721,53 @@ export default function GeradorImagensPage() {
                                   onChange={(e) => ajustarMedidas(r.posicao, { corpo: { ...r.guia!.corpo, [k]: Number(e.target.value) / 100 } })} /></label>
                             ))}
                           </div>
+                          {(() => {
+                            const ed: EdicaoMedidas = ajustes[r.posicao]?.edicao || {}; const ped = (f: (e: EdicaoMedidas) => EdicaoMedidas) => editarMedidas(r.posicao, f);
+                            const pr = ed.produto || {};
+                            const elementos = [["altura", "Altura", medidas.altura], ["largura", "Largura", medidas.largura], ["comprimento", "Comprimento", medidas.comprimento]] as const;
+                            return (
+                              <details data-gi-edicao className="border border-gray-800 rounded-lg p-2">
+                                <summary className="cursor-pointer text-purple-300 font-semibold">Editar a imagem de medidas (avançado)</summary>
+                                <div className="mt-2 space-y-3">
+                                  <p className="text-gray-400">Tudo é opcional: o que você não mexer continua automático. O que você muda vale só para esta imagem.</p>
+                                  <div className="space-y-1">
+                                    <p className="font-semibold text-gray-200">Produto</p>
+                                    <Desliza rot="Tamanho" id="produto-fator" min={30} max={100} valor={(pr.fator ?? r.guia!.fator) * 100} onMudar={(v) => ped((e) => ({ ...e, produto: { ...e.produto, fator: v / 100 } }))} />
+                                    <Desliza rot="Mover ← →" id="produto-dx" min={-30} max={30} valor={(pr.dx || 0) * 100} onMudar={(v) => ped((e) => ({ ...e, produto: { ...e.produto, dx: v / 100 } }))} />
+                                    <Desliza rot="Mover ↑ ↓" id="produto-dy" min={-30} max={30} valor={(pr.dy || 0) * 100} onMudar={(v) => ped((e) => ({ ...e, produto: { ...e.produto, dy: v / 100 } }))} />
+                                    <Desliza rot="Tamanho do texto" id="fonte" min={60} max={160} valor={(ed.fonte || 1) * 100} onMudar={(v) => ped((e) => ({ ...e, fonte: v / 100 }))} />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="flex items-center gap-2 font-semibold text-gray-200"><input data-gi-ed="guia-mostrar" type="checkbox" checked={!ed.guia?.ocultar} onChange={(e) => ped((x) => ({ ...x, guia: { ...x.guia, ocultar: !e.target.checked } }))} /> Guia de tamanho (caixa)</label>
+                                    {!ed.guia?.ocultar && (<>
+                                      <Desliza rot="Tamanho" id="guia-escala" min={50} max={150} valor={(ed.guia?.escala || 1) * 100} onMudar={(v) => ped((x) => ({ ...x, guia: { ...x.guia, escala: v / 100 } }))} />
+                                      <Desliza rot="Mover ← →" id="guia-dx" min={-10} max={60} valor={(ed.guia?.dx || 0) * 100} onMudar={(v) => ped((x) => ({ ...x, guia: { ...x.guia, dx: v / 100 } }))} />
+                                      <Desliza rot="Mover ↑ ↓" id="guia-dy" min={-5} max={70} valor={(ed.guia?.dy || 0) * 100} onMudar={(v) => ped((x) => ({ ...x, guia: { ...x.guia, dy: v / 100 } }))} />
+                                    </>)}
+                                  </div>
+                                  {elementos.map(([k, rot, v]) => (
+                                    <div key={k} data-gi-ed-bloco={k} className="space-y-1">
+                                      <label className="flex items-center gap-2 font-semibold text-gray-200"><input data-gi-ed={`${k}-mostrar`} type="checkbox" checked={!ed[k]?.ocultar} onChange={(e) => ped((x) => ({ ...x, [k]: { ...x[k], ocultar: !e.target.checked } }))} /> {rot} (seta e texto)</label>
+                                      {!ed[k]?.ocultar && (<>
+                                        <input data-gi-ed={`${k}-texto`} maxLength={24} value={ed.textos?.[k] ?? textoMedida(v)} onChange={(e) => ped((x) => ({ ...x, textos: { ...x.textos, [k]: e.target.value } }))} placeholder="Texto da medida (ex.: 23,5 cm)" className="w-full bg-[#0d0f18] border border-gray-700 rounded px-2 py-1" />
+                                        <Desliza rot="Texto ← →" id={`${k}-dx`} min={-30} max={30} valor={(ed[k]?.dx || 0) * 100} onMudar={(n) => ped((x) => ({ ...x, [k]: { ...x[k], dx: n / 100 } }))} />
+                                        <Desliza rot="Texto ↑ ↓" id={`${k}-dy`} min={-30} max={30} valor={(ed[k]?.dy || 0) * 100} onMudar={(n) => ped((x) => ({ ...x, [k]: { ...x[k], dy: n / 100 } }))} />
+                                      </>)}
+                                    </div>
+                                  ))}
+                                  <div className="space-y-1">
+                                    <label className="flex items-center gap-2 font-semibold text-gray-200"><input data-gi-ed="capacidade-mostrar" type="checkbox" checked={!ed.capacidade?.ocultar} onChange={(e) => ped((x) => ({ ...x, capacidade: { ...x.capacidade, ocultar: !e.target.checked } }))} /> Capacidade (gota)</label>
+                                    {!ed.capacidade?.ocultar && (<>
+                                      <input data-gi-ed="capacidade-texto" maxLength={24} value={ed.textos?.capacidade ?? String(medidas.capacidade || "")} onChange={(e) => ped((x) => ({ ...x, textos: { ...x.textos, capacidade: e.target.value } }))} placeholder="Ex.: 8 Litros" className="w-full bg-[#0d0f18] border border-gray-700 rounded px-2 py-1" />
+                                      <Desliza rot="Mover ← →" id="capacidade-dx" min={-60} max={10} valor={(ed.capacidade?.dx || 0) * 100} onMudar={(n) => ped((x) => ({ ...x, capacidade: { ...x.capacidade, dx: n / 100 } }))} />
+                                      <Desliza rot="Mover ↑ ↓" id="capacidade-dy" min={-5} max={80} valor={(ed.capacidade?.dy || 0) * 100} onMudar={(n) => ped((x) => ({ ...x, capacidade: { ...x.capacidade, dy: n / 100 } }))} />
+                                    </>)}
+                                  </div>
+                                  <button type="button" data-gi-ed-reset onClick={() => ajustarMedidas(r.posicao, { edicao: undefined, corpo: undefined })} className="text-amber-300 hover:text-amber-200 cursor-pointer">Voltar tudo ao automático</button>
+                                </div>
+                              </details>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>

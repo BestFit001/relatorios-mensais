@@ -2,7 +2,7 @@
 // inicial, a geometria (testável sem navegador) e a montagem no canvas do navegador com as fotos do produto.
 // Posição do tipo "cena_ia" = imagem criada por IA; fica TRAVADA até existir um serviço de imagem configurado (lib/provedorImagemIA.ts).
 
-import { MAX_EXTRAS, caixaDoCorpo, caixaTotal, calcularLayoutGuia, corDeFundo, criarMascara, textoMedida, type CaixaFrac, type MedidaExtra, type LayoutGuia, type Mascara } from "./guiaMedidas";
+import { MAX_EXTRAS, caixaDoCorpo, caixaTotal, calcularLayoutGuia, corDeFundo, criarMascara, textoMedida, type CaixaFrac, type EdicaoMedidas, type MedidaExtra, type LayoutGuia, type Mascara } from "./guiaMedidas";
 import { classificarFundo, removerFundo } from "./recorteFundo";
 import { calcularLayoutBeneficios, colocarProduto, tipoIcone, type MedirTexto, type TipoIcone } from "./layoutBeneficios";
 import type { DadosImagemModelo } from "./beneficiosModelo";
@@ -213,6 +213,8 @@ export interface ContextoMontagem {
   fotos: Foto[]; logo?: Foto | null; medidas?: MedidasProduto;
   /** corpo do produto ajustado à mão (frações da foto); vazio = detecção automática */
   caixaProduto?: CaixaFrac | null;
+  /** edição manual da imagem de medidas (tamanho/posição do produto, guia, rótulos, textos) */
+  edicaoMedidas?: EdicaoMedidas | null;
   /** preenchido por montarImagem na imagem de medidas */
   layoutGuia?: LayoutGuia;
   /** dados do modelo (Padronização IA) para a imagem de benefícios: título em 2 linhas e benefícios; `marca` vai na pílula do rodapé */
@@ -324,15 +326,16 @@ function seta(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number,
 }
 
 /** Monta a imagem de medidas e devolve o layout usado (a tela usa para mostrar/ajustar a caixa do produto). */
-export function desenharGuiaMedidas(ctx: CanvasRenderingContext2D, p: PadraoImagem, foto: Foto, m: MedidasProduto, caixaProduto?: CaixaFrac | null, estender = false): LayoutGuia {
+export function desenharGuiaMedidas(ctx: CanvasRenderingContext2D, p: PadraoImagem, foto: Foto, m: MedidasProduto, caixaProduto?: CaixaFrac | null, estender = false, edicao?: EdicaoMedidas | null): LayoutGuia {
   const W = p.largura, H = p.altura; const { mascara, corpo } = analisarFoto(foto);
-  const textos = { altura: textoMedida(m.altura), largura: textoMedida(m.largura), comprimento: textoMedida(m.comprimento), capacidade: String(m.capacidade || "").trim(), extras: extrasValidos(m.extras) };
-  const l = calcularLayoutGuia({ W, H, fotoW: foto.largura, fotoH: foto.altura, mascara, corpo: caixaProduto || corpo, textos, medir: (t, px) => medirCondensado(ctx, t, px) });
+  const troca = (auto: string, novo?: string) => (novo === undefined ? auto : novo.trim().slice(0, 24)); // texto editado à mão vale; vazio esconde
+  const textos = { altura: troca(textoMedida(m.altura), edicao?.textos?.altura), largura: troca(textoMedida(m.largura), edicao?.textos?.largura), comprimento: troca(textoMedida(m.comprimento), edicao?.textos?.comprimento), capacidade: troca(String(m.capacidade || "").trim(), edicao?.textos?.capacidade), extras: extrasValidos(m.extras) };
+  const l = calcularLayoutGuia({ edicao: edicao || undefined, W, H, fotoW: foto.largura, fotoH: foto.altura, mascara, corpo: caixaProduto || corpo, textos, medir: (t, px) => medirCondensado(ctx, t, px) });
   const esc = l.escala, f = l.fonte, cinza = "#3a3a3a", cor = p.cor_texto;
   if (estender) estenderBordas(ctx, foto, l.foto, W, H);
   ctx.drawImage(foto.img, l.foto.x, l.foto.y, l.foto.w, l.foto.h);
   // caixa GUIA DE TAMANHO (sem preenchimento: só contorno e texto)
-  const g = l.guia; const itens = [["Altura", textos.altura], ["Comprimento", textos.comprimento], ["Largura", textos.largura], ...textos.extras.map((x) => [x.nome, x.valor])].filter((i) => i[1]);
+  const g = l.guia; const itens = !l.guiaVisivel ? [] : [["Altura", textos.altura], ["Comprimento", textos.comprimento], ["Largura", textos.largura], ...textos.extras.map((x) => [x.nome, x.valor])].filter((i) => i[1]);
   if (itens.length) {
     ctx.save(); ctx.strokeStyle = "#e3e3e3"; ctx.lineWidth = Math.max(1.5, 2 * esc); ctx.strokeRect(g.x, g.y, g.w, g.h);
     const cab = g.h * 0.25; ctx.beginPath(); ctx.moveTo(g.x, g.y + cab); ctx.lineTo(g.x + g.w, g.y + cab); ctx.stroke(); ctx.restore();
@@ -475,7 +478,7 @@ export function montarImagem(p: PadraoImagem, c: ContextoMontagem): HTMLCanvasEl
         if (liso) { ctx.save(); ctx.strokeStyle = "#e4e4e4"; ctx.lineWidth = Math.max(1.5, 2 * escala); ctx.strokeRect(cx.x, cx.y, cx.w, cx.h); ctx.restore(); } // fundo branco: o contorno separa as fotos
       });
     } else if (p.layout === "medidas") {
-      c.layoutGuia = desenharGuiaMedidas(ctx, p, fotos[0], c.medidas || {}, c.caixaProduto, !liso);
+      c.layoutGuia = desenharGuiaMedidas(ctx, p, fotos[0], c.medidas || {}, c.caixaProduto, !liso, c.edicaoMedidas);
     } else {
       desenharBeneficios(ctx, p, fotos[0], c);
     }

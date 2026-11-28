@@ -78,7 +78,22 @@ export interface TextosGuia { altura?: string; largura?: string; comprimento?: s
 
 /** Quantas linhas tem o Guia de tamanho (as 3 medidas que existem + as extras). */
 export const linhasDoGuia = (t: TextosGuia): number => (t.altura ? 1 : 0) + (t.largura ? 1 : 0) + (t.comprimento ? 1 : 0) + (t.extras?.length || 0);
+/** Ajuste manual de um elemento da imagem de medidas. dx/dy: deslocamento em fração da largura/altura da imagem. */
+export interface AjusteElemento { ocultar?: boolean; dx?: number; dy?: number }
+/** Edição manual da imagem de medidas, aplicada por cima do layout automático. Tudo é opcional: o que não vier fica automático. */
+export interface EdicaoMedidas {
+  /** fator: tamanho do produto (0,3 a 1; vazio = o maior que cabe); dx/dy deslocam o produto junto com as setas e os rótulos */
+  produto?: { fator?: number; dx?: number; dy?: number };
+  /** multiplica o tamanho dos textos dos rótulos (0,6 a 1,6) */
+  fonte?: number;
+  guia?: AjusteElemento & { escala?: number };
+  capacidade?: AjusteElemento;
+  altura?: AjusteElemento; largura?: AjusteElemento; comprimento?: AjusteElemento;
+  /** troca o valor mostrado (ex.: "23,5 cm"); texto vazio esconde a medida */
+  textos?: { altura?: string; largura?: string; comprimento?: string; capacidade?: string };
+}
 export interface EntradaGuia {
+  edicao?: EdicaoMedidas;
   W: number; H: number; fotoW: number; fotoH: number; mascara: Mascara; corpo: CaixaFrac;
   textos: TextosGuia;
   /** largura do texto em px na fonte condensada do rótulo (no canvas = measureText; nos testes, uma estimativa) */
@@ -89,7 +104,7 @@ export interface SetaH { y: number; x0: number; x1: number }
 export interface SetaD { x0: number; y0: number; x1: number; y1: number }
 export interface LayoutGuia {
   foto: Retangulo; corpo: Retangulo; fator: number; limpo: boolean; escala: number; fonte: number;
-  guia: Retangulo; capacidade: Retangulo | null;
+  guia: Retangulo; guiaVisivel: boolean; capacidade: Retangulo | null;
   altura: { seta: SetaV; rotulo: Retangulo } | null;
   largura: { seta: SetaH; rotulo: Retangulo } | null;
   comprimento: { seta: SetaD; rotulo: Retangulo } | null;
@@ -97,8 +112,8 @@ export interface LayoutGuia {
 
 const FATORES = Array.from({ length: 20 }, (_, i) => Math.round((1 - i * 0.03) * 100) / 100);
 
-function montar(e: EntradaGuia, fator: number): { l: LayoutGuia; cabe: boolean } {
-  const { W, H } = e; const esc = Math.min(W, H) / 1200; const f = 44 * esc; const M = 0.04 * Math.min(W, H);
+function montar(e: EntradaGuia, fator: number, desloc?: { dx: number; dy: number }): { l: LayoutGuia; cabe: boolean } {
+  const { W, H } = e; const esc = Math.min(W, H) / 1200; const f = 44 * esc * Math.min(1.6, Math.max(0.6, e.edicao?.fonte || 1)); const M = 0.04 * Math.min(W, H);
   const k = Math.min((W - 2 * M) / e.fotoW, (H - 2 * M) / e.fotoH) * fator; const w = e.fotoW * k, h = e.fotoH * k;
   let x = W - M - w, y = H - M - h;
   const corpoEm = (xx: number, yy: number): Retangulo => ({ x: xx + e.corpo.x0 * w, y: yy + e.corpo.y0 * h, w: (e.corpo.x1 - e.corpo.x0) * w, h: (e.corpo.y1 - e.corpo.y0) * h });
@@ -120,28 +135,51 @@ function montar(e: EntradaGuia, fator: number): { l: LayoutGuia; cabe: boolean }
   const esq = r.comprimento ? M - r.comprimento.rotulo.x : -1; if (esq > 0) x += esq;
   B = corpoEm(x, y); r = rotulos(B);
   const baixo = r.largura ? r.largura.rotulo.y + r.largura.rotulo.h - (H - M) : -1; if (baixo > 0) y -= baixo;
+  if (desloc) { x += desloc.dx * W; y += desloc.dy * H; } // posição escolhida à mão
   B = corpoEm(x, y); r = rotulos(B);
   const dentro = (q: Retangulo | undefined) => !q || (q.x >= M * 0.5 && q.y >= M * 0.5 && q.x + q.w <= W - M * 0.5 && q.y + q.h <= H - M * 0.5);
   const cabe = x >= 0 && y >= 0 && x + w <= W && y + h <= H && dentro(r.altura?.rotulo) && dentro(r.largura?.rotulo) && dentro(r.comprimento?.rotulo);
   const guia: Retangulo = { x: 0.048 * W, y: 0.037 * H, w: 0.406 * W, h: (0.304 + Math.max(0, linhasDoGuia(e.textos) - 3) * 0.055) * H }; // com mais de 3 linhas a caixa cresce
   let capacidade: Retangulo | null = null;
   if (e.textos.capacidade) { const cw = 46 * esc * 0.55 + 24 * esc + e.medir(e.textos.capacidade, 40 * esc); capacidade = { x: 0.857 * W - cw, y: 0.075 * H, w: cw, h: 52 * esc }; }
-  return { l: { foto: { x, y, w, h }, corpo: B, fator, limpo: false, escala: esc, fonte: f, guia, capacidade, ...r }, cabe };
+  return { l: { foto: { x, y, w, h }, corpo: B, fator, limpo: false, escala: esc, fonte: f, guia, guiaVisivel: true, capacidade, ...r }, cabe };
 }
 
-/** Procura o maior tamanho de produto em que tudo cabe sem encostar em pixel do produto. */
+/** Procura o maior tamanho de produto em que tudo cabe sem encostar em pixel do produto; depois aplica a edição manual, se houver. */
 export function calcularLayoutGuia(e: EntradaGuia): LayoutGuia {
   const folga = 6 * (Math.min(e.W, e.H) / 1200);
-  let reserva: LayoutGuia | null = null, menos = Infinity;
-  for (const fator of FATORES) {
-    const { l, cabe } = montar(e, fator); if (!cabe) continue;
-    const alvos = [l.guia, l.capacidade, l.altura?.rotulo, l.largura?.rotulo, l.comprimento?.rotulo].filter(Boolean) as Retangulo[];
-    const batidas = alvos.filter((r) => colide(e.mascara, l.foto, r, folga)).length;
-    if (batidas === 0) return { ...l, limpo: true };
-    if (batidas < menos) { menos = batidas; reserva = l; }
+  const alvosDe = (l: LayoutGuia) => [l.guia, l.capacidade, l.altura?.rotulo, l.largura?.rotulo, l.comprimento?.rotulo].filter(Boolean) as Retangulo[];
+  const bate = (l: LayoutGuia) => alvosDe(l).filter((r) => colide(e.mascara, l.foto, r, folga)).length;
+  const automatico = (): LayoutGuia => {
+    let reserva: LayoutGuia | null = null, menos = Infinity;
+    for (const fator of FATORES) {
+      const { l, cabe } = montar(e, fator); if (!cabe) continue;
+      const batidas = bate(l);
+      if (batidas === 0) return { ...l, limpo: true };
+      if (batidas < menos) { menos = batidas; reserva = l; }
+    }
+    if (reserva) return { ...reserva, limpo: false };
+    return { ...montar(e, FATORES[FATORES.length - 1]).l, limpo: false };
+  };
+  let l = automatico();
+  const ed = e.edicao, pr = ed?.produto;
+  if (pr && (pr.fator != null || pr.dx || pr.dy)) { // tamanho/posição do produto escolhidos à mão
+    const fator = Math.min(1, Math.max(0.3, pr.fator ?? l.fator));
+    const m = montar(e, fator, { dx: pr.dx || 0, dy: pr.dy || 0 }).l; l = { ...m, limpo: bate(m) === 0 };
   }
-  if (reserva) return { ...reserva, limpo: false };
-  return { ...montar(e, FATORES[FATORES.length - 1]).l, limpo: false };
+  return ed ? aplicarEdicao(l, e) : l;
+}
+
+/** Esconde/move rótulos, setas, caixa do guia e capacidade conforme a edição manual. */
+function aplicarEdicao(l: LayoutGuia, e: EntradaGuia): LayoutGuia {
+  const ed = e.edicao; if (!ed) return l; const { W, H } = e;
+  const mover = (r: Retangulo, a?: AjusteElemento): Retangulo => (a ? { ...r, x: r.x + (a.dx || 0) * W, y: r.y + (a.dy || 0) * H } : r);
+  const g = ed.guia, esc = g?.escala && g.escala > 0 ? g.escala : 1;
+  const guia = g ? { x: l.guia.x + (g.dx || 0) * W, y: l.guia.y + (g.dy || 0) * H, w: l.guia.w * esc, h: l.guia.h * esc } : l.guia;
+  const rot = <T extends { rotulo: Retangulo }>(it: T | null, a?: AjusteElemento): T | null => (!it || a?.ocultar ? null : { ...it, rotulo: mover(it.rotulo, a) });
+  return { ...l, guia, guiaVisivel: !g?.ocultar,
+    capacidade: !l.capacidade || ed.capacidade?.ocultar ? null : mover(l.capacidade, ed.capacidade),
+    altura: rot(l.altura, ed.altura), largura: rot(l.largura, ed.largura), comprimento: rot(l.comprimento, ed.comprimento) };
 }
 
 /** "13,5 cm" / "20 cm"; vazio se não houver valor. */
