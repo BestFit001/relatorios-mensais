@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MAX_REFS = 8;
+const MAX_REFS = 10; // até 4 fotos + 2 detalhes da logo + 4 quadros do vídeo
 const MAX_B64 = 1_500_000; // por foto
 const MAX_TOTAL_B64 = 4_000_000; // o corpo inteiro da Vercel aceita ~4,5 MB
 

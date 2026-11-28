@@ -71,19 +71,27 @@ Extra products or accessories, duplicated or distorted product
 Extra fingers, deformed hands, plastic-looking skin
 Collage, borders, heavy filters, illustration or 3D render look`;
 
-/** Quantas imagens de referência seguem no pedido: as fotos principais primeiro e, depois, os quadros do vídeo. */
-export interface RefsDoPedido { fotos: number; quadros: number }
+/**
+ * Quantas imagens de referência seguem no pedido, nesta ordem: as fotos principais, os detalhes (close da etiqueta/logo/ferragem) e os quadros do vídeo.
+ * `textoLogo`: o que está escrito na etiqueta/logo do produto, para o gerador reproduzir as letras.
+ */
+export interface RefsDoPedido { fotos: number; quadros: number; detalhes?: number; textoLogo?: string }
 
 /**
- * Avisa o gerador de qual é cada referência. As fotos principais são a fonte da verdade; os quadros do vídeo entram só como complemento,
- * para conferir detalhes que as fotos não mostram (verso, laterais, alças, ferragens), sem copiar a luz, o fundo nem a qualidade do vídeo.
+ * Avisa o gerador de qual é cada referência. As fotos principais são a fonte da verdade; os detalhes são close-ups da etiqueta/logo que devem sair
+ * idênticos; os quadros do vídeo entram só como complemento, para conferir o que as fotos não mostram (verso, laterais, alças, ferragens),
+ * sem copiar a luz, o fundo nem a qualidade do vídeo.
  */
 export function textoDasReferencias(r: RefsDoPedido): string {
-  const n = Math.max(0, Math.floor(r.fotos)), m = Math.max(0, Math.floor(r.quadros));
-  if (m === 0 || n === 0) return "";
-  const principais = n === 1 ? "Image 1 is the main product photo" : `Images 1 to ${n} are the main product photos`;
-  const quadros = m === 1 ? `Image ${n + 1} is a frame` : `Images ${n + 1} to ${n + m} are frames`;
-  return `Reference images: ${principais} and the source of truth for the product's shape, print, colors and details. ${quadros} from a product video, supplied only as a complement to check details that are not visible in the main photos (for example the back, the sides, the straps, the hardware or small details). Never copy the video frames' lighting, background, framing, motion blur or lower image quality, and if a video frame conflicts with the main photos, follow the main photos.`;
+  const n = Math.max(0, Math.floor(r.fotos)), m = Math.max(0, Math.floor(r.quadros)), d = Math.max(0, Math.floor(r.detalhes || 0));
+  const logo = String(r.textoLogo || "").replace(/["\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  const faixa = (de: number, qtd: number) => (qtd === 1 ? `Image ${de}` : `Images ${de} to ${de + qtd - 1}`);
+  const partes: string[] = [];
+  if (n > 0 && (m > 0 || d > 0)) partes.push(`Reference images: ${n === 1 ? "Image 1 is the main product photo" : `Images 1 to ${n} are the main product photos`} and the source of truth for the product's shape, print, colors and details.`);
+  if (n > 0 && d > 0) partes.push(`${faixa(n + 1, d)} ${d === 1 ? "is a close-up" : "are close-ups"} of the product's brand label, logo or hardware: reproduce ${d === 1 ? "it" : "them"} exactly in the scene, with the same shape, colors, lettering, size and position on the product, sharp and legible, never blank, blurred or replaced by invented letters.`);
+  if (logo) partes.push(`The label/logo on the product reads exactly: "${logo}". Render these exact letters, correctly spelled, clearly readable and facing the camera.`);
+  if (n > 0 && m > 0) partes.push(`${m === 1 ? `Image ${n + d + 1} is a frame` : `Images ${n + d + 1} to ${n + d + m} are frames`} from a product video, supplied only as a complement to check details that are not visible in the main photos (for example the back, the sides, the straps, the hardware or small details). Never copy the video frames' lighting, background, framing, motion blur or lower image quality, and if a video frame conflicts with the main photos, follow the main photos.`);
+  return partes.join(" ");
 }
 
 /** Texto final enviado ao gerador: o prompt com os dados do produto + as proibições (uma por linha vira um item). */

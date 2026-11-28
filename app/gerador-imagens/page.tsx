@@ -23,7 +23,7 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", proces
 interface FotoEnviada extends Foto { url: string; nome: string }
 interface GuiaUsado { foto: number; corpo: CaixaFrac; limpo: boolean }
 interface Resultado { posicao: number; nome: string; arquivo: string; url?: string; blob?: Blob; largura: number; altura: number; travada?: string; erro?: string; guia?: GuiaUsado; aviso?: string }
-interface ModeloLinha { medidas_extras?: any; id: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; descricao_complementar: string | null; descricao_seo: string | null; linha1?: string | null; linha2?: string | null; capacidade?: string | null; beneficios?: any }
+interface ModeloLinha { texto_logo?: string | null; medidas_extras?: any; id: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; descricao_complementar: string | null; descricao_seo: string | null; linha1?: string | null; linha2?: string | null; capacidade?: string | null; beneficios?: any }
 interface ProdutoLista { id: string; chave: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; beneficios: any }
 interface PreviaProdutos { arquivo: string; modelos: (ModeloPadrao & { marcada: boolean })[]; ignoradas: number }
 interface DadosModelo { linha1: string; linha2: string; beneficios: BeneficioModelo[] }
@@ -48,17 +48,18 @@ async function ajustarAoTamanho(blob: Blob, largura: number, altura: number): Pr
 
 /** Quadros do vídeo que entram como referência extra na Cena (IA); as fotos da posição vão primeiro. */
 const MAX_QUADROS_REF = 4;
+const MAX_DETALHES = 2; // fotos de close da etiqueta/logo enviadas como referência extra
 const QUADROS_INICIAIS = 2;
 
 const campo = "bg-[#0d0f18] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white w-full";
 const botao = "px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
 
 /** Foto reduzida (máx. 1024 px) em base64, para mandar de referência ao serviço de imagem. */
-function fotoReduzida(f: Foto): { base64: string; mime: string } {
-  const k = Math.min(1, 1024 / Math.max(f.largura, f.altura));
+function fotoReduzida(f: Foto, maxLado = 1024, qualidade = 0.85): { base64: string; mime: string } {
+  const k = Math.min(1, maxLado / Math.max(f.largura, f.altura));
   const c = document.createElement("canvas"); c.width = Math.round(f.largura * k); c.height = Math.round(f.altura * k);
   c.getContext("2d")!.drawImage(f.img, 0, 0, c.width, c.height);
-  return { base64: c.toDataURL("image/jpeg", 0.85).split(",")[1], mime: "image/jpeg" };
+  return { base64: c.toDataURL("image/jpeg", qualidade).split(",")[1], mime: "image/jpeg" };
 }
 
 /** Texto digitado → número em cm. Aceita "3,5", "3.5" e "3,5 cm". Vazio = sem medida; texto que não é número = null (mantém o anterior). */
@@ -104,6 +105,8 @@ export default function GeradorImagensPage() {
   const [statusIA, setStatusIA] = useState<StatusIA>({ configurado: false, mensagem: "Verificando o serviço de imagem…" });
   const [quadros, setQuadros] = useState<Quadro[]>([]);
   const [quadrosSel, setQuadrosSel] = useState<number[]>([]);
+  const [detalhes, setDetalhes] = useState<(FotoEnviada & { base64: string; mime: string })[]>([]);
+  const [textoLogo, setTextoLogo] = useState("");
   const [lendoVideo, setLendoVideo] = useState(false);
   const [canva, setCanva] = useState<{ chaves: boolean; conectado: boolean; mensagem: string }>({ chaves: false, conectado: false, mensagem: "Verificando o Canva…" });
   const [fotos, setFotos] = useState<FotoEnviada[]>([]);
@@ -153,6 +156,16 @@ export default function GeradorImagensPage() {
     catch (err: any) { setMsg("Não consegui tirar os quadros do vídeo: " + (err?.message || err)); }
     setLendoVideo(false);
   }
+  async function escolherDetalhes(e: React.ChangeEvent<HTMLInputElement>) {
+    const arquivos = Array.from(e.target.files || []).filter((a) => /^image\/(jpeg|png|webp)$/.test(a.type)); e.target.value = "";
+    const livres = MAX_DETALHES - detalhes.length;
+    if (!arquivos.length || livres <= 0) return;
+    try {
+      const novas: (FotoEnviada & { base64: string; mime: string })[] = [];
+      for (const a of arquivos.slice(0, livres)) { const f = await carregarFoto(a); novas.push({ ...f, nome: a.name, ...fotoReduzida(f, 1280, 0.9) }); }
+      setDetalhes((l) => [...l, ...novas]);
+    } catch (err: any) { setMsg("Não consegui abrir a foto de detalhe: " + (err?.message || err)); }
+  }
   function alternarQuadro(i: number) {
     setQuadrosSel((l) => (l.includes(i) ? l.filter((x) => x !== i) : l.length >= MAX_QUADROS_REF ? l : [...l, i].sort((a, b) => a - b)));
   }
@@ -194,7 +207,7 @@ export default function GeradorImagensPage() {
   async function carregarModelos(m: string) {
     setModeloId(""); setDadosModelo(DADOS_VAZIOS);
     if (!m) { setModelos([]); return; }
-    const { data, error } = await supabase.from("produtos_imagens").select("id,titulo,marca,sku,categoria,altura,largura,comprimento,descricao_complementar,descricao_seo,linha1,linha2,capacidade,beneficios,medidas_extras").ilike("marca", m).order("titulo");
+    const { data, error } = await supabase.from("produtos_imagens").select("id,titulo,marca,sku,categoria,altura,largura,comprimento,descricao_complementar,descricao_seo,linha1,linha2,capacidade,beneficios,medidas_extras,texto_logo").ilike("marca", m).order("titulo");
     if (error) { setMsg("Não consegui ler os produtos da aba Produtos: " + error.message); setModelos([]); return; }
     setModelos((data || []) as ModeloLinha[]);
   }
@@ -205,6 +218,7 @@ export default function GeradorImagensPage() {
     if (!m) { setDadosModelo(DADOS_VAZIOS); return; }
     const num = (v: any) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
     setSku(m.sku || "");
+    setTextoLogo(String(m.texto_logo || ""));
     setMedidas((a) => ({ ...a, altura: num(m.altura), largura: num(m.largura), comprimento: num(m.comprimento), capacidade: "", extras: Array.isArray(m.medidas_extras) ? m.medidas_extras.map((x: any) => ({ nome: String(x?.nome ?? ""), valor: String(x?.valor ?? "") })) : [] }));
     const t = dividirTitulo(m.titulo, m.marca);
     const benef = normalizarBeneficios(m.beneficios);
@@ -272,11 +286,11 @@ export default function GeradorImagensPage() {
   async function salvarDadosModelo() {
     if (!modeloAtual) return;
     setOcupado("Salvando no modelo…"); setMsg("");
-    const dados = { linha1: dadosModelo.linha1.trim(), linha2: dadosModelo.linha2.trim(), capacidade: String(medidas.capacidade || "").trim(), medidas_extras: extrasValidos(medidas.extras), beneficios: dadosModelo.beneficios.filter((b) => b.titulo.trim()), updated_at: new Date().toISOString() };
+    const dados = { linha1: dadosModelo.linha1.trim(), linha2: dadosModelo.linha2.trim(), capacidade: String(medidas.capacidade || "").trim(), medidas_extras: extrasValidos(medidas.extras), texto_logo: textoLogo.trim().slice(0, 120), beneficios: dadosModelo.beneficios.filter((b) => b.titulo.trim()), updated_at: new Date().toISOString() };
     const { error } = await supabase.from("produtos_imagens").update(dados).eq("id", modeloAtual.id);
     if (!error) setModelos((l) => l.map((x) => (x.id === modeloAtual.id ? { ...x, ...dados } : x)));
     setOcupado("");
-    setMsg(error ? "Não consegui salvar no modelo: " + error.message : "Título, capacidade, medidas extras e benefícios salvos no modelo. Da próxima vez é só escolher o modelo.");
+    setMsg(error ? "Não consegui salvar no modelo: " + error.message : "Título, capacidade, medidas extras, texto da logo e benefícios salvos no modelo. Da próxima vez é só escolher o modelo.");
   }
   function mudarBeneficio(i: number, campo2: keyof BeneficioModelo, v: string) { setDadosModelo((d) => ({ ...d, beneficios: d.beneficios.map((b, k) => (k === i ? { ...b, [campo2]: v } : b)) })); }
 
@@ -383,8 +397,9 @@ export default function GeradorImagensPage() {
               const idx = fotosDaPosicao(p, fotos.length);
               const refsFotos = (idx.length ? idx : [0]).slice(0, 4).map((i) => fotoReduzida(fotos[i] ?? fotos[0]));
               const refsQuadros = quadrosSel.map((i) => quadros[i]).filter(Boolean).map((q) => ({ base64: q.base64, mime: q.mime }));
-              const refs = [...refsFotos, ...refsQuadros]; // as fotos principais vão primeiro; os quadros do vídeo, só como complemento
-              const blob = await cenaPeloCanva(promptDaCena(p, { fotos: refsFotos.length, quadros: refsQuadros.length }), refs, p.largura, p.altura);
+              const refsDetalhes = detalhes.map((d) => ({ base64: d.base64, mime: d.mime }));
+              const refs = [...refsFotos, ...refsDetalhes, ...refsQuadros]; // fotos principais, depois close da etiqueta/logo e, por último, os quadros do vídeo (só complemento)
+              const blob = await cenaPeloCanva(promptDaCena(p, { fotos: refsFotos.length, quadros: refsQuadros.length, detalhes: refsDetalhes.length, textoLogo }), refs, p.largura, p.altura);
               saida.push({ ...base, blob, url: URL.createObjectURL(blob), aviso: !modeloAtual && /\{\{/.test(p.prompt_ia) ? "Sem modelo escolhido: a cena foi pedida sem título, benefícios e medidas do produto." : undefined });
             } catch (e: any) { saida.push({ ...base, erro: String(e?.message || e) }); }
             setOcupado("Montando as imagens…");
@@ -527,6 +542,23 @@ export default function GeradorImagensPage() {
                   ))}
                 </div>
               )}
+              <div className="border-t border-gray-800 pt-4 space-y-2" data-gi-logo-bloco>
+                <h3 className="text-sm font-semibold text-purple-300">Etiqueta / logo do produto (recomendado para a Cena de IA)</h3>
+                <p className="text-xs text-gray-500">O gerador erra letras pequenas. Para a logo sair certa: escreva o texto exato da etiqueta e, se puder, suba até {MAX_DETALHES} fotos de perto (close) da etiqueta ou da logo. Elas vão para a Cena (IA) como referência para copiar igual. No Canva, cada foto de referência além da primeira consome créditos de IA a mais.</p>
+                <input data-gi-texto-logo maxLength={120} value={textoLogo} onChange={(e) => setTextoLogo(e.target.value)} placeholder="Texto exato da etiqueta/logo (ex.: FARM RIO etc)" className={campo} />
+                <input data-gi-detalhe-arquivo type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={escolherDetalhes} disabled={detalhes.length >= MAX_DETALHES}
+                  className="block text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-700 file:text-white file:font-semibold file:cursor-pointer" />
+                {detalhes.length > 0 && (
+                  <div className="flex flex-wrap gap-3">
+                    {detalhes.map((d, i) => (
+                      <div key={d.url} data-gi-detalhe className="relative w-24">
+                        <img src={d.url} alt={d.nome} className="w-24 h-24 object-cover rounded-lg border border-gray-700" />
+                        <button type="button" onClick={() => setDetalhes((l) => { URL.revokeObjectURL(l[i].url); return l.filter((_, k) => k !== i); })} className="absolute top-1 right-1 bg-black/70 hover:bg-red-700 text-xs w-5 h-5 rounded cursor-pointer" aria-label="Remover foto de detalhe">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="border-t border-gray-800 pt-4 space-y-2" data-gi-video-bloco>
                 <h3 className="text-sm font-semibold text-purple-300">Vídeo do produto (opcional, só como complemento da Cena de IA)</h3>
                 <p className="text-xs text-gray-500">Complemento, não fonte principal: as fotos continuam sendo a referência do produto. Os quadros marcados vão para a Cena (IA) só para o gerador conferir o que as fotos não mostram (verso, laterais, alça, ferragens, detalhes), e o pedido diz isso a ele. Se o vídeo e as fotos divergirem, valem as fotos. As outras imagens não mudam. Atenção: no Canva cada foto de referência além da primeira consome créditos de IA a mais, então marque só os quadros que ajudam.</p>
