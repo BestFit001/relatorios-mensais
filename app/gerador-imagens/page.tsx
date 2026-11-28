@@ -1,5 +1,5 @@
 "use client";
-// Gerador de imagens do anúncio: sobe as fotos do produto (até 10), escolhe a marca e o modelo (Padronização IA) e o app monta as imagens do padrão
+// Gerador de imagens do anúncio: sobe as fotos do produto (até 10), escolhe a marca e o modelo (aba Produtos, importada por planilha) e o app monta as imagens do padrão
 // cadastrado para a marca (tabela padroes_imagens: 5 no início, até 12). Medidas e benefícios vêm do modelo escolhido. As posições "cena de IA" ficam travadas até existir um serviço de geração de imagem configurado no servidor.
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -11,6 +11,8 @@ import {
   type CaixaFrac, type Foto, type FundoModo, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
 import { extrairQuadros, quadrosIniciais, type Quadro } from "../../lib/videoQuadros";
+import * as XLSX from "xlsx";
+import { chaveProduto, emLotes, linhasUnicas, linhaDoProduto, modelosDaPlanilha, MARCA_PADRAO, type ModeloPadrao } from "../../lib/produtosImagens";
 import { PROMPT_CENA_PESSOA, PROMPT_NEGATIVO_CENA, montarPromptCena, type RefsDoPedido } from "../../lib/promptCena";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
 import { MAX_BENEFICIOS, dividirTitulo, normalizarBeneficios, type BeneficioModelo } from "../../lib/beneficiosModelo";
@@ -20,7 +22,9 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", proces
 interface FotoEnviada extends Foto { url: string; nome: string }
 interface GuiaUsado { foto: number; corpo: CaixaFrac; limpo: boolean }
 interface Resultado { posicao: number; nome: string; arquivo: string; url?: string; blob?: Blob; largura: number; altura: number; travada?: string; erro?: string; guia?: GuiaUsado; aviso?: string }
-interface ModeloLinha { id: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; descricao_complementar: string | null; descricao_seo: string | null }
+interface ModeloLinha { id: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; descricao_complementar: string | null; descricao_seo: string | null; linha1?: string | null; linha2?: string | null; capacidade?: string | null; beneficios?: any }
+interface ProdutoLista { id: string; chave: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; beneficios: any }
+interface PreviaProdutos { arquivo: string; modelos: (ModeloPadrao & { marcada: boolean })[]; ignoradas: number }
 interface DadosModelo { linha1: string; linha2: string; beneficios: BeneficioModelo[] }
 const DADOS_VAZIOS: DadosModelo = { linha1: "", linha2: "", beneficios: [] };
 interface AjusteMedidas { foto?: number; corpo?: CaixaFrac }
@@ -57,7 +61,13 @@ function fotoReduzida(f: Foto): { base64: string; mime: string } {
 }
 
 export default function GeradorImagensPage() {
-  const [aba, setAba] = useState<"gerar" | "padrao">("gerar");
+  const [aba, setAba] = useState<"gerar" | "produtos" | "padrao">("gerar");
+  const [produtos, setProdutos] = useState<ProdutoLista[]>([]);
+  const [previa, setPrevia] = useState<PreviaProdutos | null>(null);
+  const [importando, setImportando] = useState(false);
+  const [msgImport, setMsgImport] = useState("");
+  const [buscaProduto, setBuscaProduto] = useState("");
+  const [apagarId, setApagarId] = useState("");
   const [msg, setMsg] = useState("");
   const [ocupado, setOcupado] = useState("");
   const [marcas, setMarcas] = useState<string[]>([]);
@@ -81,7 +91,7 @@ export default function GeradorImagensPage() {
   const [qtdBeneficios, setQtdBeneficios] = useState(4);
 
   async function carregarMarcas(manter?: string) {
-    const [a, b] = await Promise.all([supabase.from("padroes_anuncios").select("marca"), supabase.from("padroes_imagens").select("marca")]);
+    const [a, b] = await Promise.all([supabase.from("produtos_imagens").select("marca"), supabase.from("padroes_imagens").select("marca")]);
     const todas = new Map<string, string>();
     for (const l of [...(a.data || []), ...(b.data || [])]) { const m = String((l as any).marca || "").trim(); if (m && !todas.has(m.toLowerCase())) todas.set(m.toLowerCase(), m); }
     const lista = [...todas.values()].sort((x, y) => x.localeCompare(y, "pt-BR"));
@@ -145,12 +155,18 @@ export default function GeradorImagensPage() {
   }
   useEffect(() => { setResultados([]); carregarPadroes(marca); carregarModelos(marca); }, [marca]);
 
-  // ───────── modelo (Padronização IA): medidas e benefícios ─────────
+  // ───────── produto (aba Produtos, importado por planilha): medidas e benefícios ─────────
+  async function carregarProdutos() {
+    const { data, error } = await supabase.from("produtos_imagens").select("id,chave,titulo,marca,sku,categoria,altura,largura,comprimento,beneficios").order("marca").order("titulo");
+    if (error) { setMsgImport("Não consegui ler a lista de produtos: " + error.message); return; }
+    setProdutos((data || []) as ProdutoLista[]);
+  }
+  useEffect(() => { carregarProdutos(); }, []);
   async function carregarModelos(m: string) {
     setModeloId(""); setDadosModelo(DADOS_VAZIOS);
     if (!m) { setModelos([]); return; }
-    const { data, error } = await supabase.from("padroes_anuncios").select("id,titulo,marca,sku,categoria,altura,largura,comprimento,descricao_complementar,descricao_seo").ilike("marca", m).order("titulo");
-    if (error) { setMsg("Não consegui ler os modelos da Padronização IA: " + error.message); setModelos([]); return; }
+    const { data, error } = await supabase.from("produtos_imagens").select("id,titulo,marca,sku,categoria,altura,largura,comprimento,descricao_complementar,descricao_seo,linha1,linha2,capacidade,beneficios").ilike("marca", m).order("titulo");
+    if (error) { setMsg("Não consegui ler os produtos da aba Produtos: " + error.message); setModelos([]); return; }
     setModelos((data || []) as ModeloLinha[]);
   }
   const modeloAtual = useMemo(() => modelos.find((x) => x.id === modeloId) || null, [modelos, modeloId]);
@@ -161,13 +177,58 @@ export default function GeradorImagensPage() {
     const num = (v: any) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
     setSku(m.sku || "");
     setMedidas((a) => ({ ...a, altura: num(m.altura), largura: num(m.largura), comprimento: num(m.comprimento), capacidade: "" }));
-    const { data } = await supabase.from("modelos_imagem").select("*").eq("modelo_id", id).maybeSingle();
     const t = dividirTitulo(m.titulo, m.marca);
-    if (data) {
-      setDadosModelo({ linha1: String((data as any).linha1 || t.linha1), linha2: String((data as any).linha2 || t.linha2), beneficios: normalizarBeneficios((data as any).beneficios) });
-      setMedidas((a) => ({ ...a, capacidade: String((data as any).capacidade || "") }));
+    const benef = normalizarBeneficios(m.beneficios);
+    if (m.linha1 || m.linha2 || benef.length || m.capacidade) {
+      setDadosModelo({ linha1: String(m.linha1 || t.linha1), linha2: String(m.linha2 || t.linha2), beneficios: benef });
+      setMedidas((a) => ({ ...a, capacidade: String(m.capacidade || "") }));
     } else setDadosModelo({ linha1: t.linha1, linha2: t.linha2, beneficios: [] });
   }
+  // ───────── aba Produtos: importar planilha do Tiny ─────────
+  async function lerPlanilhaProdutos(e: React.ChangeEvent<HTMLInputElement>) {
+    const arquivo = e.target.files?.[0]; e.target.value = "";
+    if (!arquivo) return;
+    setMsgImport("");
+    try {
+      const wb = XLSX.read(await arquivo.arrayBuffer(), { type: "array" });
+      const linhas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" }) as any[];
+      const { modelos: lidos, ignoradas } = modelosDaPlanilha(linhas);
+      if (!lidos.length) { setPrevia(null); setMsgImport("Não encontrei produtos nessa planilha. Use a planilha de produtos exportada do Tiny (com as colunas Código (SKU), Descrição, Marca, Categoria, Altura/Largura/Comprimento embalagem, Descrição complementar…)."); return; }
+      setPrevia({ arquivo: arquivo.name, modelos: lidos.map((m) => ({ ...m, marcada: true })), ignoradas });
+    } catch (err: any) { setPrevia(null); setMsgImport("Não consegui ler a planilha: " + (err?.message || err)); }
+  }
+  async function importarProdutos() {
+    if (!previa) return;
+    const escolhidos = linhasUnicas(previa.modelos.filter((m) => m.marcada));
+    if (!escolhidos.length) return;
+    setImportando(true); setMsgImport("");
+    const jaTem = new Set(produtos.map((p) => p.chave));
+    const erros: string[] = [];
+    let gravados = 0;
+    for (const lote of emLotes(escolhidos, 200)) {
+      // as linhas não levam id, linha1/linha2/capacidade/beneficios: a reimportação atualiza os dados da planilha e mantém os benefícios salvos
+      const { error } = await supabase.from("produtos_imagens").upsert(lote, { onConflict: "chave" });
+      if (error) erros.push(error.message); else gravados += lote.length;
+    }
+    const atualizados = escolhidos.filter((l) => jaTem.has(l.chave)).length;
+    setImportando(false); setPrevia(null);
+    setMsgImport(erros.length ? `Importei ${gravados} de ${escolhidos.length}. Erro: ${erros[0]}` : `✅ Importação concluída: ${escolhidos.length - atualizados} novo(s) e ${atualizados} atualizado(s). Já dá para escolher esses produtos na aba Gerar imagens.`);
+    await Promise.all([carregarProdutos(), carregarMarcas()]);
+    if (marca) carregarModelos(marca);
+  }
+  async function apagarProduto(id: string) {
+    if (apagarId !== id) { setApagarId(id); return; } // primeiro clique pede a confirmação
+    setApagarId("");
+    const { error } = await supabase.from("produtos_imagens").delete().eq("id", id);
+    if (error) { setMsgImport("Não consegui apagar: " + error.message); return; }
+    if (modeloId === id) { setModeloId(""); setDadosModelo(DADOS_VAZIOS); }
+    setMsgImport("Produto apagado da lista do gerador."); await carregarProdutos(); if (marca) carregarModelos(marca);
+  }
+  const produtosFiltrados = useMemo(() => {
+    const q = buscaProduto.trim().toLowerCase();
+    return q ? produtos.filter((p) => `${p.titulo} ${p.marca} ${p.sku || ""}`.toLowerCase().includes(q)) : produtos;
+  }, [produtos, buscaProduto]);
+
   async function sugerirBeneficios() {
     if (!modeloAtual) return;
     setOcupado("Lendo o modelo e sugerindo os benefícios…"); setMsg("");
@@ -182,7 +243,9 @@ export default function GeradorImagensPage() {
   async function salvarDadosModelo() {
     if (!modeloAtual) return;
     setOcupado("Salvando no modelo…"); setMsg("");
-    const { error } = await supabase.from("modelos_imagem").upsert({ modelo_id: modeloAtual.id, linha1: dadosModelo.linha1.trim(), linha2: dadosModelo.linha2.trim(), capacidade: String(medidas.capacidade || "").trim(), beneficios: dadosModelo.beneficios.filter((b) => b.titulo.trim()), updated_at: new Date().toISOString() }, { onConflict: "modelo_id" });
+    const dados = { linha1: dadosModelo.linha1.trim(), linha2: dadosModelo.linha2.trim(), capacidade: String(medidas.capacidade || "").trim(), beneficios: dadosModelo.beneficios.filter((b) => b.titulo.trim()), updated_at: new Date().toISOString() };
+    const { error } = await supabase.from("produtos_imagens").update(dados).eq("id", modeloAtual.id);
+    if (!error) setModelos((l) => l.map((x) => (x.id === modeloAtual.id ? { ...x, ...dados } : x)));
     setOcupado("");
     setMsg(error ? "Não consegui salvar no modelo: " + error.message : "Título, capacidade e benefícios salvos no modelo. Da próxima vez é só escolher o modelo.");
   }
@@ -351,9 +414,9 @@ export default function GeradorImagensPage() {
             Suba até {MAX_FOTOS} fotos do produto e o app monta as imagens do anúncio no padrão cadastrado para a marca. As fotos não são salvas: ficam só no seu navegador.
           </p>
           <div className="flex gap-2 mt-4">
-            {(["gerar", "padrao"] as const).map((a) => (
+            {(["gerar", "produtos", "padrao"] as const).map((a) => (
               <button key={a} type="button" data-gi-aba={a} onClick={() => setAba(a)}
-                className={`${botao} ${aba === a ? "bg-purple-700 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>{a === "gerar" ? "Gerar imagens" : "Padrão da marca"}</button>
+                className={`${botao} ${aba === a ? "bg-purple-700 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>{a === "gerar" ? "Gerar imagens" : a === "produtos" ? "Produtos (planilha)" : "Padrão da marca"}</button>
             ))}
           </div>
         </div>
@@ -430,9 +493,9 @@ export default function GeradorImagensPage() {
               </div>
               <div className="grid md:grid-cols-3 gap-3">
                 <div className="md:col-span-2">
-                  <label className="text-xs text-gray-400 block mb-1">Modelo (cadastrado na Padronização IA): traz as medidas e os benefícios</label>
+                  <label className="text-xs text-gray-400 block mb-1">Modelo (cadastrado na aba Produtos): traz as medidas e os benefícios</label>
                   <select data-gi-modelo value={modeloId} onChange={(e) => escolherModelo(e.target.value)} disabled={!marca} className={campo}>
-                    <option value="">{!marca ? "Escolha a marca primeiro" : modelos.length ? "Escolha o modelo…" : "Essa marca não tem modelos na Padronização IA"}</option>
+                    <option value="">{!marca ? "Escolha a marca primeiro" : modelos.length ? "Escolha o modelo…" : "Essa marca não tem produtos: importe a planilha na aba Produtos"}</option>
                     {modelos.map((m) => <option key={m.id} value={m.id}>{m.titulo}{m.sku ? ` (SKU ${m.sku})` : ""}</option>)}
                   </select>
                 </div>
@@ -527,6 +590,92 @@ export default function GeradorImagensPage() {
               </div>
             )}
           </>
+        )}
+
+        {aba === "produtos" && (
+          <div className="bg-[#131625] p-6 rounded-xl border border-gray-800 space-y-4" data-gi-produtos>
+            <div>
+              <h2 className="text-lg font-semibold text-purple-400">Produtos do gerador (planilha)</h2>
+              <p className="text-xs text-gray-400 mt-1">
+                Suba a planilha de produtos exportada do Tiny (.xls, .xlsx ou .csv), a mesma que a Padronização IA lê. Cada produto pai (ou simples) vira um produto desta lista, com título,
+                marca, categoria, medidas, peso e descrições. A lista é só do gerador e não mexe na Padronização IA: é daqui que você escolhe o modelo na aba Gerar imagens.
+                Se o produto (mesmo título e marca) já existir, os dados da planilha são atualizados e os benefícios que você salvou continuam.
+              </p>
+            </div>
+            <input data-gi-planilha type="file" accept=".xls,.xlsx,.csv" onChange={lerPlanilhaProdutos} disabled={importando}
+              className="block text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-purple-600 file:text-white file:font-semibold file:cursor-pointer" />
+            {msgImport && <p data-gi-msg-import className="text-xs text-gray-300 bg-[#1b1f38] border border-gray-700 rounded-lg p-3">{msgImport}</p>}
+
+            {previa && (
+              <div data-gi-previa className="space-y-3">
+                <p className="text-xs text-gray-300">
+                  <strong>{previa.arquivo}</strong>: {previa.modelos.length} produto(s) encontrado(s)
+                  {previa.ignoradas > 0 ? ` (${previa.ignoradas} linha(s) de variação ignorada(s): vale o produto pai)` : ""}.
+                </p>
+                <div className="overflow-x-auto border border-gray-800 rounded-lg max-h-96 overflow-y-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#1b1f38] text-gray-400 uppercase sticky top-0"><tr>
+                      <th className="p-3 w-8"></th><th className="p-3">Título</th><th className="p-3">Marca</th><th className="p-3">Categoria</th><th className="p-3">Medidas (A×L×C) / Peso</th><th className="p-3">Situação</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-800">
+                      {previa.modelos.map((m, i) => {
+                        const ja = produtos.some((p) => p.chave === chaveProduto(m.titulo, m.marca));
+                        return (
+                          <tr key={i} data-gi-previa-linha>
+                            <td className="p-3"><input type="checkbox" checked={m.marcada} onChange={(e) => setPrevia({ ...previa, modelos: previa.modelos.map((x, j) => (j === i ? { ...x, marcada: e.target.checked } : x)) })} className="accent-purple-600 cursor-pointer" /></td>
+                            <td className="p-3 text-white">{m.titulo}</td>
+                            <td className="p-3 text-gray-300">{m.marca || MARCA_PADRAO}</td>
+                            <td className="p-3 text-gray-300">{m.categoria || "—"}</td>
+                            <td className="p-3 text-gray-300 font-mono">{m.altura || 0}x{m.largura || 0}x{m.comprimento || 0} cm {m.peso ? `| ${m.peso} kg` : ""}</td>
+                            <td className="p-3">{ja ? <span className="text-amber-300">atualiza o existente</span> : <span className="text-green-400">novo</span>}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setPrevia(null)} className={`${botao} bg-gray-700 hover:bg-gray-600 text-white`}>Descartar</button>
+                  <button type="button" data-gi-importar disabled={importando || previa.modelos.every((m) => !m.marcada)} onClick={importarProdutos} className={`${botao} bg-purple-600 hover:bg-purple-700 text-white`}>
+                    {importando ? "Importando…" : `Importar ${previa.modelos.filter((m) => m.marcada).length} produto(s)`}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-gray-800">
+              <h3 className="text-sm font-semibold text-gray-200" data-gi-produtos-qtd>Produtos cadastrados: {produtos.length}</h3>
+              <input data-gi-busca-produto value={buscaProduto} onChange={(e) => setBuscaProduto(e.target.value)} placeholder="Buscar por título, marca ou SKU" className={`${campo} max-w-xs`} />
+            </div>
+            {produtos.length === 0 ? (
+              <p className="text-xs text-gray-500">Nenhum produto ainda. Suba a planilha acima.</p>
+            ) : (
+              <div className="overflow-x-auto border border-gray-800 rounded-lg max-h-[28rem] overflow-y-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#1b1f38] text-gray-400 uppercase sticky top-0"><tr>
+                    <th className="p-3">Marca</th><th className="p-3">Título</th><th className="p-3">SKU</th><th className="p-3">Medidas (A×L×C)</th><th className="p-3">Benefícios</th><th className="p-3"></th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-gray-800">
+                    {produtosFiltrados.map((p) => {
+                      const nb = normalizarBeneficios(p.beneficios).length;
+                      return (
+                        <tr key={p.id} data-gi-produto={p.id}>
+                          <td className="p-3 text-gray-300">{p.marca}</td>
+                          <td className="p-3 text-white">{p.titulo}</td>
+                          <td className="p-3 text-gray-400 font-mono">{p.sku || "—"}</td>
+                          <td className="p-3 text-gray-300 font-mono">{p.altura || 0}x{p.largura || 0}x{p.comprimento || 0} cm</td>
+                          <td className="p-3">{nb ? <span className="text-green-400">{nb} salvo(s)</span> : <span className="text-gray-500">ainda não</span>}</td>
+                          <td className="p-3 text-right">
+                            <button type="button" data-gi-apagar-produto={p.id} onClick={() => apagarProduto(p.id)} className="text-red-300 hover:text-red-200 cursor-pointer">{apagarId === p.id ? "Confirmar: apagar" : "Apagar"}</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         )}
 
         {aba === "padrao" && (
