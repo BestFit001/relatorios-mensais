@@ -250,6 +250,27 @@ export function recortarFundoDaFoto(foto: Foto): { foto: Foto; removido: boolean
   CACHE_RECORTE.set(foto.img, saida); return saida;
 }
 
+/** Já existe um recorte guardado para essa foto (do Canva ou do app)? */
+export const temRecorte = (foto: Foto): boolean => CACHE_RECORTE.has(foto.img);
+
+/**
+ * Guarda o recorte feito pelo Canva (imagem com fundo transparente) no lugar do recorte do app:
+ * `recortarFundoDaFoto` passa a devolvê-lo. Corta a sobra transparente em volta do produto (2% de folga).
+ */
+export function registrarRecorte(foto: Foto, recortada: HTMLImageElement | HTMLCanvasElement): void {
+  const w0 = recortada instanceof HTMLImageElement ? recortada.naturalWidth : recortada.width, h0 = recortada instanceof HTMLImageElement ? recortada.naturalHeight : recortada.height;
+  const k = Math.min(1, 2400 / Math.max(w0, h0)); const w = Math.max(1, Math.round(w0 * k)), h = Math.max(1, Math.round(h0 * k));
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const x = c.getContext("2d", { willReadFrequently: true })!;
+  x.drawImage(recortada, 0, 0, w, h);
+  const a = x.getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let xx = 0; xx < w; xx++) if (a[(y * w + xx) * 4 + 3] > 20) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) throw new Error("o recorte do Canva veio sem produto");
+  const folga = Math.round(Math.max(w, h) * 0.02); const ax = Math.max(0, x0 - folga), ay = Math.max(0, y0 - folga), bx = Math.min(w, x1 + 1 + folga), by = Math.min(h, y1 + 1 + folga);
+  const c2 = document.createElement("canvas"); c2.width = bx - ax; c2.height = by - ay; c2.getContext("2d")!.drawImage(c, ax, ay, c2.width, c2.height, 0, 0, c2.width, c2.height);
+  CACHE_RECORTE.set(foto.img, { foto: { img: c2, largura: c2.width, altura: c2.height }, removido: true });
+}
+
 /** Corta a sobra branca em volta do produto (sem mexer nos pixels; o fundo continua branco). Usado quando a foto já tem fundo branco mas o produto ocupa pouco dela. */
 const CACHE_APARADA = new WeakMap<object, Foto>();
 export function apararFoto(foto: Foto): Foto {

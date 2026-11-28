@@ -104,7 +104,8 @@ async function api(token: string, caminho: string, init: RequestInit = {}): Prom
   if (!r.ok) {
     const cod = String(j?.code || j?.error || r.status);
     if (r.status === 401) throw new CanvaDesconectado("O Canva recusou o acesso. Clique em “Conectar ao Canva” de novo.");
-    if (r.status === 403) throw new Error("o Canva negou a geração de imagem (" + cod + "): confira se a sua conta tem IA de imagem e créditos");
+    if (r.status === 402) throw new Error("os créditos de IA do Canva acabaram (" + cod + ")");
+    if (r.status === 403) throw new Error("o Canva negou o pedido (" + cod + "): confira se a sua conta tem IA de imagem, créditos e se o app tem acesso a essa função");
     if (r.status === 429) throw new Error("o Canva limitou as chamadas por enquanto (20 por minuto); tente de novo em instantes");
     throw new Error(`o Canva respondeu ${r.status} (${cod}): ${String(j?.message || "").slice(0, 160)}`);
   }
@@ -163,6 +164,34 @@ export async function consultarCena(token: string, jobId: string): Promise<Estad
   if (job?.status === "success" && job?.result?.image?.url) return { status: "pronto", url: String(job.result.image.url) };
   if (job?.status === "failed") return { status: "falhou", mensagem: String(job?.error?.message || job?.error?.code || "o Canva não conseguiu gerar a imagem").slice(0, 200) };
   return { status: "em_andamento" };
+}
+
+/** Mensagem em português para o motivo de falha de um job de recorte. */
+function motivoRecorte(erro: any): string {
+  const cod = String(erro?.code || "");
+  if (cod === "no_foreground_found") return "o Canva não achou o produto na foto para recortar";
+  if (cod === "quota_exceeded") return "os créditos de IA do Canva acabaram";
+  return String(erro?.message || cod || "o Canva não conseguiu recortar a foto").slice(0, 200);
+}
+
+/**
+ * Tira o fundo de uma foto com a ferramenta "remover fundo" do Canva e devolve o endereço temporário do PNG transparente.
+ * Sobe a foto, abre o job de `background_removal` (preview API; consome crédito de IA do Canva) e aguarda até `limiteMs`.
+ */
+export async function recortarFundo(token: string, bytes: Buffer, nome: string, limiteMs = 40_000): Promise<string> {
+  const fim = Date.now() + limiteMs;
+  const assetId = await subirReferencia(token, bytes, nome);
+  const corpo = { asset_id: assetId, name: nome.slice(0, 200) || "recorte", transformations: [{ type: "background_removal" }], idempotency_key: randomUUID() };
+  let job = (await api(token, "/image-transformations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) })).job;
+  while (job?.status === "in_progress" && job?.id) {
+    if (Date.now() > fim) throw new Error("o Canva demorou demais para tirar o fundo da foto");
+    await espera(1500);
+    job = (await api(token, `/image-transformations/${encodeURIComponent(job.id)}`)).job;
+  }
+  if (job?.status === "failed") throw new Error(motivoRecorte(job?.error));
+  const url = job?.result?.url;
+  if (job?.status !== "success" || !url) throw new Error("o Canva não liberou a foto recortada em alta resolução");
+  return String(url);
 }
 
 export const JOB_VALIDO = /^[A-Za-z0-9_-]{8,80}$/;

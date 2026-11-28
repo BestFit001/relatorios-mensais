@@ -7,7 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import Navbar from "../components/Navbar";
 import {
-  MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, novaPosicao, padraoInicial, renumerarPosicoes,
+  MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, registrarRecorte, temRecorte, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, novaPosicao, padraoInicial, renumerarPosicoes,
   type CaixaFrac, type Foto, type FundoModo, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
 import { extrairQuadros, quadrosIniciais, type Quadro } from "../../lib/videoQuadros";
@@ -60,6 +60,16 @@ function fotoReduzida(f: Foto): { base64: string; mime: string } {
   return { base64: c.toDataURL("image/jpeg", 0.85).split(",")[1], mime: "image/jpeg" };
 }
 
+/** Foto para o recorte do Canva: até 2400 px no lado maior, em JPEG, reduzindo a qualidade até caber no limite do envio (~4 MB em base64). */
+function fotoParaRecorte(f: Foto): { base64: string; mime: string } {
+  const k = Math.min(1, 2400 / Math.max(f.largura, f.altura));
+  const c = document.createElement("canvas"); c.width = Math.round(f.largura * k); c.height = Math.round(f.altura * k);
+  c.getContext("2d")!.drawImage(f.img, 0, 0, c.width, c.height);
+  let b64 = "";
+  for (const q of [0.92, 0.85, 0.75, 0.6]) { b64 = c.toDataURL("image/jpeg", q).split(",")[1]; if (b64.length <= 3_800_000) break; }
+  return { base64: b64, mime: "image/jpeg" };
+}
+
 export default function GeradorImagensPage() {
   const [aba, setAba] = useState<"gerar" | "produtos" | "padrao">("gerar");
   const [produtos, setProdutos] = useState<ProdutoLista[]>([]);
@@ -85,6 +95,8 @@ export default function GeradorImagensPage() {
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [ajustes, setAjustes] = useState<Record<number, AjusteMedidas>>({});
   const logosCache = useRef(new Map<string, Foto>());
+  const recortesEmCurso = useRef(new Map<object, Promise<void>>()); // fotos que estão sendo recortadas no Canva
+  const avisosRecorte = useRef(new Set<string>());
   const [modelos, setModelos] = useState<ModeloLinha[]>([]);
   const [modeloId, setModeloId] = useState("");
   const [dadosModelo, setDadosModelo] = useState<DadosModelo>(DADOS_VAZIOS);
@@ -283,10 +295,37 @@ export default function GeradorImagensPage() {
     if (!logosCache.current.has(p.logo_url)) { try { const img = await carregarImagem(p.logo_url, true); logosCache.current.set(p.logo_url, { img, largura: img.naturalWidth, altura: img.naturalHeight }); } catch { return null; } }
     return logosCache.current.get(p.logo_url) || null;
   }
+  /** Tira o fundo da foto no Canva (ferramenta "remover fundo") e guarda o recorte para a montagem. */
+  async function recortarPeloCanva(f: FotoEnviada): Promise<void> {
+    const ref = fotoParaRecorte(f);
+    const r = await fetch("/api/canva/recorte", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ref) });
+    if (!r.ok || !/^image\//.test(r.headers.get("content-type") || "")) {
+      const j = await r.json().catch(() => ({} as any));
+      if (j?.desconectado) setCanva((c) => ({ ...c, conectado: false, mensagem: j.erro }));
+      throw new Error(String(j?.erro || `o Canva não devolveu o recorte (${r.status})`));
+    }
+    const url = URL.createObjectURL(await r.blob());
+    try { registrarRecorte(f, await carregarImagem(url)); } finally { URL.revokeObjectURL(url); }
+  }
+  /** Antes de montar: as fotos sem fundo branco usadas em posições de fundo liso são recortadas pelo Canva (o recorte do app só entra se o Canva não puder). */
+  async function prepararRecortes(p: PadraoImagem): Promise<void> {
+    if (p.tipo !== "montagem" || !(p.fundo_modo === "liso" || p.layout === "beneficios")) return;
+    const pendentes = fotosDaPosicao(p, fotos.length).map((i) => fotos[i]).filter((f): f is FotoEnviada => !!f && !f.jaBranco && !temRecorte(f));
+    if (!pendentes.length) return;
+    if (!canva.conectado) { avisosRecorte.current.add("O Canva não está conectado: o fundo das fotos foi tirado pelo app, que pode deixar falhas nas bordas. Conecte o Canva para um recorte melhor."); return; }
+    setOcupado("Tirando o fundo das fotos no Canva…");
+    await Promise.all(pendentes.map(async (f) => {
+      if (!recortesEmCurso.current.has(f.img)) recortesEmCurso.current.set(f.img, recortarPeloCanva(f));
+      try { await recortesEmCurso.current.get(f.img); }
+      catch (e: any) { recortesEmCurso.current.delete(f.img); avisosRecorte.current.add(`O Canva não tirou o fundo da foto “${f.nome}” (${String(e?.message || e)}): usei o recorte do app, que pode deixar falhas. Confira a imagem.`); }
+    }));
+    setOcupado("Montando as imagens…");
+  }
   /** Monta uma imagem do tipo "montagem"; na de medidas aceita foto e caixa do produto escolhidas à mão. */
   async function montarUma(p: PadraoImagem, ajuste?: AjusteMedidas): Promise<{ blob: Blob; guia?: GuiaUsado; semLogo: boolean; aviso?: string }> {
     const logo = await carregarLogo(p);
     const usado: PadraoImagem = p.layout === "medidas" && ajuste?.foto ? { ...p, fotos: [ajuste.foto] } : p;
+    await prepararRecortes(usado);
     const ctxM = { fotos, logo, medidas, caixaProduto: ajuste?.corpo || null, modelo: { ...dadosModelo, marca: modeloAtual?.marca || marca } } as Parameters<typeof montarImagem>[1];
     const canvas = montarImagem(usado, ctxM);
     const blob = await canvasParaBlob(canvas, p.formato);
@@ -310,7 +349,7 @@ export default function GeradorImagensPage() {
     }, refs);
   }
   async function gerar() {
-    setMsg(""); setResultados([]); setAjustes({});
+    setMsg(""); setResultados([]); setAjustes({}); avisosRecorte.current.clear();
     const ativos = padroes.filter((p) => p.ativo).sort((a, b) => a.posicao - b.posicao).slice(0, MAX_POSICOES);
     if (!marca) { setMsg("Escolha a marca."); return; }
     if (!ativos.length) { setMsg("Essa marca ainda não tem padrão de imagens. Cadastre na aba “Padrão da marca”."); return; }
@@ -350,6 +389,7 @@ export default function GeradorImagensPage() {
         saida.push({ ...base, blob: r.blob, url: URL.createObjectURL(r.blob), guia: r.guia, aviso: r.aviso });
       }
       setResultados(saida);
+      if (avisosRecorte.current.size) setMsg([...avisosRecorte.current].join(" "));
     } catch (e: any) { setMsg("Erro ao montar as imagens: " + (e?.message || e)); }
     setOcupado("");
   }
