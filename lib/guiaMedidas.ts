@@ -71,7 +71,13 @@ export function colide(m: Mascara, foto: Retangulo, r: Retangulo, folga: number)
   return false;
 }
 
-export interface TextosGuia { altura?: string; largura?: string; comprimento?: string; capacidade?: string }
+/** Medida extra (nome livre e valor com a unidade que a pessoa escrever), ex.: Alça = 55 cm. Entra como mais uma linha do Guia de tamanho. */
+export interface MedidaExtra { nome: string; valor: string }
+export const MAX_EXTRAS = 3;
+export interface TextosGuia { altura?: string; largura?: string; comprimento?: string; capacidade?: string; extras?: MedidaExtra[] }
+
+/** Quantas linhas tem o Guia de tamanho (as 3 medidas que existem + as extras). */
+export const linhasDoGuia = (t: TextosGuia): number => (t.altura ? 1 : 0) + (t.largura ? 1 : 0) + (t.comprimento ? 1 : 0) + (t.extras?.length || 0);
 export interface EntradaGuia {
   W: number; H: number; fotoW: number; fotoH: number; mascara: Mascara; corpo: CaixaFrac;
   textos: TextosGuia;
@@ -117,7 +123,7 @@ function montar(e: EntradaGuia, fator: number): { l: LayoutGuia; cabe: boolean }
   B = corpoEm(x, y); r = rotulos(B);
   const dentro = (q: Retangulo | undefined) => !q || (q.x >= M * 0.5 && q.y >= M * 0.5 && q.x + q.w <= W - M * 0.5 && q.y + q.h <= H - M * 0.5);
   const cabe = x >= 0 && y >= 0 && x + w <= W && y + h <= H && dentro(r.altura?.rotulo) && dentro(r.largura?.rotulo) && dentro(r.comprimento?.rotulo);
-  const guia: Retangulo = { x: 0.048 * W, y: 0.037 * H, w: 0.406 * W, h: 0.304 * H };
+  const guia: Retangulo = { x: 0.048 * W, y: 0.037 * H, w: 0.406 * W, h: (0.304 + Math.max(0, linhasDoGuia(e.textos) - 3) * 0.055) * H }; // com mais de 3 linhas a caixa cresce
   let capacidade: Retangulo | null = null;
   if (e.textos.capacidade) { const cw = 46 * esc * 0.55 + 24 * esc + e.medir(e.textos.capacidade, 40 * esc); capacidade = { x: 0.857 * W - cw, y: 0.075 * H, w: cw, h: 52 * esc }; }
   return { l: { foto: { x, y, w, h }, corpo: B, fator, limpo: false, escala: esc, fonte: f, guia, capacidade, ...r }, cabe };
@@ -140,6 +146,6 @@ export function calcularLayoutGuia(e: EntradaGuia): LayoutGuia {
 
 /** "13,5 cm" / "20 cm"; vazio se não houver valor. */
 export function textoMedida(v: any): string {
-  const n = Number(typeof v === "string" ? v.replace(",", ".") : v);
-  return Number.isFinite(n) && n > 0 ? `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} cm` : "";
+  const n = Number(typeof v === "string" ? v.replace(/cm\s*$/i, "").trim().replace(",", ".") : v);
+  return Number.isFinite(n) && n > 0 ? `${n.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} cm` : "";
 }

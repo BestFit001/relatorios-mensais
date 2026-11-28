@@ -7,11 +7,12 @@ import { createClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import Navbar from "../components/Navbar";
 import {
-  MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, registrarRecorte, temRecorte, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, novaPosicao, padraoInicial, renumerarPosicoes,
+  MAX_FOTOS, MAX_POSICOES, ROTULO_LAYOUT, canvasParaBlob, carregarFoto, extrasValidos, registrarRecorte, temRecorte, carregarImagem, fotosDaPosicao, montarImagem, nomeDoArquivoImagem, normalizarPadrao, novaPosicao, padraoInicial, renumerarPosicoes,
   type CaixaFrac, type Foto, type FundoModo, type LayoutImagem, type LogoPosicao, type MedidasProduto, type PadraoImagem,
 } from "../../lib/imagensAnuncio";
 import { extrairQuadros, quadrosIniciais, type Quadro } from "../../lib/videoQuadros";
 import * as XLSX from "xlsx";
+import { MAX_EXTRAS } from "../../lib/guiaMedidas";
 import { chaveProduto, emLotes, linhasUnicas, linhaDoProduto, modelosDaPlanilha, MARCA_PADRAO, type ModeloPadrao } from "../../lib/produtosImagens";
 import { PROMPT_CENA_PESSOA, PROMPT_NEGATIVO_CENA, montarPromptCena, type RefsDoPedido } from "../../lib/promptCena";
 import { chavePaiDe } from "../../lib/dimensoesPeso";
@@ -22,7 +23,7 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL || "", proces
 interface FotoEnviada extends Foto { url: string; nome: string }
 interface GuiaUsado { foto: number; corpo: CaixaFrac; limpo: boolean }
 interface Resultado { posicao: number; nome: string; arquivo: string; url?: string; blob?: Blob; largura: number; altura: number; travada?: string; erro?: string; guia?: GuiaUsado; aviso?: string }
-interface ModeloLinha { id: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; descricao_complementar: string | null; descricao_seo: string | null; linha1?: string | null; linha2?: string | null; capacidade?: string | null; beneficios?: any }
+interface ModeloLinha { medidas_extras?: any; id: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; descricao_complementar: string | null; descricao_seo: string | null; linha1?: string | null; linha2?: string | null; capacidade?: string | null; beneficios?: any }
 interface ProdutoLista { id: string; chave: string; titulo: string; marca: string; sku: string | null; categoria: string | null; altura: number | null; largura: number | null; comprimento: number | null; beneficios: any }
 interface PreviaProdutos { arquivo: string; modelos: (ModeloPadrao & { marcada: boolean })[]; ignoradas: number }
 interface DadosModelo { linha1: string; linha2: string; beneficios: BeneficioModelo[] }
@@ -58,6 +59,22 @@ function fotoReduzida(f: Foto): { base64: string; mime: string } {
   const c = document.createElement("canvas"); c.width = Math.round(f.largura * k); c.height = Math.round(f.altura * k);
   c.getContext("2d")!.drawImage(f.img, 0, 0, c.width, c.height);
   return { base64: c.toDataURL("image/jpeg", 0.85).split(",")[1], mime: "image/jpeg" };
+}
+
+/** Texto digitado → número em cm. Aceita "3,5", "3.5" e "3,5 cm". Vazio = sem medida; texto que não é número = null (mantém o anterior). */
+function lerMedida(t: string): number | null | undefined {
+  const limpo = t.replace(/cm\s*$/i, "").trim().replace(",", ".");
+  if (limpo === "") return null;
+  const n = Number(limpo);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+/** Campo de medida que guarda o que a pessoa digita (para dar para escrever "3," antes do "5") e só entrega o número. */
+function CampoMedida({ valor, onMudar, ...resto }: { valor: number | null | undefined; onMudar: (n: number | null) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange">) {
+  const mostrar = (v: number | null | undefined) => (v === null || v === undefined ? "" : String(v).replace(".", ","));
+  const [txt, setTxt] = useState(mostrar(valor));
+  useEffect(() => { const atual = lerMedida(txt); if ((valor ?? null) !== (atual === undefined ? null : atual)) setTxt(mostrar(valor)); }, [valor]); // mudou por fora (outro modelo, medidas do SKU)
+  return <input {...resto} inputMode="decimal" value={txt}
+    onChange={(e) => { const t = e.target.value.replace(/[^0-9.,]/g, ""); setTxt(t); const n = lerMedida(t); if (n !== undefined) onMudar(n); }} />;
 }
 
 /** Foto para o recorte do Canva: até 2400 px no lado maior, em JPEG, reduzindo a qualidade até caber no limite do envio (~4 MB em base64). */
@@ -177,7 +194,7 @@ export default function GeradorImagensPage() {
   async function carregarModelos(m: string) {
     setModeloId(""); setDadosModelo(DADOS_VAZIOS);
     if (!m) { setModelos([]); return; }
-    const { data, error } = await supabase.from("produtos_imagens").select("id,titulo,marca,sku,categoria,altura,largura,comprimento,descricao_complementar,descricao_seo,linha1,linha2,capacidade,beneficios").ilike("marca", m).order("titulo");
+    const { data, error } = await supabase.from("produtos_imagens").select("id,titulo,marca,sku,categoria,altura,largura,comprimento,descricao_complementar,descricao_seo,linha1,linha2,capacidade,beneficios,medidas_extras").ilike("marca", m).order("titulo");
     if (error) { setMsg("Não consegui ler os produtos da aba Produtos: " + error.message); setModelos([]); return; }
     setModelos((data || []) as ModeloLinha[]);
   }
@@ -188,7 +205,7 @@ export default function GeradorImagensPage() {
     if (!m) { setDadosModelo(DADOS_VAZIOS); return; }
     const num = (v: any) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
     setSku(m.sku || "");
-    setMedidas((a) => ({ ...a, altura: num(m.altura), largura: num(m.largura), comprimento: num(m.comprimento), capacidade: "" }));
+    setMedidas((a) => ({ ...a, altura: num(m.altura), largura: num(m.largura), comprimento: num(m.comprimento), capacidade: "", extras: Array.isArray(m.medidas_extras) ? m.medidas_extras.map((x: any) => ({ nome: String(x?.nome ?? ""), valor: String(x?.valor ?? "") })) : [] }));
     const t = dividirTitulo(m.titulo, m.marca);
     const benef = normalizarBeneficios(m.beneficios);
     if (m.linha1 || m.linha2 || benef.length || m.capacidade) {
@@ -255,11 +272,11 @@ export default function GeradorImagensPage() {
   async function salvarDadosModelo() {
     if (!modeloAtual) return;
     setOcupado("Salvando no modelo…"); setMsg("");
-    const dados = { linha1: dadosModelo.linha1.trim(), linha2: dadosModelo.linha2.trim(), capacidade: String(medidas.capacidade || "").trim(), beneficios: dadosModelo.beneficios.filter((b) => b.titulo.trim()), updated_at: new Date().toISOString() };
+    const dados = { linha1: dadosModelo.linha1.trim(), linha2: dadosModelo.linha2.trim(), capacidade: String(medidas.capacidade || "").trim(), medidas_extras: extrasValidos(medidas.extras), beneficios: dadosModelo.beneficios.filter((b) => b.titulo.trim()), updated_at: new Date().toISOString() };
     const { error } = await supabase.from("produtos_imagens").update(dados).eq("id", modeloAtual.id);
     if (!error) setModelos((l) => l.map((x) => (x.id === modeloAtual.id ? { ...x, ...dados } : x)));
     setOcupado("");
-    setMsg(error ? "Não consegui salvar no modelo: " + error.message : "Título, capacidade e benefícios salvos no modelo. Da próxima vez é só escolher o modelo.");
+    setMsg(error ? "Não consegui salvar no modelo: " + error.message : "Título, capacidade, medidas extras e benefícios salvos no modelo. Da próxima vez é só escolher o modelo.");
   }
   function mudarBeneficio(i: number, campo2: keyof BeneficioModelo, v: string) { setDadosModelo((d) => ({ ...d, beneficios: d.beneficios.map((b, k) => (k === i ? { ...b, [campo2]: v } : b)) })); }
 
@@ -545,13 +562,30 @@ export default function GeradorImagensPage() {
                 </div>
               </div>
               <div>
-                <p className="text-xs text-gray-400 mb-1">Medidas da imagem de medidas (vêm do modelo escolhido; sem modelo, da aba Dimensões e Peso pelo SKU; você pode editar)</p>
+                <p className="text-xs text-gray-400 mb-1">Medidas da imagem de medidas (vêm do modelo escolhido; sem modelo, da aba Dimensões e Peso pelo SKU; você pode editar). Pode usar vírgula ou ponto: 3,5.</p>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {([["altura", "Altura (cm)"], ["largura", "Largura (cm)"], ["comprimento", "Comprimento (cm)"]] as const).map(([k, rot]) => (
-                    <input key={k} data-gi-medida={k} inputMode="decimal" placeholder={rot} value={medidas[k] ?? ""}
-                      onChange={(e) => { const n = Number(e.target.value.replace(",", ".")); setMedidas((m) => ({ ...m, [k]: e.target.value === "" ? null : Number.isFinite(n) ? n : m[k] })); }} className={campo} />
+                    <label key={k} className="block text-[11px] text-gray-400">{rot}
+                      <CampoMedida data-gi-medida={k} placeholder="ex.: 3,5" valor={medidas[k]} onMudar={(n) => setMedidas((m) => ({ ...m, [k]: n }))} className={`${campo} mt-1`} />
+                    </label>
                   ))}
-                  <input data-gi-medida="capacidade" placeholder="Capacidade (opcional, ex.: 8 Litros)" value={medidas.capacidade ?? ""} onChange={(e) => setMedidas((m) => ({ ...m, capacidade: e.target.value }))} className={campo} />
+                  <label className="block text-[11px] text-gray-400">Capacidade (opcional)
+                    <input data-gi-medida="capacidade" placeholder="ex.: 8 Litros" value={medidas.capacidade ?? ""} onChange={(e) => setMedidas((m) => ({ ...m, capacidade: e.target.value }))} className={`${campo} mt-1`} />
+                  </label>
+                </div>
+                <div className="mt-3 space-y-2" data-gi-extras>
+                  <p className="text-[11px] text-gray-400">Outras medidas (aparecem como mais linhas no “Guia de tamanho”; escreva o nome e o valor com a unidade que quiser, ex.: Alça = 55 cm, Boca = 9,5 cm).</p>
+                  <datalist id="gi-nomes-medida">{["Alça", "Profundidade", "Boca", "Diâmetro", "Tamanho da alça", "Espessura"].map((n) => <option key={n} value={n} />)}</datalist>
+                  {(medidas.extras || []).map((x, i) => (
+                    <div key={i} data-gi-extra={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 md:max-w-xl">
+                      <input data-gi-extra-nome list="gi-nomes-medida" maxLength={18} value={x.nome} placeholder="Nome (ex.: Alça)" onChange={(e) => setMedidas((m) => ({ ...m, extras: (m.extras || []).map((y, k) => (k === i ? { ...y, nome: e.target.value } : y)) }))} className={campo} />
+                      <input data-gi-extra-valor maxLength={14} value={x.valor} placeholder="Valor (ex.: 55 cm)" onChange={(e) => setMedidas((m) => ({ ...m, extras: (m.extras || []).map((y, k) => (k === i ? { ...y, valor: e.target.value } : y)) }))} className={campo} />
+                      <button type="button" data-gi-extra-tirar onClick={() => setMedidas((m) => ({ ...m, extras: (m.extras || []).filter((_, k) => k !== i) }))} className="text-xs text-red-300 hover:text-red-200 cursor-pointer px-2">Tirar</button>
+                    </div>
+                  ))}
+                  {(medidas.extras || []).length < MAX_EXTRAS && (
+                    <button type="button" data-gi-add-extra onClick={() => setMedidas((m) => ({ ...m, extras: [...(m.extras || []), { nome: "", valor: "" }] }))} className="text-xs text-purple-300 hover:text-purple-200 cursor-pointer">+ Adicionar medida</button>
+                  )}
                 </div>
               </div>
               {modeloAtual && (

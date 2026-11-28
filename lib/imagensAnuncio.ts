@@ -2,7 +2,7 @@
 // inicial, a geometria (testável sem navegador) e a montagem no canvas do navegador com as fotos do produto.
 // Posição do tipo "cena_ia" = imagem criada por IA; fica TRAVADA até existir um serviço de imagem configurado (lib/provedorImagemIA.ts).
 
-import { caixaDoCorpo, caixaTotal, calcularLayoutGuia, corDeFundo, criarMascara, textoMedida, type CaixaFrac, type LayoutGuia, type Mascara } from "./guiaMedidas";
+import { MAX_EXTRAS, caixaDoCorpo, caixaTotal, calcularLayoutGuia, corDeFundo, criarMascara, textoMedida, type CaixaFrac, type MedidaExtra, type LayoutGuia, type Mascara } from "./guiaMedidas";
 import { classificarFundo, removerFundo } from "./recorteFundo";
 import { calcularLayoutBeneficios, colocarProduto, tipoIcone, type MedirTexto, type TipoIcone } from "./layoutBeneficios";
 import type { DadosImagemModelo } from "./beneficiosModelo";
@@ -40,7 +40,13 @@ export interface PadraoImagem {
   ativo: boolean;
 }
 
-export interface MedidasProduto { altura?: number | null; largura?: number | null; comprimento?: number | null; peso?: number | null; /** texto livre, ex.: "8 Litros" */ capacidade?: string | null }
+export interface MedidasProduto { altura?: number | null; largura?: number | null; comprimento?: number | null; peso?: number | null; /** texto livre, ex.: "8 Litros" */ capacidade?: string | null; /** outras medidas com nome e valor livres, ex.: Alça = 55 cm (até 3) */ extras?: MedidaExtra[] | null }
+
+/** Extras prontos para o desenho: só os que têm nome e valor, com texto aparado e no máximo MAX_EXTRAS. */
+export function extrasValidos(lista: any): MedidaExtra[] {
+  if (!Array.isArray(lista)) return [];
+  return lista.map((x) => ({ nome: String(x?.nome ?? "").trim().slice(0, 18), valor: String(x?.valor ?? "").trim().slice(0, 14) })).filter((x) => x.nome && x.valor).slice(0, MAX_EXTRAS);
+}
 
 /** Fotos do produto que podem ser enviadas de uma vez e imagens (posições) que cada marca pode ter. O padrão inicial da marca tem 5. */
 export const MAX_FOTOS = 10;
@@ -320,20 +326,20 @@ function seta(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number,
 /** Monta a imagem de medidas e devolve o layout usado (a tela usa para mostrar/ajustar a caixa do produto). */
 export function desenharGuiaMedidas(ctx: CanvasRenderingContext2D, p: PadraoImagem, foto: Foto, m: MedidasProduto, caixaProduto?: CaixaFrac | null, estender = false): LayoutGuia {
   const W = p.largura, H = p.altura; const { mascara, corpo } = analisarFoto(foto);
-  const textos = { altura: textoMedida(m.altura), largura: textoMedida(m.largura), comprimento: textoMedida(m.comprimento), capacidade: String(m.capacidade || "").trim() };
+  const textos = { altura: textoMedida(m.altura), largura: textoMedida(m.largura), comprimento: textoMedida(m.comprimento), capacidade: String(m.capacidade || "").trim(), extras: extrasValidos(m.extras) };
   const l = calcularLayoutGuia({ W, H, fotoW: foto.largura, fotoH: foto.altura, mascara, corpo: caixaProduto || corpo, textos, medir: (t, px) => medirCondensado(ctx, t, px) });
   const esc = l.escala, f = l.fonte, cinza = "#3a3a3a", cor = p.cor_texto;
   if (estender) estenderBordas(ctx, foto, l.foto, W, H);
   ctx.drawImage(foto.img, l.foto.x, l.foto.y, l.foto.w, l.foto.h);
   // caixa GUIA DE TAMANHO (sem preenchimento: só contorno e texto)
-  const g = l.guia; const itens = [["Altura", textos.altura], ["Comprimento", textos.comprimento], ["Largura", textos.largura]].filter((i) => i[1]);
+  const g = l.guia; const itens = [["Altura", textos.altura], ["Comprimento", textos.comprimento], ["Largura", textos.largura], ...textos.extras.map((x) => [x.nome, x.valor])].filter((i) => i[1]);
   if (itens.length) {
     ctx.save(); ctx.strokeStyle = "#e3e3e3"; ctx.lineWidth = Math.max(1.5, 2 * esc); ctx.strokeRect(g.x, g.y, g.w, g.h);
     const cab = g.h * 0.25; ctx.beginPath(); ctx.moveTo(g.x, g.y + cab); ctx.lineTo(g.x + g.w, g.y + cab); ctx.stroke(); ctx.restore();
     textoCond(ctx, "GUIA DE TAMANHO", g.x + g.w / 2, g.y + cab * 0.64, 34 * esc, cor, "center");
     const passo = (g.h - cab) / itens.length;
     itens.forEach(([nome, valor], i) => {
-      const yb = g.y + cab + passo * i + passo * 0.64; const fs = 37 * esc;
+      const fs = Math.min(37 * esc, passo * 0.5); const yb = g.y + cab + passo * i + passo * 0.64;
       ctx.save(); ctx.fillStyle = "#111"; ctx.beginPath(); const tx = g.x + g.w * 0.07, ty = yb - fs * 0.32; ctx.moveTo(tx, ty - 9 * esc); ctx.lineTo(tx + 17 * esc, ty); ctx.lineTo(tx, ty + 9 * esc); ctx.closePath(); ctx.fill(); ctx.restore();
       const xl = g.x + g.w * 0.145; textoCond(ctx, nome, xl, yb, fs, cor);
       const wv = medirCondensado(ctx, valor, fs); const xv = g.x + g.w - g.w * 0.045; textoCond(ctx, valor, xv, yb, fs, cor, "right");
